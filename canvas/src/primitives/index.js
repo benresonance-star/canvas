@@ -1,0 +1,12 @@
+export { newUlid, isUlid } from './shared/ulid.js';
+export { primitiveRef, validatePrimitiveRef, refKey, PRIMITIVE_TYPES } from './shared/primitive-ref.js';
+export * from './shared/types.js';
+export { validateArtifact, createArtifact } from './artifact.js';
+export { validateNote, createNote } from './note.js';
+export { validateRelationship, createRelationship, isStructuralRelation, isClaimRelation } from './relationship.js';
+export { validateAssertion } from './assertion.js';
+export { aggregateConfidence, withComputedAggregate, minBand } from './confidence/aggregate.js';
+export { scopesOverlap } from './scope/overlap.js';
+export { appendAuthorStep, currentAuthor, validateAuthorChain } from './authorship/chain.js';
+export { deriveRelationshipConfidence } from './relations/derivation.js';
+export { identityCheck } from './identity/match.js';

@@ -1,0 +1,26 @@
+# Dependencies and build
+node_modules/
+dist/
+dist-ssr/
+.data/
+*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+.cursor/
+
+# Local folder-link test data (user-specific)
+test folder/
