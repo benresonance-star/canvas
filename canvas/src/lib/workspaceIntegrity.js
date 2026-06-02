@@ -8,6 +8,7 @@ import {
 } from './projectDocumentStore.js';
 import { projectRevisionStorageKey } from './projectRevision.js';
 import { readLocalProjectSerialised } from './sync/projectSyncLocal.js';
+import { isDeletedProjectId } from './projectDeletionTombstones.js';
 
 const SUPPRESSED_PREFIX = 'canvas:suppressed:';
 
@@ -60,10 +61,14 @@ export async function listAllOrphanProjectIds(index) {
 /**
  * Remove cached project bodies not in the workspace index (index is source of truth).
  * @param {object | null | undefined} index
+ * @param {{ protectProjectIds?: string[] }} [options]
  * @returns {Promise<{ purgedCount: number, purgedIds: string[] }>}
  */
-export async function purgeOrphanProjectBodies(index) {
-  const orphanIds = await listAllOrphanProjectIds(index);
+export async function purgeOrphanProjectBodies(index, options = {}) {
+  const protect = new Set((options.protectProjectIds ?? []).filter(Boolean));
+  const orphanIds = (await listAllOrphanProjectIds(index)).filter(
+    (id) => !protect.has(id),
+  );
   if (orphanIds.length === 0) {
     return { purgedCount: 0, purgedIds: [] };
   }
@@ -147,6 +152,10 @@ export async function listGhostProjectIds(
   for (const row of index?.projects ?? []) {
     if (!row?.id) continue;
     if (await hasLocalProjectBody(row.id)) continue;
+    if (row.syncState === 'missing') {
+      ghosts.push(row.id);
+      continue;
+    }
     if (checkServer && serverSyncEnabled) {
       try {
         const meta = await fetchCanvasProjectMeta(row.id);
@@ -201,6 +210,22 @@ export async function recoverOrphanProjectsIntoIndex(index) {
 
   let recoveredCount = 0;
   for (const id of orphanIds) {
+    if (isDeletedProjectId(id)) {
+      try {
+        await deleteProjectDocumentSerialised(id);
+      } catch {
+        /* ignore */
+      }
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.removeItem(projectStorageKey(id));
+          localStorage.removeItem(projectRevisionStorageKey(id));
+        } catch {
+          /* ignore */
+        }
+      }
+      continue;
+    }
     const payload = await readLocalProjectPayload(id);
     if (!payload) continue;
     if (base.projects.some((p) => p.id === id)) continue;
@@ -264,23 +289,29 @@ export async function auditWorkspaceIndex(index, options = {}) {
     : (index ?? null);
   let orphanPurged = 0;
   let ghostsMarked = 0;
+  let orphanRecovered = 0;
 
-  const { purgedCount } = await purgeOrphanProjectBodies(repaired ?? { projects: [] });
+  const recovery = await recoverOrphanProjectsIntoIndex(
+    repaired ?? { version: 1, activeProjectId: null, projects: [] },
+  );
+  if (recovery.recoveredCount > 0) {
+    repaired = recovery.index;
+    orphanRecovered = recovery.recoveredCount;
+    actions.push(`recovered_orphans:${orphanRecovered}`);
+    issues.push({ type: 'orphan_recovered', count: orphanRecovered });
+  }
+
+  const activeProtectId = resolveActiveProjectIdForIndex(
+    repaired,
+    repaired?.activeProjectId,
+  );
+  const { purgedCount } = await purgeOrphanProjectBodies(repaired ?? { projects: [] }, {
+    protectProjectIds: activeProtectId ? [activeProtectId] : [],
+  });
   if (purgedCount > 0) {
     orphanPurged = purgedCount;
     actions.push(`purged_orphans:${purgedCount}`);
     issues.push({ type: 'orphan_purged', count: purgedCount });
-  }
-
-  let orphanRecovered = 0;
-  if (repaired?.projects) {
-    const recovery = await recoverOrphanProjectsIntoIndex(repaired);
-    if (recovery.recoveredCount > 0) {
-      repaired = recovery.index;
-      orphanRecovered = recovery.recoveredCount;
-      actions.push(`recovered_orphans:${orphanRecovered}`);
-      issues.push({ type: 'orphan_recovered', count: orphanRecovered });
-    }
   }
 
   if (!repaired?.projects?.length) {

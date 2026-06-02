@@ -31,10 +31,14 @@ This documents Phase 2–3 of the agent chat dock / spec migration program relat
 | POST | `/canvas/projects/:id/spec-resources/:rid/detach` | Detach (repoint reference) |
 | GET/POST/DELETE | `/spec/notes/:noteId/links` | Note → resource links |
 
+### Workspace index realtime
+
+- **SSE:** `GET /canvas/index/stream` broadcasts `index_updated` after successful `PUT /canvas/index` (includes `clientId` so origin tab can skip redundant menu refresh).
+
 ### Client dual-write
 
-- **Save:** `syncSpecCanvasStateFromPayload` after project document PUT
-- **Load:** `reconcileSpecCanvasOnLoad` logs drift; **project JSON remains authoritative**
+- **Save:** `writeThroughSpecCanvasFromPayload` on every layout/placement commit ([`structure/canvasWriteThrough.js`](../src/lib/structure/canvasWriteThrough.js)); also after project document PUT via `syncSpecCanvasStateFromPayload`
+- **Load:** `reconcileSpecCanvasOnLoad` applies `spec_canvas_state` when version matches document revision, when spec-only (no document), or when spec version ≥ document revision; otherwise project JSON remains authoritative (drift logged)
 
 ### Not yet implemented (spec §11 gaps)
 

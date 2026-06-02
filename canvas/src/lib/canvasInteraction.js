@@ -2,6 +2,13 @@
 
 let interactionDepth = 0;
 
+/** @type {(() => void) | null} */
+let onInteractionIdle = null;
+
+export function setCanvasInteractionIdleListener(listener) {
+  onInteractionIdle = listener;
+}
+
 export function beginCanvasInteraction(_kind) {
   interactionDepth += 1;
 }
@@ -13,6 +20,11 @@ export function endCanvasInteraction(_kind) {
     import('./actionSync.js')
       .then(({ flushPendingFolderScanIfAny }) => flushPendingFolderScanIfAny())
       .catch(() => {});
+    try {
+      onInteractionIdle?.();
+    } catch {
+      /* ignore */
+    }
   }
 }
 

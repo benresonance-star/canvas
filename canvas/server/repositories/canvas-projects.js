@@ -1,4 +1,6 @@
 import { pool, query } from '../db.js';
+import { applyProjectOps, validateProjectPatchOps } from '../../src/lib/sync/projectPatchOps.js';
+import { summarizePatchOps, syncTraceLog } from '../../src/lib/sync/syncTrace.js';
 
 const INDEX_ID = 'default';
 
@@ -148,22 +150,34 @@ export async function getCanvasProject(projectId) {
   };
 }
 
-/** Keep workspace index row name aligned when document carries projectName. */
-export async function syncIndexProjectName(projectId, projectName) {
+/**
+ * Canonical project rename — workspace index only (canvas_workspace_index.payload).
+ */
+export async function setWorkspaceProjectName(projectId, projectName) {
   const trimmed = typeof projectName === 'string' ? projectName.trim() : '';
-  if (!trimmed) return false;
+  if (!trimmed) return { ok: false, reason: 'empty_name' };
 
   const indexRow = await getCanvasIndex();
-  if (!indexRow?.payload?.projects?.length) return false;
+  if (!indexRow?.payload?.projects?.length) {
+    return { ok: false, reason: 'no_index' };
+  }
 
-  const projects = indexRow.payload.projects;
-  const row = projects.find((p) => p.id === projectId);
-  if (!row || row.name === trimmed) return false;
+  const row = indexRow.payload.projects.find((p) => p.id === projectId);
+  if (!row) return { ok: false, reason: 'no_row' };
+  if (row.name === trimmed) return { ok: true, unchanged: true };
 
   row.name = trimmed;
   row.updatedAt = Date.now();
-  await putCanvasIndex(indexRow.payload);
-  return true;
+  const result = await putCanvasIndex(indexRow.payload, indexRow.revision);
+  return result.ok
+    ? { ok: true, revision: result.revision, updatedAt: result.updatedAt }
+    : { ok: false, conflict: true, revision: result.revision };
+}
+
+/** @deprecated Use setWorkspaceProjectName — documents must not drive index names. */
+export async function syncIndexProjectName(projectId, projectName) {
+  const result = await setWorkspaceProjectName(projectId, projectName);
+  return Boolean(result.ok);
 }
 
 /**
@@ -199,13 +213,6 @@ export async function putCanvasProject(projectId, payload, expectedRevision) {
        VALUES ($1, $2::jsonb, $3, 1)`,
       [projectId, JSON.stringify(payload), now],
     );
-    if (payload?.projectName) {
-      try {
-        await syncIndexProjectName(projectId, payload.projectName);
-      } catch (e) {
-        console.warn(`Could not sync index name for project ${projectId}:`, e.message);
-      }
-    }
     return { ok: true, revision: 1, updatedAt: now };
   }
 
@@ -227,14 +234,128 @@ export async function putCanvasProject(projectId, payload, expectedRevision) {
      WHERE project_id = $1`,
     [projectId, JSON.stringify(payload), now, nextRevision],
   );
-  if (payload?.projectName) {
-    try {
-      await syncIndexProjectName(projectId, payload.projectName);
-    } catch (e) {
-      console.warn(`Could not sync index name for project ${projectId}:`, e.message);
+  return { ok: true, revision: nextRevision, updatedAt: now };
+}
+
+/**
+ * @param {string} projectId
+ * @param {{ expectedRevision: number, ops: object[] }} patch
+ * @returns {Promise<
+ *   | { ok: true, revision: number, updatedAt: string, payload: object }
+ *   | { ok: false, conflict: true, revision: number, payload: object | null, updatedAt: string | null, reason?: string }
+ * >}
+ */
+export async function patchCanvasProject(projectId, { expectedRevision, ops, traceId = null }) {
+  const expected = Number(expectedRevision);
+  if (!Number.isFinite(expected) || expected < 0) {
+    throw new Error('expectedRevision must be a non-negative number');
+  }
+  syncTraceLog(traceId, 'db:patch-start', {
+    projectId,
+    expectedRevision: expected,
+    ...summarizePatchOps(ops),
+  });
+  const validated = validateProjectPatchOps(ops);
+  if (!validated.ok) {
+    syncTraceLog(traceId, 'db:patch-invalid', { projectId, reason: validated.reason });
+    return {
+      ok: false,
+      conflict: true,
+      revision: 0,
+      payload: null,
+      updatedAt: null,
+      reason: validated.reason,
+    };
+  }
+
+  const existing = await query(
+    'SELECT revision, payload, updated_at FROM canvas_project_document WHERE project_id = $1',
+    [projectId],
+  );
+  const now = new Date().toISOString();
+
+  if (!existing.rows[0]) {
+    if (expected > 0) {
+      return {
+        ok: false,
+        conflict: true,
+        revision: 0,
+        payload: null,
+        updatedAt: null,
+      };
+    }
+    const created = applyProjectOps({}, ops);
+    syncTraceLog(traceId, 'db:patch-insert', { projectId });
+    await query(
+      `INSERT INTO canvas_project_document (project_id, payload, updated_at, revision)
+       VALUES ($1, $2::jsonb, $3, 1)`,
+      [projectId, JSON.stringify(created), now],
+    );
+    syncTraceLog(traceId, 'db:patch-ok', { projectId, revision: 1, cardCount: (created.cards ?? []).length });
+    for (const op of ops) {
+      if (op?.op === 'setProjectName' && typeof op.projectName === 'string') {
+        try {
+          await setWorkspaceProjectName(projectId, op.projectName);
+        } catch (e) {
+          console.warn(`Could not set workspace name for project ${projectId}:`, e.message);
+        }
+        break;
+      }
+    }
+    return { ok: true, revision: 1, updatedAt: now, payload: created };
+  }
+
+  const currentRevision = Number(existing.rows[0].revision);
+  if (expected !== currentRevision) {
+    syncTraceLog(traceId, 'db:patch-conflict', {
+      projectId,
+      expected,
+      currentRevision,
+    });
+    return {
+      ok: false,
+      conflict: true,
+      revision: currentRevision,
+      payload: existing.rows[0].payload,
+      updatedAt: existing.rows[0].updated_at,
+    };
+  }
+
+  const merged = applyProjectOps(existing.rows[0].payload, ops);
+  const nextRevision = currentRevision + 1;
+  syncTraceLog(traceId, 'db:patch-update', { projectId, nextRevision });
+  try {
+    await query(
+      `UPDATE canvas_project_document
+       SET payload = $2::jsonb, updated_at = $3, revision = $4
+       WHERE project_id = $1`,
+      [projectId, JSON.stringify(merged), now, nextRevision],
+    );
+  } catch (e) {
+    syncTraceLog(traceId, 'db:patch-error', { projectId, error: e.message });
+    throw e;
+  }
+  syncTraceLog(traceId, 'db:patch-ok', {
+    projectId,
+    revision: nextRevision,
+    cardCount: (merged.cards ?? []).length,
+  });
+  for (const op of ops) {
+    if (op?.op === 'setProjectName' && typeof op.projectName === 'string') {
+      try {
+        await setWorkspaceProjectName(projectId, op.projectName);
+      } catch (e) {
+        console.warn(`Could not set workspace name for project ${projectId}:`, e.message);
+      }
+      break;
     }
   }
-  return { ok: true, revision: nextRevision, updatedAt: now };
+  return {
+    ok: true,
+    revision: nextRevision,
+    updatedAt: now,
+    payload: merged,
+  };
 }
 
 export async function deleteCanvasProject(projectId) {

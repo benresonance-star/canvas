@@ -1,40 +1,40 @@
+/**
+ * Phase 4 load authority: prefer {@link loadProjectStructure} and {@link applyProjectLoadFence}
+ * for all UI/feature loads. `loadProjectById` is a deprecated alias.
+ */
 import { resolveLoadedCardType } from './filename.js';
 import {
   stripVersionForPersist,
   slimProjectPayloadForCache,
 } from './projectSlim.js';
 import {
-  initializeProjectSync,
-  loadSyncedProjectDocument,
-  loadSyncedProjectIndex,
-  persistProjectDocumentLocally,
-  flushOutgoingProjectDocument,
-} from './projectSync.js';
-import { suppressedKeysForSave } from './syncSuppressedKeys.js';
-import {
-  attachArtifactPlacementsToPayload,
-  reconcileArtifactPlacements,
-} from './artifactPlacementsMap.js';
+  commitProjectDocument,
+  getCommittedPayload,
+  clearCommittedPayloadCache,
+  seedCommittedPayloadFromLoad,
+} from './projectDocumentCommit.js';
 import {
   migrateFolderBackedCardKeys,
   migrateFolderBackedStagedKeys,
 } from './canvasCardMerge.js';
 import {
-  reconcileSpecCanvasOnLoad,
-  syncSpecCanvasStateFromPayload,
-} from './specDataPlaneSync.js';
+  attachArtifactPlacementsToPayload,
+  buildPayloadFromAuthoritativePlacements,
+  patchPlacementsMapFromArrays,
+  reconcileArtifactPlacements,
+} from './artifactPlacementsMap.js';
+import { suppressedKeysForSave } from './syncSuppressedKeys.js';
+import { auditPlacementStep } from './placementAudit.js';
+import { loadProjectStructure } from './project/loadProjectStructure.js';
 
-export async function loadProjectById(projectId, { localOnly = false } = {}) {
-  if (!projectId) return null;
-  try {
-    await initializeProjectSync();
-    const doc = await loadSyncedProjectDocument(projectId, { localOnly });
-    if (!doc) return null;
-    return reconcileSpecCanvasOnLoad(projectId, doc);
-  } catch {
-    return null;
-  }
+/**
+ * @deprecated Use {@link loadProjectStructure} from `./project/loadProjectStructure.js`.
+ */
+export async function loadProjectById(projectId, options = {}) {
+  return loadProjectStructure(projectId, options);
 }
+
+export { loadProjectStructure, loadProjectDocument, applyProjectLoadFence } from './project/loadProjectStructure.js';
 
 export { stripVersionForPersist } from './projectSlim.js';
 
@@ -73,7 +73,14 @@ export function normalizeLoadedProject(data) {
   const migratedStaged = migrateFolderBackedStagedKeys(next.stagedSyncCards);
   next.cards = migratedCards.cards;
   next.stagedSyncCards = migratedStaged.stagedSyncCards;
-  return reconcileArtifactPlacements(next);
+  next.artifactPlacements = patchPlacementsMapFromArrays(
+    next.artifactPlacements ?? {},
+    next.cards,
+    next.stagedSyncCards,
+  );
+  const reconciled = reconcileArtifactPlacements(next);
+  auditPlacementStep('load:normalize', reconciled);
+  return reconciled;
 }
 
 export function sanitizeStagedForPersist(stagedCards, opts = {}) {
@@ -98,7 +105,7 @@ export function buildProjectSavePayload(
   state,
   stagedSyncCards = [],
   suppressedSyncKeys = [],
-  { stripNoteContent = false } = {},
+  { stripNoteContent = false, authoritativePlacements = null } = {},
 ) {
   const keys = Array.isArray(suppressedSyncKeys)
     ? suppressedSyncKeys.filter((k) => typeof k === 'string' && k)
@@ -109,11 +116,39 @@ export function buildProjectSavePayload(
     stagedSyncCards: sanitizeStagedForPersist(stagedSyncCards, stripOpts),
     suppressedSyncKeys: keys,
   };
+  if (
+    authoritativePlacements
+    && typeof authoritativePlacements === 'object'
+    && Object.keys(authoritativePlacements).length > 0
+  ) {
+    const synced = buildPayloadFromAuthoritativePlacements(
+      base.cards ?? [],
+      base.stagedSyncCards ?? [],
+      authoritativePlacements,
+    );
+    return {
+      ...base,
+      cards: synced.cards,
+      stagedSyncCards: synced.stagedSyncCards,
+      artifactPlacements: synced.artifactPlacements,
+      artifactPlacementsVersion: synced.artifactPlacementsVersion,
+    };
+  }
   return attachArtifactPlacementsToPayload(base, base.stagedSyncCards);
 }
 
+export {
+  commitProjectDocument,
+  getCommittedPayload,
+  clearCommittedPayloadCache,
+  seedCommittedPayloadFromLoad,
+};
+
 /**
  * Persist project document to local cache and optionally Postgres.
+ *
+ * @deprecated For layout/placement edits prefer {@link commitProjectDocument} or
+ *   `requestActionSync`. Retained for index/hygiene/create flows.
  *
  * - Default: local cache only (`pushRemote: false`). Layout/card edits should use
  *   `requestActionSync` instead of relying on this for server push.
@@ -135,38 +170,23 @@ export async function saveProjectById(
 ) {
   if (!projectId) return { error: new Error('No project id') };
   try {
-    let payloadState = state;
-    try {
-      const index = await loadSyncedProjectIndex();
-      const row = index?.projects?.find((p) => p.id === projectId);
-      if (row?.name && row.name !== state.projectName) {
-        payloadState = { ...state, projectName: row.name };
-      }
-    } catch {
-      /* use state as-is */
-    }
-    const payload = buildProjectSavePayload(
-      payloadState,
+    const commitResult = await commitProjectDocument(projectId, {
+      state,
       stagedSyncCards,
-      suppressedKeysForSave(projectId, payloadState),
-      { stripNoteContent },
-    );
-    const { serialised, trimmed } = slimProjectPayloadForCache(payload, {
+      suppressedSyncKeys: suppressedKeysForSave(projectId, state),
+      stripNoteContent,
+      reason: 'saveProjectById',
+      pushRemote,
+    });
+    const payload = commitResult.payload;
+    const { trimmed } = slimProjectPayloadForCache(payload ?? {}, {
       stripNoteContent,
     });
-    const localCacheWritten = await persistProjectDocumentLocally(
-      projectId,
-      serialised,
-    );
-    let pushOk;
-    if (pushRemote) {
-      const pushResult = await flushOutgoingProjectDocument(projectId, payload);
-      pushOk = Boolean(pushResult?.ok);
-      void syncSpecCanvasStateFromPayload(projectId, payload);
-    } else if (!persistLocal) {
-      void syncSpecCanvasStateFromPayload(projectId, payload);
-    }
-    return { trimmed, localCacheWritten, pushOk };
+    return {
+      trimmed,
+      localCacheWritten: commitResult.localCacheWritten,
+      pushOk: commitResult.pushOk,
+    };
   } catch (e) {
     console.error('Save failed:', e);
     return { error: e };

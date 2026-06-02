@@ -6,11 +6,35 @@
 let inFlight = null;
 let inFlightLabel = null;
 
+/** Placement push must not queue behind long-running sync jobs. */
+const PLACEMENT_PRIORITY_LABELS = new Set([
+  'action:placementTransfer',
+  'patch-push',
+  'flush-outgoing',
+]);
+
 /** @param {string} label */
 function logSyncGate(label, detail) {
   if (import.meta.env?.DEV) {
     console.debug(`[syncGate] ${label}`, detail ?? '');
   }
+}
+
+/**
+ * Dock/canvas placement runs immediately unless another placement is in flight.
+ * @param {string} label
+ * @returns {boolean}
+ */
+export function canBypassSyncGateForPlacement(label) {
+  if (!PLACEMENT_PRIORITY_LABELS.has(label) || !inFlightLabel) {
+    return false;
+  }
+  return inFlightLabel !== 'action:placementTransfer';
+}
+
+/** @deprecated Use canBypassSyncGateForPlacement */
+export function canBypassBootSyncGate(label) {
+  return canBypassSyncGateForPlacement(label);
 }
 
 /**
@@ -22,10 +46,15 @@ function logSyncGate(label, detail) {
  */
 export async function runSyncGate(label, fn, { mode = 'wait' } = {}) {
   if (inFlight) {
+    if (canBypassSyncGateForPlacement(label)) {
+      logSyncGate('bypass-wait', { label, busy: inFlightLabel });
+      return fn();
+    }
     if (mode === 'skip') {
       logSyncGate('skip', { label, busy: inFlightLabel });
       return null;
     }
+    logSyncGate('wait', { label, busy: inFlightLabel });
     try {
       await inFlight;
     } catch {

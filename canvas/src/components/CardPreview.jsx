@@ -250,12 +250,17 @@ export function CardPreview({
 
   if (card.type === 'pdf' && mediaSrc) {
     return (
-      <PdfPreviewFrame
-        mediaSrc={mediaSrc}
-        iframeKey={`${card.id}-v${pinned.version}-pdf`}
-        title={card.name}
-        pointerEventsNone={!isActive}
-      />
+      <div
+        className="h-full w-full min-h-0 flex flex-col"
+        {...(isActive ? { 'data-artifact-scroll': '' } : {})}
+      >
+        <PdfPreviewFrame
+          mediaSrc={mediaSrc}
+          iframeKey={`${card.id}-v${pinned.version}-pdf`}
+          title={card.name}
+          pointerEventsNone={!isActive}
+        />
+      </div>
     );
   }
 

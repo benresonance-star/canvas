@@ -12,7 +12,7 @@ describe('projectReconcile', () => {
     expect(sorted.map((p) => p.id)).toEqual(['c', 'b', 'a']);
   });
 
-  it('mergeProjectIndices prefers server active when preferServerActive', () => {
+  it('mergeProjectIndices keeps local active tab over stale server active', () => {
     const { index } = mergeProjectIndices(
       {
         version: 1,
@@ -31,7 +31,7 @@ describe('projectReconcile', () => {
       },
       { preferServerActive: true },
     );
-    expect(index.activeProjectId).toBe('shared');
+    expect(index.activeProjectId).toBe('local');
   });
 });
 
@@ -65,7 +65,7 @@ describe('projectReconcile reconcileProject', () => {
     vi.unstubAllGlobals();
   });
 
-  it('index name wins over stale document projectName', async () => {
+  it('reconcile does not rewrite index name from document projectName', async () => {
     const projectId = 'p1';
     storage.set(
       'canvas:project-index',
@@ -130,9 +130,10 @@ describe('projectReconcile reconcileProject', () => {
     await initializeProjectSync();
 
     const index = JSON.parse(storage.get('canvas:project-index'));
-    await reconcileProject(projectId, { index, row: index.projects[0] });
+    const { row } = await reconcileProject(projectId, { index, row: index.projects[0] });
 
+    expect(row.name).toBe('Index Name');
     const doc = JSON.parse(storage.get(`canvas:project:${projectId}`));
-    expect(doc.projectName).toBe('Index Name');
+    expect(doc.projectName).toBe('Stale Doc Name');
   });
 });

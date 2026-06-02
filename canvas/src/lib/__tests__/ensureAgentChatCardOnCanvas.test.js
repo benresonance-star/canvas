@@ -2,26 +2,32 @@ import { describe, it, expect } from 'vitest';
 import { ensureAgentChatCardOnCanvas } from '../ensureAgentChatCardOnCanvas.js';
 
 describe('ensureAgentChatCardOnCanvas', () => {
-  it('does not recreate a card when thread.cardId points at a deleted card', () => {
+  it('stages to dock when thread.cardId points at a deleted card', () => {
     const result = ensureAgentChatCardOnCanvas([], {
       filename: 'notes__agent-chat-openai-abc12345-v1.md',
       cardId: 'deleted-card-id',
       title: 'Previous chat',
     });
-    expect(result.created).toBe(false);
-    expect(result.removedFromCanvas).toBe(true);
+    expect(result.created).toBe(true);
+    expect(result.onDock).toBe(true);
     expect(result.cardId).toBeNull();
     expect(result.cards).toEqual([]);
+    expect(result.stagedSyncCards).toHaveLength(1);
+    expect(result.stagedSyncCards[0].key).toBe('notes__agent-chat-openai-abc12345');
   });
 
-  it('creates a card with canonical sync key (fullBase)', () => {
+  it('stages new thread to dock with canonical sync key (fullBase)', () => {
     const result = ensureAgentChatCardOnCanvas([], {
       filename: 'notes__agent-chat-openai-abc12345-v1.md',
       cardId: null,
       title: 'New chat',
+      threadId: 'thread-uuid',
     });
     expect(result.created).toBe(true);
-    expect(result.cards[0].key).toBe('notes__agent-chat-openai-abc12345');
+    expect(result.onDock).toBe(true);
+    expect(result.cards).toEqual([]);
+    expect(result.stagedSyncCards[0].key).toBe('notes__agent-chat-openai-abc12345');
+    expect(result.stagedSyncCards[0].agentThreadId).toBe('thread-uuid');
   });
 
   it('does not create when card key is suppressed', () => {
@@ -37,16 +43,19 @@ describe('ensureAgentChatCardOnCanvas', () => {
     );
     expect(result.suppressed).toBe(true);
     expect(result.cards).toEqual([]);
+    expect(result.stagedSyncCards).toEqual([]);
   });
 
-  it('creates a card when none exists and no stale cardId', () => {
+  it('stages to dock when none exists and no stale cardId', () => {
     const result = ensureAgentChatCardOnCanvas([], {
       filename: 'notes__agent-chat-openai-abc12345-v1.md',
       cardId: null,
       title: 'New chat',
     });
     expect(result.created).toBe(true);
-    expect(result.cards).toHaveLength(1);
+    expect(result.onDock).toBe(true);
+    expect(result.stagedSyncCards).toHaveLength(1);
+    expect(result.cards).toHaveLength(0);
   });
 
   it('merges syncResult into existing card matched by key', () => {
@@ -82,12 +91,44 @@ describe('ensureAgentChatCardOnCanvas', () => {
       },
     });
     expect(result.created).toBe(false);
+    expect(result.onDock).toBe(false);
     expect(result.cardId).toBe('card-existing');
     const updated = result.cards.find((c) => c.id === 'card-existing');
     expect(updated.agentThreadId).toBe('thread-uuid');
     expect(updated.name).toBe('Updated chat');
     expect(updated.versions[0].artifactRef).toEqual(artifactRef);
     expect(updated.versions[0].content_hash).toBe('abc123');
+  });
+
+  it('updates staged row when already on dock', () => {
+    const staged = [
+      {
+        stagingId: 's1',
+        key: 'notes__agent-chat-openai-abc12345',
+        type: 'agent_chat',
+        prefix: 'notes',
+        name: 'Dock chat',
+        versions: [
+          {
+            version: 1,
+            filename: 'notes__agent-chat-openai-abc12345-v1.md',
+            content_hash: '',
+            artifactRef: null,
+          },
+        ],
+        pinnedVersion: 1,
+      },
+    ];
+    const result = ensureAgentChatCardOnCanvas([], {
+      filename: 'notes__agent-chat-openai-abc12345-v1.md',
+      cardId: null,
+      threadId: 'thread-uuid',
+      title: 'Renamed',
+    }, { stagedSyncCards: staged });
+    expect(result.onDock).toBe(true);
+    expect(result.cardId).toBeNull();
+    expect(result.stagedSyncCards[0].name).toBe('Renamed');
+    expect(result.stagedSyncCards[0].agentThreadId).toBe('thread-uuid');
   });
 
   it('updates name on existing card matched by thread.cardId', () => {
@@ -118,6 +159,7 @@ describe('ensureAgentChatCardOnCanvas', () => {
       title: 'Why, What If Thread',
     });
     expect(result.cardId).toBe('card-linked');
+    expect(result.onDock).toBe(false);
     expect(result.cards[0].name).toBe('Why, What If Thread');
   });
 });

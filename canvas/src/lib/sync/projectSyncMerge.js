@@ -1,3 +1,7 @@
+import { canonicalKeyForEntry } from '../artifactPlacement.js';
+import { strings } from '../../content/strings.js';
+import { isDefaultProjectDisplayName } from '../projectReconcile.js';
+import { isDeletedProjectId } from '../projectDeletionTombstones.js';
 import { normalizeWorkspaceIndex } from '../projectIndexNormalize.js';
 
 export const RECONCILE_SCOPE_RANK = { none: 0, active: 1, all: 2 };
@@ -36,6 +40,18 @@ export function projectCardCount(doc) {
  * Lightweight structural fingerprint for project JSON (canvas layout, not blob content).
  * @param {object | null | undefined} doc
  */
+function placementKeysFromDoc(doc) {
+  const canvasKeys = (doc?.cards ?? [])
+    .map((c) => canonicalKeyForEntry(c))
+    .filter(Boolean)
+    .sort();
+  const dockKeys = (doc?.stagedSyncCards ?? [])
+    .map((s) => canonicalKeyForEntry(s))
+    .filter(Boolean)
+    .sort();
+  return { canvasKeys, dockKeys };
+}
+
 export function projectPayloadFingerprint(doc) {
   if (!doc) return '';
   const cards = (doc.cards ?? [])
@@ -46,6 +62,7 @@ export function projectPayloadFingerprint(doc) {
     })
     .sort();
   const view = doc.canvasView ?? {};
+  const { canvasKeys, dockKeys } = placementKeysFromDoc(doc);
   return JSON.stringify({
     cards,
     view: [
@@ -54,6 +71,8 @@ export function projectPayloadFingerprint(doc) {
       Math.round((view.zoom ?? 1) * 1000) / 1000,
     ],
     staged: (doc.stagedSyncCards ?? []).length,
+    placementCanvas: canvasKeys,
+    placementDock: dockKeys,
     name: doc.projectName ?? '',
   });
 }
@@ -76,6 +95,17 @@ function pickMergedMetaField(field, local, server) {
   return serverVal;
 }
 
+function pickMergedProjectDisplayName(local, server) {
+  const defaultName = strings.defaultProjectName;
+  const localName = local.name?.trim() ?? '';
+  const serverName = server.name?.trim() ?? '';
+  const localDefault = isDefaultProjectDisplayName(localName, defaultName);
+  const serverDefault = isDefaultProjectDisplayName(serverName, defaultName);
+  if (!localDefault && serverDefault) return localName;
+  if (localDefault && !serverDefault) return serverName;
+  return pickMergedMetaField('name', local, server);
+}
+
 /** Merge two index rows for the same project id (field-level metadata). */
 export function mergeProjectRow(local, server) {
   const localAt = local.updatedAt ?? 0;
@@ -84,7 +114,7 @@ export function mergeProjectRow(local, server) {
   const serverDocRev = server.documentRevision ?? 0;
   const merged = {
     id: local.id,
-    name: pickMergedMetaField('name', local, server),
+    name: pickMergedProjectDisplayName(local, server),
     archived: pickMergedMetaField('archived', local, server),
     connectedFolderName: pickMergedMetaField('connectedFolderName', local, server),
     createdAt: Math.min(
@@ -149,6 +179,7 @@ export function mergeProjectIndices(localIndex, serverIndex, options = {}) {
   const byId = new Map();
 
   for (const id of new Set([...localIds, ...serverIds])) {
+    if (isDeletedProjectId(id)) continue;
     const local = localById.get(id);
     const server = serverById.get(id);
     if (local && server) {
@@ -166,10 +197,11 @@ export function mergeProjectIndices(localIndex, serverIndex, options = {}) {
   let activeProjectId = null;
   const localActive = localIndex?.activeProjectId;
   const serverActive = serverIndex?.activeProjectId;
-  if (preferServerActive && serverActive && byId.has(serverActive)) {
-    activeProjectId = serverActive;
-  } else if (localActive && byId.has(localActive)) {
+  // Local tab selection wins over server index.activeProjectId (stale cross-tab).
+  if (localActive && byId.has(localActive)) {
     activeProjectId = localActive;
+  } else if (preferServerActive && serverActive && byId.has(serverActive)) {
+    activeProjectId = serverActive;
   } else if (serverActive && byId.has(serverActive)) {
     activeProjectId = serverActive;
   } else if (projects.length > 0) {

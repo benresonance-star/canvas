@@ -67,6 +67,48 @@ export function projectPayloadToSpecViewport(payload) {
  * @param {object} payload
  * @param {object | null} specLayout
  */
+/**
+ * Apply spec_canvas_state layout/viewport onto a project JSON payload.
+ * @param {object} payload
+ * @param {{ layout?: object, viewport?: object }} specState
+ */
+export function applySpecCanvasLayoutToPayload(payload, specState) {
+  if (!payload || !specState?.layout) return payload;
+  const layout = specState.layout;
+  const viewport = specState.viewport ?? layout.viewport;
+  let cards = payload.cards ?? [];
+  if (Array.isArray(layout.placed) && layout.placed.length > 0) {
+    const byKey = new Map(layout.placed.map((p) => [p.syncKey, p]));
+    cards = cards.map((card) => {
+      const key = canonicalKeyForEntry(card);
+      const placed = byKey.get(key);
+      if (!placed) return card;
+      return {
+        ...card,
+        x: placed.x ?? card.x,
+        y: placed.y ?? card.y,
+        width: placed.w ?? card.width,
+        height: placed.h ?? card.height,
+      };
+    });
+  }
+  return {
+    ...payload,
+    cards,
+    canvasView: viewport
+      ? {
+          x: viewport.x ?? payload.canvasView?.x ?? 0,
+          y: viewport.y ?? payload.canvasView?.y ?? 0,
+          zoom: viewport.zoom ?? payload.canvasView?.zoom ?? 1,
+        }
+      : payload.canvasView,
+    artifactPlacements:
+      layout.artifactPlacements ?? payload.artifactPlacements,
+    specCanvasState: specState,
+    specLayoutAuthoritative: true,
+  };
+}
+
 export function specLayoutDrift(payload, specLayout) {
   const local = projectPayloadToSpecLayout(payload);
   const localKeys = new Set([

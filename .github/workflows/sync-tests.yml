@@ -1,0 +1,38 @@
+name: Sync-critical tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'canvas/**'
+  pull_request:
+    paths:
+      - 'canvas/**'
+
+defaults:
+  run:
+    working-directory: canvas
+
+jobs:
+  sync-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: canvas/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify projectSync barrel exports
+        run: node scripts/verify-project-sync-exports.mjs
+
+      - name: Run sync-critical tests
+        run: npm run test:sync
+
+      - name: Run feature hook tests
+        run: npm run test:features

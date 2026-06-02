@@ -33,6 +33,7 @@ import {
   setLastServerWorkspaceIndexUpdatedAt,
 } from './projectSyncIndex.js';
 import { pullProjectDocumentIfServerNewer } from './projectSyncDocument.js';
+import { projectCardCount } from './projectSyncMerge.js';
 
 async function runQuickInitBody() {
   try {
@@ -146,6 +147,9 @@ async function runBackgroundSyncBody() {
   const index = await readLocalIndex();
   if (!index?.projects?.length) return;
 
+  const { healProjectsMissingServerDocuments } = await import('./projectSyncIndex.js');
+  await healProjectsMissingServerDocuments(index);
+
   const mode = getPendingBackgroundMode();
 
   if (mode === 'mirror_from_server') {
@@ -159,7 +163,16 @@ async function runBackgroundSyncBody() {
       }
     }
     if (activeId) {
-      await pullProjectDocumentIfServerNewer(activeId, { force: false });
+      const raw = await readLocalProjectSerialised(activeId);
+      let localCanvas = 0;
+      try {
+        if (raw) localCanvas = projectCardCount(JSON.parse(raw));
+      } catch {
+        /* ignore */
+      }
+      if (localCanvas === 0) {
+        await pullProjectDocumentIfServerNewer(activeId, { force: false });
+      }
     }
     const { reconcileWorkspaceIndex } = await import('../projectReconcile.js');
     const current = await readLocalIndex();

@@ -2,7 +2,7 @@
 export const PROJECT_SYNC_POLL_INTERVAL_MS = 3000;
 
 /** Interval for workspace index refresh during poll (ms). */
-export const PROJECT_SYNC_INDEX_POLL_INTERVAL_MS = 30000;
+export const PROJECT_SYNC_INDEX_POLL_INTERVAL_MS = 8000;
 
 /** Max poll interval after repeated API errors (ms). */
 export const PROJECT_SYNC_POLL_MAX_INTERVAL_MS = 60000;

@@ -632,7 +632,7 @@ describe('projectSync', () => {
     expect(forced.payload?.cards?.[0]?.id).toBe('local-only');
   });
 
-  it('pullProjectDocumentIfServerNewer with force merges local dock when server still has canvas card', async () => {
+  it('pullProjectDocumentIfServerNewer with force adopts server canvas over stale local dock', async () => {
     const projectId = 'p-force-dock';
     const serverUpdatedAt = '2026-06-15T00:00:00.000Z';
     const localStaged = {
@@ -675,6 +675,12 @@ describe('projectSync', () => {
               projectName: 'Server',
               cards: [{ id: 'c1', key: 'notes__dock', type: 'markdown', versions: [] }],
               stagedSyncCards: [],
+              artifactPlacements: {
+                notes__dock: {
+                  surface: 'canvas',
+                  placement: { key: 'notes__dock' },
+                },
+              },
               canvasView: { x: 0, y: 0, zoom: 1 },
             },
             updatedAt: serverUpdatedAt,
@@ -697,9 +703,10 @@ describe('projectSync', () => {
       force: true,
     });
     expect(pulled).toBe(true);
-    expect(payload?.cards ?? []).toHaveLength(0);
-    expect(payload?.stagedSyncCards ?? []).toHaveLength(1);
-    expect(payload?.stagedSyncCards?.[0]?.key).toBe('notes__dock');
+    expect(payload?.cards ?? []).toHaveLength(1);
+    expect(payload?.cards?.[0]?.key).toBe('notes__dock');
+    expect(payload?.stagedSyncCards ?? []).toHaveLength(0);
+    expect(payload?.artifactPlacements?.notes__dock?.surface).toBe('canvas');
   });
 
   it('pushProjectDocumentIfLocalNewer PUTs when local has cards and server is empty', async () => {

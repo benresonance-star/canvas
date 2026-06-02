@@ -88,6 +88,36 @@ describe('normalizeLoadedProject', () => {
     expect(normalized.stagedSyncCards[0].versions[0].previewStripped).toBe(false);
   });
 
+  it('keeps canvas cards when artifactPlacements map is stale dock', () => {
+    const card = {
+      id: 'c1',
+      key: 'notes__a',
+      type: 'markdown',
+      x: 40,
+      y: 50,
+      versions: [{ version: 1, filename: 'notes__a-v1.md' }],
+    };
+    const normalized = normalizeLoadedProject({
+      projectName: 'Test',
+      cards: [card],
+      stagedSyncCards: [],
+      artifactPlacements: {
+        notes__a: {
+          surface: 'dock',
+          record: {
+            stagingId: 's1',
+            key: 'notes__a',
+            type: 'markdown',
+            versions: [{ version: 1, filename: 'notes__a-v1.md' }],
+          },
+        },
+      },
+    });
+    expect(normalized.cards).toHaveLength(1);
+    expect(normalized.stagedSyncCards).toHaveLength(0);
+    expect(normalized.artifactPlacements.notes__a.surface).toBe('canvas');
+  });
+
   it('migrates notes__ markdown cards to user_note on load', () => {
     const normalized = normalizeLoadedProject({
       projectName: 'Test',

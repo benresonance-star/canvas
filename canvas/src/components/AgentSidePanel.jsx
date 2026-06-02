@@ -838,7 +838,9 @@ export function AgentSidePanel({
               onClick={() => onContextModeChange('selected')}
               className={`w-full text-left rounded-md border px-2 py-1.5 transition ${
                 contextMode === 'selected'
-                  ? 'border-border bg-surface-muted'
+                  ? contextCards.length > 0
+                    ? 'border-success-border bg-success-muted'
+                    : 'border-border bg-surface-muted'
                   : 'border-border-subtle hover:border-border'
               }`}
             >

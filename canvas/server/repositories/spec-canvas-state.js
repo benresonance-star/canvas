@@ -1,5 +1,15 @@
 import { query } from '../db.js';
 
+/** Default layout when no spec_canvas_state row exists yet. */
+export function emptySpecCanvasState() {
+  return {
+    layout: { placed: [], staging: [], artifactPlacements: null },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    version: 0,
+    updatedAt: null,
+  };
+}
+
 /**
  * @param {string} projectId
  */

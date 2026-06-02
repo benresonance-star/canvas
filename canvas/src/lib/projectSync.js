@@ -40,6 +40,7 @@ export {
   applyWorkspaceIntegrityRepair,
   loadSyncedProjectIndex,
   saveSyncedProjectIndex,
+  healProjectsMissingServerDocuments,
 } from './sync/projectSyncIndex.js';
 
 export {
@@ -62,12 +63,35 @@ export {
   recordGoodLocalCardCount,
   getLastGoodLocalCardCount,
   clearLastGoodLocalCardCount,
+  preserveCanvasCardsInMergedPayload,
 } from './sync/projectSyncDocument.js';
 
 export {
   initializeProjectSync,
   runProjectSyncBackground,
 } from './sync/projectSyncInit.js';
+
+export {
+  startProjectSyncStream,
+  stopProjectSyncStream,
+} from './sync/projectSyncStream.js';
+
+export {
+  startWorkspaceIndexSyncStream,
+  stopWorkspaceIndexSyncStream,
+} from './sync/workspaceIndexSyncStream.js';
+
+export {
+  applyRemoteProjectPatch,
+  flushPendingRemoteProjectPatch,
+  setRemotePatchAppliedListener,
+} from './sync/projectSyncRemoteApply.js';
+
+export { getProjectSyncClientId } from './sync/projectSyncClientId.js';
+
+export { isProjectPatchSyncEnabled } from './sync/projectPatchSync.js';
+
+export { shouldFallbackToPutAfterPatch } from './sync/projectSyncPatch.js';
 
 export {
   getProjectConflict,

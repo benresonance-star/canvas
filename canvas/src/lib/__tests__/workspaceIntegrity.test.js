@@ -47,7 +47,7 @@ describe('workspaceIntegrity', () => {
     expect(ids).toEqual(['orphan-1']);
   });
 
-  it('auditWorkspaceIndex purges orphan project bodies not in index', async () => {
+  it('auditWorkspaceIndex recovers orphan bodies into index before purge', async () => {
     const { auditWorkspaceIndex } = await import('../workspaceIntegrity.js');
     storage.set(
       'canvas:project:orphan-1',
@@ -57,6 +57,21 @@ describe('workspaceIntegrity', () => {
         canvasView: { x: 0, y: 0, zoom: 1 },
       }),
     );
+    const { repairedIndex, orphanRecovered, orphanPurged } = await auditWorkspaceIndex({
+      version: 1,
+      activeProjectId: null,
+      projects: [],
+    });
+    expect(orphanRecovered).toBe(1);
+    expect(orphanPurged).toBe(0);
+    expect(repairedIndex.projects).toHaveLength(1);
+    expect(repairedIndex.projects[0].id).toBe('orphan-1');
+    expect(storage.has('canvas:project:orphan-1')).toBe(true);
+  });
+
+  it('auditWorkspaceIndex purges orphan cache when body is not parseable', async () => {
+    const { auditWorkspaceIndex } = await import('../workspaceIntegrity.js');
+    storage.set('canvas:project:orphan-bad', 'not-json');
     const { repairedIndex, orphanPurged } = await auditWorkspaceIndex({
       version: 1,
       activeProjectId: null,
@@ -64,7 +79,27 @@ describe('workspaceIntegrity', () => {
     });
     expect(orphanPurged).toBe(1);
     expect(repairedIndex.projects).toHaveLength(0);
-    expect(storage.has('canvas:project:orphan-1')).toBe(false);
+    expect(storage.has('canvas:project:orphan-bad')).toBe(false);
+  });
+
+  it('auditWorkspaceIndex never purges active project id even when missing from index rows', async () => {
+    const { auditWorkspaceIndex } = await import('../workspaceIntegrity.js');
+    storage.set(
+      'canvas:project:active-only',
+      JSON.stringify({
+        projectName: 'Active',
+        cards: [{ id: 'c1', key: 'notes__a' }],
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      }),
+    );
+    const { repairedIndex, orphanPurged } = await auditWorkspaceIndex({
+      version: 1,
+      activeProjectId: 'active-only',
+      projects: [],
+    });
+    expect(orphanPurged).toBe(0);
+    expect(repairedIndex.projects.some((p) => p.id === 'active-only')).toBe(true);
+    expect(storage.has('canvas:project:active-only')).toBe(true);
   });
 
   it('auditWorkspaceIndex marks ghost rows missing without deleting storage', async () => {

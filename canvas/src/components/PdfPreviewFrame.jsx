@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { PDF_IFRAME_DATA_URL_MAX_CHARS } from '../lib/constants.js';
+import { pdfEmbedSrc } from '../lib/pdfEmbedSrc.js';
 import { strings } from '../content/strings.js';
 
 export function PdfPreviewFrame({ mediaSrc, iframeKey, title, pointerEventsNone }) {
@@ -44,10 +45,10 @@ export function PdfPreviewFrame({ mediaSrc, iframeKey, title, pointerEventsNone 
     );
   }
 
-  const src = displaySrc ?? mediaSrc;
+  const src = pdfEmbedSrc(displaySrc ?? mediaSrc);
 
   return (
-    <div className="h-full w-full min-h-0">
+    <div className="h-full w-full min-h-0 flex flex-col">
       <iframe
         key={iframeKey}
         src={src}

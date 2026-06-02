@@ -92,6 +92,7 @@ export function Canvas({
   const [draggingCluster, setDraggingCluster] = useState(null);
   const cardDragEndedRef = useRef(false);
   const linkDragRef = useRef(null);
+  const wheelCommitTimerRef = useRef(null);
 
   const baseView = state.canvasView;
   /** @type {[object | null, Function]} */
@@ -168,6 +169,23 @@ export function Canvas({
     return null;
   }, [cardsForLink]);
 
+  const endInteraction = useCallback(
+    (kind, payload) => {
+      onInteractionCommit?.({ kind, ...payload });
+    },
+    [onInteractionCommit],
+  );
+
+  const scheduleViewCommit = useCallback(() => {
+    if (wheelCommitTimerRef.current) {
+      clearTimeout(wheelCommitTimerRef.current);
+    }
+    wheelCommitTimerRef.current = setTimeout(() => {
+      wheelCommitTimerRef.current = null;
+      endInteraction('viewCommit', {});
+    }, 400);
+  }, [endInteraction]);
+
   const handleWheel = useCallback((e) => {
     if (e.target.closest('[data-artifact-scroll]')) return;
 
@@ -185,11 +203,19 @@ export function Canvas({
         y: my - worldY * newZoom,
         zoom: newZoom,
       });
+      scheduleViewCommit();
     } else {
       e.preventDefault();
       setView(v => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
+      scheduleViewCommit();
     }
-  }, [view, setView]);
+  }, [view, setView, scheduleViewCommit]);
+
+  useEffect(() => () => {
+    if (wheelCommitTimerRef.current) {
+      clearTimeout(wheelCommitTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     const el = canvasRef.current;
@@ -211,13 +237,6 @@ export function Canvas({
     ro.observe(el);
     return () => ro.disconnect();
   }, [onViewportSizeChange]);
-
-  const endInteraction = useCallback(
-    (kind, payload) => {
-      onInteractionCommit?.({ kind, ...payload });
-    },
-    [onInteractionCommit],
-  );
 
   const onMouseDown = (e) => {
     if (linkDrag) return;

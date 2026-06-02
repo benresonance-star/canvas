@@ -4,6 +4,8 @@ vi.mock('../projectSync.js', () => ({
   cancelPendingProjectSave: vi.fn(),
   persistProjectDocumentLocally: vi.fn(async () => true),
   flushOutgoingProjectDocument: vi.fn(async () => ({ ok: true })),
+  isServerSyncEnabled: vi.fn(() => true),
+  reconcileActiveProject: vi.fn(async () => ({ pulled: false })),
 }));
 
 import {
@@ -45,6 +47,26 @@ describe('actionSync', () => {
     expect(reconcile).not.toHaveBeenCalled();
   });
 
+  it('boot flushes without reconcile pull', async () => {
+    const reconcile = vi.fn();
+    const flushActive = vi.fn(async () => {});
+    registerActionSyncHandlers({
+      getProjectId: () => 'p1',
+      getState: () => ({ cards: [] }),
+      getStagedSyncCards: () => [],
+      buildPayload: (s) => s,
+      touchIndex: vi.fn(),
+      onLocalCacheFailed: vi.fn(),
+      reconcileInbound: reconcile,
+      flushActiveProject: flushActive,
+      flushAll: vi.fn(),
+    });
+
+    await requestActionSync('boot', { projectId: 'p1' });
+    expect(flushActive).toHaveBeenCalledWith('p1');
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
   it('visibilityResume flushes active project before reconcile', async () => {
     const flushActive = vi.fn(async () => {});
     const reconcile = vi.fn(async () => ({}));
@@ -83,6 +105,30 @@ describe('actionSync', () => {
     expect(reconcile).not.toHaveBeenCalled();
   });
 
+  it('structuralChange with awaitLocal persists before push', async () => {
+    const { persistProjectDocumentLocally } = await import('../projectSync.js');
+    let pushCalled = false;
+    flushOutgoingProjectDocument.mockImplementation(async () => {
+      pushCalled = true;
+      return { ok: true };
+    });
+
+    registerActionSyncHandlers({
+      getProjectId: () => 'p1',
+      getState: () => ({ cards: [], canvasView: { x: 0, y: 0, zoom: 1 } }),
+      getStagedSyncCards: () => [{ stagingId: 's1', key: 'notes__a', versions: [] }],
+      buildPayload: (s, staged) => ({ ...s, stagedSyncCards: staged }),
+      touchIndex: vi.fn(),
+      onLocalCacheFailed: vi.fn(),
+      reconcileInbound: vi.fn(),
+      flushAll: vi.fn(),
+    });
+
+    await requestActionSync('structuralChange', { projectId: 'p1', awaitLocal: true });
+    expect(persistProjectDocumentLocally).toHaveBeenCalled();
+    expect(pushCalled).toBe(true);
+  });
+
   it('structuralChange notifies when server push fails', async () => {
     flushOutgoingProjectDocument.mockResolvedValueOnce({
       ok: false,
@@ -107,6 +153,55 @@ describe('actionSync', () => {
       'p1',
       expect.objectContaining({ conflict: true }),
     );
+  });
+
+  it('placementTransfer pushes committed payload without re-persist', async () => {
+    const { persistProjectDocumentLocally } = await import('../projectSync.js');
+    const {
+      setCommittedPayloadForTests,
+      resetProjectDocumentCommitForTests,
+    } = await import('../projectDocumentCommit.js');
+    resetProjectDocumentCommitForTests();
+    let pushCalled = false;
+    flushOutgoingProjectDocument.mockImplementation(async () => {
+      pushCalled = true;
+      return { ok: true };
+    });
+
+    const payload = {
+      projectName: 'P',
+      cards: [{ id: 'c1', key: 'notes__a', type: 'markdown', versions: [] }],
+      stagedSyncCards: [],
+      artifactPlacements: {
+        notes__a: { surface: 'canvas', record: { id: 'c1', key: 'notes__a' } },
+      },
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    setCommittedPayloadForTests('p1', payload);
+
+    registerActionSyncHandlers({
+      getProjectId: () => 'p1',
+      getState: () => ({
+        cards: payload.cards,
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      }),
+      getStagedSyncCards: () => [],
+      buildPayload: (s, staged) => ({ ...s, stagedSyncCards: staged }),
+      touchIndex: vi.fn(),
+      onLocalCacheFailed: vi.fn(),
+      reconcileInbound: vi.fn(),
+      flushAll: vi.fn(),
+    });
+
+    const { requestPlacementSync } = await import('../actionSync.js');
+    await requestPlacementSync({ projectId: 'p1' });
+    expect(persistProjectDocumentLocally).not.toHaveBeenCalled();
+    expect(pushCalled).toBe(true);
+    expect(flushOutgoingProjectDocument).toHaveBeenCalledWith('p1', payload, {
+      reason: 'placementTransfer',
+      traceId: null,
+      beforePayload: null,
+    });
   });
 
   it('structuralChange does not push when target id is not the active project', async () => {

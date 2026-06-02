@@ -110,6 +110,8 @@ export function CanvasChrome({
   onKeepMyProjectCopy,
   onClearLocalCache,
   showClearLocalCache = false,
+  dockRestoreCount = 0,
+  onRestoreDockToCanvas,
   folderDisplayName,
   connectedFolderName,
   folderNeedsReconnect,
@@ -315,19 +317,52 @@ export function CanvasChrome({
             )}
           </div>
         )}
+        {syncStatus?.manualSyncing && (
+          <div
+            className="sans text-xs bg-surface-muted text-secondary border border-border px-3 py-2 rounded max-w-xs pointer-events-auto flex items-center gap-2"
+            role="status"
+            aria-live="polite"
+          >
+            <RefreshCw size={13} strokeWidth={1.8} className="animate-spin shrink-0" />
+            {syncStatus.banner ?? strings.sync.syncInProgress}
+          </div>
+        )}
+        {syncStatus?.syncSuccess && (
+          <div
+            className="sans text-xs bg-success-muted text-success border border-success-border px-3 py-2 rounded max-w-xs pointer-events-auto"
+            role="status"
+            aria-live="polite"
+          >
+            {syncStatus.syncSuccess}
+          </div>
+        )}
         {syncStatus?.error && (
           <div className="sans text-xs bg-danger-muted text-danger border border-danger-border px-3 py-2 rounded max-w-xs pointer-events-auto">
             {syncStatus.error}
           </div>
         )}
-        {syncStatus?.noChanges && (
+        {syncStatus?.noChanges && !syncStatus?.syncSuccess && (
           <div className="sans text-xs bg-surface-muted text-secondary border border-border px-3 py-2 rounded pointer-events-auto">
             {strings.sync.nothingNew}
           </div>
         )}
-        {syncStatus?.previewsRestored && (
+        {syncStatus?.previewsRestored && !syncStatus?.syncSuccess && (
           <div className="sans text-xs bg-success-muted text-success border border-success-border px-3 py-2 rounded max-w-xs pointer-events-auto">
             {strings.sync.previewsRestored}
+          </div>
+        )}
+        {dockRestoreCount > 0 && onRestoreDockToCanvas && (
+          <div className="flex flex-col items-end gap-1.5 max-w-sm pointer-events-auto">
+            <p className="sans text-xs bg-warning-muted text-warning border border-warning-border px-3 py-2 rounded leading-snug">
+              {strings.projects.dockRestoreBanner(dockRestoreCount)}
+            </p>
+            <button
+              type="button"
+              onClick={onRestoreDockToCanvas}
+              className="sans text-xs bg-accent hover:bg-accent-hover text-on-accent px-3 py-1.5 rounded-full transition"
+            >
+              {strings.projects.dockRestoreAction}
+            </button>
           </div>
         )}
         {syncStatus?.toast && (
@@ -335,10 +370,12 @@ export function CanvasChrome({
             {syncStatus.toast}
           </div>
         )}
-        {folderNeedsConnect && connectedFolderName && (
+        {folderNeedsConnect && (
           <div className="flex flex-col items-end gap-1.5 max-w-[16rem] pointer-events-auto">
             <p className="sans text-[10px] text-warning text-right leading-snug">
-              {strings.sync.connectFolderNamed(connectedFolderName)}
+              {connectedFolderName
+                ? strings.sync.connectFolderNamed(connectedFolderName)
+                : strings.empty.desktopHint}
             </p>
             {onConnectFolder && (
               <button
@@ -421,13 +458,15 @@ export function CanvasChrome({
             <button
               type="button"
               onClick={onSync}
-              disabled={syncStatus?.scanning}
+              disabled={syncStatus?.scanning || syncStatus?.manualSyncing}
               className="sans flex items-center gap-1.5 bg-accent hover:bg-accent-hover text-on-accent text-xs px-3 py-1.5 rounded-full transition disabled:opacity-50 shrink-0"
             >
               <RefreshCw
                 size={13}
                 strokeWidth={1.8}
-                className={syncStatus?.scanning ? 'animate-spin' : ''}
+                className={
+                  syncStatus?.scanning || syncStatus?.manualSyncing ? 'animate-spin' : ''
+                }
               />
               {folderLinked
                 ? strings.sync.sync

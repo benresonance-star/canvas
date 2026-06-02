@@ -1,7 +1,10 @@
 import { strings } from '../content/strings.js';
 
-/** Max wait for post-boot server pull + index touch (hydrate/cluster deferred). */
+/** Max wait for local index + IDB paint before showing the canvas. */
 export const BOOT_LOADING_TIMEOUT_MS = 30000;
+
+/** Post-boot server work may run longer without blocking the loading overlay. */
+export const POST_BOOT_SYNC_TIMEOUT_MS = 120000;
 
 /** Per-request API timeout should stay below boot budget (see canvasProjectsApi). */
 export const BOOT_API_REQUEST_TIMEOUT_MS = 8000;

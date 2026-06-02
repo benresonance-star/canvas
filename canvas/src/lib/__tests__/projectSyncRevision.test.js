@@ -313,4 +313,38 @@ describe('projectSync revision', () => {
     await persistProjectDocumentLocally(projectId, doc);
     expect(storage.get(projectStorageKey(projectId))).toBe(doc);
   });
+
+  it('applyServerProjectRevision does not clobber newer localEditAt', async () => {
+    const { resetProjectSyncRevisionState, recordLocalProjectEdit, applyServerProjectRevision, getLocalEditAt } =
+      await import('../sync/projectSyncRevision.js');
+    const { projectLocalEditAtStorageKey } = await import('../projectRevision.js');
+
+    resetProjectSyncRevisionState();
+    const projectId = 'edit-at';
+    recordLocalProjectEdit(projectId);
+    const afterEdit = getLocalEditAt(projectId);
+    expect(afterEdit).toBeGreaterThan(0);
+
+    applyServerProjectRevision(projectId, '2020-01-01T00:00:00.000Z', 1);
+    expect(getLocalEditAt(projectId)).toBe(afterEdit);
+    expect(storage.has(projectLocalEditAtStorageKey(projectId))).toBe(true);
+  });
+
+  it('recordLocalProjectEdit survives revision state reset and reload from storage', async () => {
+    const {
+      resetProjectSyncRevisionState,
+      recordLocalProjectEdit,
+      getLocalEditAt,
+      ensureClientRevision,
+    } = await import('../sync/projectSyncRevision.js');
+
+    const projectId = 'persist-edit';
+    resetProjectSyncRevisionState();
+    recordLocalProjectEdit(projectId);
+    const t1 = getLocalEditAt(projectId);
+
+    resetProjectSyncRevisionState();
+    await ensureClientRevision(projectId);
+    expect(getLocalEditAt(projectId)).toBe(t1);
+  });
 });

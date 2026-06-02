@@ -4,6 +4,10 @@ import { strings } from '../content/strings.js';
 import { buildWorkspaceTree } from '../lib/buildWorkspaceTree.js';
 import { getLegendEntries } from '../lib/primitiveTreeColors.js';
 import {
+  buildPrimitivePlacementIndex,
+  decorateWorkspacePlacement,
+} from '../lib/workspacePlacementIndex.js';
+import {
   isApiAvailable,
   listClusterEvents,
   listPrimitives,
@@ -54,6 +58,63 @@ function TypePill({ color, label, className = '' }) {
   );
 }
 
+function PlacementPill({ label, title, className = '' }) {
+  return (
+    <span
+      className={`inline-flex items-center justify-center sans text-[8px] font-medium uppercase tracking-wide min-w-[14px] h-[14px] px-1 rounded border border-border/70 text-muted shrink-0 ${className}`}
+      title={title}
+    >
+      {label}
+    </span>
+  );
+}
+
+function PlacementLeafBadge({ placement }) {
+  if (placement === 'canvas') {
+    return (
+      <PlacementPill
+        label="C"
+        title={strings.workspaceTree.placementCanvas}
+        className="text-primary/80"
+      />
+    );
+  }
+  if (placement === 'dock') {
+    return (
+      <PlacementPill
+        label="D"
+        title={strings.workspaceTree.placementDock}
+        className="text-primary/80"
+      />
+    );
+  }
+  return null;
+}
+
+function PlacementSummaryBadges({ summary }) {
+  if (!summary) return null;
+  const { canvas, dock } = summary;
+  if (!canvas && !dock) return null;
+  const parts = [];
+  if (canvas) parts.push(String(canvas));
+  if (dock) parts.push(String(dock));
+  const title = [
+    canvas ? `${canvas} ${strings.workspaceTree.placementCanvasShort.toLowerCase()}` : '',
+    dock ? `${dock} ${strings.workspaceTree.placementDockShort.toLowerCase()}` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
+  return (
+    <span
+      className="sans text-[9px] text-muted tabular-nums shrink-0"
+      title={title}
+      aria-label={title}
+    >
+      {parts.join('·')}
+    </span>
+  );
+}
+
 function TreeNodeRow({
   node,
   depth,
@@ -85,6 +146,7 @@ function TreeNodeRow({
         <span className="sans text-[11px] text-secondary group-hover:text-primary truncate flex-1">
           {node.label}
         </span>
+        <PlacementLeafBadge placement={node.placement} />
       </button>
     );
   }
@@ -112,6 +174,7 @@ function TreeNodeRow({
           <span className="sans text-[11px] text-primary font-medium truncate">{node.label}</span>
         )}
         {node.kind === 'subtype' && <span className="flex-1" />}
+        <PlacementSummaryBadges summary={node.placementSummary} />
         <span className="sans text-[9px] text-muted tabular-nums">{count}</span>
       </button>
       {isExpanded &&
@@ -169,6 +232,21 @@ function WorkspaceLegend({ legendOpen, onToggleLegend }) {
               )}
             </div>
           ))}
+          <div className="pt-2 border-t border-border/60">
+            <span className="sans text-[10px] text-secondary block mb-1.5">
+              {strings.workspaceTree.placementLegend}
+            </span>
+            <div className="flex flex-wrap gap-2 pl-0.5">
+              <span className="inline-flex items-center gap-1 sans text-[10px] text-muted">
+                <PlacementPill label="C" title={strings.workspaceTree.placementCanvas} />
+                {strings.workspaceTree.placementCanvasShort}
+              </span>
+              <span className="inline-flex items-center gap-1 sans text-[10px] text-muted">
+                <PlacementPill label="D" title={strings.workspaceTree.placementDock} />
+                {strings.workspaceTree.placementDockShort}
+              </span>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -181,6 +259,10 @@ export function WorkspaceTreePanel({
   projectName,
   subclusters = [],
   reloadKey = 0,
+  cards = [],
+  stagedSyncCards = [],
+  threads = [],
+  connectorId = '',
   onClose,
   onSelectPrimitive,
 }) {
@@ -249,16 +331,30 @@ export function WorkspaceTreePanel({
     };
   }, [clusterId, reloadKey]);
 
-  const tree = useMemo(
-    () =>
-      buildWorkspaceTree({
-        projectName: projectName || strings.defaultProjectName,
-        items,
-        events,
-        subclusters,
-      }),
-    [projectName, items, events, subclusters],
-  );
+  const tree = useMemo(() => {
+    const base = buildWorkspaceTree({
+      projectName: projectName || strings.defaultProjectName,
+      items,
+      events,
+      subclusters,
+    });
+    const index = buildPrimitivePlacementIndex({
+      cards,
+      stagedSyncCards,
+      threads,
+      connectorId,
+    });
+    return decorateWorkspacePlacement(base, index);
+  }, [
+    projectName,
+    items,
+    events,
+    subclusters,
+    cards,
+    stagedSyncCards,
+    threads,
+    connectorId,
+  ]);
 
   const handleSelectLeaf = useCallback(
     (ref) => {

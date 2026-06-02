@@ -101,6 +101,65 @@ export function isFolderBackedCanvasCard(card) {
 }
 
 /**
+ * @param {{ key?: string, type?: string, prefix?: string, name?: string, versions?: Array<{ filename?: string }> }} card
+ */
+function cardCanonicalKeysForPresence(card) {
+  const keys = new Set();
+  if (card?.key) keys.add(toCanonicalSyncKey(card.key));
+  for (const v of card.versions ?? []) {
+    if (v?.filename) keys.add(cardKeyFromFilename(v.filename));
+  }
+  const prefix = card.prefix ?? '';
+  const name = card.name;
+  if (prefix && name) keys.add(toCanonicalSyncKey(`${prefix}__${name}`));
+  return keys;
+}
+
+/**
+ * @param {Set<string>} folderKeySet
+ * @param {{ key?: string, versions?: Array<{ filename?: string }>, prefix?: string, name?: string }} card
+ */
+export function folderKeySetMatchesCard(folderKeySet, card) {
+  if (!folderKeySet?.size || !card) return false;
+  const cardKeys = cardCanonicalKeysForPresence(card);
+  for (const fk of folderKeySet) {
+    for (const ck of cardKeys) {
+      if (syncKeysMatch(fk, ck)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Canonical keys for folder-backed artifacts on canvas and dock.
+ * @param {object[]} cards
+ * @param {object[]} stagedSyncCards
+ */
+export function collectFolderBackedKeys(cards, stagedSyncCards) {
+  const keys = new Set();
+  for (const entry of [...(cards ?? []), ...(stagedSyncCards ?? [])]) {
+    if (!isFolderBackedCanvasCard(entry)) continue;
+    for (const k of cardCanonicalKeysForPresence(entry)) {
+      if (k) keys.add(k);
+    }
+  }
+  return [...keys];
+}
+
+/**
+ * @param {string[]} scanKeys
+ * @param {object[]} cards
+ * @param {object[]} stagedSyncCards
+ */
+export function unionFolderPresentKeys(scanKeys, cards, stagedSyncCards) {
+  const out = new Set(scanKeys ?? []);
+  for (const k of collectFolderBackedKeys(cards, stagedSyncCards)) {
+    out.add(k);
+  }
+  return [...out];
+}
+
+/**
  * True when a folder-backed card's key was absent from the last folder scan.
  * @param {{ folderConnected?: boolean, folderKeySet?: Set<string> | null, card?: { key?: string, type?: string, prefix?: string } | null }} input
  */
@@ -111,7 +170,7 @@ export function isCardMissingFromFolder({
 } = {}) {
   if (!folderConnected || !folderKeySet || !card?.key) return false;
   if (!isFolderBackedCanvasCard(card)) return false;
-  return !folderKeySet.has(card.key);
+  return !folderKeySetMatchesCard(folderKeySet, card);
 }
 
 /**
@@ -129,7 +188,7 @@ export function noteRequiresProjectOnlySave({
     folderConnected
     && folderKeySet
     && card?.key
-    && !folderKeySet.has(card.key)
+    && !folderKeySetMatchesCard(folderKeySet, card)
     && isFolderBackedCanvasCard(card)
   ) {
     return true;

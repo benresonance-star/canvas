@@ -371,7 +371,7 @@ describe('setProjectDisplayName', () => {
     vi.unstubAllGlobals();
   });
 
-  it('pushes renamed project document to server', async () => {
+  it('pushes rename to workspace index only (not project document)', async () => {
     const projectId = 'rename-me';
     storage.set(
       'canvas:project-index',
@@ -389,29 +389,23 @@ describe('setProjectDisplayName', () => {
         ],
       }),
     );
-    storage.set(
-      `canvas:project:${projectId}`,
-      JSON.stringify({
-        projectName: 'Old Name',
-        cards: [],
-        canvasView: { x: 0, y: 0, zoom: 1 },
-      }),
-    );
 
-    const putCalls = [];
+    const indexPuts = [];
+    const projectPuts = [];
     vi.stubGlobal('fetch', vi.fn(async (url, options) => {
       const u = String(url);
       if (u.endsWith('/health')) {
         return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
       }
       if (u.endsWith('/canvas/index') && options?.method === 'PUT') {
-        return { ok: true, json: async () => ({ updatedAt: 'now' }) };
+        indexPuts.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({ updatedAt: 'now', revision: 2 }) };
       }
       if (u.endsWith('/canvas/index')) {
         return { ok: true, json: async () => ({ index: null }) };
       }
       if (u.includes('/canvas/projects/') && options?.method === 'PUT') {
-        putCalls.push({ url: u, body: JSON.parse(options.body) });
+        projectPuts.push({ url: u, body: JSON.parse(options.body) });
         return { ok: true, json: async () => ({ updatedAt: 'now', revision: 2 }) };
       }
       if (u.includes('/meta')) {
@@ -425,9 +419,37 @@ describe('setProjectDisplayName', () => {
     resetProjectSyncState();
 
     await setProjectDisplayName(projectId, 'New Name');
-    const put = putCalls.find((c) => c.url.includes(projectId));
-    expect(put).toBeTruthy();
-    expect(put.body.payload.projectName).toBe('New Name');
+    expect(projectPuts.length).toBe(0);
+    expect(indexPuts.length).toBeGreaterThan(0);
+    const row = indexPuts.at(-1).index.projects.find((p) => p.id === projectId);
+    expect(row.name).toBe('New Name');
+    const stored = JSON.parse(storage.get('canvas:project-index'));
+    expect(stored.projects[0].name).toBe('New Name');
+  });
+
+  it('does not coerce empty rename to Untitled Project', async () => {
+    const projectId = 'keep-name';
+    storage.set(
+      'canvas:project-index',
+      JSON.stringify({
+        version: 1,
+        activeProjectId: projectId,
+        projects: [
+          {
+            id: projectId,
+            name: 'FROG',
+            createdAt: 1,
+            updatedAt: 1,
+            archived: false,
+          },
+        ],
+      }),
+    );
+
+    const { setProjectDisplayName } = await import('../projects.js');
+    await setProjectDisplayName(projectId, '   ');
+    const stored = JSON.parse(storage.get('canvas:project-index'));
+    expect(stored.projects[0].name).toBe('FROG');
   });
 });
 

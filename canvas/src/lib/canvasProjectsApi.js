@@ -1,4 +1,5 @@
 import { BOOT_API_REQUEST_TIMEOUT_MS } from './bootSync.js';
+import { summarizePatchOps, syncTraceLog } from './sync/syncTrace.js';
 
 const API_BASE = import.meta.env.VITE_PRIMITIVES_API || '/api';
 const REQUEST_TIMEOUT_MS = BOOT_API_REQUEST_TIMEOUT_MS;
@@ -43,11 +44,22 @@ export async function fetchCanvasIndex() {
  * @param {object} index
  * @param {number} expectedRevision
  */
-export async function saveCanvasIndex(index, expectedRevision = 0) {
+/**
+ * @returns {string}
+ */
+export function workspaceIndexStreamUrl() {
+  return `${API_BASE}/canvas/index/stream`;
+}
+
+export async function saveCanvasIndex(index, expectedRevision = 0, clientId = null) {
   const res = await fetch(`${API_BASE}/canvas/index`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ index, expectedRevision }),
+    body: JSON.stringify({
+      index,
+      expectedRevision,
+      clientId: clientId ?? undefined,
+    }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const data = await res.json().catch(() => ({}));
@@ -85,7 +97,7 @@ export async function fetchCanvasProjectMeta(projectId) {
     },
   );
   const data = await res.json().catch(() => ({}));
-  if (res.status === 404) return null;
+  if (res.status === 404 || res.status === 409) return null;
   if (!res.ok) {
     const msg = data.error || res.statusText || 'API error';
     throw new Error(msg);
@@ -163,6 +175,72 @@ export async function saveCanvasProject(projectId, payload, expectedRevision) {
     revision: Number(data.revision) || 0,
     updatedAt: data.updatedAt ?? null,
   };
+}
+
+/**
+ * @param {string} projectId
+ * @param {{
+ *   ops: object[],
+ *   expectedRevision: number,
+ *   clientId?: string,
+ *   reason?: string,
+ *   traceId?: string | null,
+ * }} body
+ */
+export async function patchCanvasProject(projectId, body) {
+  syncTraceLog(body.traceId, 'http:patch-sent', {
+    projectId,
+    ...summarizePatchOps(body.ops),
+  });
+  const res = await fetch(
+    `${API_BASE}/canvas/projects/${encodeURIComponent(projectId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    },
+  );
+  const data = await res.json().catch(() => ({}));
+  syncTraceLog(body.traceId, 'http:patch-status', {
+    projectId,
+    status: res.status,
+    error: data.error ?? null,
+  });
+  if (res.status === 409) {
+    return {
+      ok: false,
+      conflict: true,
+      revision: Number(data.revision) || 0,
+      payload: data.payload ?? null,
+      updatedAt: data.updatedAt ?? null,
+    };
+  }
+  if (res.status === 400) {
+    return {
+      ok: false,
+      conflict: true,
+      badRequest: true,
+      reason: data.error,
+      revision: Number(data.revision) || 0,
+      payload: data.payload ?? null,
+      updatedAt: data.updatedAt ?? null,
+    };
+  }
+  if (!res.ok) {
+    const msg = data.error || res.statusText || 'API error';
+    throw new Error(msg);
+  }
+  return {
+    ok: true,
+    revision: Number(data.revision) || 0,
+    updatedAt: data.updatedAt ?? null,
+  };
+}
+
+export function projectSyncStreamUrl(projectId) {
+  const base = API_BASE.replace(/\/$/, '');
+  return `${base}/canvas/projects/${encodeURIComponent(projectId)}/stream`;
 }
 
 export async function deleteCanvasProject(projectId) {

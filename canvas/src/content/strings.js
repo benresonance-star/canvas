@@ -11,6 +11,17 @@ export const strings = {
   sync: {
     connectFolder: 'Connect folder',
     sync: 'Sync',
+    syncInProgress: 'Syncing with server…',
+    syncInProgressWithFolder: 'Syncing with server and folder…',
+    syncComplete: 'Sync finished.',
+    syncTimedOut: 'Sync timed out. Try again or check the API server.',
+    syncAlreadyInProgress: 'Sync already in progress. Wait a moment and try again.',
+    serverDocumentMissing:
+      'Project is on the server menu but has no canvas document yet. Edit the canvas here, then Sync again.',
+    syncedFromServerRevision: (revision) =>
+      `Synced from server (revision ${revision}).`,
+    alreadySyncedRevision: (revision) =>
+      `Already up to date with server (revision ${revision}).`,
     changeFolder: 'Change folder',
     nothingNew: 'Nothing new to sync',
     previewsRestored: 'Previews restored from folder',
@@ -22,7 +33,7 @@ export const strings = {
     reconnectFolderNamed: (name) =>
       `Allow access to “${name}” to sync files from disk. Choose “Allow on every visit” in Chrome to avoid prompts when switching projects.`,
     connectFolderNamed: (name) =>
-      `This project uses folder “${name}”. Connect the same folder on this browser to sync files.`,
+      `This project uses folder “${name}” on another device. On this browser, pick that same folder once — then canvas layout and files will sync.`,
     folderPermissionDenied: 'Could not access the folder. Try Reconnect or pick the folder again.',
     folderSaveFailed:
       'Could not save the folder link for this project. Reconnect the folder before refreshing the page.',
@@ -138,6 +149,8 @@ export const strings = {
       'Could not load your canvas data. Check the browser console, then refresh. Large projects may finish syncing in the background after the canvas appears.',
     switchLoadFailed:
       'Could not load that project. Try again, or clear site storage if the browser is full.',
+    noActiveProject:
+      'Select or create a project before connecting a folder.',
     switchPushFailed:
       'Could not sync this project to the server yet. Your work is saved in this browser; try Sync or refresh from server before switching devices.',
     placementPushFailed:
@@ -156,6 +169,8 @@ export const strings = {
       'Syncing project from server…',
     syncedFromServer:
       'Canvas updated from server.',
+    alreadySyncedFromServer:
+      'Already up to date with the server.',
     loadingProject:
       'Loading project…',
     bootSyncTimeout:
@@ -212,6 +227,11 @@ export const strings = {
     deleteConfirm: 'Delete',
     cancel: 'Cancel',
     cannotDeleteLast: 'You need at least one project.',
+    dockRestoreBanner: (n) =>
+      `${n} item${n === 1 ? '' : 's'} in the sync dock — not on the canvas. Drag them on, or restore layout.`,
+    dockRestoreAction: 'Restore to canvas',
+    dockRestoredToast: (n) =>
+      `Restored ${n} item${n === 1 ? '' : 's'} from the sync dock to the canvas.`,
     syncMissingBody: 'Canvas data missing on server — open in the browser that has this project to upload.',
     syncErrorBody: 'Could not sync this project (file may be too large for server storage).',
     active: 'Current project',
@@ -558,6 +578,11 @@ export const strings = {
     title: 'Workspace',
     toggle: 'Workspace tree',
     legend: 'Type key',
+    placementLegend: 'Placement',
+    placementCanvas: 'On canvas',
+    placementDock: 'In dock',
+    placementCanvasShort: 'Canvas',
+    placementDockShort: 'Dock',
     loading: 'Loading workspace…',
     empty: 'No primitives in this project yet.',
     emptyNoCluster: 'No project cluster yet — sync or create a note to register primitives.',

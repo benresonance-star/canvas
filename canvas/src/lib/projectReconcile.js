@@ -1,5 +1,4 @@
 import { strings } from '../content/strings.js';
-import { projectStorageKey } from './constants.js';
 import { fetchCanvasProjectDocument } from './canvasProjectsApi.js';
 import {
   isServerSyncEnabled,
@@ -7,7 +6,6 @@ import {
   loadSyncedProjectIndex,
   saveSyncedProjectIndex,
 } from './projectSync.js';
-import { loadProjectById, saveProjectById } from './persistence.js';
 import {
   dedupeProjectsById,
   collapseDuplicateProjectNames,
@@ -15,6 +13,7 @@ import {
   normalizeWorkspaceIndex,
   pickPreferredProjectRow,
 } from './projectIndexNormalize.js';
+import { resolveProjectDisplayName } from './projectDisplayName.js';
 
 export {
   dedupeProjectsById,
@@ -26,11 +25,29 @@ export {
 
 let reconcileInFlight = false;
 
+export {
+  isDefaultProjectDisplayName,
+  resolveProjectDisplayName,
+  projectNameForDocumentPayload,
+} from './projectDisplayName.js';
+
 /** Sorted menu rows from a workspace index (normalized). */
 export function projectsForMenuFromIndex(index) {
   if (!index?.projects?.length) return [];
   const { index: normalized } = normalizeWorkspaceIndex(index);
   return sortProjectListForMenu(normalized?.projects ?? []);
+}
+
+/**
+ * @deprecated Use resolveProjectDisplayName — document titles are not a name source.
+ */
+export function canonicalProjectNameFromIndex(
+  index,
+  projectId,
+  _documentName = null,
+  defaultName = strings.defaultProjectName,
+) {
+  return resolveProjectDisplayName(index, projectId, defaultName);
 }
 
 /** Menu order: active non-archived first by updatedAt desc. */
@@ -41,41 +58,6 @@ export function sortProjectListForMenu(projects) {
     }
     return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
   });
-}
-
-/**
- * Align document.projectName with index row name (index canonical).
- * @returns {Promise<boolean>} whether document was patched
- */
-async function patchDocumentNameFromIndex(projectId, indexName) {
-  let doc = null;
-  try {
-    const cached = await window.storage.get(projectStorageKey(projectId));
-    if (cached?.value) {
-      doc = JSON.parse(cached.value);
-    }
-  } catch {
-    /* use server load below */
-  }
-  if (!doc) {
-    doc = await loadProjectById(projectId);
-  }
-  if (!doc) return false;
-  const canonical = indexName?.trim() || strings.defaultProjectName;
-  if (doc.projectName === canonical) return false;
-  const nextDoc = { ...doc, projectName: canonical };
-  try {
-    await window.storage.set(
-      projectStorageKey(projectId),
-      JSON.stringify(nextDoc),
-    );
-  } catch {
-    /* quota */
-  }
-  await saveProjectById(projectId, nextDoc, nextDoc.stagedSyncCards ?? [], {
-    pushRemote: true,
-  });
-  return true;
 }
 
 /**
@@ -117,19 +99,7 @@ export async function reconcileProject(projectId, {
         indexChanged = true;
       }
 
-      const doc = pulledPayload ?? remote.payload;
-      const docName = doc?.projectName?.trim() || strings.defaultProjectName;
-      const indexName = nextRow.name?.trim() || strings.defaultProjectName;
-
-      if (!skipNameReconcile && docName !== indexName) {
-        if (adoptDocumentName) {
-          nextRow.name = docName;
-          nextRow.updatedAt = Date.now();
-          indexChanged = true;
-        } else {
-          await patchDocumentNameFromIndex(projectId, indexName);
-        }
-      }
+      /* Project display names live only on the workspace index (DB), not in documents. */
     } catch (e) {
       const msg = String(e?.message ?? e);
       if (/too large|413/i.test(msg)) {
@@ -141,12 +111,6 @@ export async function reconcileProject(projectId, {
       }
     }
   } else if (isServerSyncEnabled() && localOnly) {
-    const doc = pulledPayload ?? (await loadProjectById(projectId));
-    const docName = doc?.projectName?.trim() || strings.defaultProjectName;
-    const indexName = nextRow.name?.trim() || strings.defaultProjectName;
-    if (!skipNameReconcile && docName !== indexName && !adoptDocumentName) {
-      await patchDocumentNameFromIndex(projectId, indexName);
-    }
     if (!await hasLocalProjectDocument(projectId) && nextRow.syncState !== 'missing') {
       nextRow.syncState = 'missing';
       indexChanged = true;
@@ -232,18 +196,12 @@ export async function reconcileWorkspaceIndex(index, {
   }
 }
 
-/** After document pull with newer server revision, adopt name into index when allowed. */
-export async function adoptDocumentNameToIndex(projectId, payload) {
-  const name = payload?.projectName?.trim();
-  if (!name || !projectId) return null;
-  const index = await loadSyncedProjectIndex();
-  if (!index?.projects?.length) return null;
-  const row = index.projects.find((p) => p.id === projectId);
-  if (!row || row.name === name) return index;
-  row.name = name;
-  row.updatedAt = Date.now();
-  await saveSyncedProjectIndex(index, { immediate: true });
-  return index;
+/**
+ * @deprecated Document projectName is not a name source; use setProjectDisplayName.
+ */
+export async function adoptDocumentNameToIndex(projectId) {
+  if (!projectId) return null;
+  return loadSyncedProjectIndex();
 }
 
 export function markProjectUploadError(index, projectId) {

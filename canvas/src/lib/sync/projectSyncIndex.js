@@ -1,5 +1,6 @@
 ﻿import {
   fetchCanvasIndexDocument,
+  fetchCanvasProjectMeta,
   saveCanvasIndex,
   saveCanvasProject,
 } from '../canvasProjectsApi.js';
@@ -21,6 +22,8 @@ import {
   parseServerUpdatedAt,
   projectIndexSignature,
 } from './projectSyncMerge.js';
+import { isDeletedProjectId } from '../projectDeletionTombstones.js';
+import { deleteCanvasProject } from '../canvasProjectsApi.js';
 import {
   readLocalIndex,
   writeLocalIndex,
@@ -68,13 +71,38 @@ function scheduleIndexRemoteSave(index) {
   });
 }
 
+/**
+ * Upload local bodies for index rows that have no server document yet.
+ * @param {object} index
+ * @returns {Promise<number>} count uploaded
+ */
+export async function healProjectsMissingServerDocuments(index) {
+  if (!getServerSyncEnabled() || !index?.projects?.length) return 0;
+  const candidateIds = index.projects
+    .filter((p) => p?.id && !p.archived)
+    .map((p) => p.id);
+  const missing = [];
+  for (const projectId of candidateIds) {
+    const meta = await fetchCanvasProjectMeta(projectId);
+    if (!meta) missing.push(projectId);
+  }
+  if (missing.length === 0) return 0;
+  return uploadLocalOnlyProjects(missing, index);
+}
+
 async function pushIndexToServer(index) {
   if (!getServerSyncEnabled() || !index) return;
   flushIndexTimer();
   setPendingIndexPayload(null);
   try {
+    await healProjectsMissingServerDocuments(index);
+    const refreshed = await readLocalIndex();
+    if (refreshed?.projects?.length) {
+      index = refreshed;
+    }
+    const { getProjectSyncClientId } = await import('./projectSyncClientId.js');
     let expected = getClientWorkspaceIndexRevision();
-    let result = await saveCanvasIndex(index, expected);
+    let result = await saveCanvasIndex(index, expected, getProjectSyncClientId());
     if (result.conflict && result.index) {
       const localIndex = index;
       const { index: merged } = mergeProjectIndices(localIndex, result.index, {});
@@ -161,6 +189,16 @@ async function uploadLocalOnlyProjects(localOnlyIds, index) {
     }
     if (!doc) continue;
     try {
+      let meta = null;
+      try {
+        meta = await fetchCanvasProjectMeta(projectId);
+      } catch {
+        meta = null;
+      }
+      if (meta && Number(meta.revision) > 0) {
+        applyServerProjectRevision(projectId, meta.updatedAt, meta.revision);
+        continue;
+      }
       const result = await saveCanvasProject(projectId, doc, 0);
       if (!result.ok) {
         if (result.conflict && result.payload) {
@@ -327,14 +365,24 @@ async function pullAndMergeProjectIndexBody(options = {}) {
     lastServerWorkspaceIndexUpdatedAt = serverIndexMs;
   }
 
-  if (serverOnlyIds.length > 0) {
+  const suppressedServerOnly = serverOnlyIds.filter((id) => !isDeletedProjectId(id));
+  for (const id of serverOnlyIds) {
+    if (isDeletedProjectId(id) && getServerSyncEnabled()) {
+      try {
+        await deleteCanvasProject(id);
+      } catch {
+        /* best effort — align server with local delete */
+      }
+    }
+  }
+  if (suppressedServerOnly.length > 0) {
     setPendingSyncBothServerOnlyIds([
-      ...new Set([...getPendingSyncBothServerOnlyIds(), ...serverOnlyIds]),
+      ...new Set([...getPendingSyncBothServerOnlyIds(), ...suppressedServerOnly]),
     ]);
     setPendingBackgroundMode('sync_both');
     try {
       const { recordServerProjectsSynced } = await import('../projects.js');
-      recordServerProjectsSynced(serverOnlyIds.length);
+      recordServerProjectsSynced(suppressedServerOnly.length);
     } catch {
       /* ignore */
     }

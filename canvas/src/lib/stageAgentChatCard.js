@@ -4,10 +4,10 @@ import { resolvePlacement } from './artifactPlacement.js';
 
 /**
  * @param {object[]} stagedCards
- * @param {{ filename: string, title?: string, syncResult?: { content_hash?: string, artifactRef?: object } }} params
+ * @param {{ filename: string, title?: string, threadId?: string, syncResult?: { content_hash?: string, artifactRef?: object } }} params
  * @param {object[]} [canvasCards]
  */
-export function buildAgentChatStagedRow({ filename, title, syncResult }) {
+export function buildAgentChatStagedRow({ filename, title, threadId, syncResult }) {
   const cardKey = cardKeyFromFilename(filename);
   return {
     stagingId: crypto.randomUUID(),
@@ -15,6 +15,7 @@ export function buildAgentChatStagedRow({ filename, title, syncResult }) {
     prefix: 'notes',
     name: title || 'Agent chat',
     type: 'agent_chat',
+    ...(threadId ? { agentThreadId: threadId } : {}),
     versions: [
       {
         version: 1,

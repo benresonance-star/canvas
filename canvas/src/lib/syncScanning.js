@@ -5,5 +5,7 @@
  */
 export function resolveScanExitStatus(prev, nextStatus) {
   if (!prev?.scanning) return prev;
-  return nextStatus ?? null;
+  if (nextStatus == null) return null;
+  const { scanning: _removed, ...rest } = nextStatus;
+  return rest;
 }

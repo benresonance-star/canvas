@@ -130,6 +130,36 @@ describe('isCardMissingFromFolder', () => {
       }),
     ).toBe(true);
   });
+
+  it('matches card by version filename when card.key differs', () => {
+    expect(
+      isCardMissingFromFolder({
+        folderConnected: true,
+        folderKeySet: new Set(['notes__legacy']),
+        card: {
+          key: 'notes__legacy-v1',
+          type: 'markdown',
+          prefix: 'notes',
+          versions: [{ filename: 'notes__legacy-v1.md', version: 1 }],
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it('unionFolderPresentKeys includes project artifact keys', async () => {
+    const { unionFolderPresentKeys, collectFolderBackedKeys } = await import(
+      '../filename.js'
+    );
+    const keys = unionFolderPresentKeys(
+      ['scan__only'],
+      [{ key: 'notes__on_canvas', type: 'markdown', versions: [] }],
+      [{ key: 'img__staged', type: 'image', versions: [] }],
+    );
+    expect(keys).toContain('scan__only');
+    expect(keys).toContain('notes__on_canvas');
+    expect(keys).toContain('img__staged');
+    expect(collectFolderBackedKeys([], [])).toEqual([]);
+  });
 });
 
 describe('computeUserNoteDisabled', () => {

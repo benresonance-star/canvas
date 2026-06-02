@@ -63,12 +63,14 @@ export function ModalContent({ card, version }) {
 
   if (card.type === 'pdf' && mediaSrc) {
     return (
-      <PdfPreviewFrame
-        mediaSrc={mediaSrc}
-        iframeKey={`${card.id}-v${version.version}-modal-pdf`}
-        title={card.name}
-        pointerEventsNone={false}
-      />
+      <div className="h-full w-full min-h-0 flex flex-col bg-preview-bg">
+        <PdfPreviewFrame
+          mediaSrc={mediaSrc}
+          iframeKey={`${card.id}-v${version.version}-modal-pdf`}
+          title={card.name}
+          pointerEventsNone={false}
+        />
+      </div>
     );
   }
 

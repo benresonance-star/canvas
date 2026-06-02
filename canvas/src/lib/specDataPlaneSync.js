@@ -1,9 +1,11 @@
 import {
+  applySpecCanvasLayoutToPayload,
   projectPayloadToSpecLayout,
   projectPayloadToSpecViewport,
   specLayoutDrift,
 } from './specDataPlane.js';
 import { fetchSpecCanvasState, saveSpecCanvasState } from './specDataPlaneApi.js';
+import { fetchCanvasProjectMeta } from './canvasProjectsApi.js';
 import { isApiAvailable } from './primitivesApi.js';
 import { enqueueSpecSyncRetry } from './specSyncOutbox.js';
 
@@ -46,7 +48,7 @@ export async function syncSpecCanvasStateFromPayload(projectId, payload) {
 }
 
 /**
- * Load spec canvas row and log drift vs JSON (JSON remains authoritative in Phase 3).
+ * Load spec canvas row; when spec version matches project document revision, spec layout wins.
  * @param {string} projectId
  * @param {object} payload
  */
@@ -58,6 +60,24 @@ export async function reconcileSpecCanvasOnLoad(projectId, payload) {
   try {
     const remote = await fetchSpecCanvasState(projectId);
     if (!remote?.layout) return payload;
+
+    const meta = await fetchCanvasProjectMeta(projectId);
+    const specVersion = Number(remote.version) || 0;
+    const docRevision = Number(meta?.revision) || 0;
+    const specMatchesDocument = meta && specVersion > 0 && specVersion === docRevision;
+    const specOnlySource = !meta && specVersion > 0;
+    const specAheadOfDocument =
+      meta && specVersion > 0 && specVersion >= docRevision;
+
+    if (specMatchesDocument || specOnlySource || specAheadOfDocument) {
+      if (specLayoutDrift(payload, remote.layout)) {
+        console.info(
+          `[spec] layout drift for project ${projectId} — applying spec_canvas_state (revision ${specVersion})`,
+        );
+      }
+      return applySpecCanvasLayoutToPayload(payload, remote);
+    }
+
     if (specLayoutDrift(payload, remote.layout)) {
       console.info(
         `[spec] layout drift for project ${projectId} — project JSON remains authoritative`,

@@ -1,6 +1,6 @@
 import { LEGACY_PROJECT_KEY, projectStorageKey } from './constants.js';
 import { strings } from '../content/strings.js';
-import { loadProjectById, saveProjectById } from './persistence.js';
+import { loadProjectById, saveProjectById, loadProjectStructure } from './persistence.js';
 import { clearAgentChatSessionsForProject } from './agentChatPersistence.js';
 import { deletePreviewsForProject } from './previewStore.js';
 import { removeFolderHandle } from './folderStore.js';
@@ -10,6 +10,7 @@ import {
   sortProjectListForMenu,
   adoptDocumentNameToIndex,
   projectsForMenuFromIndex,
+  canonicalProjectNameFromIndex,
 } from './projectReconcile.js';
 import {
   normalizeProjectNameKey,
@@ -20,7 +21,11 @@ import {
   listOrphanProjectIds,
   auditWorkspaceIndex,
   purgeOrphanProjectBodies,
+  hasLocalProjectBody,
+  readLocalProjectPayload,
 } from './workspaceIntegrity.js';
+import { projectCardCount } from './sync/projectSyncMerge.js';
+import { recordDeletedProjectId } from './projectDeletionTombstones.js';
 import {
   initializeProjectSync,
   loadSyncedProjectIndex,
@@ -75,6 +80,15 @@ export {
   setCacheEvictionContext,
   getProjectConflict,
   clearProjectConflict,
+  startProjectSyncStream,
+  stopProjectSyncStream,
+  startWorkspaceIndexSyncStream,
+  stopWorkspaceIndexSyncStream,
+  applyRemoteProjectPatch,
+  flushPendingRemoteProjectPatch,
+  setRemotePatchAppliedListener,
+  getProjectSyncClientId,
+  isProjectPatchSyncEnabled,
 } from './projectSync.js';
 
 export {
@@ -83,18 +97,22 @@ export {
   clearAgentChatLocalCaches,
 } from './storageBudget.js';
 
+export { loadProjectStructure, loadProjectDocument, applyProjectLoadFence } from './persistence.js';
+
 export { subscribeProjectCacheChanges } from './projectDocumentStore.js';
 
 export {
   registerActionSyncHandlers,
   unregisterActionSyncHandlers,
   requestActionSync,
+  notifyStructuralPushFailed,
 } from './actionSync.js';
 
 export {
   beginCanvasInteraction,
   endCanvasInteraction,
   isCanvasInteractionActive,
+  setCanvasInteractionIdleListener,
 } from './canvasInteraction.js';
 
 export {
@@ -108,6 +126,8 @@ export {
   sortProjectListForMenu,
   adoptDocumentNameToIndex,
   projectsForMenuFromIndex,
+  canonicalProjectNameFromIndex,
+  resolveProjectDisplayName,
   normalizeWorkspaceIndex,
 } from './projectReconcile.js';
 
@@ -259,6 +279,40 @@ export function resolveActiveProjectId(index) {
   return list.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b)).id;
 }
 
+/**
+ * Project id with the richest local canvas cache (for refresh / stale active id).
+ * @param {object | null | undefined} index
+ * @returns {Promise<string | null>}
+ */
+export async function findBestProjectIdWithLocalCanvas(index) {
+  let bestId = null;
+  let bestScore = -1;
+  for (const row of index?.projects ?? []) {
+    if (!row?.id || row.archived) continue;
+    const payload = await readLocalProjectPayload(row.id);
+    if (!payload) continue;
+    const canvasCount = projectCardCount(payload);
+    if (canvasCount === 0) continue;
+    const score = canvasCount * 1e12 + (row.updatedAt ?? 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestId = row.id;
+    }
+  }
+  return bestId;
+}
+
+/**
+ * Prefer a project that still has canvas cards in local cache (avoids stale empty active id).
+ * @param {object | null | undefined} index
+ * @returns {Promise<string | null>}
+ */
+export async function resolveActiveProjectIdPreferringLocalBody(index) {
+  const withCanvas = await findBestProjectIdWithLocalCanvas(index);
+  if (withCanvas) return withCanvas;
+  return resolveActiveProjectId(index);
+}
+
 export async function loadProjectIndex() {
   try {
     return await loadSyncedProjectIndex();
@@ -317,36 +371,30 @@ async function tryLoadServerProjectIndex() {
  * @param {object} [state] - current canvas state (optional)
  * @param {object[]} [stagedSyncCards]
  */
-export async function setProjectDisplayName(projectId, name, state = null, stagedSyncCards = []) {
-  const trimmed = name?.trim() || strings.defaultProjectName;
+/**
+ * Rename a project — writes only to the workspace index (canonical DB store).
+ * Canvas document payloads may mirror the name on the next layout save but never
+ * define the display title.
+ */
+export async function setProjectDisplayName(projectId, name) {
+  const trimmed = name?.trim();
+  if (!trimmed) {
+    return loadProjectIndex();
+  }
   const index = await loadProjectIndex();
   if (!index) return ensureProjectIndex();
 
   const row = index.projects.find((p) => p.id === projectId);
   if (!row) return index;
 
-  let indexChanged = false;
-  if (row.name !== trimmed) {
-    row.name = trimmed;
-    row.updatedAt = Date.now();
-    indexChanged = true;
+  if (row.name === trimmed) {
+    return index;
   }
 
-  if (indexChanged) {
-    await saveProjectIndex(index, { immediate: true });
-  }
-
-  const doc = state ?? (await loadProjectById(projectId));
-  if (doc && doc.projectName !== trimmed) {
-    await saveProjectById(
-      projectId,
-      { ...doc, projectName: trimmed },
-      stagedSyncCards.length ? stagedSyncCards : (doc.stagedSyncCards ?? []),
-      { pushRemote: true },
-    );
-  }
-
-  return indexChanged ? index : await loadProjectIndex();
+  row.name = trimmed;
+  row.updatedAt = Date.now();
+  await saveProjectIndex(index, { immediate: true });
+  return index;
 }
 
 /** Pull index, reconcile, return sorted project rows for the menu. */
@@ -429,9 +477,6 @@ export async function ensureProjectIndex(options = {}) {
   if (!index?.projects?.length) {
     index = await tryLoadServerProjectIndex();
   }
-  if (listOrphanProjectIds(index).length > 0) {
-    await purgeOrphansFromLocalStorage(index);
-  }
   if (!index) {
     index = {
       version: INDEX_VERSION,
@@ -439,13 +484,18 @@ export async function ensureProjectIndex(options = {}) {
       projects: [],
     };
   }
-  const resolved = resolveActiveProjectId(index);
-  if (resolved && index.activeProjectId !== resolved) {
-    index.activeProjectId = resolved;
-    await saveProjectIndex(index);
-  } else if (!resolved && index.activeProjectId) {
-    index.activeProjectId = null;
-    await saveProjectIndex(index);
+  const currentActiveValid =
+    index.activeProjectId
+    && index.projects.some((p) => p.id === index.activeProjectId);
+  if (!currentActiveValid) {
+    const resolved = await resolveActiveProjectIdPreferringLocalBody(index);
+    if (resolved && index.activeProjectId !== resolved) {
+      index.activeProjectId = resolved;
+      await saveProjectIndex(index);
+    } else if (!resolved && index.activeProjectId) {
+      index.activeProjectId = null;
+      await saveProjectIndex(index);
+    }
   }
   index = await repairNormalizedIndex(index);
   const integrity = await repairWorkspaceIndex(index, {
@@ -522,15 +572,31 @@ async function createProjectBody(name = strings.defaultProjectName) {
     createdBy: 'user',
   });
   index.activeProjectId = id;
-  const saveResult = await saveProjectById(id, createEmptyProjectState(trimmed), [], {
+  await saveProjectIndex(index, { immediate: false });
+  const emptyState = createEmptyProjectState(trimmed);
+  const saveResult = await saveProjectById(id, emptyState, [], {
     pushRemote: true,
   });
-  if (isServerSyncEnabled() && !saveResult?.error) {
+  let documentPushOk = !isServerSyncEnabled() || saveResult?.pushOk === true;
+  if (isServerSyncEnabled() && !documentPushOk && !saveResult?.error) {
+    const { flushOutgoingProjectDocument } = await import('./projectSync.js');
+    const retry = await flushOutgoingProjectDocument(id, emptyState, {
+      reason: 'createProject',
+    });
+    documentPushOk = retry?.ok === true;
+    if (!documentPushOk) {
+      const { notifyStructuralPushFailed } = await import('./actionSync.js');
+      notifyStructuralPushFailed(id, retry);
+    }
+  }
+  if (isServerSyncEnabled() && documentPushOk && !saveResult?.error) {
     await seedClientRevisionFromMeta(id);
   }
   let repaired = await repairNormalizedIndex(index);
   if (repaired === index) {
-    await saveProjectIndex(index, { immediate: true });
+    const pushIndexToServer =
+      !isServerSyncEnabled() || documentPushOk;
+    await saveProjectIndex(index, { immediate: pushIndexToServer });
   }
   const integrity = await repairWorkspaceIndex(repaired, {
     checkServerGhosts: isServerSyncEnabled(),
@@ -590,6 +656,7 @@ export async function deleteProject(projectId) {
     return { ok: false, reason: 'last' };
   }
 
+  recordDeletedProjectId(projectId);
   await deletePreviewsForProject(projectId);
   await removeFolderHandle(projectId);
   await deleteSyncedProjectDocument(projectId);
@@ -605,13 +672,15 @@ export async function deleteProject(projectId) {
     switchToId = pickFallbackActiveId(index, projectId) || remaining[0].id;
     index.activeProjectId = switchToId;
   }
-  await saveProjectIndex(index, { immediate: true });
+  let repaired = index;
   const integrity = await repairWorkspaceIndex(index, {
     checkServerGhosts: isServerSyncEnabled(),
   });
+  repaired = integrity.repairedIndex ?? index;
+  await saveProjectIndex(repaired, { immediate: true });
   return {
     ok: true,
-    index: integrity.repairedIndex ?? index,
+    index: repaired,
     switchToId,
   };
 }
