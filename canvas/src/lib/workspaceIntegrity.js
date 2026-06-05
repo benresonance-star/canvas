@@ -191,9 +191,11 @@ export function resolveActiveProjectIdForIndex(index, resolvedActiveId) {
 /**
  * Re-add index rows for orphan local bodies.
  * @param {object} index
+ * @param {{ recentlyDeletedIds?: string[] }} [options]
  * @returns {Promise<{ index: object, recoveredCount: number }>}
  */
-export async function recoverOrphanProjectsIntoIndex(index) {
+export async function recoverOrphanProjectsIntoIndex(index, options = {}) {
+  const recentlyDeleted = new Set(options.recentlyDeletedIds ?? []);
   const orphanIds = await listAllOrphanProjectIds(index);
   if (orphanIds.length === 0) {
     return { index, recoveredCount: 0 };
@@ -210,7 +212,7 @@ export async function recoverOrphanProjectsIntoIndex(index) {
 
   let recoveredCount = 0;
   for (const id of orphanIds) {
-    if (isDeletedProjectId(id)) {
+    if (isDeletedProjectId(id) || recentlyDeleted.has(id)) {
       try {
         await deleteProjectDocumentSerialised(id);
       } catch {
@@ -270,6 +272,8 @@ function patchRowNameFromDocument(row, payload) {
  * @param {{
  *   checkServerGhosts?: boolean,
  *   serverSyncEnabled?: boolean,
+ *   skipOrphanRecovery?: boolean,
+ *   recentlyDeletedIds?: string[],
  * }} [options]
  * @returns {Promise<{
  *   issues: { type: string, projectId?: string }[],
@@ -280,7 +284,12 @@ function patchRowNameFromDocument(row, payload) {
  * }>}
  */
 export async function auditWorkspaceIndex(index, options = {}) {
-  const { checkServerGhosts = false, serverSyncEnabled = false } = options;
+  const {
+    checkServerGhosts = false,
+    serverSyncEnabled = false,
+    skipOrphanRecovery = false,
+    recentlyDeletedIds = [],
+  } = options;
   const issues = [];
   const actions = [];
 
@@ -291,14 +300,17 @@ export async function auditWorkspaceIndex(index, options = {}) {
   let ghostsMarked = 0;
   let orphanRecovered = 0;
 
-  const recovery = await recoverOrphanProjectsIntoIndex(
-    repaired ?? { version: 1, activeProjectId: null, projects: [] },
-  );
-  if (recovery.recoveredCount > 0) {
-    repaired = recovery.index;
-    orphanRecovered = recovery.recoveredCount;
-    actions.push(`recovered_orphans:${orphanRecovered}`);
-    issues.push({ type: 'orphan_recovered', count: orphanRecovered });
+  if (!skipOrphanRecovery) {
+    const recovery = await recoverOrphanProjectsIntoIndex(
+      repaired ?? { version: 1, activeProjectId: null, projects: [] },
+      { recentlyDeletedIds },
+    );
+    if (recovery.recoveredCount > 0) {
+      repaired = recovery.index;
+      orphanRecovered = recovery.recoveredCount;
+      actions.push(`recovered_orphans:${orphanRecovered}`);
+      issues.push({ type: 'orphan_recovered', count: orphanRecovered });
+    }
   }
 
   const activeProtectId = resolveActiveProjectIdForIndex(

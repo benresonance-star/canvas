@@ -11,12 +11,22 @@ function resolveSpecApiBase() {
 }
 
 const API_BASE = resolveSpecApiBase();
+const REQUEST_TIMEOUT_MS = 2_000;
+
+function requestSignal() {
+  return typeof AbortSignal !== 'undefined'
+    && typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+    : undefined;
+}
 
 /**
  * @param {string} projectId
  */
 export async function fetchSpecCanvasState(projectId) {
-  const res = await fetch(`${API_BASE}/canvas/projects/${projectId}/spec-canvas`);
+  const res = await fetch(`${API_BASE}/canvas/projects/${projectId}/spec-canvas`, {
+    signal: requestSignal(),
+  });
   if (res.status === 404) return null;
   if (!res.ok) return null;
   return res.json();
@@ -32,6 +42,7 @@ export async function saveSpecCanvasState(projectId, body, expectedVersion = 0) 
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...body, expectedVersion }),
+    signal: requestSignal(),
   });
   if (res.status === 409) {
     const data = await res.json().catch(() => ({}));

@@ -149,6 +149,7 @@ export function preserveMergedLocalRowsWithCards(mergedIndex, localIndex, preser
   const byId = new Map(mergedIndex.projects.map((p) => [p.id, p]));
   let changed = false;
   for (const id of preserveIds) {
+    if (isDeletedProjectId(id)) continue;
     if (byId.has(id)) continue;
     const localRow = localIndex?.projects?.find((p) => p.id === id);
     if (!localRow) continue;

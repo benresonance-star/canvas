@@ -251,6 +251,11 @@ export function applyPlacementMapToArrays(cards, stagedSyncCards, artifactPlacem
  */
 export function localPlacementShouldWin(localDoc, serverDoc, localEditAt, serverAt) {
   if (!localDoc) return false;
+  const localArtifactCount =
+    (localDoc.cards?.length ?? 0) + (localDoc.stagedSyncCards?.length ?? 0);
+  const serverArtifactCount =
+    (serverDoc?.cards?.length ?? 0) + (serverDoc?.stagedSyncCards?.length ?? 0);
+  if (localArtifactCount === 0 && serverArtifactCount > 0) return false;
   if (localEditAt > serverAt) return true;
 
   const serverMap = patchPlacementsMapFromArrays(

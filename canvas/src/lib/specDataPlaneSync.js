@@ -9,6 +9,12 @@ import { fetchCanvasProjectMeta } from './canvasProjectsApi.js';
 import { isApiAvailable } from './primitivesApi.js';
 import { enqueueSpecSyncRetry } from './specSyncOutbox.js';
 
+function parseUpdatedAt(value) {
+  if (!value) return 0;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 /**
  * Dual-write project payload to spec_canvas_state (best-effort).
  * @param {string} projectId
@@ -48,7 +54,8 @@ export async function syncSpecCanvasStateFromPayload(projectId, payload) {
 }
 
 /**
- * Load spec canvas row; when spec version matches project document revision, spec layout wins.
+ * Load spec canvas row; when its timestamp is at least as fresh as the project document,
+ * spec layout wins for canvas placement/viewport.
  * @param {string} projectId
  * @param {object} payload
  */
@@ -63,13 +70,15 @@ export async function reconcileSpecCanvasOnLoad(projectId, payload) {
 
     const meta = await fetchCanvasProjectMeta(projectId);
     const specVersion = Number(remote.version) || 0;
-    const docRevision = Number(meta?.revision) || 0;
-    const specMatchesDocument = meta && specVersion > 0 && specVersion === docRevision;
-    const specOnlySource = !meta && specVersion > 0;
-    const specAheadOfDocument =
-      meta && specVersion > 0 && specVersion >= docRevision;
+    const specUpdatedAt = parseUpdatedAt(remote.updatedAt);
+    const docUpdatedAt = parseUpdatedAt(meta?.updatedAt);
+    const specOnlySource = !meta && specUpdatedAt > 0;
+    const specAtLeastDocument =
+      meta && specUpdatedAt > 0 && (
+        docUpdatedAt === 0 || specUpdatedAt >= docUpdatedAt
+      );
 
-    if (specMatchesDocument || specOnlySource || specAheadOfDocument) {
+    if (specOnlySource || specAtLeastDocument) {
       if (specLayoutDrift(payload, remote.layout)) {
         console.info(
           `[spec] layout drift for project ${projectId} — applying spec_canvas_state (revision ${specVersion})`,

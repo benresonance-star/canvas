@@ -224,6 +224,105 @@ export function buildConfirmChangesForDialog(
 }
 
 /**
+ * After linking a folder on this browser, the server may already list artefacts while
+ * buildConfirmChangesForDialog returns nothing (metadata in sync, previews on disk).
+ * Surface disk files in the import dialog so the user can confirm hydration.
+ *
+ * @param {Record<string, object>} grouped
+ * @param {object[]} canvasCards
+ * @param {object[]} stagedCards
+ * @param {{ suppressedKeys?: Set<string>, knownAgentChatKeys?: Set<string> | null }} [opts]
+ */
+export function buildFolderConnectConfirmChanges(
+  grouped,
+  canvasCards,
+  stagedCards,
+  { suppressedKeys = new Set(), knownAgentChatKeys = null } = {},
+) {
+  const primary = buildConfirmChangesForDialog(grouped, canvasCards, stagedCards, {
+    suppressedKeys,
+    knownAgentChatKeys,
+  });
+  if (primary.length > 0) return primary;
+
+  const keys = Object.keys(grouped ?? {});
+  if (keys.length === 0) return [];
+
+  const { refreshPatches, stagedRefreshPatches } = buildSyncChangesFromFolder(
+    grouped,
+    canvasCards,
+    stagedCards,
+  );
+  const patchChanges = [...refreshPatches, ...stagedRefreshPatches]
+    .filter(
+      (p) =>
+        !suppressedKeys.has(p.key)
+        && !suppressedKeys.has(toCanonicalSyncKey(p.key)),
+    )
+    .map(({ key, group }) => {
+      const existing =
+        findSyncEntryByFolderKey(canvasCards, key)
+        ?? findSyncEntryByFolderKey(stagedCards, key);
+      const diskVersions = group.versions ?? [];
+      const newVersions = existing
+        ? diskVersions.filter(
+          (v) => !(existing.versions ?? []).find((ev) => ev.version === v.version),
+        )
+        : diskVersions;
+      return {
+        type: existing ? 'updated' : 'new',
+        key,
+        group,
+        existing,
+        newVersions,
+      };
+    });
+
+  if (patchChanges.length > 0) {
+    return filterSyncChangesForConfirm(
+      patchChanges,
+      canvasCards,
+      stagedCards,
+      knownAgentChatKeys,
+    );
+  }
+
+  const diskLinked = keys
+    .filter(
+      (key) =>
+        !suppressedKeys.has(key)
+        && !suppressedKeys.has(toCanonicalSyncKey(key)),
+    )
+    .map((key) => {
+      const group = grouped[key];
+      const existing =
+        findSyncEntryByFolderKey(canvasCards, key)
+        ?? findSyncEntryByFolderKey(stagedCards, key);
+      if (!existing) {
+        return { type: 'new', key, group };
+      }
+      const diskVersions = group.versions ?? [];
+      const newVersions = diskVersions.filter(
+        (v) => !(existing.versions ?? []).find((ev) => ev.version === v.version),
+      );
+      return {
+        type: 'updated',
+        key,
+        group,
+        existing,
+        newVersions,
+      };
+    });
+
+  return filterSyncChangesForConfirm(
+    diskLinked,
+    canvasCards,
+    stagedCards,
+    knownAgentChatKeys,
+  );
+}
+
+/**
  * @param {Array<{ version: number }>} existingVersions
  * @param {Array<{ version: number }>} newVersions
  * @param {Array<{ version: number }>} diskGroupVersions

@@ -11,6 +11,7 @@ export const strings = {
   sync: {
     connectFolder: 'Connect folder',
     sync: 'Sync',
+    scanFolder: 'Scan folder',
     syncInProgress: 'Syncing with server…',
     syncInProgressWithFolder: 'Syncing with server and folder…',
     syncComplete: 'Sync finished.',
@@ -33,7 +34,17 @@ export const strings = {
     reconnectFolderNamed: (name) =>
       `Allow access to “${name}” to sync files from disk. Choose “Allow on every visit” in Chrome to avoid prompts when switching projects.`,
     connectFolderNamed: (name) =>
-      `This project uses folder “${name}” on another device. On this browser, pick that same folder once — then canvas layout and files will sync.`,
+      `This project uses folder “${name}” on another device. Pick that same folder once on this browser. The folder handle is saved here when the browser allows it.`,
+    folderPickerBusy:
+      'Chrome still has a folder dialog open (check other windows) or refresh the page, then try Connect folder once.',
+    folderPickerIdInvalid:
+      'Could not open the folder picker. Refresh the page and try Connect folder again.',
+    folderImportReady: (n) =>
+      `${n} ${n === 1 ? 'artefact' : 'artefacts'} from folder — review and apply below.`,
+    folderScanNoFiles:
+      'Folder linked. No matching artefact files found (use prefix__name-v1.ext naming).',
+    importedFilesFolderName: 'Imported files',
+    importFiles: 'Import files',
     folderPermissionDenied: 'Could not access the folder. Try Reconnect or pick the folder again.',
     folderSaveFailed:
       'Could not save the folder link for this project. Reconnect the folder before refreshing the page.',
@@ -173,6 +184,8 @@ export const strings = {
       'Already up to date with the server.',
     loadingProject:
       'Loading project…',
+    switchTimeout:
+      'Project switch timed out. Try another project or click Sync to retry.',
     bootSyncTimeout:
       'Sync took too long; showing your cached canvas. Click Sync to retry from the server.',
     remoteChangesWhileEditing:
@@ -184,6 +197,9 @@ export const strings = {
     serverRevisionStale:
       'A newer version of this project is on the server. Refresh to update before editing.',
     refreshFromServer: 'Reload from server',
+    refreshProjects: 'Refresh projects',
+    projectsRefreshed: 'Project list refreshed from server.',
+    projectsRefreshFailed: 'Could not refresh projects from the server.',
     projectSyncing: 'Syncing project…',
     updatedFromOtherDevice:
       'This project was updated from the server.',
@@ -204,6 +220,9 @@ export const strings = {
     emptyWorkspaceBody:
       'Create a project to start placing notes, links, and files on the canvas. Projects are only added when you choose New project.',
     createFirstProject: 'Create your first project',
+    selectProjectTitle: 'Choose a project',
+    selectProjectBody:
+      'You have projects in the menu but none is open yet. Pick a project from the Projects menu to load its canvas.',
     createTitle: 'New project',
     createNameLabel: 'Project name',
     createConfirm: 'Create',
@@ -227,6 +246,11 @@ export const strings = {
     deleteConfirm: 'Delete',
     cancel: 'Cancel',
     cannotDeleteLast: 'You need at least one project.',
+    deleteFailed: 'Could not delete this project. Try again.',
+    deleteServerMayPersist:
+      'Project removed on this device, but a server copy may still exist — sync will retry.',
+    projectChangeInProgress:
+      'Wait for the current project change to finish, then try again.',
     dockRestoreBanner: (n) =>
       `${n} item${n === 1 ? '' : 's'} in the sync dock — not on the canvas. Drag them on, or restore layout.`,
     dockRestoreAction: 'Restore to canvas',

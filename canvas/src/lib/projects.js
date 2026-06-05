@@ -26,6 +26,7 @@ import {
 } from './workspaceIntegrity.js';
 import { projectCardCount } from './sync/projectSyncMerge.js';
 import { recordDeletedProjectId } from './projectDeletionTombstones.js';
+import { flowTrace } from './sync/syncTrace.js';
 import {
   initializeProjectSync,
   loadSyncedProjectIndex,
@@ -46,6 +47,7 @@ import {
   seedClientRevisionFromMeta,
   applyWorkspaceIntegrityRepair as applyWorkspaceIntegrityRepairCore,
 } from './projectSync.js';
+import { writeLocalActiveProjectId } from './sync/projectSyncLocal.js';
 
 export {
   flushProjectSync,
@@ -292,8 +294,11 @@ export async function findBestProjectIdWithLocalCanvas(index) {
     const payload = await readLocalProjectPayload(row.id);
     if (!payload) continue;
     const canvasCount = projectCardCount(payload);
-    if (canvasCount === 0) continue;
-    const score = canvasCount * 1e12 + (row.updatedAt ?? 0);
+    const stagedCount = Array.isArray(payload.stagedSyncCards)
+      ? payload.stagedSyncCards.length
+      : 0;
+    if (canvasCount === 0 && stagedCount === 0) continue;
+    const score = canvasCount * 1e12 + stagedCount * 1e9 + (row.updatedAt ?? 0);
     if (score > bestScore) {
       bestScore = score;
       bestId = row.id;
@@ -313,6 +318,27 @@ export async function resolveActiveProjectIdPreferringLocalBody(index) {
   return resolveActiveProjectId(index);
 }
 
+/**
+ * Active project for boot: honor persisted index.activeProjectId, but if that row
+ * has no local canvas while another project does, open the richer local body.
+ * @param {object | null | undefined} index
+ * @returns {Promise<string | null>}
+ */
+export async function resolveBootActiveProjectId(index) {
+  const activeId = resolveActiveProjectId(index);
+  if (!activeId) return null;
+  const richerId = await findBestProjectIdWithLocalCanvas(index);
+  if (!richerId || richerId === activeId) return activeId;
+  const activePayload = await readLocalProjectPayload(activeId);
+  const activeStagedCount = Array.isArray(activePayload?.stagedSyncCards)
+    ? activePayload.stagedSyncCards.length
+    : 0;
+  if (projectCardCount(activePayload) === 0 && activeStagedCount === 0) {
+    return richerId;
+  }
+  return activeId;
+}
+
 export async function loadProjectIndex() {
   try {
     return await loadSyncedProjectIndex();
@@ -321,8 +347,11 @@ export async function loadProjectIndex() {
   }
 }
 
-export async function saveProjectIndex(index, { immediate = false } = {}) {
-  await saveSyncedProjectIndex(index, { immediate });
+export async function saveProjectIndex(
+  index,
+  { immediate = false, deletedProjectIds = [] } = {},
+) {
+  await saveSyncedProjectIndex(index, { immediate, deletedProjectIds });
 }
 
 export async function migrateLegacyProjectIfNeeded() {
@@ -507,6 +536,7 @@ export async function ensureProjectIndex(options = {}) {
 /** Persist which project is active (called on autosave, not only on switch) */
 export async function touchActiveProjectInIndex(projectId) {
   if (!projectId) return null;
+  await writeLocalActiveProjectId(projectId);
   const index = await loadProjectIndex();
   if (!index?.projects?.length) return null;
   const row = index.projects.find((p) => p.id === projectId);
@@ -542,6 +572,7 @@ export async function setConnectedFolder(projectId, folderName) {
 }
 
 export async function setActiveProjectId(projectId) {
+  await writeLocalActiveProjectId(projectId);
   const index = await ensureProjectIndex();
   index.activeProjectId = projectId;
   await saveProjectIndex(index);
@@ -561,6 +592,7 @@ export async function createProject(name = strings.defaultProjectName) {
 async function createProjectBody(name = strings.defaultProjectName) {
   const index = await ensureProjectIndex({ serverPull: false });
   const id = crypto.randomUUID();
+  flowTrace('project:create-start', { projectId: id, name });
   const now = Date.now();
   const trimmed = uniqueProjectNameForIndex(index, name);
   index.projects.push({
@@ -603,6 +635,11 @@ async function createProjectBody(name = strings.defaultProjectName) {
   });
   repaired = integrity.repairedIndex ?? repaired;
   const healed = await healDuplicateProjectNames(repaired, id);
+  flowTrace('project:create-done', {
+    projectId: id,
+    documentPushOk,
+    projectCount: healed.index.projects.length,
+  });
   return { index: healed.index, projectId: id };
 }
 
@@ -650,16 +687,21 @@ export async function unarchiveProject(projectId) {
 }
 
 export async function deleteProject(projectId) {
+  flowTrace('project:delete-start', { projectId });
   const index = await ensureProjectIndex();
   const remaining = index.projects.filter((p) => p.id !== projectId);
-  if (remaining.length === 0) {
-    return { ok: false, reason: 'last' };
-  }
 
   recordDeletedProjectId(projectId);
-  await deletePreviewsForProject(projectId);
-  await removeFolderHandle(projectId);
-  await deleteSyncedProjectDocument(projectId);
+  try {
+    await deletePreviewsForProject(projectId);
+  } catch {
+    /* preview store may be unavailable in some environments */
+  }
+  try {
+    await removeFolderHandle(projectId);
+  } catch {
+    /* folder store may be unavailable in some environments */
+  }
   try {
     clearAgentChatSessionsForProject(projectId);
   } catch {
@@ -669,15 +711,47 @@ export async function deleteProject(projectId) {
   index.projects = remaining;
   let switchToId = null;
   if (index.activeProjectId === projectId) {
-    switchToId = pickFallbackActiveId(index, projectId) || remaining[0].id;
-    index.activeProjectId = switchToId;
+    if (remaining.length === 0) {
+      index.activeProjectId = null;
+      switchToId = null;
+    } else {
+      switchToId = pickFallbackActiveId(index, projectId) || remaining[0].id;
+      index.activeProjectId = switchToId;
+    }
   }
+
+  await purgeOrphanProjectBodies(index, {
+    protectProjectIds: remaining.map((p) => p.id),
+  });
+
   let repaired = index;
   const integrity = await repairWorkspaceIndex(index, {
     checkServerGhosts: isServerSyncEnabled(),
+    skipOrphanRecovery: true,
+    recentlyDeletedIds: [projectId],
   });
   repaired = integrity.repairedIndex ?? index;
-  await saveProjectIndex(repaired, { immediate: true });
+
+  if (import.meta.env?.DEV) {
+    const actions = integrity.actions ?? integrity.issues?.map((i) => i.type) ?? [];
+    console.debug('[canvas] deleteProject', {
+      projectId,
+      remaining: remaining.length,
+      orphanRecovered: integrity.orphanRecovered ?? 0,
+      actions,
+    });
+  }
+
+  await saveProjectIndex(repaired, {
+    immediate: true,
+    deletedProjectIds: [projectId],
+  });
+  await deleteSyncedProjectDocument(projectId);
+  flowTrace('project:delete-done', {
+    projectId,
+    switchToId,
+    remaining: remaining.length,
+  });
   return {
     ok: true,
     index: repaired,

@@ -1,6 +1,18 @@
 import { projectCardCount } from './sync/projectSyncMerge.js';
 
 /**
+ * Count user-visible artifact state across canvas and holding tray.
+ * @param {object | null | undefined} doc
+ */
+export function projectArtifactCount(doc) {
+  const canvasCards = projectCardCount(doc);
+  const dockCards = Array.isArray(doc?.stagedSyncCards)
+    ? doc.stagedSyncCards.length
+    : 0;
+  return canvasCards + dockCards;
+}
+
+/**
  * @param {object | null | undefined} doc
  */
 export function summarizeProjectDocumentShape(doc) {
@@ -12,9 +24,7 @@ export function summarizeProjectDocumentShape(doc) {
     else if (entry?.surface === 'canvas') placementCanvas += 1;
   }
   const canvasCards = projectCardCount(doc);
-  const dockCards = Array.isArray(doc?.stagedSyncCards)
-    ? doc.stagedSyncCards.length
-    : 0;
+  const dockCards = projectArtifactCount(doc) - canvasCards;
   return {
     canvasCards,
     dockCards,

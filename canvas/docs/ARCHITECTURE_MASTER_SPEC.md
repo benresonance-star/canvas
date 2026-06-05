@@ -205,21 +205,24 @@ Run validation via `lib/schemas/validate.js` helpers.
 
 ## 7. Debugging
 
+See **[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)** for the full system map, per-flow trace stages, and symptom tables.
+
 ### Sync trace
 
 Enable verbose sync logging in browser console:
 
 ```js
-localStorage.setItem('canvas:sync-trace', '1');
-// reload
+localStorage.setItem('canvas-sync-trace', '1');
+// reload (legacy alias: canvas:sync-trace)
 ```
 
-Implementation: `lib/sync/syncTrace.js` — logs patch summaries, reconcile decisions, placement audit steps.
+Implementation: `lib/sync/syncTrace.js` — logs patch summaries, reconcile decisions, flow stages (`project:create`, `project:switch`, etc.). See [DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md).
 
 ### Placement audit
 
 ```js
-localStorage.setItem('canvas:placement-audit', '1');
+localStorage.setItem('canvas-placement-audit', '1');
+// legacy alias: canvas:placement-audit
 ```
 
 Steps logged by `lib/placement/placementAudit.js` during load, commit, transfer.
@@ -228,12 +231,80 @@ Steps logged by `lib/placement/placementAudit.js` during load, commit, transfer.
 
 PATCH requests accept `traceId` in body; server logs via `syncTraceLog(traceId, ...)`.
 
+### Menu / canvas / database drift
+
+Selection and canvas are **multiple projections**, not one React field. When the menu checkmark, header title, and canvas cards disagree, trace which layers updated.
+
+```mermaid
+flowchart LR
+  subgraph menu [Menu highlight]
+    PEND[pendingSwitchProjectId]
+    ACT[activeProjectId React]
+    PLIST[projectList rows]
+  end
+  subgraph durable [Durable selection]
+    IDX[index.activeProjectId IDB]
+    SRV[server workspace index]
+  end
+  subgraph canvas [Canvas body]
+    NAME[state.projectName]
+    CARDS[state.cards stagedSyncCards]
+    DOC[IDB document]
+    SSE[remote patch reload]
+  end
+  PEND --> menu
+  ACT --> menu
+  PLIST --> menu
+  IDX --> ACT
+  SRV --> PLIST
+  DOC --> CARDS
+  SSE --> CARDS
+```
+
+| Layer | Location | Drives |
+|-------|----------|--------|
+| `pendingSwitchProjectId` | `useAppShell` | Menu highlight during switch |
+| `activeProjectId` | `useAppShell` | Committed selection after successful load |
+| `activeProjectIdRef` | `useAppShell` | `shouldApplyProjectLoad`, switch guards |
+| Index `activeProjectId` | `lib/projects.js` / IDB | Boot + `persistActiveProjectId` |
+| Server index | Postgres + SSE `index_updated` | Cross-browser project list |
+| `projectList` | `useAppShell` | `ProjectSwitcher` rows |
+| `state` / `loadProjectIntoState` | `useProjectSyncLifecycle` | Canvas cards |
+| Header display | `resolveHeaderProjectName` in `CanvasWorkspaceView` | Header `textbox` (menu row when not dirty) |
+
+**Workspace projection (Phase 2):** [`useWorkspaceProjection.js`](../src/features/workspace/useWorkspaceProjection.js) is the single coordinator for selection lifecycle. Consumers read `workspaceProjection` from `buildWorkspaceViewBundles` (not scattered `??` in the view).
+
+| Field | Meaning |
+|-------|---------|
+| `effectiveProjectId` | `pending ?? committed` — menu, header, canvas target during switch |
+| `committedProjectId` | React `activeProjectId` after successful load |
+| `phase` | `idle` \| `selecting` \| `ready` \| `noProjects` |
+| `canMutateCanvas` | I6 — blocks placement while switching |
+
+**Transitions:** `selectProject(targetId)` (outgoing commit → load → persist), `commitBoot` / `commitBootWithRecovery` (cold start via `resolveInitialProjectId.js`). Boot rehydrate repairs **same** id only; no second `findBestProjectIdWithLocalCanvas` pass.
+
+**Empty UX:** `noProjects` → create prompt; projects exist but `committedProjectId == null` → select-project prompt (`SelectProjectPrompt.jsx`).
+
+**Agent trace checklist** (see also [`AGENTS.md`](../AGENTS.md)):
+
+1. **Cursor browser:** `http://localhost:5173` — `browser_navigate` → `lock` → `snapshot` → switch project → assert menu checkmark row === header `textbox` name (I1).
+2. Enable `canvas-sync-trace` and reproduce.
+3. Fill a step table: file/function → input → output → `projectId` → `revision` / `switchSeq`.
+4. Note whether `loadProjectIntoState` returned `null` (`shouldApplyProjectLoad` / superseded switch).
+5. On switch failure, confirm `restoreWorkspaceProject(previousId)` ran only when `switchStillCurrent`.
+6. Dev: `window.__canvasProjectionSnapshot()` for projection fields.
+7. Run `npm run test:sync` after fixes.
+
+**Pure invariant helpers:** `src/lib/syncProjectionInvariants.js` — includes `resolveHeaderProjectName` (I1 menu/header alignment); tested in `syncProjectionInvariants.test.js`.
+
 ### Common issues
 
 | Symptom | Check |
 |---------|-------|
+| Menu shows FROG, canvas TREE STORM | Selection layers table above; failed switch without reload? `pending` cleared in `finally`? |
 | Stale canvas after edit | `getClientRevision(projectId)` vs server meta; SSE connected? |
 | Placements lost on switch | `artifactPlacements` in committed payload; `placement-persistence-qa.md` |
+| Dock→canvas reverts on refresh | `placement-persistence-qa.md` § Placement commit debug; `canvas-sync-trace` + `__canvasProjectionSnapshot` + `__canvasDocumentSnapshot`; look for `placement:commit-deferred` / missing `commit:done` |
 | Index out of sync | `GET /canvas/index/stream`; poll interval |
 | Spec vs document drift | `GET /canvas/projects/:id/spec-canvas` vs document revision |
 | Local-only mode | `isServerSyncEnabled()` false → footer banner |

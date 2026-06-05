@@ -18,6 +18,11 @@ import {
 } from '../../lib/projects.js';
 import { suppressedKeysForSave } from '../../lib/syncSuppressedKeys.js';
 import { syncTraceLog } from '../../lib/sync/syncTrace.js';
+import {
+  isPlacementCommitBlocked,
+  placementCommitBlockedResult,
+  shouldGatePlacementCommit,
+} from '../../lib/placementCommitGate.js';
 import { strings } from '../../content/strings.js';
 
 /**
@@ -34,6 +39,8 @@ export function useActionSync({
     initialHydratedRef,
     projectNameDirtyRef,
     pendingPlacementTransferSyncRef,
+    pendingPlacementCommitRef,
+    canMutateCanvasRef,
   },
   folderHandle,
   applyReconcileFromServer,
@@ -70,6 +77,7 @@ export function useActionSync({
         projectId,
         reason: 'switching_project',
       });
+      pendingPlacementTransferSyncRef.current = { projectId, traceId, options };
       return Promise.resolve();
     }
     if (creatingProjectRef.current) {
@@ -77,6 +85,7 @@ export function useActionSync({
         projectId,
         reason: 'creating_project',
       });
+      pendingPlacementTransferSyncRef.current = { projectId, traceId, options };
       return Promise.resolve();
     }
     if (!initialHydratedRef.current) {
@@ -119,6 +128,26 @@ export function useActionSync({
     creatingProjectRef,
   ]);
 
+  const commitProjectDocumentForSync = useCallback(
+    async (projectId, { reason = 'commit', pushRemote = false, traceId = null } = {}) => {
+      if (!projectId) return { ok: false };
+      return commitProjectDocument(projectId, {
+        state: stateRef.current,
+        stagedSyncCards: stagedSyncCardsRef.current,
+        artifactPlacements: null,
+        suppressedSyncKeys: suppressedKeysForSave(projectId, stateRef.current),
+        stripNoteContent:
+          Boolean(folderHandle)
+          && Boolean(folderPresentKeysRef.current?.length)
+          && isServerSyncEnabled(),
+        reason,
+        pushRemote,
+        traceId,
+      });
+    },
+    [folderHandle, stateRef, stagedSyncCardsRef, folderPresentKeysRef],
+  );
+
   const commitPlacementState = useCallback(
     async (
       projectId,
@@ -130,6 +159,24 @@ export function useActionSync({
       } = {},
     ) => {
       if (!projectId) return { ok: false };
+      const blocked = shouldGatePlacementCommit(reason)
+        ? placementCommitBlockedResult(canMutateCanvasRef)
+        : null;
+      if (blocked) {
+        if (pendingPlacementCommitRef) {
+          pendingPlacementCommitRef.current = {
+            projectId,
+            artifactPlacements,
+            reason,
+            traceId,
+          };
+        }
+        syncTraceLog(traceId, 'placement:commit-deferred', {
+          projectId,
+          reason: 'projection_not_ready',
+        });
+        return blocked;
+      }
       return commitProjectDocument(projectId, {
         state: stateRef.current,
         stagedSyncCards: stagedSyncCardsRef.current,
@@ -144,8 +191,73 @@ export function useActionSync({
         traceId,
       });
     },
-    [folderHandle, stateRef, stagedSyncCardsRef, folderPresentKeysRef],
+    [
+      folderHandle,
+      stateRef,
+      stagedSyncCardsRef,
+      folderPresentKeysRef,
+      canMutateCanvasRef,
+      pendingPlacementCommitRef,
+    ],
   );
+
+  const flushPendingPlacementCommit = useCallback(async () => {
+    const pending = pendingPlacementCommitRef?.current;
+    if (!pending) return;
+    if (isPlacementCommitBlocked(canMutateCanvasRef)) return;
+    if (activeProjectIdRef.current !== pending.projectId) {
+      pendingPlacementCommitRef.current = null;
+      return;
+    }
+    pendingPlacementCommitRef.current = null;
+    syncTraceLog(pending.traceId, 'placement:commit-flush', {
+      projectId: pending.projectId,
+    });
+    const result = await commitPlacementState(pending.projectId, {
+      artifactPlacements: pending.artifactPlacements,
+      reason: pending.reason,
+      traceId: pending.traceId,
+    });
+    if (!result?.deferred && !result?.skipped) {
+      await requestPlacementTransferSync({ traceId: pending.traceId });
+    }
+  }, [
+    pendingPlacementCommitRef,
+    canMutateCanvasRef,
+    activeProjectIdRef,
+    commitPlacementState,
+    requestPlacementTransferSync,
+  ]);
+
+  /** Commits deferred placement during switch-out (bypasses I6; projection may already be selecting). */
+  const flushPendingPlacementCommitForSwitch = useCallback(async (projectId) => {
+    const pending = pendingPlacementCommitRef?.current;
+    if (!pending || pending.projectId !== projectId) return;
+    pendingPlacementCommitRef.current = null;
+    syncTraceLog(pending.traceId, 'placement:commit-flush', {
+      projectId: pending.projectId,
+      reason: 'project_switch',
+    });
+    await commitProjectDocument(projectId, {
+      state: stateRef.current,
+      stagedSyncCards: stagedSyncCardsRef.current,
+      artifactPlacements: pending.artifactPlacements,
+      suppressedSyncKeys: suppressedKeysForSave(projectId, stateRef.current),
+      stripNoteContent:
+        Boolean(folderHandle)
+        && Boolean(folderPresentKeysRef.current?.length)
+        && isServerSyncEnabled(),
+      reason: pending.reason,
+      pushRemote: true,
+      traceId: pending.traceId,
+    });
+  }, [
+    pendingPlacementCommitRef,
+    stateRef,
+    stagedSyncCardsRef,
+    folderHandle,
+    folderPresentKeysRef,
+  ]);
 
   useEffect(() => {
     registerActionSyncHandlers({
@@ -166,12 +278,15 @@ export function useActionSync({
           },
         ),
       commitProjectDocument: (projectId, opts) =>
-        commitPlacementState(projectId, opts),
+        commitProjectDocumentForSync(projectId, opts),
       getStripNoteContent: () =>
         Boolean(folderHandle)
         && Boolean(folderPresentKeysRef.current?.length)
         && isServerSyncEnabled(),
-      touchIndex: (projectId) => touchActiveProjectInIndex(projectId),
+      touchIndex: (projectId) => {
+        if (projectId !== activeProjectIdRef.current) return null;
+        return touchActiveProjectInIndex(projectId);
+      },
       onLocalCacheFailed: () => {
         setSyncStatus({
           banner: strings.projects.localStorageFull,
@@ -219,7 +334,7 @@ export function useActionSync({
     return () => unregisterActionSyncHandlers();
   }, [
     applyReconcileFromServer,
-    commitPlacementState,
+    commitProjectDocumentForSync,
     folderHandle,
     activeProjectIdRef,
     stateRef,
@@ -233,6 +348,8 @@ export function useActionSync({
     requestStructuralSync,
     requestPlacementTransferSync,
     flushPendingPlacementTransferSync,
+    flushPendingPlacementCommit,
+    flushPendingPlacementCommitForSwitch,
     commitPlacementState,
   };
 }

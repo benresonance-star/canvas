@@ -3,25 +3,16 @@ import {
   archiveProject,
   unarchiveProject,
   deleteProject,
-  ensureProjectIndex,
   loadProjectIndex,
-  createProject as createNewProject,
-  setActiveProjectId as persistActiveProjectId,
   isServerSyncEnabled,
+  createProject as createNewProject,
+  createEmptyProjectState,
+  setActiveProjectId as persistActiveProjectId,
   consumeDuplicateMergeNotice,
   projectsForMenuFromIndex,
 } from '../../lib/projects.js';
-import {
-  commitProjectDocument,
-  clearCommittedPayloadCache,
-  getCommittedPayload,
-  saveProjectById,
-} from '../../lib/persistence.js';
-import { patchPlacementsMapFromArrays } from '../../lib/artifactPlacementsMap.js';
-import { suppressedKeysForSave } from '../../lib/syncSuppressedKeys.js';
-import { buildSwitchPlaceholderState } from '../../lib/projectSwitch.js';
-import { perfMark, perfMeasure } from '../../lib/loadPerfMarks.js';
 import { strings } from '../../content/strings.js';
+import { flowTrace } from '../../lib/sync/syncTrace.js';
 
 /**
  * Project create/switch/archive/delete workflow extracted from App.jsx.
@@ -30,23 +21,15 @@ export function useProjectWorkspace({
   refs: {
     activeProjectIdRef,
     stateRef,
-    stagedSyncCardsRef,
     switchingProjectRef,
     creatingProjectRef,
-    projectSwitchSeqRef,
-    projectHydratedRef,
     folderRestoreHandledSeqRef,
-    folderPresentKeysRef,
     projectNameDirtyRef,
-    lastAppliedSyncLockRef,
-    userAdjustedViewRef,
-    initialHydratedRef: _initialHydratedRef,
   },
   ui: {
     setActiveProjectId,
     setProjectList,
     setSyncStatus,
-    setSyncLock,
     setState,
     setProjectSwitchLoading,
     setPendingSwitchProjectId,
@@ -59,31 +42,20 @@ export function useProjectWorkspace({
     setFolderLinkProbeComplete,
     setFolderPresentKeys,
     setChangeFolderDialog,
-    showSearch,
     setShowSearch,
-    searchQuery,
     setSearchQuery,
-    architectureOpen,
     setArchitectureOpen,
   },
   deps: {
-    loaded: _loaded,
+    loaded,
     activeProjectId,
+    effectiveProjectId,
+    projectSwitchLoading,
     projectList,
     projectDeleteTarget,
     folderHandle,
     resetProjectUiParts: { resetCanvasUi, resetClusterUi, resetAgentUi },
-    loadProjectIntoState,
-    continueProjectSwitchBackground,
-    loadAgentChatThreadIndexEarly,
-    singleConnectorId,
-    syncActiveProjectNameFromIndex,
-    linkProjectFolder,
-    warnFolderNameMismatch,
-    scanFolder,
-    reconcileAllThreadChatCards,
-    requestStructuralSync,
-    fitCanvasViewToCards,
+    selectProject,
     setAgentMessages,
     setAgentPanelOpen,
     setActiveThreadId,
@@ -133,217 +105,44 @@ export function useProjectWorkspace({
     setActiveThreadId,
     setAgentChatThreadIndex,
     setThreadPickerOpen,
+    setSearchQuery,
+    setShowSearch,
+    setArchitectureOpen,
     resetCanvasUi,
     resetClusterUi,
     resetAgentUi,
   ]);
 
-  const switchProject = useCallback(async (targetId) => {
-    if (!targetId || targetId === activeProjectIdRef.current) return;
-    perfMark('switch/start');
-    const switchSeq = ++projectSwitchSeqRef.current;
-    switchingProjectRef.current = true;
-    setProjectSwitchLoading(true);
-    setPendingSwitchProjectId(targetId);
-
-    const previousActiveId = activeProjectIdRef.current;
-    const outgoingProjectId = previousActiveId;
-    const outgoingState =
-      outgoingProjectId ? { ...stateRef.current } : null;
-    const outgoingStaged = outgoingProjectId
-      ? [...stagedSyncCardsRef.current]
-      : [];
-    const outgoingPlacements = outgoingProjectId
-      ? patchPlacementsMapFromArrays(
-        getCommittedPayload(outgoingProjectId)?.artifactPlacements ?? {},
-        outgoingState?.cards ?? [],
-        outgoingStaged,
-      )
-      : null;
-
-    try {
-      if (outgoingProjectId) {
-        await commitProjectDocument(outgoingProjectId, {
-          state: outgoingState,
-          stagedSyncCards: outgoingStaged,
-          artifactPlacements: outgoingPlacements,
-          suppressedSyncKeys: suppressedKeysForSave(outgoingProjectId, outgoingState),
-          stripNoteContent:
-            Boolean(folderHandle)
-            && Boolean(folderPresentKeysRef.current?.length)
-            && isServerSyncEnabled(),
-          reason: 'projectSwitch:outgoing',
-        });
-        clearCommittedPayloadCache(outgoingProjectId);
-      }
-
-      resetProjectUi();
-      projectHydratedRef.current.delete(targetId);
-
-      activeProjectIdRef.current = targetId;
-      const index = await loadProjectIndex();
-      const row = index?.projects?.find((p) => p.id === targetId);
-      projectNameDirtyRef.current = false;
-      setSyncLock('live');
-      lastAppliedSyncLockRef.current = 'live';
-      setSyncStatus(clearStaleSyncBanners);
-      setState((prev) => ({
-        ...prev,
-        ...buildSwitchPlaceholderState(row, strings.defaultProjectName),
-      }));
-
-      folderRestoreHandledSeqRef.current = null;
-
-      const [, cards] = await Promise.all([
-        loadAgentChatThreadIndexEarly(targetId, singleConnectorId),
-        loadProjectIntoState(targetId, {
-          switchSeq,
-          hydratePreviews: false,
-          localOnly: true,
-        }),
-      ]);
-      perfMark('switch/paint');
-      perfMeasure('switch/paint', 'switch/start', 'switch/paint');
-
-      const switchStillCurrent = projectSwitchSeqRef.current === switchSeq;
-
-      if (switchStillCurrent && cards != null && reconcileAllThreadChatCards()) {
-        requestStructuralSync();
-      }
-
-      if (cards == null) {
-        if (switchStillCurrent) {
-          activeProjectIdRef.current = previousActiveId ?? null;
-          setSyncStatus({ error: strings.projects.switchLoadFailed });
-          setTimeout(() => setSyncStatus(null), 6000);
-        }
-      } else if (switchStillCurrent) {
-        setActiveProjectId(targetId);
-        await persistActiveProjectId(targetId);
-        const view = stateRef.current.canvasView;
-        userAdjustedViewRef.current = Boolean(
-          view
-          && Number.isFinite(view.x)
-          && Number.isFinite(view.y)
-          && Number.isFinite(view.zoom),
-        );
-        const refreshedIndex = await loadProjectIndex();
-        syncActiveProjectNameFromIndex(refreshedIndex);
-        void continueProjectSwitchBackground(targetId, switchSeq, {
-          projectId: outgoingProjectId,
-          state: outgoingState,
-          stagedSyncCards: outgoingStaged,
-          artifactPlacements: outgoingPlacements,
-        });
-        void (async () => {
-          if (projectSwitchSeqRef.current !== switchSeq) return;
-          setFolderLinkInProgress(true);
-          let switchLinkResult = {
-            granted: false,
-            handle: null,
-            stored: false,
-          };
-          try {
-            switchLinkResult = await linkProjectFolder(targetId, {
-              requestIfNeeded: true,
-              switchSeq,
-            });
-            if (projectSwitchSeqRef.current !== switchSeq) return;
-            if (switchLinkResult.granted && switchLinkResult.handle) {
-              warnFolderNameMismatch(targetId, switchLinkResult.handle);
-              try {
-                await scanFolder(switchLinkResult.handle, {
-                  baseCards: cards ?? [],
-                  projectId: targetId,
-                });
-                if (projectSwitchSeqRef.current === switchSeq) {
-                  folderRestoreHandledSeqRef.current = { projectId: targetId, switchSeq };
-                }
-              } catch (scanErr) {
-                console.warn('Folder scan after project switch failed:', scanErr);
-              }
-            }
-          } finally {
-            if (projectSwitchSeqRef.current === switchSeq) {
-              setFolderLinkInProgress(false);
-            }
-          }
-        })();
-      }
-    } catch (e) {
-      console.error('Project switch failed:', e);
-      if (projectSwitchSeqRef.current === switchSeq) {
-        activeProjectIdRef.current = previousActiveId ?? null;
-        setSyncStatus({ error: strings.projects.switchLoadFailed });
-        setTimeout(() => setSyncStatus(null), 6000);
-      }
-    } finally {
-      if (projectSwitchSeqRef.current === switchSeq) {
-        switchingProjectRef.current = false;
-        setPendingSwitchProjectId(null);
-        setFolderLinkInProgress(false);
-      }
-      setProjectSwitchLoading(false);
-    }
-  }, [
-    activeProjectIdRef,
-    stateRef,
-    stagedSyncCardsRef,
-    switchingProjectRef,
-    projectSwitchSeqRef,
-    projectHydratedRef,
-    folderRestoreHandledSeqRef,
-    folderPresentKeysRef,
-    projectNameDirtyRef,
-    lastAppliedSyncLockRef,
-    userAdjustedViewRef,
-    setProjectSwitchLoading,
-    setPendingSwitchProjectId,
-    setFolderLinkInProgress,
-    setActiveProjectId,
-    setSyncLock,
-    setSyncStatus,
-    setState,
-    resetProjectUi,
-    folderHandle,
-    clearStaleSyncBanners,
-    loadProjectIntoState,
-    loadAgentChatThreadIndexEarly,
-    singleConnectorId,
-    syncActiveProjectNameFromIndex,
-    continueProjectSwitchBackground,
-    linkProjectFolder,
-    warnFolderNameMismatch,
-    scanFolder,
-    reconcileAllThreadChatCards,
-    requestStructuralSync,
-  ]);
+  const switchProject = selectProject;
 
   const handleCreateProject = useCallback(async (projectName = strings.defaultProjectName) => {
-    if (creatingProjectRef.current || switchingProjectRef.current) return;
+    const staleSwitchGuard =
+      switchingProjectRef.current
+      && loaded
+      && !projectSwitchLoading
+      && effectiveProjectId === activeProjectId;
+    if (staleSwitchGuard) {
+      flowTrace('project:create-clear-stale-switch', {
+        projectId: activeProjectId,
+      });
+      switchingProjectRef.current = false;
+    }
+    if (creatingProjectRef.current || switchingProjectRef.current) {
+      setSyncStatus({ toast: strings.projects.projectChangeInProgress });
+      setTimeout(() => setSyncStatus(null), 3500);
+      return;
+    }
     creatingProjectRef.current = true;
-    const switchSeq = ++projectSwitchSeqRef.current;
     switchingProjectRef.current = true;
     setProjectSwitchLoading(true);
 
-    const outgoingProjectId = activeProjectIdRef.current;
-    const outgoingState =
-      outgoingProjectId ? { ...stateRef.current } : null;
-    const outgoingStaged = outgoingProjectId
-      ? [...stagedSyncCardsRef.current]
-      : [];
-
     try {
-      if (outgoingProjectId) {
-        await saveProjectById(
-          outgoingProjectId,
-          outgoingState,
-          outgoingStaged,
-          { persistLocal: true },
-        );
-      }
-      resetProjectUi();
+      flowTrace('project:create-ui-start', {
+        projectId: null,
+        outgoingProjectId: activeProjectIdRef.current,
+      });
       const { index, projectId } = await createNewProject(projectName);
+      flowTrace('project:create-ui-loaded', { projectId });
       const duplicatesMerged = consumeDuplicateMergeNotice();
       if (duplicatesMerged > 0) {
         setSyncStatus({
@@ -351,38 +150,15 @@ export function useProjectWorkspace({
         });
         setTimeout(() => setSyncStatus(null), 6000);
       }
-      const row = index.projects.find((p) => p.id === projectId);
-      const placeholder = buildSwitchPlaceholderState(
-        row,
-        strings.defaultProjectName,
-      );
-      activeProjectIdRef.current = projectId;
-      setActiveProjectId(projectId);
       setProjectList(projectsForMenuFromIndex(index));
-      setState((prev) => {
-        const next = {
-          ...prev,
-          ...placeholder,
-          stagedSyncCards: [],
-          suppressedSyncKeys: [],
-        };
-        stateRef.current = next;
-        return next;
+      const switchResult = await selectProject(projectId, {
+        reason: 'create',
+        showSwitchLoading: true,
+        force: true,
       });
-      stagedSyncCardsRef.current = [];
-      await persistActiveProjectId(projectId);
-      const cards = await loadProjectIntoState(projectId, {
-        switchSeq,
-        hydratePreviews: false,
-        localOnly: true,
-      });
-      if (cards == null) {
+      if (!switchResult?.ok) {
         setSyncStatus({ error: strings.projects.switchLoadFailed });
         setTimeout(() => setSyncStatus(null), 6000);
-        setProjectSwitchLoading(false);
-      } else {
-        fitCanvasViewToCards(cards);
-        setProjectSwitchLoading(false);
       }
     } catch (e) {
       console.error('Create project switch failed:', e);
@@ -391,33 +167,22 @@ export function useProjectWorkspace({
     } finally {
       creatingProjectRef.current = false;
       switchingProjectRef.current = false;
-      setProjectSwitchLoading(false);
-    }
-    if (activeProjectIdRef.current) {
-      void continueProjectSwitchBackground(activeProjectIdRef.current, switchSeq, {
-        projectId: outgoingProjectId,
-        state: outgoingState,
-        stagedSyncCards: outgoingStaged,
-      });
-    } else {
+      setPendingSwitchProjectId(null);
       setProjectSwitchLoading(false);
     }
   }, [
     activeProjectIdRef,
-    stateRef,
-    stagedSyncCardsRef,
     creatingProjectRef,
     switchingProjectRef,
-    projectSwitchSeqRef,
     setProjectSwitchLoading,
-    setActiveProjectId,
+    setPendingSwitchProjectId,
     setProjectList,
-    setState,
     setSyncStatus,
-    resetProjectUi,
-    loadProjectIntoState,
-    fitCanvasViewToCards,
-    continueProjectSwitchBackground,
+    selectProject,
+    loaded,
+    projectSwitchLoading,
+    activeProjectId,
+    effectiveProjectId,
   ]);
 
   const handleRequestCreateProject = useCallback(() => {
@@ -450,18 +215,44 @@ export function useProjectWorkspace({
     if (!projectDeleteTarget) return;
     const { id } = projectDeleteTarget;
     setProjectDeleteTarget(null);
-    const result = await deleteProject(id);
-    if (!result.ok) {
-      setSyncStatus({ error: strings.projects.cannotDeleteLast });
-      setTimeout(() => setSyncStatus(null), 2500);
-      return;
-    }
-    setProjectList(projectsForMenuFromIndex(result.index));
-    if (result.switchToId) {
-      await switchProject(result.switchToId);
-    } else {
-      const index = await ensureProjectIndex();
-      setProjectList(projectsForMenuFromIndex(index));
+    flowTrace('project:delete-ui-start', { projectId: id });
+    try {
+      const result = await deleteProject(id);
+      if (!result.ok) {
+        setSyncStatus({ error: strings.projects.cannotDeleteLast });
+        setTimeout(() => setSyncStatus(null), 2500);
+        return;
+      }
+      setProjectList(projectsForMenuFromIndex(result.index));
+      if (result.switchToId) {
+        const deletingActive = id === activeProjectIdRef.current;
+        await switchProject(result.switchToId, {
+          reason: 'delete',
+          commitOutgoing: !deletingActive,
+          rollbackProjectId: deletingActive ? null : undefined,
+        });
+      } else if (result.index.projects.length === 0) {
+        activeProjectIdRef.current = null;
+        projectNameDirtyRef.current = false;
+        await persistActiveProjectId(null);
+        setActiveProjectId(null);
+        resetProjectUi();
+        const empty = createEmptyProjectState();
+        stateRef.current = { ...stateRef.current, ...empty };
+        setState((prev) => ({ ...prev, ...empty }));
+      }
+      if (isServerSyncEnabled()) {
+        const index = await loadProjectIndex();
+        if (index?.projects?.some((p) => p.id === id)) {
+          setSyncStatus({
+            banner: strings.projects.deleteServerMayPersist,
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Delete project failed:', e);
+      setSyncStatus({ error: strings.projects.deleteFailed });
+      setTimeout(() => setSyncStatus(null), 6000);
     }
   }, [
     projectDeleteTarget,
@@ -469,13 +260,20 @@ export function useProjectWorkspace({
     setProjectDeleteTarget,
     setProjectList,
     setSyncStatus,
+    activeProjectIdRef,
+    projectNameDirtyRef,
+    stateRef,
+    setState,
+    resetProjectUi,
+    setActiveProjectId,
   ]);
 
   const connectedFolderName = useMemo(() => {
-    if (!activeProjectId) return null;
-    const row = projectList.find((p) => p.id === activeProjectId);
+    const id = effectiveProjectId ?? activeProjectId;
+    if (!id) return null;
+    const row = projectList.find((p) => p.id === id);
     return row?.connectedFolderName ?? null;
-  }, [projectList, activeProjectId]);
+  }, [projectList, activeProjectId, effectiveProjectId]);
 
   const folderDisplayName = folderHandle?.name ?? connectedFolderName;
 

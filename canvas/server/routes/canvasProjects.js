@@ -37,7 +37,7 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
 
   app.put('/canvas/index', async (req, res) => {
     try {
-      const { index, expectedRevision, clientId } = req.body;
+      const { index, expectedRevision, clientId, deletedProjectIds } = req.body;
       if (!index || !Array.isArray(index.projects)) {
         return res.status(400).json({ error: 'index with projects array required' });
       }
@@ -53,7 +53,9 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
           );
         }
       }
-      const result = await putCanvasIndex(index, expectedRevision);
+      const result = await putCanvasIndex(index, expectedRevision, {
+        deletedProjectIds: Array.isArray(deletedProjectIds) ? deletedProjectIds : [],
+      });
       if (!result.ok) {
         return res.status(409).json({
           error: 'conflict',
@@ -139,7 +141,12 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
 
   app.put('/canvas/projects/:projectId', async (req, res) => {
     try {
-      const { payload, expectedRevision } = req.body;
+      const {
+        payload,
+        expectedRevision,
+        allowEmptyRemoteOverwrite,
+        allowDockOnlyRemoteOverwrite,
+      } = req.body;
       if (!payload || typeof payload !== 'object') {
         return res.status(400).json({ error: 'payload required' });
       }
@@ -150,10 +157,14 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
         req.params.projectId,
         payload,
         expectedRevision,
+        {
+          allowEmptyRemoteOverwrite: allowEmptyRemoteOverwrite === true,
+          allowDockOnlyRemoteOverwrite: allowDockOnlyRemoteOverwrite === true,
+        },
       );
       if (!result.ok) {
         return res.status(409).json({
-          error: 'conflict',
+          error: result.reason || 'conflict',
           revision: result.revision,
           payload: result.payload,
           updatedAt: result.updatedAt,
@@ -171,7 +182,15 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
 
   app.patch('/canvas/projects/:projectId', async (req, res) => {
     try {
-      const { ops, expectedRevision, clientId, reason, traceId } = req.body;
+      const {
+        ops,
+        expectedRevision,
+        clientId,
+        reason,
+        traceId,
+        allowEmptyRemoteOverwrite,
+        allowDockOnlyRemoteOverwrite,
+      } = req.body;
       if (!Array.isArray(ops) || ops.length === 0) {
         return res.status(400).json({ error: 'ops required' });
       }
@@ -188,6 +207,10 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
         expectedRevision,
         ops,
         traceId,
+        allowEmptyRemoteOverwrite: allowEmptyRemoteOverwrite === true,
+        allowDockOnlyRemoteOverwrite:
+          allowDockOnlyRemoteOverwrite === true
+          || reason === 'placementTransfer:dock',
       });
       if (!result.ok) {
         const status = result.reason ? 400 : 409;

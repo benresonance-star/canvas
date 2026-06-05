@@ -1,4 +1,5 @@
 import { canonicalKeyForEntry } from './artifactPlacement.js';
+import { canvasCardToStaged } from './syncStaging.js';
 
 /**
  * Map canvas card type to spec layout kind.
@@ -62,6 +63,99 @@ export function projectPayloadToSpecViewport(payload) {
   };
 }
 
+function layoutEntryMap(entries) {
+  return new Map(
+    (entries ?? [])
+      .filter((entry) => entry?.syncKey)
+      .map((entry) => [entry.syncKey, entry]),
+  );
+}
+
+function applyPlacedGeometry(card, placed) {
+  return {
+    ...card,
+    id: placed.cardId ?? card.id,
+    x: placed.x ?? card.x ?? 0,
+    y: placed.y ?? card.y ?? 0,
+    width: placed.w ?? card.width,
+    height: placed.h ?? card.height,
+    clusterId: placed.cluster_id ?? card.clusterId,
+  };
+}
+
+function stagedToPlacedCard(staged, placed) {
+  return {
+    id: placed.cardId ?? crypto.randomUUID(),
+    key: staged.key,
+    prefix: staged.prefix,
+    name: staged.name,
+    type: staged.type,
+    versions: staged.versions ?? [],
+    pinnedVersion: staged.pinnedVersion,
+    x: placed.x ?? 0,
+    y: placed.y ?? 0,
+    width: placed.w ?? undefined,
+    height: placed.h ?? undefined,
+    ...(placed.cluster_id ? { clusterId: placed.cluster_id } : {}),
+    ...(staged.audioSkinColor ? { audioSkinColor: staged.audioSkinColor } : {}),
+  };
+}
+
+function applySpecSurfaces(payload, layout) {
+  const placedByKey = layoutEntryMap(layout.placed);
+  const stagedByKey = layoutEntryMap(layout.staging);
+  if (placedByKey.size === 0 && stagedByKey.size === 0) {
+    return {
+      cards: payload.cards ?? [],
+      stagedSyncCards: payload.stagedSyncCards ?? [],
+    };
+  }
+
+  const cards = [];
+  const stagedSyncCards = [];
+  const handled = new Set();
+
+  for (const card of payload.cards ?? []) {
+    const key = canonicalKeyForEntry(card);
+    if (key && placedByKey.has(key)) {
+      cards.push(applyPlacedGeometry(card, placedByKey.get(key)));
+      handled.add(key);
+      continue;
+    }
+    if (key && stagedByKey.has(key)) {
+      const staged = canvasCardToStaged(card);
+      stagedSyncCards.push({
+        ...staged,
+        stagingId: stagedByKey.get(key).stagingId ?? staged.stagingId,
+      });
+      handled.add(key);
+      continue;
+    }
+    cards.push(card);
+  }
+
+  for (const staged of payload.stagedSyncCards ?? []) {
+    const key = canonicalKeyForEntry(staged);
+    if (key && handled.has(key)) continue;
+    if (key && placedByKey.has(key)) {
+      cards.push(stagedToPlacedCard(staged, placedByKey.get(key)));
+      handled.add(key);
+      continue;
+    }
+    if (key && stagedByKey.has(key)) {
+      stagedSyncCards.push({
+        ...staged,
+        stagingId: stagedByKey.get(key).stagingId ?? staged.stagingId,
+      });
+      handled.add(key);
+      continue;
+    }
+    stagedSyncCards.push(staged);
+  }
+
+  return { cards, stagedSyncCards };
+}
+
 /**
  * Compare layout derived from JSON vs stored spec row (drift logging).
  * @param {object} payload
@@ -76,25 +170,11 @@ export function applySpecCanvasLayoutToPayload(payload, specState) {
   if (!payload || !specState?.layout) return payload;
   const layout = specState.layout;
   const viewport = specState.viewport ?? layout.viewport;
-  let cards = payload.cards ?? [];
-  if (Array.isArray(layout.placed) && layout.placed.length > 0) {
-    const byKey = new Map(layout.placed.map((p) => [p.syncKey, p]));
-    cards = cards.map((card) => {
-      const key = canonicalKeyForEntry(card);
-      const placed = byKey.get(key);
-      if (!placed) return card;
-      return {
-        ...card,
-        x: placed.x ?? card.x,
-        y: placed.y ?? card.y,
-        width: placed.w ?? card.width,
-        height: placed.h ?? card.height,
-      };
-    });
-  }
+  const { cards, stagedSyncCards } = applySpecSurfaces(payload, layout);
   return {
     ...payload,
     cards,
+    stagedSyncCards,
     canvasView: viewport
       ? {
           x: viewport.x ?? payload.canvasView?.x ?? 0,

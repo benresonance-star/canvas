@@ -1,7 +1,8 @@
 import { BOOT_API_REQUEST_TIMEOUT_MS } from './bootSync.js';
 import { summarizePatchOps, syncTraceLog } from './sync/syncTrace.js';
+import { resolveApiBase } from './apiBase.js';
 
-const API_BASE = import.meta.env.VITE_PRIMITIVES_API || '/api';
+const API_BASE = resolveApiBase();
 const REQUEST_TIMEOUT_MS = BOOT_API_REQUEST_TIMEOUT_MS;
 
 async function request(path, options = {}) {
@@ -43,6 +44,7 @@ export async function fetchCanvasIndex() {
 /**
  * @param {object} index
  * @param {number} expectedRevision
+ * @param {{ allowEmptyRemoteOverwrite?: boolean, allowDockOnlyRemoteOverwrite?: boolean }} [options]
  */
 /**
  * @returns {string}
@@ -51,7 +53,12 @@ export function workspaceIndexStreamUrl() {
   return `${API_BASE}/canvas/index/stream`;
 }
 
-export async function saveCanvasIndex(index, expectedRevision = 0, clientId = null) {
+export async function saveCanvasIndex(
+  index,
+  expectedRevision = 0,
+  clientId = null,
+  { deletedProjectIds = [] } = {},
+) {
   const res = await fetch(`${API_BASE}/canvas/index`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -59,6 +66,7 @@ export async function saveCanvasIndex(index, expectedRevision = 0, clientId = nu
       index,
       expectedRevision,
       clientId: clientId ?? undefined,
+      deletedProjectIds: deletedProjectIds.length > 0 ? deletedProjectIds : undefined,
     }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
@@ -146,11 +154,17 @@ export async function fetchCanvasProject(projectId) {
  *   | { ok: false, conflict: true, revision: number, payload: object | null, updatedAt: string | null }
  * >}
  */
-export async function saveCanvasProject(projectId, payload, expectedRevision) {
+export async function saveCanvasProject(projectId, payload, expectedRevision, options = {}) {
   const res = await fetch(`${API_BASE}/canvas/projects/${encodeURIComponent(projectId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ payload, expectedRevision }),
+    body: JSON.stringify({
+      payload,
+      expectedRevision,
+      allowEmptyRemoteOverwrite: options.allowEmptyRemoteOverwrite === true || undefined,
+      allowDockOnlyRemoteOverwrite:
+        options.allowDockOnlyRemoteOverwrite === true || undefined,
+    }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const data = await res.json().catch(() => ({}));
@@ -185,6 +199,8 @@ export async function saveCanvasProject(projectId, payload, expectedRevision) {
  *   clientId?: string,
  *   reason?: string,
  *   traceId?: string | null,
+ *   allowEmptyRemoteOverwrite?: boolean,
+ *   allowDockOnlyRemoteOverwrite?: boolean,
  * }} body
  */
 export async function patchCanvasProject(projectId, body) {

@@ -49,6 +49,8 @@ export function shouldFallbackToPutAfterPatch(patchResult) {
  * @param {string} reason
  * @param {object | null} [beforePayload]
  * @param {string | null} [traceId]
+ * @param {boolean} [allowEmptyRemoteOverwrite]
+ * @param {boolean} [allowDockOnlyRemoteOverwrite]
  */
 export async function pushProjectPatchIfEnabled(
   projectId,
@@ -56,6 +58,8 @@ export async function pushProjectPatchIfEnabled(
   reason,
   beforePayload = null,
   traceId = null,
+  allowEmptyRemoteOverwrite = false,
+  allowDockOnlyRemoteOverwrite = false,
 ) {
   if (!getServerSyncEnabled() || !isProjectPatchSyncEnabled()) {
     syncTraceLog(traceId, 'patch:skipped', { projectId, reason: 'sync_disabled' });
@@ -92,6 +96,8 @@ export async function pushProjectPatchIfEnabled(
       clientId: getProjectSyncClientId(),
       reason,
       traceId,
+      allowEmptyRemoteOverwrite,
+      allowDockOnlyRemoteOverwrite,
     });
     syncTraceLog(traceId, 'patch:response', {
       projectId,
@@ -159,6 +165,8 @@ export async function pushProjectPatchIfEnabled(
           clientId: getProjectSyncClientId(),
           reason,
           traceId,
+          allowEmptyRemoteOverwrite,
+          allowDockOnlyRemoteOverwrite,
         });
         if (retry.ok) {
           applyServerProjectRevision(projectId, retry.updatedAt, retry.revision);

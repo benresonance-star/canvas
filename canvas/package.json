@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:sync": "vitest run projectPatch projectSync placement projectDocument actionSync schemas",
     "test:features": "vitest run src/features",
+    "test:e2e": "node scripts/placement-switch-e2e.mjs",
     "baseline": "node scripts/capture-architecture-baseline.mjs",
     "server": "node --use-system-ca server/index.js",
     "db:migrate": "node server/migrate.js",

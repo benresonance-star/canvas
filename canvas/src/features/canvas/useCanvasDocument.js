@@ -39,6 +39,7 @@ import {
   transferCardToDock,
 } from '../../lib/placementTransfer.js';
 import { createSyncTraceId, syncTraceLog } from '../../lib/sync/syncTrace.js';
+import { isPlacementCommitBlocked } from '../../lib/placementCommitGate.js';
 import {
   getFallbackTrayDropRect,
   isPointerInTrayDropZone,
@@ -96,6 +97,7 @@ export function useCanvasDocument({ refs, deps }) {
     canvasViewportSizeRef,
     clusterContextProjectIdRef,
     singleConnectorIdRef,
+    canMutateCanvasRef,
   } = refs;
   const {
     state,
@@ -330,44 +332,45 @@ export function useCanvasDocument({ refs, deps }) {
     setSyncStatus,
   ]);
 
-  const applySyncChanges = useCallback(() => {
-    if (!confirmChanges) return;
-    const { changes, applyMode = 'merge' } = confirmChanges;
-    const newlyStaged = changes
-      .filter((c) => c.type === 'new')
-      .map(buildStagedSyncCardFromChange);
+  const applySyncChangesFromList = useCallback(
+    ({ changes, applyMode = 'merge' } = {}) => {
+      if (!changes?.length) return { applied: false, stagedCount: 0 };
+      const newlyStaged = changes
+        .filter((c) => c.type === 'new')
+        .map(buildStagedSyncCardFromChange);
 
-    const stagedVersionUpdates = new Map();
+      const stagedVersionUpdates = new Map();
 
-    setState((prev) => {
-      const cardsCopy = applyMode === 'replace' ? [] : [...prev.cards];
-      changes.forEach((change) => {
-        if (change.type !== 'updated') return;
-        const idx = cardsCopy.findIndex((c) => syncKeysMatch(c.key, change.key));
-        if (idx >= 0) {
-          const merged = mergeVersionsForSyncUpdate(
-            cardsCopy[idx].versions,
-            change.newVersions,
-            change.group.versions,
-          );
-          cardsCopy[idx] = { ...cardsCopy[idx], versions: merged };
-        } else {
-          stagedVersionUpdates.set(
-            change.key,
-            mergeVersionsForSyncUpdate(
-              change.existing.versions ?? [],
+      setState((prev) => {
+        const cardsCopy = applyMode === 'replace' ? [] : [...prev.cards];
+        changes.forEach((change) => {
+          if (change.type !== 'updated') return;
+          const idx = cardsCopy.findIndex((c) => syncKeysMatch(c.key, change.key));
+          if (idx >= 0) {
+            const merged = mergeVersionsForSyncUpdate(
+              cardsCopy[idx].versions,
               change.newVersions,
               change.group.versions,
-            ),
-          );
-        }
+            );
+            cardsCopy[idx] = { ...cardsCopy[idx], versions: merged };
+          } else {
+            stagedVersionUpdates.set(
+              change.key,
+              mergeVersionsForSyncUpdate(
+                change.existing.versions ?? [],
+                change.newVersions,
+                change.group.versions,
+              ),
+            );
+          }
+        });
+        stateRef.current = { ...stateRef.current, cards: cardsCopy };
+        return { ...prev, cards: cardsCopy };
       });
-      return { ...prev, cards: cardsCopy };
-    });
 
-    if (newlyStaged.length > 0 || stagedVersionUpdates.size > 0) {
-      setStagedSyncCards((prev) => {
-        let next = prev;
+      let stagedCount = stagedSyncCardsRef.current?.length ?? 0;
+      if (newlyStaged.length > 0 || stagedVersionUpdates.size > 0) {
+        let next = stagedSyncCardsRef.current ?? [];
         if (stagedVersionUpdates.size > 0) {
           next = next.map((s) => {
             const versions = stagedVersionUpdates.get(s.key);
@@ -383,26 +386,34 @@ export function useCanvasDocument({ refs, deps }) {
           { threads: agentChatThreadIndexRef.current?.threads ?? [] },
         );
         stagedSyncCardsRef.current = exclusive.stagedSyncCards;
+        stagedCount = exclusive.stagedSyncCards.length;
         if (exclusive.changed) {
+          stateRef.current = { ...stateRef.current, cards: exclusive.cards };
           setState((s) => ({ ...s, cards: exclusive.cards }));
         }
-        return exclusive.stagedSyncCards;
-      });
-    }
-    invalidateFolderScan();
+        setStagedSyncCards(exclusive.stagedSyncCards);
+      }
+      invalidateFolderScan();
+      requestStructuralSync({ awaitLocal: true });
+      void refreshGraph();
+      return { applied: true, stagedCount, newlyStagedCount: newlyStaged.length };
+    },
+    [
+      refreshGraph,
+      requestStructuralSync,
+      invalidateFolderScan,
+      setState,
+      stateRef,
+      stagedSyncCardsRef,
+      agentChatThreadIndexRef,
+    ],
+  );
+
+  const applySyncChanges = useCallback(() => {
+    if (!confirmChanges) return;
+    applySyncChangesFromList(confirmChanges);
     setConfirmChanges(null);
-    requestStructuralSync();
-    void refreshGraph();
-  }, [
-    confirmChanges,
-    refreshGraph,
-    requestStructuralSync,
-    invalidateFolderScan,
-    setState,
-    stateRef,
-    stagedSyncCardsRef,
-    agentChatThreadIndexRef,
-  ]);
+  }, [confirmChanges, applySyncChangesFromList]);
 
   const getTrayDropRect = useCallback(() => {
     return trayDropRectRef.current ?? getFallbackTrayDropRect();
@@ -483,6 +494,7 @@ export function useCanvasDocument({ refs, deps }) {
       if (!staged) return;
 
       const projectId = activeProjectIdRef.current;
+      if (!projectId) return;
       const result = transferStagedToCanvas(
         stateRef.current.cards,
         stagedSyncCardsRef.current,
@@ -494,6 +506,12 @@ export function useCanvasDocument({ refs, deps }) {
       if (!result.placed) return;
 
       const traceId = createSyncTraceId();
+      if (isPlacementCommitBlocked(canMutateCanvasRef)) {
+        syncTraceLog(traceId, 'placement:ui-before-ready', {
+          projectId,
+          stagingId,
+        });
+      }
       syncTraceLog(traceId, 'ui:placement-canvas', {
         projectId,
         stagingId,
@@ -544,13 +562,15 @@ export function useCanvasDocument({ refs, deps }) {
         }
       }
       if (projectId) {
-        await commitPlacementState(projectId, {
+        const commitResult = await commitPlacementState(projectId, {
           artifactPlacements: result.artifactPlacements,
           reason: 'placementTransfer:canvas',
           traceId,
         });
+        if (!commitResult?.deferred) {
+          await requestPlacementTransferSync({ traceId });
+        }
       }
-      await requestPlacementTransferSync({ traceId });
       void refreshGraph();
     },
     [
@@ -560,6 +580,7 @@ export function useCanvasDocument({ refs, deps }) {
       commitPlacementState,
       refreshGraph,
       requestPlacementTransferSync,
+      canMutateCanvasRef,
       singleConnectorIdRef,
       invalidateFolderScan,
       setState,
@@ -828,10 +849,12 @@ export function useCanvasDocument({ refs, deps }) {
         x: 100 + (stateRef.current.cards.length % 4) * 320,
         y: 100 + Math.floor(stateRef.current.cards.length / 4) * 240,
       };
-      setState((prev) => ({
-        ...prev,
-        cards: [...prev.cards, newCard],
-      }));
+      const nextState = {
+        ...stateRef.current,
+        cards: [...stateRef.current.cards, newCard],
+      };
+      stateRef.current = nextState;
+      setState(nextState);
       if (projectId && newCard.id) {
         registerOptimisticCard(projectId, newCard.id);
       }
@@ -1078,6 +1101,7 @@ export function useCanvasDocument({ refs, deps }) {
     resetCanvasUi,
     handleRestoreDockToCanvas,
     applySyncChanges,
+    applySyncChangesFromList,
     getTrayDropRect,
     handleCardDragMove,
     handleCardDragEnd,

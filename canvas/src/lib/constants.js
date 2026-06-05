@@ -1,6 +1,7 @@
 /** @deprecated Legacy single-project key; migrated into canvas:project-index */
 export const LEGACY_PROJECT_KEY = 'canvas:default-project';
 export const PROJECT_INDEX_KEY = 'canvas:project-index';
+export const LOCAL_ACTIVE_PROJECT_ID_KEY = 'canvas:active-project-id';
 
 export function projectStorageKey(projectId) {
   return `canvas:project:${projectId}`;

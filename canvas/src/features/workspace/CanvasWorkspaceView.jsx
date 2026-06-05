@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile.js';
 import {
   getProjectSyncMode,
@@ -12,11 +12,21 @@ import {
 } from '../../lib/filename.js';
 import { strings } from '../../content/strings.js';
 import {
+  canShowEmptyWorkspace,
+  shouldShowSelectProjectPrompt,
+} from '../../lib/syncProjectionInvariants.js';
+import { SelectProjectPrompt } from '../../components/SelectProjectPrompt.jsx';
+import {
   clampCanvasZoom,
   setViewZoomAtViewportCenter,
 } from '../../lib/canvasView.js';
 import { getContextLimits } from '../../lib/agentContextContent.js';
 import { clusterSelectionStatsFromCards } from '../../lib/clusterMembers.js';
+import { fetchCanvasProjectDocument } from '../../lib/canvasProjectsApi.js';
+import {
+  artifactCountAuditStatus,
+  summarizeArtifactDatabaseCounts,
+} from '../../lib/artifactCountAudit.js';
 import { SyncHoldingTray } from '../../components/SyncHoldingTray.jsx';
 import { PrimitiveTableModal } from '../../components/PrimitiveTableModal.jsx';
 import { NewNoteDialog } from '../../components/NewNoteDialog.jsx';
@@ -54,8 +64,9 @@ export function CanvasWorkspaceView({
     state,
     setState,
     canEditCanvas,
-    activeProjectId,
+    activeProjectId: _activeProjectId,
     pendingSwitchProjectId,
+    workspaceProjection,
     projectList,
     projectSwitchLoading,
     projectNameDirtyRef,
@@ -64,11 +75,19 @@ export function CanvasWorkspaceView({
     commitProjectDisplayName,
     switchProject,
     handleRequestCreateProject,
+    handleRefreshProjectsFromServer,
     handleArchiveProject,
     handleUnarchiveProject,
     handleConfirmDeleteProject,
     handleCreateProject,
   } = workspace;
+
+  const {
+    effectiveProjectId,
+    committedProjectId,
+    displayProjectName,
+    phase,
+  } = workspaceProjection ?? {};
 
   const {
     folderHandle,
@@ -81,6 +100,7 @@ export function CanvasWorkspaceView({
     handleSyncClick,
     handleReconnectFolder,
     requestFolder,
+    importFilesToDock,
     beginChangeFolder,
   } = folder;
 
@@ -281,10 +301,15 @@ export function CanvasWorkspaceView({
     folderNeedsConnect,
   } = folderLinkState;
 
+  const showChangeFolder =
+    folderConnected
+    || folderStoredOnDevice
+    || Boolean(connectedFolderName?.trim());
+
   const folderNeedsConnectUi =
     folderNeedsConnect
     || (
-      Boolean(activeProjectId)
+      Boolean(effectiveProjectId)
       && !folderConnected
       && !folderNeedsReconnect
       && folderLinkState.phase === 'unlinked'
@@ -327,6 +352,52 @@ export function CanvasWorkspaceView({
     return clusterSelectionStatsFromCards(cards, clusterMemberOptions);
   }, [state.cards, selectedCardIds, clusterMemberOptions]);
 
+  const [artifactCountAudit, setArtifactCountAudit] = useState(null);
+
+  useEffect(() => {
+    if (!effectiveProjectId || !isServerSyncEnabled()) {
+      return undefined;
+    }
+    let cancelled = false;
+    void fetchCanvasProjectDocument(effectiveProjectId)
+      .then((remote) => {
+        if (cancelled) return;
+        const counts = summarizeArtifactDatabaseCounts(remote?.payload);
+        if (!counts) {
+          setArtifactCountAudit({
+            projectId: effectiveProjectId,
+            loading: false,
+            missing: true,
+            status: 'unknown',
+          });
+          return;
+        }
+        setArtifactCountAudit({
+          projectId: effectiveProjectId,
+          loading: false,
+          revision: remote?.revision ?? 0,
+          updatedAt: remote?.updatedAt ?? null,
+          ...counts,
+          status: artifactCountAuditStatus(state.cards.length, counts),
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setArtifactCountAudit({
+          projectId: effectiveProjectId,
+          loading: false,
+          error: true,
+          status: 'unknown',
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveProjectId, state.cards.length, stagedSyncCards.length]);
+
+  const visibleArtifactCountAudit =
+    artifactCountAudit?.projectId === effectiveProjectId ? artifactCountAudit : null;
+
   return (
     <div className="h-screen w-screen overflow-hidden bg-canvas text-primary sans">
       {/* Canvas or Mobile view */}
@@ -364,7 +435,7 @@ export function CanvasWorkspaceView({
           linkCountByCardId={linkCountByCardId}
           onGraphRefresh={refreshGraph}
           folderHandle={folderHandle}
-          projectId={activeProjectId}
+          projectId={effectiveProjectId}
           projectName={state.projectName}
           onPatchCardVersion={handleUpdateVersion}
           onInlineSaveUserNote={handleInlineSaveUserNote}
@@ -429,8 +500,8 @@ export function CanvasWorkspaceView({
       <CanvasChrome
           showDesktopControls={!isMobile}
           projectList={projectList}
-          activeProjectId={pendingSwitchProjectId ?? activeProjectId}
-          projectName={state.projectName}
+          activeProjectId={effectiveProjectId}
+          projectName={displayProjectName}
           onProjectNameChange={(name) => {
             projectNameDirtyRef.current = true;
             setState((prev) => ({ ...prev, projectName: name }));
@@ -439,6 +510,7 @@ export function CanvasWorkspaceView({
           onSwitchProject={switchProject}
           projectSwitchLoading={projectSwitchLoading}
           onCreateProject={handleRequestCreateProject}
+          onRefreshProjects={handleRefreshProjectsFromServer}
           onArchiveProject={handleArchiveProject}
           onUnarchiveProject={handleUnarchiveProject}
           onDeleteProjectRequest={(p) => setProjectDeleteTarget({ id: p.id, name: p.name })}
@@ -509,9 +581,11 @@ export function CanvasWorkspaceView({
           folderNeedsReconnect={folderNeedsReconnect}
           folderNeedsConnect={folderNeedsConnectUi}
           folderLinked={folderConnected}
+          showChangeFolder={showChangeFolder}
           onChangeFolder={() => setChangeFolderDialog(true)}
           onNewNote={() => setNewNoteOpen(true)}
           onAddLink={() => setAddLinkOpen(true)}
+          onImportFiles={importFilesToDock}
           onSync={() => {
             void handleSyncClick();
           }}
@@ -522,6 +596,7 @@ export function CanvasWorkspaceView({
             folderNeedsConnectUi ? () => void requestFolder() : undefined
           }
           cardCount={state.cards.length}
+          artifactCountAudit={visibleArtifactCountAudit}
           selectedCardCount={selectedCardIds.size}
           clusterApiAvailable={clusterApiAvailable}
           clusterApiUnavailableMessage={clusterApiUnavailableMessage}
@@ -550,24 +625,43 @@ export function CanvasWorkspaceView({
         </div>
       )}
 
-      {/* Loading project (switch) */}
-      {!isMobile && projectSwitchLoading && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+      {/* Loading project (user switch only — boot/repair use phase without this overlay) */}
+      {!isMobile && projectSwitchLoading && pendingSwitchProjectId && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
           <p className="sans text-sm text-muted uppercase tracking-wider">
             {strings.projects.loadingProject}
           </p>
         </div>
       )}
 
-      {!isMobile && loaded && !activeProjectId && (
-        <EmptyWorkspacePrompt onCreateProject={handleRequestCreateProject} />
+      {!isMobile
+        && loaded
+        && canShowEmptyWorkspace({
+          projectListLength: projectList.length,
+          committedProjectId,
+          phase,
+        }) && (
+        <EmptyWorkspacePrompt
+          onCreateProject={handleRequestCreateProject}
+          onRefreshProjects={handleRefreshProjectsFromServer}
+        />
       )}
 
-      {/* Empty state desktop */}
       {!isMobile
-        && activeProjectId
+        && loaded
+        && shouldShowSelectProjectPrompt({
+          projectListLength: projectList.length,
+          committedProjectId,
+          phase,
+        }) && <SelectProjectPrompt />}
+
+      {/* Empty state desktop — only when selection settled (not mid-switch / folder link) */}
+      {!isMobile
+        && phase === 'ready'
+        && effectiveProjectId
         && state.cards.length === 0
-        && !projectSwitchLoading && (
+        && !projectSwitchLoading
+        && !folderLinkInProgress && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="text-center">
             <p className="serif italic text-muted text-2xl mb-2">{strings.empty.desktopTitle}</p>
@@ -585,9 +679,9 @@ export function CanvasWorkspaceView({
             generatedAt: new Date().toISOString(),
             syncMode: getProjectSyncMode(),
             serverSyncEnabled: isServerSyncEnabled(),
-            activeProjectId,
+            activeProjectId: effectiveProjectId,
             syncLock,
-            clientRevision: activeProjectId ? getClientRevision(activeProjectId) : 0,
+            clientRevision: effectiveProjectId ? getClientRevision(effectiveProjectId) : 0,
             cardCount: state.cards.length,
             stagedCount: stagedSyncCards.length,
             folderLinked: folderConnected,
@@ -826,7 +920,7 @@ export function CanvasWorkspaceView({
           cards={state.cards}
           clusterId={clusterId}
           folderHandle={folderHandle}
-          projectId={activeProjectId}
+          projectId={effectiveProjectId}
           projectName={state.projectName}
           onClose={() => setOpenCardId(null)}
           onPinVersion={pinVersion}

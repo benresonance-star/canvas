@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { loadFolderHandle } from '../../lib/folderStore.js';
 import { verifyFolderHandleStored } from '../../lib/folderPersist.js';
 import {
@@ -13,7 +13,11 @@ import {
   manualSyncTimeoutPromise,
   buildManualSyncSuccessMessage,
 } from '../../lib/sync/manualSync.js';
-import { buildDirectoryPickerOptions } from '../../lib/folderPicker.js';
+import {
+  isFolderPickerBusyError,
+  isFolderPickerIdError,
+  pickProjectDirectoryHandle,
+} from '../../lib/folderPicker.js';
 import { readFileEntry } from '../../lib/readFile.js';
 import {
   parseFilename,
@@ -28,9 +32,11 @@ import {
 } from '../../lib/previewHydrate.js';
 import { mergeDiskPreviewIntoCardVersions } from '../../lib/sync.js';
 import { strings } from '../../content/strings.js';
+import { flowTrace } from '../../lib/sync/syncTrace.js';
 import {
   buildStagedSyncCardFromChange,
   buildConfirmChangesForDialog,
+  buildFolderConnectConfirmChanges,
   buildSyncChangesFromFolder,
   findSyncEntryByFolderKey,
   partitionSyncChanges,
@@ -92,6 +98,8 @@ export function useFolderLinkScan({
     folderPresentKeys,
     projectList,
     commitPlacementState,
+    flushPendingPlacementCommit,
+    applySyncChangesFromList,
     refreshGraph,
     syncCanvasFromServerAfterFolderConnect,
     loadProjectIntoStateRef,
@@ -104,6 +112,7 @@ export function useFolderLinkScan({
 }) {
   const {
     activeProjectIdRef,
+    committedProjectIdRef,
     projectSwitchSeqRef,
     folderRestoreHandledSeqRef,
     lastLoadedCardsRef,
@@ -112,13 +121,56 @@ export function useFolderLinkScan({
     stagedSyncCardsRef,
     folderScanSeqRef,
     folderPresentKeysRef,
+    folderPickerInFlightRef,
     switchingProjectRef,
     setChangeFolderDialog,
   } = refs;
 
+  const settledProjectIdRef = committedProjectIdRef ?? activeProjectIdRef;
+  const directoryPickPromiseRef = useRef(null);
+
+  const clearFolderPickerInProgress = useCallback(() => {
+    folderPickerInFlightRef.current = false;
+    setSyncStatus((prev) => {
+      if (!prev?.folderPickerInProgress) return prev ?? null;
+      const next = { ...prev };
+      delete next.folderPickerInProgress;
+      return Object.keys(next).length > 0 ? next : null;
+    });
+  }, [folderPickerInFlightRef]);
+
+  const pickDirectoryExclusive = useCallback(
+    async (projectId) => {
+      if (directoryPickPromiseRef.current) {
+        return directoryPickPromiseRef.current;
+      }
+      clearFolderPickerInProgress();
+      folderPickerInFlightRef.current = true;
+      setSyncStatus((prev) => ({ ...(prev ?? {}), folderPickerInProgress: true }));
+
+      const promise = (async () => {
+        try {
+          return await pickProjectDirectoryHandle(projectId);
+        } finally {
+          clearFolderPickerInProgress();
+        }
+      })();
+
+      directoryPickPromiseRef.current = promise;
+      try {
+        return await promise;
+      } finally {
+        if (directoryPickPromiseRef.current === promise) {
+          directoryPickPromiseRef.current = null;
+        }
+      }
+    },
+    [clearFolderPickerInProgress, folderPickerInFlightRef],
+  );
+
   const persistFolderConnection = useCallback(async (handle) => {
     const projectId = activeProjectIdRef.current;
-    if (!projectId || !handle) return;
+    if (!projectId || !handle) return false;
     let stored = false;
     try {
       stored = await verifyFolderHandleStored(projectId, handle);
@@ -130,13 +182,18 @@ export function useFolderLinkScan({
       setFolderStoredOnDevice(false);
       setSyncStatus({ toast: strings.sync.folderSaveFailed });
       setTimeout(() => setSyncStatus(null), 5000);
-      return;
+      return false;
     }
     setFolderHandle(handle);
     setFolderStoredOnDevice(true);
     setCachedFolderHandle(projectId, handle);
     const index = await setConnectedFolder(projectId, handle.name);
     if (index?.projects) setProjectList(projectsForMenuFromIndex(index));
+    flowTrace('folder:link-done', {
+      projectId,
+      folderName: handle.name,
+    });
+    return true;
   }, []);
 
   const linkProjectFolder = useCallback(
@@ -206,10 +263,18 @@ export function useFolderLinkScan({
       signal,
       _placementDeferCount = 0,
       skipPlacementDefer = false,
+      autoApplyImport = false,
+      preferImportDialog = false,
     } = options;
     const scanSeq = ++folderScanSeqRef.current;
     const isScanStale = () => scanSeq !== folderScanSeqRef.current || signal?.aborted;
-    const projectIdEarly = projectIdOption ?? activeProjectIdRef.current;
+    flowTrace('folder:scan-start', {
+      projectId: projectIdOption ?? settledProjectIdRef.current,
+      scanSeq,
+      autoApplyImport,
+    });
+    if (!projectIdOption && switchingProjectRef.current) return;
+    const projectIdEarly = projectIdOption ?? settledProjectIdRef.current;
     const { isSyncGateIdle, getSyncGateLabel } = await import('../../lib/syncGate.js');
     if (
       !skipPlacementDefer
@@ -229,10 +294,10 @@ export function useFolderLinkScan({
     const cardsBaseline =
       baseCards !== undefined
         ? (baseCards ?? [])
-        : (projectIdEarly === activeProjectIdRef.current
+        : (projectIdEarly === settledProjectIdRef.current
           ? (stateRef.current.cards ?? [])
           : (stateRef.current.cards ?? []));
-    const projectId = projectIdOption ?? activeProjectIdRef.current;
+    const projectId = projectIdOption ?? settledProjectIdRef.current;
     setSyncStatus({ scanning: true });
     const scanSpinnerTimeoutId = setTimeout(() => {
       setSyncStatus((prev) => (prev?.scanning ? null : prev));
@@ -244,7 +309,7 @@ export function useFolderLinkScan({
     try {
       for await (const entry of handle.values()) {
         if (isScanStale()) break;
-        if (entry.kind === 'file') {
+        if (!entry.kind || entry.kind === 'file') {
           const parsed = parseFilename(entry.name);
           const cacheKey = projectId
             ? previewCacheKey(projectId, parsed.fullBase, parsed.version)
@@ -399,7 +464,9 @@ export function useFolderLinkScan({
       }
     }
 
-    if (stagedRefreshPatches.length > 0) {
+    const deferPreviewMergeForImportDialog = preferImportDialog;
+
+    if (stagedRefreshPatches.length > 0 && !deferPreviewMergeForImportDialog) {
       const stagedRefreshByKey = new Map(stagedRefreshPatches.map((p) => [p.key, p.group]));
       setStagedSyncCards((prev) =>
         prev.map((s) => {
@@ -419,17 +486,27 @@ export function useFolderLinkScan({
 
     const canvasNow = stateRef.current.cards ?? [];
     const stagedNow = stagedSyncCardsRef.current ?? [];
-    const confirmChangesList =
-      scanSeq === folderScanSeqRef.current
-      && !stagingDragActiveRef.current
-        ? buildConfirmChangesForDialog(groupedFinal, canvasNow, stagedNow, {
-          suppressedKeys,
-          knownAgentChatKeys,
-        })
-        : [];
+    const buildConfirmList = () => {
+      if (scanSeq !== folderScanSeqRef.current || stagingDragActiveRef.current) {
+        return [];
+      }
+      const opts = { suppressedKeys, knownAgentChatKeys };
+      if (preferImportDialog) {
+        return buildFolderConnectConfirmChanges(
+          groupedFinal,
+          canvasNow,
+          stagedNow,
+          opts,
+        );
+      }
+      return buildConfirmChangesForDialog(groupedFinal, canvasNow, stagedNow, opts);
+    };
+    const confirmChangesList = buildConfirmList();
 
     const willClearCanvas = confirmChangesList.length === 0 && replaceCanvas;
-    if (refreshPatches.length > 0 && !willClearCanvas) {
+    const skipInlinePreviewMerge =
+      deferPreviewMergeForImportDialog && confirmChangesList.length > 0;
+    if (refreshPatches.length > 0 && !willClearCanvas && !skipInlinePreviewMerge) {
       let mergedCards = null;
       setState((prev) => {
         mergedCards = (prev.cards ?? []).map((c) => {
@@ -450,6 +527,13 @@ export function useFolderLinkScan({
     if (confirmChangesList.length === 0) {
       exitStatus =
         refreshPatches.length > 0 ? { previewsRestored: true } : { noChanges: true };
+      if (preferImportDialog && found.length === 0) {
+        setSyncStatus((prev) => ({
+          ...(prev ?? {}),
+          toast: strings.sync.folderScanNoFiles,
+        }));
+        setTimeout(() => setSyncStatus(null), 6000);
+      }
       if (replaceCanvas) {
         setState(prev => ({ ...prev, cards: [] }));
         setOpenCardId(null);
@@ -457,13 +541,39 @@ export function useFolderLinkScan({
         setVersionStackOpen(null);
       }
       setTimeout(() => setSyncStatus(null), 2000);
-    } else if (scanSeq === folderScanSeqRef.current) {
-      setConfirmChanges({
-        changes: confirmChangesList,
-        applyMode: replaceCanvas ? 'replace' : 'merge',
-      });
-      exitStatus = null;
+    } else if (
+      scanSeq === folderScanSeqRef.current
+      && !isScanStale()
+    ) {
+      const applyMode = replaceCanvas ? 'replace' : 'merge';
+      if (autoApplyImport && confirmChangesList.length > 0) {
+        const applied = applySyncChangesFromList?.({
+          changes: confirmChangesList,
+          applyMode,
+        });
+        if (applied?.newlyStagedCount > 0) {
+          setTrayRevealActive(true);
+        }
+        exitStatus = { previewsRestored: true };
+      } else {
+        setConfirmChanges({
+          changes: confirmChangesList,
+          applyMode,
+        });
+        setSyncStatus((prev) => ({
+          ...(prev ?? {}),
+          toast: strings.sync.folderImportReady(confirmChangesList.length),
+        }));
+        exitStatus = null;
+      }
     } else {
+      flowTrace('folder:scan-stale', {
+        projectId,
+        scanSeq,
+        scanSeqNow: folderScanSeqRef.current,
+        preferImportDialog,
+        foundCount: found.length,
+      });
       exitStatus = { noChanges: true };
       setTimeout(() => setSyncStatus(null), 2000);
     }
@@ -476,6 +586,12 @@ export function useFolderLinkScan({
         !exitStatus?.error
           ? (projectIdOption ?? activeProjectIdRef.current)
           : null;
+      flowTrace('folder:scan-done', {
+        projectId: folderScanProjectId,
+        scanSeq,
+        stale: isScanStale(),
+        exitStatus: exitStatus ? Object.keys(exitStatus) : ['ok'],
+      });
     }
     if (folderScanProjectId) {
       const cached = getCommittedPayload(folderScanProjectId);
@@ -490,7 +606,12 @@ export function useFolderLinkScan({
         console.warn('Folder scan action sync failed:', e);
       }
     }
-  }, [commitPlacementState, refreshGraph, invalidateFolderScan]);
+  }, [
+    commitPlacementState,
+    refreshGraph,
+    invalidateFolderScan,
+    applySyncChangesFromList,
+  ]);
 
   const probeFolderStoredOnDevice = useCallback(async (projectId) => {
     if (!projectId) {
@@ -561,10 +682,14 @@ export function useFolderLinkScan({
           && (switchSeq == null || projectSwitchSeqRef.current === switchSeq)
         ) {
           setFolderLinkProbeComplete(true);
+          folderRestoreHandledSeqRef.current = {
+            projectId,
+            switchSeq: projectSwitchSeqRef.current,
+          };
         }
       }
     },
-    [linkProjectFolder, scanFolder, warnFolderNameMismatch],
+    [linkProjectFolder, scanFolder, warnFolderNameMismatch, folderRestoreHandledSeqRef],
   );
 
   useEffect(() => {
@@ -641,17 +766,43 @@ export function useFolderLinkScan({
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, [loaded, activeProjectId, projectSwitchLoading]);
 
-  const pickProjectDirectory = useCallback(async (projectId) => {
-    const base = buildDirectoryPickerOptions(projectId);
-    try {
-      return await window.showDirectoryPicker(base);
-    } catch (e) {
-      if (base.id && (e?.name === 'TypeError' || e?.name === 'NotSupportedError')) {
-        return window.showDirectoryPicker({ mode: 'readwrite' });
-      }
-      throw e;
-    }
-  }, []);
+  const pickProjectDirectory = pickDirectoryExclusive;
+
+  useEffect(() => {
+    clearFolderPickerInProgress();
+    directoryPickPromiseRef.current = null;
+  }, [clearFolderPickerInProgress]);
+
+  const finishFolderConnectFlow = useCallback(
+    async (projectId, handle) => {
+      const linked = await persistFolderConnection(handle);
+      if (!linked) return;
+      // Block attemptRestore from starting a competing scan during connect.
+      folderRestoreHandledSeqRef.current = {
+        projectId,
+        switchSeq: projectSwitchSeqRef.current,
+      };
+      setFolderLinkProbeComplete(true);
+      warnFolderNameMismatch(projectId, handle);
+      stagingDragActiveRef.current = false;
+      await scanFolder(handle, {
+        baseCards: stateRef.current.cards ?? [],
+        projectId,
+        skipPlacementDefer: true,
+        autoApplyImport: true,
+        preferImportDialog: true,
+      });
+      void syncCanvasFromServerAfterFolderConnect(projectId);
+      await flushPendingPlacementCommit?.();
+    },
+    [
+      persistFolderConnection,
+      warnFolderNameMismatch,
+      scanFolder,
+      syncCanvasFromServerAfterFolderConnect,
+      flushPendingPlacementCommit,
+    ],
+  );
 
   const requestFolder = useCallback(async () => {
     if (!window.showDirectoryPicker) {
@@ -665,30 +816,54 @@ export function useFolderLinkScan({
       return;
     }
     try {
-      const handle = await pickProjectDirectory(projectId);
-      await persistFolderConnection(handle);
-      setFolderLinkProbeComplete(true);
-      warnFolderNameMismatch(projectId, handle);
+      const handle = await pickDirectoryExclusive(projectId);
+      await finishFolderConnectFlow(projectId, handle);
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        const message = isFolderPickerBusyError(e)
+          ? strings.sync.folderPickerBusy
+          : isFolderPickerIdError(e)
+            ? strings.sync.folderPickerIdInvalid
+            : e.message;
+        setSyncStatus({ error: message });
+        setTimeout(() => setSyncStatus(null), 6000);
+      }
+    }
+  }, [pickDirectoryExclusive, finishFolderConnectFlow]);
+
+  const importFilesToDock = useCallback(
+    async (files) => {
+      const projectId = activeProjectIdRef.current;
+      const selected = Array.from(files ?? []).filter(Boolean);
+      if (!projectId) {
+        setSyncStatus({ error: strings.projects.noActiveProject });
+        setTimeout(() => setSyncStatus(null), 4000);
+        return;
+      }
+      if (selected.length === 0) {
+        setSyncStatus({ toast: strings.sync.folderScanNoFiles });
+        setTimeout(() => setSyncStatus(null), 4000);
+        return;
+      }
+      const handle = {
+        name: strings.sync.importedFilesFolderName,
+        async *values() {
+          for (const file of selected) {
+            yield file;
+          }
+        },
+      };
       await scanFolder(handle, {
-        baseCards: stateRef.current.cards,
+        baseCards: stateRef.current.cards ?? [],
         projectId,
         skipPlacementDefer: true,
+        autoApplyImport: true,
+        preferImportDialog: true,
       });
-      folderRestoreHandledSeqRef.current = {
-        projectId,
-        switchSeq: projectSwitchSeqRef.current,
-      };
-      await syncCanvasFromServerAfterFolderConnect(projectId);
-    } catch (e) {
-      if (e.name !== 'AbortError') setSyncStatus({ error: e.message });
-    }
-  }, [
-    scanFolder,
-    persistFolderConnection,
-    pickProjectDirectory,
-    warnFolderNameMismatch,
-    syncCanvasFromServerAfterFolderConnect,
-  ]);
+      await flushPendingPlacementCommit?.();
+    },
+    [scanFolder, flushPendingPlacementCommit],
+  );
 
   const applyFolderHandleAndScan = useCallback(
     async (handle) => {
@@ -722,6 +897,7 @@ export function useFolderLinkScan({
         });
         await applyFolderHandleAndScan(result.handle);
         await syncCanvasFromServerAfterFolderConnect(projectId);
+        await flushPendingPlacementCommit?.();
         return;
       }
       if (result.reason === 'not_stored') {
@@ -743,6 +919,7 @@ export function useFolderLinkScan({
     requestFolder,
     warnFolderNameMismatch,
     syncCanvasFromServerAfterFolderConnect,
+    flushPendingPlacementCommit,
   ]);
 
   const handleSyncClick = useCallback(async () => {
@@ -775,8 +952,7 @@ export function useFolderLinkScan({
       return;
     }
 
-    // Server-first: footer Sync pulls Postgres layout; folder scan stays on connect/reconnect.
-    const withFolderScan = false;
+    const withFolderScan = syncAction === 'scan' && Boolean(folderHandle);
     setSyncStatus({
       manualSyncing: true,
       banner: strings.sync.syncInProgress,
@@ -865,9 +1041,9 @@ export function useFolderLinkScan({
       setSyncStatus({ error: strings.sync.folderUnsupported });
       return;
     }
+    const projectId = activeProjectIdRef.current;
     try {
-      const projectId = activeProjectIdRef.current;
-      const handle = await pickProjectDirectory(projectId);
+      const handle = await pickDirectoryExclusive(projectId);
       await persistFolderConnection(handle);
       warnFolderNameMismatch(projectId, handle);
       await scanFolder(
@@ -877,16 +1053,35 @@ export function useFolderLinkScan({
             baseCards: [],
             replaceCanvas: true,
             projectId,
+            skipPlacementDefer: true,
+            autoApplyImport: true,
+            preferImportDialog: true,
           }
           : {
             baseCards: stateRef.current.cards,
             projectId,
+            skipPlacementDefer: true,
+            autoApplyImport: true,
+            preferImportDialog: true,
           },
       );
+      await flushPendingPlacementCommit?.();
     } catch (e) {
-      if (e.name !== 'AbortError') setSyncStatus({ error: e.message });
+      if (e.name !== 'AbortError') {
+        const message = isFolderPickerBusyError(e)
+          ? strings.sync.folderPickerBusy
+          : e.message;
+        setSyncStatus({ error: message });
+        setTimeout(() => setSyncStatus(null), 6000);
+      }
     }
-  }, [scanFolder, persistFolderConnection, pickProjectDirectory, warnFolderNameMismatch]);
+  }, [
+    scanFolder,
+    persistFolderConnection,
+    pickDirectoryExclusive,
+    warnFolderNameMismatch,
+    flushPendingPlacementCommit,
+  ]);
 
   return {
     persistFolderConnection,
@@ -896,6 +1091,7 @@ export function useFolderLinkScan({
     probeFolderStoredOnDevice,
     attemptRestoreFolderForProject,
     requestFolder,
+    importFilesToDock,
     pickProjectDirectory,
     applyFolderHandleAndScan,
     handleReconnectFolder,

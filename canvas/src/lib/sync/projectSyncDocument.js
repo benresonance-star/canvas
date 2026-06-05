@@ -8,7 +8,6 @@
 } from '../canvasProjectsApi.js';
 import {
   localPlacementShouldWin,
-  patchPlacementsMapFromArrays,
 } from '../artifactPlacementsMap.js';
 import { placementMapDiffers } from '../placementTransfer.js';
 import { slimProjectPayloadForCache } from '../projectSlim.js';
@@ -25,7 +24,6 @@ import {
 } from './projectSyncLocal.js';
 import {
   mergeProjectIndices,
-  projectCardCount,
   payloadsEquivalent,
   parseServerUpdatedAt,
 } from './projectSyncMerge.js';
@@ -41,6 +39,10 @@ import {
   deleteRevisionStateForProject,
 } from './projectSyncRevision.js';
 import { getServerSyncEnabled } from './projectSyncState.js';
+import {
+  projectArtifactCount,
+  summarizeProjectDocumentShape,
+} from '../projectDocumentShape.js';
 
 import {
   recordGoodLocalCardCount,
@@ -68,6 +70,7 @@ import {
 } from './projectSyncPending.js';
 import { patchIndexDocumentRevision } from './projectSyncIndex.js';
 import { runSyncGate } from '../syncGate.js';
+import { flowTrace } from './syncTrace.js';
 import {
   needsProjectConflictResolution,
   recordProjectConflict,
@@ -101,7 +104,13 @@ async function getPendingOrCachedProjectDoc(projectId) {
 async function pushProjectPayloadToServer(
   projectId,
   payload,
-  { expectedRevision, _retrying = false, traceId = null } = {},
+  {
+    expectedRevision,
+    _retrying = false,
+    traceId = null,
+    allowEmptyRemoteOverwrite = false,
+    allowDockOnlyRemoteOverwrite = false,
+  } = {},
 ) {
   if (!getServerSyncEnabled() || !projectId || !payload) {
     return { ok: false };
@@ -114,7 +123,10 @@ async function pushProjectPayloadToServer(
   const revision =
     expectedRevision !== undefined ? expectedRevision : getClientRevision(projectId);
   try {
-    const result = await saveCanvasProject(projectId, payload, revision);
+    const result = await saveCanvasProject(projectId, payload, revision, {
+      allowEmptyRemoteOverwrite,
+      allowDockOnlyRemoteOverwrite,
+    });
     if (result.ok) {
       applyServerProjectRevision(projectId, result.updatedAt, result.revision);
       await writeLocalProjectSerialised(projectId, JSON.stringify(payload));
@@ -150,9 +162,9 @@ async function pushProjectPayloadToServer(
       }
       applyServerProjectRevision(projectId, result.updatedAt, result.revision);
       if (serverPayload) {
-        const localCards = projectCardCount(payload);
-        const serverCards = projectCardCount(serverPayload);
-        if (serverCards > localCards) {
+        const localArtifacts = projectArtifactCount(payload);
+        const serverArtifacts = projectArtifactCount(serverPayload);
+        if (serverArtifacts > localArtifacts) {
           await writeLocalProjectSerialised(
             projectId,
             JSON.stringify(serverPayload),
@@ -162,11 +174,13 @@ async function pushProjectPayloadToServer(
           return { ok: true, pulled: true, revision: result.revision };
         }
         const clientBehind = getClientRevision(projectId) < (Number(result.revision) || 0);
-        if ((localCards > serverCards || clientBehind) && !_retrying) {
+        if ((localArtifacts > serverArtifacts || clientBehind) && !_retrying) {
           const retry = await pushProjectPayloadToServer(projectId, payload, {
             expectedRevision: result.revision,
             _retrying: true,
             traceId,
+            allowEmptyRemoteOverwrite,
+            allowDockOnlyRemoteOverwrite,
           });
           if (retry.ok) {
             clearProjectConflict(projectId);
@@ -194,12 +208,20 @@ export async function pushProjectDocumentIfLocalNewer(projectId, payload) {
 async function pushProjectDocumentIfLocalNewerInner(
   projectId,
   payload,
-  { traceId = null } = {},
+  {
+    traceId = null,
+    allowEmptyRemoteOverwrite = false,
+    allowDockOnlyRemoteOverwrite = false,
+  } = {},
 ) {
-  const pushOpts = { traceId };
+  const pushOpts = {
+    traceId,
+    allowEmptyRemoteOverwrite,
+    allowDockOnlyRemoteOverwrite,
+  };
 
-  const localCards = projectCardCount(payload);
-  if (localCards === 0) {
+  const localArtifacts = projectArtifactCount(payload);
+  if (localArtifacts === 0) {
     return pushProjectPayloadToServer(projectId, payload, pushOpts);
   }
 
@@ -227,20 +249,20 @@ async function pushProjectDocumentIfLocalNewerInner(
   }
 
   let serverDoc = null;
-  let serverCards = 0;
+  let serverArtifacts = 0;
   try {
     const remote = await fetchCanvasProjectDocument(projectId);
     serverDoc = remote?.payload ?? null;
-    serverCards = projectCardCount(serverDoc);
+    serverArtifacts = projectArtifactCount(serverDoc);
   } catch {
     /* best effort */
   }
 
-  const localRicherThanServer = localCards > serverCards;
+  const localRicherThanServer = localArtifacts > serverArtifacts;
   const hasPending = hasPendingProjectSave(projectId);
   const shouldForcePush =
     (localNewerByTime && localRicherThanServer)
-    || (localCards > 0 && serverCards === 0)
+    || (localArtifacts > 0 && serverArtifacts === 0)
     || (ahead && (localNewerByTime || hasPending));
 
   if (!shouldForcePush) {
@@ -377,8 +399,8 @@ async function reconcileActiveProjectInner(projectId, options = {}) {
     }
   }
 
-  const localCards = projectCardCount(localDoc);
-  const serverCards = projectCardCount(serverDoc);
+  const localArtifacts = projectArtifactCount(localDoc);
+  const serverArtifacts = projectArtifactCount(serverDoc);
   const layoutDiffers =
     localDoc && serverDoc && !payloadsEquivalent(localDoc, serverDoc);
   const placementShouldWin =
@@ -387,24 +409,24 @@ async function reconcileActiveProjectInner(projectId, options = {}) {
     && localPlacementShouldWin(localDoc, serverDoc, localEditAt, serverAt);
   const lastGoodCards = getLastGoodLocalCardCount(projectId);
   const localFresherWithLayout =
-    (localEditAt > serverAt && localCards > 0 && localCards >= serverCards)
+    (localEditAt > serverAt && localArtifacts > 0 && localArtifacts >= serverArtifacts)
     || placementShouldWin;
   const serverWins =
     serverRev > clientRev
     && serverAt >= localEditAt
-    && serverCards > 0
-    && (serverCards > localCards || localCards === 0)
+    && serverArtifacts > 0
+    && (serverArtifacts > localArtifacts || localArtifacts === 0)
     && !localFresherWithLayout
     && !placementShouldWin;
   const serverUndercutsLastGood =
     serverWins
     && lastGoodCards > 0
-    && serverCards < lastGoodCards;
+    && serverArtifacts < lastGoodCards;
   const keepLocalLayout =
     layoutDiffers
-    && localCards > 0
+    && localArtifacts > 0
     && (
-      (localEditAt > serverAt && localCards >= serverCards)
+      (localEditAt > serverAt && localArtifacts >= serverArtifacts)
       || placementShouldWin
     );
 
@@ -542,13 +564,13 @@ export async function reconcileSyncLock(projectId) {
 export async function adoptSyncLockForProject(projectId) {
   return reconcileSyncLock(projectId);
 }
-function cardCountFromLocalWrite(serialisedOrPayload, options) {
+function artifactCountFromLocalWrite(serialisedOrPayload, options) {
   try {
     if (typeof serialisedOrPayload === 'string') {
-      return projectCardCount(JSON.parse(serialisedOrPayload));
+      return projectArtifactCount(JSON.parse(serialisedOrPayload));
     }
     const slim = slimProjectPayloadForCache(serialisedOrPayload, options);
-    return projectCardCount(slim.payload);
+    return projectArtifactCount(slim.payload);
   } catch {
     return 0;
   }
@@ -560,8 +582,8 @@ export async function persistProjectDocumentLocally(
   options = {},
 ) {
   recordLocalProjectEdit(projectId);
-  const cardCount = cardCountFromLocalWrite(serialisedOrPayload, options);
-  recordGoodLocalCardCount(projectId, cardCount);
+  const artifactCount = artifactCountFromLocalWrite(serialisedOrPayload, options);
+  recordGoodLocalCardCount(projectId, artifactCount);
   const serialised =
     typeof serialisedOrPayload === 'string'
       ? serialisedOrPayload
@@ -581,7 +603,14 @@ export async function persistProjectDocumentLocally(
  * Push an explicit project snapshot on switch-away (cancels stale debounced payloads first).
  * @param {string} projectId
  * @param {object} payload
- * @param {{ reason?: string, traceId?: string | null, beforePayload?: object | null, skipSpecDualWrite?: boolean }} [options]
+ * @param {{
+ *   reason?: string,
+ *   traceId?: string | null,
+ *   beforePayload?: object | null,
+ *   allowEmptyRemoteOverwrite?: boolean,
+ *   allowDockOnlyRemoteOverwrite?: boolean,
+ *   skipSpecDualWrite?: boolean,
+ * }} [options]
  */
 export async function flushOutgoingProjectDocument(projectId, payload, options = {}) {
   if (!projectId || !payload) {
@@ -591,6 +620,8 @@ export async function flushOutgoingProjectDocument(projectId, payload, options =
     reason = 'flush',
     traceId = null,
     beforePayload = null,
+    allowEmptyRemoteOverwrite = false,
+    allowDockOnlyRemoteOverwrite = false,
     skipSpecDualWrite = false,
   } = options;
   getLastKnownProjectPayloadById().set(projectId, payload);
@@ -598,6 +629,54 @@ export async function flushOutgoingProjectDocument(projectId, payload, options =
   if (!getServerSyncEnabled()) {
     return { ok: true, skipped: true, reason: 'no_sync' };
   }
+
+  const localArtifacts = projectArtifactCount(payload);
+  if (localArtifacts === 0 && !allowEmptyRemoteOverwrite) {
+    try {
+      const remote = await fetchCanvasProjectDocument(projectId);
+      const serverPayload = remote?.payload ?? null;
+      if (projectArtifactCount(serverPayload) > 0) {
+        await writeLocalProjectSerialised(projectId, JSON.stringify(serverPayload));
+        applyServerProjectRevision(projectId, remote.updatedAt, remote.revision);
+        await patchIndexDocumentRevision(projectId, remote.revision, remote.updatedAt);
+        notifySyncLock(projectId, 'live');
+        return {
+          ok: true,
+          skipped: true,
+          pulled: true,
+          reason: 'server_has_cards',
+        };
+      }
+    } catch (e) {
+      console.warn(`Could not guard empty project push ${projectId}:`, e.message);
+      return { ok: false, skipped: true, reason: 'empty_push_guard_unavailable' };
+    }
+  }
+
+  const localShape = summarizeProjectDocumentShape(payload);
+  if (localShape.isDockOnly && !allowDockOnlyRemoteOverwrite) {
+    try {
+      const remote = await fetchCanvasProjectDocument(projectId);
+      const serverPayload = remote?.payload ?? null;
+      const serverShape = summarizeProjectDocumentShape(serverPayload);
+      if (serverShape.canvasCards > 0) {
+        await writeLocalProjectSerialised(projectId, JSON.stringify(serverPayload));
+        applyServerProjectRevision(projectId, remote.updatedAt, remote.revision);
+        await patchIndexDocumentRevision(projectId, remote.revision, remote.updatedAt);
+        notifySyncLock(projectId, 'live');
+        return {
+          ok: true,
+          skipped: true,
+          pulled: true,
+          reason: 'server_has_canvas_cards',
+        };
+      }
+    } catch (e) {
+      console.warn(`Could not guard dock-only project push ${projectId}:`, e.message);
+      return { ok: false, skipped: true, reason: 'dock_only_push_guard_unavailable' };
+    }
+  }
+
   const { pushProjectPatchIfEnabled, shouldFallbackToPutAfterPatch } =
     await import('./projectSyncPatch.js');
   const patchResult = await pushProjectPatchIfEnabled(
@@ -606,6 +685,8 @@ export async function flushOutgoingProjectDocument(projectId, payload, options =
     reason,
     beforePayload,
     traceId,
+    allowEmptyRemoteOverwrite,
+    allowDockOnlyRemoteOverwrite,
   );
   if (patchResult !== null) {
     if (patchResult?.ok) {
@@ -619,7 +700,11 @@ export async function flushOutgoingProjectDocument(projectId, payload, options =
     }
   }
   const result = await runSyncGate('flush-outgoing', () =>
-    pushProjectDocumentIfLocalNewerInner(projectId, payload, { traceId }),
+    pushProjectDocumentIfLocalNewerInner(projectId, payload, {
+      traceId,
+      allowEmptyRemoteOverwrite,
+      allowDockOnlyRemoteOverwrite,
+    }),
   );
   if (result?.ok) {
     if (!skipSpecDualWrite) {
@@ -658,8 +743,17 @@ export async function pullProjectDocumentIfServerNewer(projectId, options = {}) 
 
   let remote;
   try {
+    flowTrace('project:pull-force-fetch-start', { projectId, force });
     remote = await fetchCanvasProjectDocument(projectId);
+    flowTrace('project:pull-force-fetch-done', {
+      projectId,
+      revision: remote?.revision ?? 0,
+    });
   } catch (e) {
+    flowTrace('project:pull-force-fetch-failed', {
+      projectId,
+      message: e?.message,
+    });
     console.warn(`Could not fetch project ${projectId} from server:`, e.message);
     return { pulled: false, payload: null, localCacheWritten: true };
   }
@@ -670,19 +764,31 @@ export async function pullProjectDocumentIfServerNewer(projectId, options = {}) 
 
   let localDoc = null;
   try {
+    flowTrace('project:pull-local-read-start', { projectId });
     const raw = await readLocalProjectSerialised(projectId);
     if (raw) localDoc = JSON.parse(raw);
+    flowTrace('project:pull-local-read-done', {
+      projectId,
+      hasLocal: Boolean(localDoc),
+    });
   } catch {
     localDoc = null;
+    flowTrace('project:pull-local-read-failed', { projectId });
   }
 
   const serverAt = parseServerUpdatedAt(remote.updatedAt);
   const localEditAt = getLocalEditAt(projectId) ?? 0;
 
+  flowTrace('project:pull-pending-read-start', { projectId });
   const pendingOrLocal =
     (await getPendingOrCachedProjectDoc(projectId)) ?? localDoc;
+  flowTrace('project:pull-pending-read-done', {
+    projectId,
+    hasPendingOrLocal: Boolean(pendingOrLocal),
+  });
 
   const placementSource = pendingOrLocal ?? localDoc;
+  flowTrace('project:pull-merge-start', { projectId });
   const { mergeProjectDocuments } = await import('../projectDocumentMerge.js');
   const { merged: mergedPayload, skipWrite } = mergeProjectDocuments(
     localDoc,
@@ -697,28 +803,40 @@ export async function pullProjectDocumentIfServerNewer(projectId, options = {}) 
   );
 
   if (skipWrite || !mergedPayload) {
+    flowTrace('project:pull-merge-skip', { projectId });
     return { pulled: false, payload: null, localCacheWritten: true };
   }
+  flowTrace('project:pull-merge-done', { projectId });
 
   let normalizedMerged = mergedPayload;
   try {
+    flowTrace('project:pull-normalize-start', { projectId });
     const { normalizeLoadedProject } = await import('../persistence.js');
     normalizedMerged = normalizeLoadedProject(mergedPayload);
+    flowTrace('project:pull-normalize-done', { projectId });
   } catch {
     /* keep merged */
+    flowTrace('project:pull-normalize-failed', { projectId });
   }
 
   auditPlacementStep('pull:merged', normalizedMerged, { projectId });
 
+  flowTrace('project:pull-fence-start', { projectId });
   const fencedMerged = await fencePullPayload(projectId, normalizedMerged);
+  flowTrace('project:pull-fence-done', { projectId });
 
+  flowTrace('project:pull-local-write-start', { projectId });
   const localCacheWritten = await writeLocalProjectSerialised(
     projectId,
     JSON.stringify(fencedMerged),
   );
+  flowTrace('project:pull-local-write-done', { projectId, localCacheWritten });
   applyServerProjectRevision(projectId, remote.updatedAt, remote.revision);
+  flowTrace('project:pull-index-patch-start', { projectId });
   await patchIndexDocumentRevision(projectId, remote.revision, remote.updatedAt);
+  flowTrace('project:pull-index-patch-done', { projectId });
   notifySyncLock(projectId, 'live');
+  flowTrace('project:pull-done', { projectId });
   return {
     pulled: true,
     payload: fencedMerged,
@@ -731,6 +849,10 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
   }
 
   const localRaw = await readLocalProjectSerialised(projectId);
+  flowTrace('project:switch-reconcile-local-read', {
+    projectId,
+    hasLocalRaw: Boolean(localRaw),
+  });
   let localDoc = null;
   try {
     if (localRaw) localDoc = JSON.parse(localRaw);
@@ -738,9 +860,18 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
     localDoc = null;
   }
 
-  const localCards = projectCardCount(localDoc);
-  if (localDoc && localCards > 0) {
+  const localArtifacts = projectArtifactCount(localDoc);
+  flowTrace('project:switch-reconcile-local-shape', {
+    projectId,
+    localArtifacts,
+  });
+  if (localDoc && localArtifacts > 0) {
+    flowTrace('project:switch-reconcile-push-local-start', { projectId });
     const pushResult = await pushProjectDocumentIfLocalNewer(projectId, localDoc);
+    flowTrace('project:switch-reconcile-push-local-done', {
+      projectId,
+      ok: Boolean(pushResult.ok),
+    });
     if (pushResult.ok) {
       return {
         pulled: false,
@@ -754,8 +885,14 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
 
   let meta;
   try {
+    flowTrace('project:switch-reconcile-meta-start', { projectId });
     meta = await fetchCanvasProjectMeta(projectId);
+    flowTrace('project:switch-reconcile-meta-done', {
+      projectId,
+      revision: meta?.revision ?? 0,
+    });
   } catch {
+    flowTrace('project:switch-reconcile-meta-failed', { projectId });
     return {
       pulled: false,
       payload: localDoc,
@@ -764,7 +901,12 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
     };
   }
 
+  flowTrace('project:switch-reconcile-client-rev-start', { projectId });
   await ensureClientRevision(projectId);
+  flowTrace('project:switch-reconcile-client-rev-done', {
+    projectId,
+    clientRevision: getClientRevision(projectId),
+  });
   const serverRev = meta?.revision ?? 0;
   const clientRev = getClientRevision(projectId);
   const serverAt = parseServerUpdatedAt(meta?.updatedAt);
@@ -772,9 +914,15 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
 
   let serverDoc = null;
   try {
+    flowTrace('project:switch-reconcile-server-doc-start', { projectId });
     const remote = await fetchCanvasProjectDocument(projectId);
     serverDoc = remote?.payload ?? null;
+    flowTrace('project:switch-reconcile-server-doc-done', {
+      projectId,
+      serverArtifacts: projectArtifactCount(serverDoc),
+    });
   } catch {
+    flowTrace('project:switch-reconcile-server-doc-failed', { projectId });
     return {
       pulled: false,
       payload: localDoc,
@@ -783,7 +931,7 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
     };
   }
 
-  const serverCards = projectCardCount(serverDoc);
+  const serverArtifacts = projectArtifactCount(serverDoc);
   const layoutDiffers =
     localDoc
     && serverDoc
@@ -794,9 +942,9 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
     && localPlacementShouldWin(localDoc, serverDoc, localEditAt, serverAt);
   const localLayoutNewer =
     layoutDiffers
-    && localCards > 0
+    && localArtifacts > 0
     && (
-      (localEditAt > serverAt && localCards >= serverCards)
+      (localEditAt > serverAt && localArtifacts >= serverArtifacts)
       || placementShouldWin
     );
 
@@ -817,21 +965,21 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
 
   const lastGoodCards = getLastGoodLocalCardCount(projectId);
   const localFresherWithLayout =
-    (localEditAt > serverAt && localCards > 0 && localCards >= serverCards)
+    (localEditAt > serverAt && localArtifacts > 0 && localArtifacts >= serverArtifacts)
     || placementShouldWin;
   const serverWins =
     serverRev > clientRev
     && serverAt >= localEditAt
-    && serverCards > 0
-    && (serverCards > localCards || localCards === 0)
+    && serverArtifacts > 0
+    && (serverArtifacts > localArtifacts || localArtifacts === 0)
     && !localFresherWithLayout
     && !placementShouldWin;
   const serverUndercutsLastGood =
     serverWins
     && lastGoodCards > 0
-    && serverCards < lastGoodCards;
+    && serverArtifacts < lastGoodCards;
 
-  if (!localDoc && serverDoc && serverCards > 0) {
+  if (!localDoc && serverDoc && serverArtifacts > 0) {
     return pullProjectDocumentIfServerNewer(projectId, { force: true });
   }
 
@@ -896,6 +1044,10 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
       keptLocal: true,
       rejectedStaleServer: true,
     };
+  }
+
+  if (localArtifacts === 0 && serverDoc && serverArtifacts > 0) {
+    return pullProjectDocumentIfServerNewer(projectId, { force: true });
   }
 
   if (meta) {

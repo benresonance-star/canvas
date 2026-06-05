@@ -3,6 +3,7 @@ import {
   appendCardIfKeyAbsent,
   buildStagedSyncCardFromChange,
   buildConfirmChangesForDialog,
+  buildFolderConnectConfirmChanges,
   buildSyncChangesFromFolder,
   filterSyncChangesForConfirm,
   partitionSyncChanges,
@@ -170,6 +171,28 @@ describe('buildSyncChangesFromFolder', () => {
     const liveStaged = [];
     const confirm = buildConfirmChangesForDialog(grouped, liveCanvas, liveStaged);
     expect(confirm).toHaveLength(0);
+  });
+
+  it('buildFolderConnectConfirmChanges lists disk files when server already has staged rows', () => {
+    const grouped = {
+      'notes__readme': {
+        parsed: { name: 'readme', prefix: 'notes', ext: 'md' },
+        versions: [{ version: 1, filename: 'notes__readme-v1.md' }],
+      },
+    };
+    const staged = [{
+      key: 'notes__readme',
+      stagingId: 's1',
+      name: 'readme',
+      prefix: 'notes',
+      type: 'markdown',
+      versions: [{ version: 1, filename: 'notes__readme-v1.md' }],
+      pinnedVersion: 1,
+    }];
+    expect(buildConfirmChangesForDialog(grouped, [], staged)).toHaveLength(0);
+    const connect = buildFolderConnectConfirmChanges(grouped, [], staged);
+    expect(connect).toHaveLength(1);
+    expect(connect[0].key).toBe('notes__readme');
   });
 
   it('filterSyncChangesForConfirm drops false-new general html on canvas', () => {

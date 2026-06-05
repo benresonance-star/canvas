@@ -36,3 +36,46 @@ export function resolveProjectDisplayName(
 export function projectNameForDocumentPayload(index, projectId, defaultName) {
   return resolveProjectDisplayName(index, projectId, defaultName);
 }
+
+/**
+ * Pick the visible title when index row and React state disagree.
+ * Index wins when it has a non-default name; stale index "Untitled" must not hide a custom state title.
+ */
+export function pickAuthoritativeProjectDisplayName(
+  indexName,
+  stateName,
+  defaultName = strings.defaultProjectName,
+) {
+  const fromIndex = indexName?.trim() || '';
+  const fromState = stateName?.trim() || '';
+  if (!fromIndex && !fromState) return defaultName;
+  if (!fromIndex) return fromState;
+  if (!fromState) return fromIndex;
+  if (
+    isDefaultProjectDisplayName(fromIndex, defaultName)
+    && !isDefaultProjectDisplayName(fromState, defaultName)
+  ) {
+    return fromState;
+  }
+  return fromIndex;
+}
+
+/**
+ * Whether index-driven title sync should overwrite React state.projectName.
+ * Prevents periodic index poll from clobbering a visible custom title with default.
+ */
+export function shouldSyncIndexNameToState(
+  indexDisplayName,
+  stateProjectName,
+  defaultName = strings.defaultProjectName,
+) {
+  const fromState = stateProjectName?.trim();
+  if (!fromState) return true;
+  const picked = pickAuthoritativeProjectDisplayName(
+    indexDisplayName,
+    stateProjectName,
+    defaultName,
+  );
+  const indexTrim = indexDisplayName?.trim() || defaultName;
+  return picked === indexTrim;
+}

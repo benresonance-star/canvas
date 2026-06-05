@@ -18,12 +18,16 @@ describe('reconcileSpecCanvasOnLoad', () => {
     vi.clearAllMocks();
   });
 
-  it('applies spec layout when spec version matches document revision', async () => {
+  it('applies spec layout when spec timestamp is at least as fresh as the document', async () => {
     const { fetchSpecCanvasState } = await import('../specDataPlaneApi.js');
     const { fetchCanvasProjectMeta } = await import('../canvasProjectsApi.js');
-    fetchCanvasProjectMeta.mockResolvedValue({ revision: 3, updatedAt: 't' });
+    fetchCanvasProjectMeta.mockResolvedValue({
+      revision: 3,
+      updatedAt: '2026-06-05T00:00:00.000Z',
+    });
     fetchSpecCanvasState.mockResolvedValue({
-      version: 3,
+      version: 1,
+      updatedAt: '2026-06-05T00:00:01.000Z',
       layout: {
         placed: [{ syncKey: 'k1', x: 99, y: 88, w: null, h: null }],
         staging: [],
@@ -52,6 +56,7 @@ describe('reconcileSpecCanvasOnLoad', () => {
     fetchCanvasProjectMeta.mockResolvedValue(null);
     fetchSpecCanvasState.mockResolvedValue({
       version: 1,
+      updatedAt: '2026-06-05T00:00:01.000Z',
       layout: {
         placed: [{ syncKey: 'k1', x: 50, y: 60, w: null, h: null }],
         staging: [],
@@ -70,12 +75,16 @@ describe('reconcileSpecCanvasOnLoad', () => {
     expect(merged.cards[0].x).toBe(50);
   });
 
-  it('keeps JSON authoritative when spec version differs', async () => {
+  it('keeps JSON authoritative when spec row is older than the document', async () => {
     const { fetchSpecCanvasState } = await import('../specDataPlaneApi.js');
     const { fetchCanvasProjectMeta } = await import('../canvasProjectsApi.js');
-    fetchCanvasProjectMeta.mockResolvedValue({ revision: 5, updatedAt: 't' });
+    fetchCanvasProjectMeta.mockResolvedValue({
+      revision: 2,
+      updatedAt: '2026-06-05T00:00:02.000Z',
+    });
     fetchSpecCanvasState.mockResolvedValue({
-      version: 2,
+      version: 99,
+      updatedAt: '2026-06-05T00:00:01.000Z',
       layout: { placed: [], staging: [] },
     });
 

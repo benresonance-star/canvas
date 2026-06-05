@@ -90,7 +90,7 @@ export async function healProjectsMissingServerDocuments(index) {
   return uploadLocalOnlyProjects(missing, index);
 }
 
-async function pushIndexToServer(index) {
+async function pushIndexToServer(index, options = {}) {
   if (!getServerSyncEnabled() || !index) return;
   flushIndexTimer();
   setPendingIndexPayload(null);
@@ -102,11 +102,18 @@ async function pushIndexToServer(index) {
     }
     const { getProjectSyncClientId } = await import('./projectSyncClientId.js');
     let expected = getClientWorkspaceIndexRevision();
-    let result = await saveCanvasIndex(index, expected, getProjectSyncClientId());
+    let result = await saveCanvasIndex(
+      index,
+      expected,
+      getProjectSyncClientId(),
+      { deletedProjectIds: options.deletedProjectIds ?? [] },
+    );
     if (result.conflict && result.index) {
       const localIndex = index;
       const { index: merged } = mergeProjectIndices(localIndex, result.index, {});
-      result = await saveCanvasIndex(merged, result.revision);
+      result = await saveCanvasIndex(merged, result.revision, getProjectSyncClientId(), {
+        deletedProjectIds: options.deletedProjectIds ?? [],
+      });
       index = merged;
     }
     if (result.ok) {
@@ -119,7 +126,7 @@ async function pushIndexToServer(index) {
 async function collectLocalProjectIdsWithCards(localProjects) {
   const ids = [];
   for (const row of localProjects ?? []) {
-    if (!row?.id) continue;
+    if (!row?.id || isDeletedProjectId(row.id)) continue;
     const payload = await readLocalProjectPayload(row.id);
     if (projectCardCountFromDoc(payload) > 0) ids.push(row.id);
   }
@@ -149,12 +156,18 @@ export async function patchIndexDocumentRevision(projectId, revision, updatedAt)
 
 /**
  * @param {object | null | undefined} index
- * @param {{ checkServerGhosts?: boolean }} [options]
+ * @param {{
+ *   checkServerGhosts?: boolean,
+ *   skipOrphanRecovery?: boolean,
+ *   recentlyDeletedIds?: string[],
+ * }} [options]
  */
 export async function applyWorkspaceIntegrityRepair(index, options = {}) {
   const result = await auditWorkspaceIndex(index, {
     checkServerGhosts: options.checkServerGhosts ?? false,
     serverSyncEnabled: getServerSyncEnabled(),
+    skipOrphanRecovery: options.skipOrphanRecovery ?? false,
+    recentlyDeletedIds: options.recentlyDeletedIds ?? [],
   });
   if (!result.repairedIndex) return result;
 
@@ -367,11 +380,16 @@ async function pullAndMergeProjectIndexBody(options = {}) {
 
   const suppressedServerOnly = serverOnlyIds.filter((id) => !isDeletedProjectId(id));
   for (const id of serverOnlyIds) {
-    if (isDeletedProjectId(id) && getServerSyncEnabled()) {
+    if (!isDeletedProjectId(id) || !getServerSyncEnabled()) continue;
+    let removedOnServer = false;
+    for (let attempt = 0; attempt < 2 && !removedOnServer; attempt += 1) {
       try {
         await deleteCanvasProject(id);
-      } catch {
-        /* best effort — align server with local delete */
+        removedOnServer = true;
+      } catch (e) {
+        if (attempt === 1 && import.meta.env?.DEV) {
+          console.warn('[canvas] tombstoned server project delete failed:', id, e);
+        }
       }
     }
   }
@@ -425,12 +443,15 @@ export async function loadSyncedProjectIndex() {
   return normalizeAndRepairLocalIndex(raw);
 }
 
-export async function saveSyncedProjectIndex(index, { immediate = false } = {}) {
+export async function saveSyncedProjectIndex(
+  index,
+  { immediate = false, deletedProjectIds = [] } = {},
+) {
   const { index: normalized } = normalizeWorkspaceIndex(index ?? { projects: [] });
   await writeLocalIndex(normalized);
   index = normalized;
   if (immediate) {
-    await pushIndexToServer(normalized);
+    await pushIndexToServer(normalized, { deletedProjectIds });
   } else {
     scheduleIndexRemoteSave(normalized);
   }

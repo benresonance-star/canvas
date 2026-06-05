@@ -1,4 +1,6 @@
-const API_BASE = import.meta.env.VITE_PRIMITIVES_API || '/api';
+import { resolveApiBase } from './apiBase.js';
+
+const API_BASE = resolveApiBase();
 const REQUEST_TIMEOUT_MS = 15_000;
 
 const DB_UNAVAILABLE_HINT =
@@ -72,6 +74,11 @@ export async function listSubClusters(projectId) {
 
 export async function fetchClusterMembers(clusterId) {
   return request(`/clusters/${clusterId}/members`);
+}
+
+export function clusterProjectStreamUrl(projectId) {
+  const base = API_BASE.replace(/\/$/, '');
+  return `${base}/clusters/by-project/${encodeURIComponent(projectId)}/stream`;
 }
 
 export async function addClusterMembers(clusterId, members) {

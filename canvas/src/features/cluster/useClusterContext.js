@@ -6,6 +6,7 @@ import {
   fetchClusterMembers,
   fetchHealth,
   clusterApiStatusFromHealth,
+  clusterProjectStreamUrl,
 } from '../../lib/primitivesApi.js';
 import {
   resolveWorkspaceClusterId,
@@ -395,6 +396,45 @@ export function useClusterContext({
       stateRef.current.projectName,
     );
   }, [activeProjectId, loaded, clusterApiAvailable, clusterId, applyClusterContextForProject]);
+
+  useEffect(() => {
+    if (
+      !loaded
+      || !activeProjectId
+      || !clusterApiAvailable
+      || typeof EventSource === 'undefined'
+    ) {
+      return undefined;
+    }
+
+    const source = new EventSource(clusterProjectStreamUrl(activeProjectId));
+    const refreshFromClusterEvent = () => {
+      if (
+        switchingProjectRef.current
+        || refreshingFromServerRef.current
+        || activeProjectIdRef.current !== activeProjectId
+      ) {
+        return;
+      }
+      void refreshGraphRef.current({
+        projectId: activeProjectId,
+        force: true,
+      });
+    };
+    source.addEventListener('clusters_updated', refreshFromClusterEvent);
+    return () => {
+      source.removeEventListener('clusters_updated', refreshFromClusterEvent);
+      source.close();
+    };
+  }, [
+    loaded,
+    activeProjectId,
+    clusterApiAvailable,
+    activeProjectIdRef,
+    refreshingFromServerRef,
+    switchingProjectRef,
+    refreshGraphRef,
+  ]);
 
   useEffect(() => {
     if (

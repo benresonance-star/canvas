@@ -18,6 +18,7 @@ vi.mock('../projectSync.js', () => ({
   persistProjectDocumentLocally: vi.fn(async () => true),
   flushOutgoingProjectDocument: vi.fn(async () => ({ ok: true })),
   initializeProjectSync: vi.fn(),
+  isServerSyncEnabled: vi.fn(() => false),
 }));
 
 import { readLocalProjectSerialised } from '../sync/projectSyncLocal.js';
@@ -185,6 +186,96 @@ describe('placement persistence integration', () => {
     const loaded = JSON.parse(persistedRaw);
     expect(loaded.cards).toHaveLength(1);
     expect(loaded.stagedSyncCards).toHaveLength(0);
+    expect(loaded.artifactPlacements.notes__a.surface).toBe('canvas');
+  });
+
+  it('awaited outgoing switch commit after dock→canvas survives IDB reload (switch-back)', async () => {
+    const staged = [
+      {
+        stagingId: 's1',
+        key: 'notes__a',
+        prefix: 'notes',
+        name: 'A',
+        type: 'markdown',
+        versions: [{ version: 1, filename: 'notes__a-v1.md' }],
+        pinnedVersion: 1,
+      },
+    ];
+    const transfer = transferStagedToCanvas([], staged, 's1', 88, 99);
+    expect(transfer.placed).toBe(true);
+
+    let persistedRaw = null;
+    persistProjectDocumentLocally.mockImplementation(async (_id, serialised) => {
+      persistedRaw = serialised;
+      return true;
+    });
+
+    const outgoingState = {
+      projectName: 'ProjectA',
+      cards: transfer.cards,
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    const outgoingPlacements = patchPlacementsMapFromArrays(
+      {},
+      transfer.cards,
+      transfer.stagedSyncCards,
+    );
+
+    await commitProjectDocument('p-a', {
+      state: outgoingState,
+      stagedSyncCards: transfer.stagedSyncCards,
+      artifactPlacements: outgoingPlacements,
+      reason: 'projectSwitch:outgoing',
+    });
+
+    expect(persistedRaw).toBeTruthy();
+    readLocalProjectSerialised.mockResolvedValueOnce(persistedRaw);
+
+    const reloaded = JSON.parse(persistedRaw);
+    const normalized = normalizeLoadedProject(reloaded);
+    expect(normalized.cards).toHaveLength(1);
+    expect(normalized.stagedSyncCards).toHaveLength(0);
+    expect(normalized.artifactPlacements?.notes__a?.surface).toBe('canvas');
+    expect(normalized.cards[0].key).toBe('notes__a');
+    expect(Number.isFinite(normalized.cards[0].x)).toBe(true);
+    expect(Number.isFinite(normalized.cards[0].y)).toBe(true);
+  });
+
+  it('switch flush path persists deferred canvas placement (pending + live state)', async () => {
+    const staged = [
+      {
+        stagingId: 's1',
+        key: 'notes__a',
+        prefix: 'notes',
+        name: 'A',
+        type: 'markdown',
+        versions: [{ version: 1, filename: 'notes__a-v1.md' }],
+        pinnedVersion: 1,
+      },
+    ];
+    const transfer = transferStagedToCanvas([], staged, 's1', 64, 72);
+    expect(transfer.placed).toBe(true);
+
+    let persistedRaw = null;
+    persistProjectDocumentLocally.mockImplementation(async (_id, serialised) => {
+      persistedRaw = serialised;
+      return true;
+    });
+
+    await commitProjectDocument('p-switch-flush', {
+      state: {
+        projectName: 'P',
+        cards: transfer.cards,
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      },
+      stagedSyncCards: transfer.stagedSyncCards,
+      artifactPlacements: transfer.artifactPlacements,
+      reason: 'placementTransfer:canvas',
+    });
+
+    expect(persistedRaw).toBeTruthy();
+    const loaded = JSON.parse(persistedRaw);
+    expect(loaded.cards).toHaveLength(1);
     expect(loaded.artifactPlacements.notes__a.surface).toBe('canvas');
   });
 

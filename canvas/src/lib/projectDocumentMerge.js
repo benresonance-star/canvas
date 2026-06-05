@@ -7,24 +7,27 @@ import { canonicalKeyForEntry } from './artifactPlacement.js';
 import { mergeOptimisticCardsIntoDoc } from './optimisticCards.js';
 import { placementMapDiffers } from './placementTransfer.js';
 import { buildPayloadAfterDockRestore } from './restoreDockToCanvas.js';
-import { summarizeProjectDocumentShape } from './projectDocumentShape.js';
+import {
+  projectArtifactCount,
+  summarizeProjectDocumentShape,
+} from './projectDocumentShape.js';
 import { projectCardCount } from './sync/projectSyncMerge.js';
 
-/** Best-known non-zero card count per project (guards against emptying local via stale server). */
-const lastGoodCardCountByProjectId = new Map();
+/** Best-known non-zero artifact count per project (guards against stale empty server). */
+const lastGoodArtifactCountByProjectId = new Map();
 
 export function recordGoodLocalCardCount(projectId, count) {
   if (projectId && count > 0) {
-    lastGoodCardCountByProjectId.set(projectId, count);
+    lastGoodArtifactCountByProjectId.set(projectId, count);
   }
 }
 
 export function getLastGoodLocalCardCount(projectId) {
-  return lastGoodCardCountByProjectId.get(projectId) ?? 0;
+  return lastGoodArtifactCountByProjectId.get(projectId) ?? 0;
 }
 
 export function clearLastGoodLocalCardCount(projectId) {
-  lastGoodCardCountByProjectId.delete(projectId);
+  lastGoodArtifactCountByProjectId.delete(projectId);
 }
 
 /**
@@ -40,9 +43,11 @@ export function preserveCanvasCardsInMergedPayload(mergedPayload, ctx = {}) {
   const { localDoc, placementSource, projectId } = ctx;
   const localCanvas = projectCardCount(localDoc);
   const pendingCanvas = projectCardCount(placementSource);
+  const localArtifacts = projectArtifactCount(localDoc);
+  const pendingArtifacts = projectArtifactCount(placementSource);
   const lastGood = projectId ? getLastGoodLocalCardCount(projectId) : 0;
 
-  if (localCanvas === 0 && pendingCanvas === 0 && lastGood === 0) {
+  if (localArtifacts === 0 && pendingArtifacts === 0 && lastGood === 0) {
     return mergedPayload;
   }
 
@@ -130,17 +135,24 @@ export function mergeProjectDocuments(localDoc, remoteDoc, options = {}) {
 
   const localPatched = patchLocalDocFromArrays(localDoc);
   const remotePatched = patchLocalDocFromArrays(remoteDoc);
+  const localArtifactCount = projectArtifactCount(localPatched);
+  const remoteArtifactCount = projectArtifactCount(remotePatched);
+  const emptyLocalWouldHideRemote =
+    localArtifactCount === 0 && remoteArtifactCount > 0;
   const placementRef = placementSource
     ? patchLocalDocFromArrays(placementSource)
     : localPatched;
 
   const localLayoutNewer =
-    localEditAt > serverAt
-    || localPlacementShouldWin(
-      placementRef,
-      remotePatched,
-      localEditAt,
-      serverAt,
+    !emptyLocalWouldHideRemote
+    && (
+      localEditAt > serverAt
+      || localPlacementShouldWin(
+        placementRef,
+        remotePatched,
+        localEditAt,
+        serverAt,
+      )
     );
 
   let merged;
@@ -166,9 +178,8 @@ export function mergeProjectDocuments(localDoc, remoteDoc, options = {}) {
     projectId,
   });
 
-  const localCanvasCount = projectCardCount(localPatched);
-  const mergedCanvasCount = projectCardCount(merged);
-  if (localCanvasCount > 0 && mergedCanvasCount < localCanvasCount) {
+  const mergedArtifactCount = projectArtifactCount(merged);
+  if (localArtifactCount > 0 && mergedArtifactCount < localArtifactCount) {
     return {
       merged: localPatched,
       decision: 'keptLocal',
@@ -206,9 +217,9 @@ export function shouldSkipInboundReconcileAfterLocalCommit(localDoc, serverDoc) 
   if (!localDoc || !serverDoc) return false;
   const localPatched = patchLocalDocFromArrays(localDoc);
   const serverPatched = patchLocalDocFromArrays(serverDoc);
-  const localCanvas = projectCardCount(localPatched);
-  const serverCanvas = projectCardCount(serverPatched);
-  if (localCanvas > serverCanvas) return true;
+  const localArtifacts = projectArtifactCount(localPatched);
+  const serverArtifacts = projectArtifactCount(serverPatched);
+  if (localArtifacts > serverArtifacts) return true;
   if (
     placementMapDiffers(
       localPatched.artifactPlacements,

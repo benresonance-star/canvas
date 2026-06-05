@@ -69,4 +69,28 @@ describe('patchCanvasProject', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('empty_ops');
   });
+
+  it('returns conflict when concurrent patch create wins insert', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            revision: 1,
+            payload: { projectName: 'Winner', cards: [], stagedSyncCards: [] },
+            updated_at: '2020-01-01',
+          },
+        ],
+      });
+    const { patchCanvasProject } = await import('../canvas-projects.js');
+    const result = await patchCanvasProject('p1', {
+      expectedRevision: 0,
+      ops: [{ op: 'setProjectName', projectName: 'Loser' }],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.conflict).toBe(true);
+    expect(result.revision).toBe(1);
+    expect(result.payload.projectName).toBe('Winner');
+  });
 });

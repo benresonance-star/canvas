@@ -204,6 +204,104 @@ describe('actionSync', () => {
     });
   });
 
+  it('placementTransfer waits for the server push before resolving', async () => {
+    const {
+      setCommittedPayloadForTests,
+      resetProjectDocumentCommitForTests,
+    } = await import('../projectDocumentCommit.js');
+    resetProjectDocumentCommitForTests();
+    let resolvePush;
+    let pushSettled = false;
+    flushOutgoingProjectDocument.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePush = () => {
+            pushSettled = true;
+            resolve({ ok: true });
+          };
+        }),
+    );
+
+    const payload = {
+      projectName: 'P',
+      cards: [{ id: 'c1', key: 'notes__a', type: 'markdown', versions: [] }],
+      stagedSyncCards: [],
+      artifactPlacements: {
+        notes__a: { surface: 'canvas', record: { id: 'c1', key: 'notes__a' } },
+      },
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    setCommittedPayloadForTests('p1', payload);
+
+    registerActionSyncHandlers({
+      getProjectId: () => 'p1',
+      getState: () => ({
+        cards: payload.cards,
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      }),
+      getStagedSyncCards: () => [],
+      buildPayload: (s, staged) => ({ ...s, stagedSyncCards: staged }),
+      touchIndex: vi.fn(),
+      onLocalCacheFailed: vi.fn(),
+      reconcileInbound: vi.fn(),
+      flushAll: vi.fn(),
+    });
+
+    const { requestPlacementSync } = await import('../actionSync.js');
+    let resolved = false;
+    const pending = requestPlacementSync({ projectId: 'p1' }).then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+
+    expect(resolved).toBe(false);
+    expect(pushSettled).toBe(false);
+
+    resolvePush();
+    await pending;
+
+    expect(resolved).toBe(true);
+    expect(pushSettled).toBe(true);
+  });
+
+  it('folderScan persists via commitProjectDocument handler', async () => {
+    const commitProjectDocument = vi.fn(async () => ({
+      ok: true,
+      localCacheWritten: true,
+      payload: {
+        cards: [{ id: 'c1', key: 'notes__a' }],
+        stagedSyncCards: [],
+        artifactPlacements: {},
+      },
+    }));
+    const reconcile = vi.fn(async () => ({}));
+    registerActionSyncHandlers({
+      getProjectId: () => 'p1',
+      getState: () => ({
+        projectName: 'P',
+        cards: [{ id: 'c1', key: 'notes__a' }],
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      }),
+      getStagedSyncCards: () => [],
+      buildPayload: (s, staged) => ({ ...s, stagedSyncCards: staged ?? [] }),
+      commitProjectDocument,
+      touchIndex: vi.fn(),
+      onLocalCacheFailed: vi.fn(),
+      reconcileInbound: reconcile,
+      flushAll: vi.fn(),
+    });
+
+    await requestActionSync('folderScan', { projectId: 'p1' });
+
+    expect(commitProjectDocument).toHaveBeenCalledWith(
+      'p1',
+      expect.objectContaining({ reason: 'folderScan' }),
+    );
+    const result = await commitProjectDocument.mock.results[0].value;
+    expect(result.deferred).not.toBe(true);
+    expect(flushOutgoingProjectDocument).toHaveBeenCalled();
+  });
+
   it('structuralChange does not push when target id is not the active project', async () => {
     registerActionSyncHandlers({
       getProjectId: () => 'old-project',

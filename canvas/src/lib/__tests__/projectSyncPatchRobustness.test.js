@@ -7,6 +7,7 @@ import {
 } from '../sync/projectPatchOps.js';
 import {
   applyRemoteProjectPatch,
+  flushPendingRemoteProjectPatch,
   resetProjectSyncRemoteApplyForTests,
 } from '../sync/projectSyncRemoteApply.js';
 import { resetCanvasInteractionForTests, beginCanvasInteraction, endCanvasInteraction } from '../canvasInteraction.js';
@@ -58,5 +59,20 @@ describe('projectSyncPatch robustness', () => {
     );
     expect(result.queued).toBe(true);
     endCanvasInteraction('card');
+  });
+
+  it('does not flush a queued remote patch into a different project', async () => {
+    resetProjectSyncRemoteApplyForTests();
+    resetCanvasInteractionForTests();
+    beginCanvasInteraction('card');
+    await applyRemoteProjectPatch(
+      'p1',
+      [{ op: 'setCardLayout', id: 'c1', x: 1, y: 2 }],
+      3,
+      { clientId: 'remote', localClientId: 'local' },
+    );
+    endCanvasInteraction('card');
+
+    await expect(flushPendingRemoteProjectPatch('p2', 'local')).resolves.toBeNull();
   });
 });

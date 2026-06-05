@@ -52,7 +52,7 @@ function handleIndexEvent(data) {
  * @param {(data: { revision: number, updatedAt?: string | null, clientId?: string | null }) => void} onIndexUpdated
  */
 export function startWorkspaceIndexSyncStream(onIndexUpdated) {
-  if (!getServerSyncEnabled()) return;
+  if (!isServerSyncEnabled()) return;
   if (typeof EventSource === 'undefined') return;
 
   stopWorkspaceIndexSyncStream();

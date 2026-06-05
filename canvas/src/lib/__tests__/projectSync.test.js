@@ -930,6 +930,87 @@ describe('projectSync', () => {
     expect(putBodies.length).toBeGreaterThan(0);
   });
 
+  it('reconcileProjectDocumentOnSwitch keeps staged-only local artifacts when server document is empty', async () => {
+    const projectId = 'p-switch-dock-back';
+    const serverUpdatedAt = '2025-06-01T00:00:00.000Z';
+    const localPayload = {
+      projectName: 'Docked',
+      cards: [],
+      stagedSyncCards: [
+        { stagingId: 's1', key: 'notes__dock', type: 'markdown', versions: [{ version: 1 }] },
+      ],
+      artifactPlacements: {
+        'notes__dock': { surface: 'dock' },
+      },
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    storage.set(`canvas:project:${projectId}`, JSON.stringify(localPayload));
+    storage.set(`canvas:project-rev:${projectId}`, JSON.stringify(0));
+
+    const putBodies = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      const u = String(url);
+      if (u.endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (u.endsWith('/canvas/index') && options?.method === 'PUT') {
+        return { ok: true, json: async () => ({ updatedAt: 'now' }) };
+      }
+      if (u.endsWith('/canvas/index')) {
+        return { ok: true, json: async () => ({ index: null }) };
+      }
+      if (u.endsWith('/meta')) {
+        return {
+          ok: true,
+          json: async () => ({ revision: 1, updatedAt: serverUpdatedAt }),
+        };
+      }
+      if (u.includes(`/canvas/projects/${projectId}`) && options?.method === 'PUT') {
+        putBodies.push(JSON.parse(options.body));
+        return {
+          ok: true,
+          json: async () => ({
+            revision: 2,
+            updatedAt: '2025-06-02T00:00:00.000Z',
+          }),
+        };
+      }
+      if (u.includes(`/canvas/projects/${projectId}`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            payload: {
+              projectName: 'Docked',
+              cards: [],
+              stagedSyncCards: [],
+              artifactPlacements: {},
+              canvasView: { x: 0, y: 0, zoom: 1 },
+            },
+            updatedAt: serverUpdatedAt,
+            revision: 1,
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      reconcileProjectDocumentOnSwitch,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+    resetProjectSyncState();
+    await initializeProjectSync();
+
+    const result = await reconcileProjectDocumentOnSwitch(projectId);
+    expect(result.pulled).toBe(false);
+    expect(result.keptLocal).toBe(true);
+    expect(result.payload?.stagedSyncCards?.[0]?.key).toBe('notes__dock');
+    const cached = JSON.parse(storage.get(`canvas:project:${projectId}`));
+    expect(cached.stagedSyncCards[0].key).toBe('notes__dock');
+    expect(putBodies[0].payload.stagedSyncCards[0].key).toBe('notes__dock');
+  });
+
   it('reconcileProjectDocumentOnSwitch seeds revision when keeping local so poll stays live', async () => {
     const projectId = 'p-switch-rev-seed';
     const serverUpdatedAt = '2025-06-01T00:00:00.000Z';
@@ -1057,6 +1138,77 @@ describe('projectSync', () => {
     expect(result.payload?.cards?.[0]?.id).toBe('from-server');
     const cached = JSON.parse(storage.get(`canvas:project:${projectId}`));
     expect(cached.cards[0].id).toBe('from-server');
+  });
+
+  it('reconcileProjectDocumentOnSwitch pulls populated server when local body is empty at same revision', async () => {
+    const projectId = 'p-empty-local-current-rev';
+    const serverUpdatedAt = '2025-12-01T00:00:00.000Z';
+    storage.set(
+      `canvas:project:${projectId}`,
+      JSON.stringify({
+        projectName: 'Local Empty',
+        cards: [],
+        stagedSyncCards: [],
+        artifactPlacements: {},
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      }),
+    );
+    storage.set(`canvas:project-rev:${projectId}`, JSON.stringify(9));
+    storage.set(
+      `canvas:project-local-edit-at:${projectId}`,
+      JSON.stringify(Date.parse('2025-12-02T00:00:00.000Z')),
+    );
+
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      if (String(url).endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (String(url).endsWith('/canvas/index')) {
+        return { ok: true, json: async () => ({ index: null }) };
+      }
+      if (String(url).endsWith('/meta')) {
+        return {
+          ok: true,
+          json: async () => ({ revision: 9, updatedAt: serverUpdatedAt }),
+        };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            payload: {
+              projectName: 'Server',
+              cards: [{ id: 'from-server', key: 'aps-playbook' }],
+              stagedSyncCards: [{ stagingId: 's1', key: 'operations-playbook' }],
+              artifactPlacements: {
+                'aps-playbook': { surface: 'canvas' },
+                'operations-playbook': { surface: 'dock' },
+              },
+              canvasView: { x: 0, y: 0, zoom: 1 },
+            },
+            updatedAt: serverUpdatedAt,
+            revision: 9,
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      reconcileProjectDocumentOnSwitch,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+    resetProjectSyncState();
+    await initializeProjectSync();
+
+    const result = await reconcileProjectDocumentOnSwitch(projectId);
+    expect(result.pulled).toBe(true);
+    expect(result.payload?.cards?.[0]?.id).toBe('from-server');
+    expect(result.payload?.stagedSyncCards?.[0]?.key).toBe('operations-playbook');
+    const cached = JSON.parse(storage.get(`canvas:project:${projectId}`));
+    expect(cached.cards[0].id).toBe('from-server');
+    expect(cached.stagedSyncCards[0].key).toBe('operations-playbook');
   });
 
   it('reconcileProjectDocumentOnSwitch refuses server when card count undercuts last good local', async () => {
@@ -1355,6 +1507,171 @@ describe('projectSync', () => {
     const afterFlush = JSON.parse(storage.get(projectStorageKey(projectId)));
     expect(afterFlush.cards[0].x).toBe(480);
     expect(afterFlush.cards[0].y).toBe(220);
+  });
+
+  it('flushOutgoingProjectDocument pulls a non-empty server instead of boot-pushing empty cache', async () => {
+    const projectId = 'p-empty-boot-guard';
+    const serverPayload = {
+      projectName: 'Server',
+      cards: [{ id: 'server-card', key: 'artifact.pdf', versions: [{ version: 1 }] }],
+      stagedSyncCards: [],
+      canvasView: { x: 1, y: 2, zoom: 1 },
+    };
+    storage.set(`canvas:project-rev:${projectId}`, JSON.stringify(7));
+
+    const putBodies = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      if (String(url).endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (String(url).endsWith('/canvas/index') && options?.method === 'PUT') {
+        return { ok: true, json: async () => ({ updatedAt: 'now' }) };
+      }
+      if (String(url).endsWith('/canvas/index')) {
+        return { ok: true, json: async () => ({ index: null }) };
+      }
+      if (String(url).endsWith('/meta')) {
+        return {
+          ok: true,
+          json: async () => ({
+            revision: 8,
+            updatedAt: '2025-06-05T00:00:00.000Z',
+          }),
+        };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`) && options?.method === 'PUT') {
+        putBodies.push(JSON.parse(options.body));
+        return {
+          ok: true,
+          json: async () => ({
+            revision: 9,
+            updatedAt: '2025-06-05T00:01:00.000Z',
+          }),
+        };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            payload: serverPayload,
+            updatedAt: '2025-06-05T00:00:00.000Z',
+            revision: 8,
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      flushOutgoingProjectDocument,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+    resetProjectSyncState();
+    await initializeProjectSync();
+
+    const result = await flushOutgoingProjectDocument(
+      projectId,
+      {
+        projectName: 'Server',
+        cards: [],
+        stagedSyncCards: [],
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      },
+      { reason: 'boot-push' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.pulled).toBe(true);
+    expect(result.reason).toBe('server_has_cards');
+    expect(putBodies).toHaveLength(0);
+    const cached = JSON.parse(storage.get(`canvas:project:${projectId}`));
+    expect(cached.cards[0].id).toBe('server-card');
+  });
+
+  it('flushOutgoingProjectDocument pulls server canvas instead of pushing dock-only cache', async () => {
+    const projectId = 'p-dock-only-boot-guard';
+    const serverPayload = {
+      projectName: 'Server',
+      cards: [{ id: 'server-card', key: 'artifact.pdf', versions: [{ version: 1 }] }],
+      stagedSyncCards: [{ stagingId: 'dock-1', key: 'notes.md' }],
+      canvasView: { x: 1, y: 2, zoom: 1 },
+    };
+    const localPayload = {
+      projectName: 'Server',
+      cards: [],
+      stagedSyncCards: [
+        { stagingId: 'dock-1', key: 'artifact.pdf' },
+        { stagingId: 'dock-2', key: 'notes.md' },
+      ],
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    storage.set(`canvas:project-rev:${projectId}`, JSON.stringify(7));
+
+    const writes = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      if (String(url).endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (String(url).endsWith('/canvas/index') && options?.method === 'PUT') {
+        return { ok: true, json: async () => ({ updatedAt: 'now' }) };
+      }
+      if (String(url).endsWith('/canvas/index')) {
+        return { ok: true, json: async () => ({ index: null }) };
+      }
+      if (String(url).endsWith('/meta')) {
+        return {
+          ok: true,
+          json: async () => ({
+            revision: 8,
+            updatedAt: '2025-06-05T00:00:00.000Z',
+          }),
+        };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`) && options?.method) {
+        writes.push({ method: options.method, body: JSON.parse(options.body) });
+        return {
+          ok: true,
+          json: async () => ({
+            revision: 9,
+            updatedAt: '2025-06-05T00:01:00.000Z',
+          }),
+        };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            payload: serverPayload,
+            updatedAt: '2025-06-05T00:00:00.000Z',
+            revision: 8,
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      flushOutgoingProjectDocument,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+    resetProjectSyncState();
+    await initializeProjectSync();
+
+    const result = await flushOutgoingProjectDocument(
+      projectId,
+      localPayload,
+      { reason: 'boot-push' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.pulled).toBe(true);
+    expect(result.reason).toBe('server_has_canvas_cards');
+    expect(writes).toHaveLength(0);
+    const cached = JSON.parse(storage.get(`canvas:project:${projectId}`));
+    expect(cached.cards[0].id).toBe('server-card');
+    expect(cached.stagedSyncCards).toHaveLength(1);
   });
 
   it('reconcileProjectDocumentOnSwitch keeps local layout when card count matches but positions differ', async () => {

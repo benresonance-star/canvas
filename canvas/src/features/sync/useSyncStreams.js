@@ -22,6 +22,7 @@ import { runExclusive } from '../../lib/projectSyncCoordinator.js';
  * @param {boolean} params.loaded
  * @param {string | null} params.activeProjectId
  * @param {import('react').MutableRefObject<string | null>} params.activeProjectIdRef
+ * @param {import('react').MutableRefObject<string | null>} [params.committedProjectIdRef]
  * @param {import('react').MutableRefObject<Function>} params.loadProjectIntoStateRef
  * @param {import('react').MutableRefObject<Function>} params.refreshProjectListFromServerRef
  * @param {import('react').MutableRefObject<boolean>} params.switchingProjectRef
@@ -30,16 +31,19 @@ export function useSyncStreams({
   loaded,
   activeProjectId,
   activeProjectIdRef,
+  committedProjectIdRef,
   loadProjectIntoStateRef,
   refreshProjectListFromServerRef,
   switchingProjectRef,
 }) {
+  const settledProjectIdRef = committedProjectIdRef ?? activeProjectIdRef;
+
   useEffect(() => {
     if (!loaded || !isBootSyncCompleted() || !isProjectPatchSyncEnabled()) {
       return undefined;
     }
     setRemotePatchAppliedListener((projectId, merged) => {
-      if (projectId !== activeProjectIdRef.current) return;
+      if (projectId !== settledProjectIdRef.current) return;
       if (isCanvasInteractionActive() || switchingProjectRef.current) return;
       void loadProjectIntoStateRef.current(projectId, {
         localOnly: true,
@@ -48,11 +52,11 @@ export function useSyncStreams({
       });
     });
     setCanvasInteractionIdleListener(() => {
-      const projectId = activeProjectIdRef.current;
+      const projectId = settledProjectIdRef.current;
       if (!projectId) return;
       void flushPendingRemoteProjectPatch(projectId, getProjectSyncClientId()).then(
         (result) => {
-          if (result?.applied && result.payload && projectId === activeProjectIdRef.current) {
+          if (result?.applied && result.payload && projectId === settledProjectIdRef.current) {
             void loadProjectIntoStateRef.current(projectId, {
               localOnly: true,
               document: normalizeLoadedProject(result.payload),
@@ -66,7 +70,7 @@ export function useSyncStreams({
       setRemotePatchAppliedListener(null);
       setCanvasInteractionIdleListener(null);
     };
-  }, [loaded, activeProjectIdRef, loadProjectIntoStateRef, switchingProjectRef]);
+  }, [loaded, settledProjectIdRef, loadProjectIntoStateRef, switchingProjectRef]);
 
   useEffect(() => {
     if (!loaded || !isBootSyncCompleted() || !isServerSyncEnabled()) {

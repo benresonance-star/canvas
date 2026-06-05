@@ -4,6 +4,82 @@ import { summarizePatchOps, syncTraceLog } from '../../src/lib/sync/syncTrace.js
 
 const INDEX_ID = 'default';
 
+function canvasCardCount(payload) {
+  return Array.isArray(payload?.cards) ? payload.cards.length : 0;
+}
+
+function projectArtifactCount(payload) {
+  const dockCards = Array.isArray(payload?.stagedSyncCards)
+    ? payload.stagedSyncCards.length
+    : 0;
+  return canvasCardCount(payload) + dockCards;
+}
+
+function emptyPayloadWouldEraseServer(payload, existingPayload, allowEmptyRemoteOverwrite) {
+  return (
+    !allowEmptyRemoteOverwrite
+    && projectArtifactCount(payload) === 0
+    && projectArtifactCount(existingPayload) > 0
+  );
+}
+
+function dockOnlyPayloadWouldEraseServerCanvas(
+  payload,
+  existingPayload,
+  allowDockOnlyRemoteOverwrite,
+) {
+  return (
+    !allowDockOnlyRemoteOverwrite
+    && canvasCardCount(payload) === 0
+    && projectArtifactCount(payload) > 0
+    && canvasCardCount(existingPayload) > 0
+  );
+}
+
+function activeProjectIdIsValid(index, projectId) {
+  return Boolean(
+    projectId
+    && index?.projects?.some((row) => row?.id === projectId && !row.archived),
+  );
+}
+
+function fallbackActiveProjectId(index) {
+  const pool = (index?.projects ?? []).filter((row) => row?.id && !row.archived);
+  if (pool.length === 0) return null;
+  return pool.reduce((a, b) =>
+    ((a.updatedAt ?? 0) >= (b.updatedAt ?? 0) ? a : b),
+  ).id;
+}
+
+function workspaceIndexForPersistence(
+  nextPayload,
+  existingPayload = null,
+  { deletedProjectIds = [] } = {},
+) {
+  const deleted = new Set(deletedProjectIds.filter(Boolean));
+  const next = {
+    ...nextPayload,
+    projects: nextPayload?.projects ?? [],
+  };
+  if (existingPayload?.projects?.length) {
+    const byId = new Map(next.projects.map((row) => [row.id, row]));
+    for (const row of existingPayload.projects) {
+      if (!row?.id || byId.has(row.id) || deleted.has(row.id)) continue;
+      byId.set(row.id, row);
+    }
+    next.projects = [...byId.values()];
+  }
+  const existingActive = existingPayload?.activeProjectId ?? null;
+  if (activeProjectIdIsValid(next, existingActive)) {
+    return { ...next, activeProjectId: existingActive };
+  }
+  const nextActive = next.activeProjectId ?? null;
+  if (activeProjectIdIsValid(next, nextActive)) {
+    return next;
+  }
+  return { ...next, activeProjectId: fallbackActiveProjectId(next) };
+}
+
 export async function getCanvasIndex() {
   const res = await query(
     'SELECT payload, updated_at, revision FROM canvas_workspace_index WHERE id = $1',
@@ -21,7 +97,7 @@ export async function getCanvasIndex() {
  * @param {object} payload
  * @param {number} expectedRevision — 0 for create-if-absent
  */
-export async function putCanvasIndex(payload, expectedRevision = 0) {
+export async function putCanvasIndex(payload, expectedRevision = 0, options = {}) {
   const expected = Number(expectedRevision);
   if (!Number.isFinite(expected) || expected < 0) {
     throw new Error('expectedRevision must be a non-negative number');
@@ -43,10 +119,11 @@ export async function putCanvasIndex(payload, expectedRevision = 0) {
         updatedAt: null,
       };
     }
+    const persistedPayload = workspaceIndexForPersistence(payload, null, options);
     await query(
       `INSERT INTO canvas_workspace_index (id, payload, updated_at, revision)
        VALUES ($1, $2::jsonb, $3, 1)`,
-      [INDEX_ID, JSON.stringify(payload), now],
+      [INDEX_ID, JSON.stringify(persistedPayload), now],
     );
     return { ok: true, revision: 1, updatedAt: now };
   }
@@ -63,11 +140,16 @@ export async function putCanvasIndex(payload, expectedRevision = 0) {
   }
 
   const nextRevision = currentRevision + 1;
+  const persistedPayload = workspaceIndexForPersistence(
+    payload,
+    existing.rows[0].payload,
+    options,
+  );
   await query(
     `UPDATE canvas_workspace_index
      SET payload = $2::jsonb, updated_at = $3, revision = $4
      WHERE id = $1`,
-    [INDEX_ID, JSON.stringify(payload), now, nextRevision],
+    [INDEX_ID, JSON.stringify(persistedPayload), now, nextRevision],
   );
   return { ok: true, revision: nextRevision, updatedAt: now };
 }
@@ -186,7 +268,15 @@ export async function syncIndexProjectName(projectId, projectName) {
  * @param {number} expectedRevision — client must match current row revision (use 0 for create-if-absent)
  * @returns {Promise<{ ok: true, revision: number, updatedAt: string } | { ok: false, conflict: true, revision: number, payload: object | null, updatedAt: string | null }>}
  */
-export async function putCanvasProject(projectId, payload, expectedRevision) {
+export async function putCanvasProject(
+  projectId,
+  payload,
+  expectedRevision,
+  {
+    allowEmptyRemoteOverwrite = false,
+    allowDockOnlyRemoteOverwrite = false,
+  } = {},
+) {
   const expected = Number(expectedRevision);
   if (!Number.isFinite(expected) || expected < 0) {
     throw new Error('expectedRevision must be a non-negative number');
@@ -208,11 +298,27 @@ export async function putCanvasProject(projectId, payload, expectedRevision) {
         updatedAt: null,
       };
     }
-    await query(
+    const inserted = await query(
       `INSERT INTO canvas_project_document (project_id, payload, updated_at, revision)
-       VALUES ($1, $2::jsonb, $3, 1)`,
+       VALUES ($1, $2::jsonb, $3, 1)
+       ON CONFLICT (project_id) DO NOTHING
+       RETURNING revision, updated_at`,
       [projectId, JSON.stringify(payload), now],
     );
+    if (!inserted.rows[0]) {
+      const current = await query(
+        'SELECT revision, payload, updated_at FROM canvas_project_document WHERE project_id = $1',
+        [projectId],
+      );
+      const row = current.rows[0];
+      return {
+        ok: false,
+        conflict: true,
+        revision: Number(row?.revision) || 0,
+        payload: row?.payload ?? null,
+        updatedAt: row?.updated_at ?? null,
+      };
+    }
     return { ok: true, revision: 1, updatedAt: now };
   }
 
@@ -221,6 +327,36 @@ export async function putCanvasProject(projectId, payload, expectedRevision) {
     return {
       ok: false,
       conflict: true,
+      revision: currentRevision,
+      payload: existing.rows[0].payload,
+      updatedAt: existing.rows[0].updated_at,
+    };
+  }
+
+  if (emptyPayloadWouldEraseServer(
+    payload,
+    existing.rows[0].payload,
+    allowEmptyRemoteOverwrite,
+  )) {
+    return {
+      ok: false,
+      conflict: true,
+      reason: 'empty_would_erase_server_cards',
+      revision: currentRevision,
+      payload: existing.rows[0].payload,
+      updatedAt: existing.rows[0].updated_at,
+    };
+  }
+
+  if (dockOnlyPayloadWouldEraseServerCanvas(
+    payload,
+    existing.rows[0].payload,
+    allowDockOnlyRemoteOverwrite,
+  )) {
+    return {
+      ok: false,
+      conflict: true,
+      reason: 'dock_only_would_erase_server_canvas',
       revision: currentRevision,
       payload: existing.rows[0].payload,
       updatedAt: existing.rows[0].updated_at,
@@ -245,7 +381,16 @@ export async function putCanvasProject(projectId, payload, expectedRevision) {
  *   | { ok: false, conflict: true, revision: number, payload: object | null, updatedAt: string | null, reason?: string }
  * >}
  */
-export async function patchCanvasProject(projectId, { expectedRevision, ops, traceId = null }) {
+export async function patchCanvasProject(
+  projectId,
+  {
+    expectedRevision,
+    ops,
+    traceId = null,
+    allowEmptyRemoteOverwrite = false,
+    allowDockOnlyRemoteOverwrite = false,
+  },
+) {
   const expected = Number(expectedRevision);
   if (!Number.isFinite(expected) || expected < 0) {
     throw new Error('expectedRevision must be a non-negative number');
@@ -286,11 +431,27 @@ export async function patchCanvasProject(projectId, { expectedRevision, ops, tra
     }
     const created = applyProjectOps({}, ops);
     syncTraceLog(traceId, 'db:patch-insert', { projectId });
-    await query(
+    const inserted = await query(
       `INSERT INTO canvas_project_document (project_id, payload, updated_at, revision)
-       VALUES ($1, $2::jsonb, $3, 1)`,
+       VALUES ($1, $2::jsonb, $3, 1)
+       ON CONFLICT (project_id) DO NOTHING
+       RETURNING revision, updated_at`,
       [projectId, JSON.stringify(created), now],
     );
+    if (!inserted.rows[0]) {
+      const current = await query(
+        'SELECT revision, payload, updated_at FROM canvas_project_document WHERE project_id = $1',
+        [projectId],
+      );
+      const row = current.rows[0];
+      return {
+        ok: false,
+        conflict: true,
+        revision: Number(row?.revision) || 0,
+        payload: row?.payload ?? null,
+        updatedAt: row?.updated_at ?? null,
+      };
+    }
     syncTraceLog(traceId, 'db:patch-ok', { projectId, revision: 1, cardCount: (created.cards ?? []).length });
     for (const op of ops) {
       if (op?.op === 'setProjectName' && typeof op.projectName === 'string') {
@@ -322,6 +483,43 @@ export async function patchCanvasProject(projectId, { expectedRevision, ops, tra
   }
 
   const merged = applyProjectOps(existing.rows[0].payload, ops);
+  if (emptyPayloadWouldEraseServer(
+    merged,
+    existing.rows[0].payload,
+    allowEmptyRemoteOverwrite,
+  )) {
+    syncTraceLog(traceId, 'db:patch-reject-empty-overwrite', {
+      projectId,
+      currentRevision,
+    });
+    return {
+      ok: false,
+      conflict: true,
+      revision: currentRevision,
+      payload: existing.rows[0].payload,
+      updatedAt: existing.rows[0].updated_at,
+      reason: 'empty_would_erase_server_cards',
+    };
+  }
+
+  if (dockOnlyPayloadWouldEraseServerCanvas(
+    merged,
+    existing.rows[0].payload,
+    allowDockOnlyRemoteOverwrite,
+  )) {
+    syncTraceLog(traceId, 'db:patch-reject-dock-only-overwrite', {
+      projectId,
+      currentRevision,
+    });
+    return {
+      ok: false,
+      conflict: true,
+      revision: currentRevision,
+      payload: existing.rows[0].payload,
+      updatedAt: existing.rows[0].updated_at,
+      reason: 'dock_only_would_erase_server_canvas',
+    };
+  }
   const nextRevision = currentRevision + 1;
   syncTraceLog(traceId, 'db:patch-update', { projectId, nextRevision });
   try {

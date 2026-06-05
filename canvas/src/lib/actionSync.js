@@ -254,7 +254,7 @@ export function requestActionSync(reason, options = {}) {
             await alignClientRevisionWithServerMeta(projectId, traceId);
             auditPlacementStep(`actionSync:${reason}:push`, payload, { projectId });
             syncTraceLog(traceId, 'actionSync:placement-push', { projectId });
-            void pushPayloadForProject(
+            await pushPayloadForProject(
               projectId,
               payload,
               reason,

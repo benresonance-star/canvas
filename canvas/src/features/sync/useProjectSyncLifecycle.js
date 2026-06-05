@@ -11,8 +11,10 @@ import {
   seedCommittedPayloadFromLoad,
 } from '../../lib/persistence.js';
 import { auditPlacementStep } from '../../lib/placementAudit.js';
+import { flowTrace } from '../../lib/sync/syncTrace.js';
 import { patchPlacementsMapFromArrays } from '../../lib/artifactPlacementsMap.js';
-import { projectCardCount, parseServerUpdatedAt } from '../../lib/sync/projectSyncMerge.js';
+import { parseServerUpdatedAt } from '../../lib/sync/projectSyncMerge.js';
+import { projectArtifactCount } from '../../lib/projectDocumentShape.js';
 import { getLocalEditAt } from '../../lib/sync/projectSyncRevision.js';
 import {
   ensureProjectIndex,
@@ -20,7 +22,7 @@ import {
   createEmptyProjectState,
   setActiveProjectId as persistActiveProjectId,
   touchActiveProjectInIndex,
-  resolveActiveProjectId,
+  resolveBootActiveProjectId,
   flushProjectSync,
   runProjectSyncBackground,
   isServerSyncEnabled,
@@ -68,7 +70,10 @@ import {
   shouldOfferDockRestore,
   countRestorableDockCards,
 } from '../../lib/projectDocumentShape.js';
-import { shouldApplyProjectLoad } from '../../lib/projectSwitch.js';
+import {
+  shouldApplyProjectLoad,
+  buildSwitchPlaceholderState,
+} from '../../lib/projectSwitch.js';
 import { hydrateStrippedCardContent } from '../../lib/projectHydrate.js';
 import {
   hydrateCardsPreviews,
@@ -79,6 +84,7 @@ import { shouldAutoFitCanvasOnLoad } from '../../lib/canvasView.js';
 import { fetchCanvasProjectMeta } from '../../lib/canvasProjectsApi.js';
 import { perfMark, perfMeasure } from '../../lib/loadPerfMarks.js';
 import { strings } from '../../content/strings.js';
+import { resolveInitialProjectId } from '../../lib/resolveInitialProjectId.js';
 
 /**
  * Boot, background sync, project load/switch, and server reconcile lifecycle.
@@ -112,13 +118,17 @@ export function useProjectSyncLifecycle({
     applyClusterContextForProject,
     applyClusterContextForProjectRef,
     flushPendingPlacementTransferSync,
+    flushPendingPlacementCommit,
     loadAgentChatThreadIndexEarlyRef,
     agentChatThreadIndexRef,
     activeThreadIdRef,
+    projectionBootRef,
+    projectListLength = 0,
   },
 }) {
   const {
     activeProjectIdRef,
+    committedProjectIdRef,
     projectNameDirtyRef,
     stateRef,
     stagedSyncCardsRef,
@@ -136,8 +146,8 @@ export function useProjectSyncLifecycle({
     folderRestoreHandledSeqRef,
   } = refs;
 
-  const loadProjectIntoStateRef = useRef(async () => []);
-  const applyServerPullResultRef = useRef(async () => null);
+  const loadProjectIntoStateRef = useRef(null);
+  const applyServerPullResultRef = useRef(null);
   const backgroundSyncStartedRef = useRef(false);
 
   const loadProjectIntoState = useCallback(async (
@@ -150,6 +160,11 @@ export function useProjectSyncLifecycle({
     } = {},
   ) => {
     const seqAtStart = switchSeq ?? null;
+    flowTrace('project:load-start', {
+      projectId,
+      localOnly,
+      switchSeq: seqAtStart,
+    });
     let saved;
     if (documentOverride != null) {
       const fenced = await applyProjectLoadFence(projectId, documentOverride);
@@ -208,6 +223,7 @@ export function useProjectSyncLifecycle({
         ? await hydrateCardsPreviews(stagedRaw, hydrateOpts)
         : stagedRaw;
     const seqNow = switchSeq != null ? projectSwitchSeqRef.current : null;
+    // Superseded switch: return null; the newer switchProject owns UI (no rollback here).
     if (
       !shouldApplyProjectLoad(
         projectId,
@@ -216,11 +232,17 @@ export function useProjectSyncLifecycle({
         seqNow,
       )
     ) {
+      flowTrace('project:load-superseded', {
+        projectId,
+        switchSeq: seqAtStart,
+        seqNow,
+        activeProjectId: activeProjectIdRef.current,
+      });
       return null;
     }
     lastLoadedCardsRef.current = cards;
     projectHydratedRef.current.add(projectId);
-    recordGoodLocalCardCount(projectId, cards.length);
+    recordGoodLocalCardCount(projectId, cards.length + stagedHydrated.length);
     const { stagedSyncCards: _staged, ...stateWithoutStaged } = normalized;
     const indexForName = await loadProjectIndex();
     const displayName = resolveProjectDisplayName(
@@ -305,8 +327,24 @@ export function useProjectSyncLifecycle({
       stagedSyncCards: stagedHydrated,
       artifactPlacements: patchedPlacements,
     }, { projectId });
+    flowTrace('project:load-done', {
+      projectId,
+      cardCount: cards.length,
+      stagedCount: stagedHydrated.length,
+      switchSeq: seqAtStart,
+    });
     return cards;
   }, [folderHandle, syncActiveProjectNameFromIndex]);
+
+  loadProjectIntoStateRef.current = loadProjectIntoState;
+
+  const invokeLoadProjectIntoState = useCallback(
+    (projectId, options) => {
+      const load = loadProjectIntoStateRef.current ?? loadProjectIntoState;
+      return load(projectId, options);
+    },
+    [loadProjectIntoState],
+  );
 
   const applyServerPullResult = useCallback(
     async (
@@ -322,7 +360,7 @@ export function useProjectSyncLifecycle({
       }
       const fencedPayload = await applyProjectLoadFence(projectId, payload);
       const documentToLoad = normalizeLoadedProject(fencedPayload ?? payload);
-      const cards = await loadProjectIntoStateRef.current(projectId, {
+      const cards = await invokeLoadProjectIntoState(projectId, {
         localOnly: true,
         document: documentToLoad,
         hydratePreviews,
@@ -342,8 +380,10 @@ export function useProjectSyncLifecycle({
       }
       return cards;
     },
-    [fitCanvasViewToCards, syncActiveProjectNameFromIndex],
+    [fitCanvasViewToCards, syncActiveProjectNameFromIndex, invokeLoadProjectIntoState],
   );
+
+  applyServerPullResultRef.current = applyServerPullResult;
 
   const clearStaleSyncBanners = useCallback((prev) => {
     if (
@@ -498,7 +538,7 @@ export function useProjectSyncLifecycle({
       void runExclusive('cache-tab', async () => {
         await applyReconcileFromServer(projectId, { showPullToast: true });
         if (!isCanvasInteractionActive()) {
-          await loadProjectIntoStateRef.current(projectId, { localOnly: true });
+          await invokeLoadProjectIntoState(projectId, { localOnly: true });
         }
       }, { mode: 'skip' });
     });
@@ -548,12 +588,132 @@ export function useProjectSyncLifecycle({
     setProjectSwitchLoading(false);
   }, []);
 
+  const hydrateBootActiveProject = useCallback(
+    async (index, activeId) => {
+      if (!activeId) {
+        setState((prev) => ({
+          ...prev,
+          cards: [],
+          projectName: strings.defaultProjectName,
+        }));
+        return null;
+      }
+      activeProjectIdRef.current = activeId;
+      setProjectList(projectsForMenuFromIndex(index));
+      projectNameDirtyRef.current = false;
+      const row = index.projects?.find((p) => p.id === activeId);
+      setState((prev) => ({
+        ...prev,
+        ...buildSwitchPlaceholderState(row, strings.defaultProjectName),
+      }));
+      await loadAgentChatThreadIndexEarlyRef.current(
+        activeId,
+        singleConnectorIdRef.current,
+      );
+      let cards = await invokeLoadProjectIntoState(activeId, {
+        localOnly: true,
+        hydratePreviews: false,
+      });
+      if (cards == null) {
+        cards = await invokeLoadProjectIntoState(activeId, {
+          localOnly: true,
+          hydratePreviews: false,
+        });
+      }
+      if ((cards == null || cards.length === 0) && isServerSyncEnabled()) {
+        try {
+          const pullResult = await pullProjectDocumentIfServerNewer(activeId, {
+            force: true,
+          });
+          if (pullResult.pulled && pullResult.payload) {
+            const pulledCards = await invokeLoadProjectIntoState(activeId, {
+              localOnly: true,
+              hydratePreviews: false,
+              document: pullResult.payload,
+            });
+            if (pulledCards != null) {
+              cards = pulledCards;
+            }
+          }
+        } catch (e) {
+          console.warn('Boot server pull for active project failed:', e);
+        }
+      }
+      if (cards != null) {
+        setActiveProjectId(activeId);
+        await persistActiveProjectId(activeId);
+        const displayName = resolveProjectDisplayName(
+          index,
+          activeId,
+          strings.defaultProjectName,
+        );
+        stateRef.current = { ...stateRef.current, projectName: displayName };
+        setState((prev) => ({ ...prev, projectName: displayName }));
+        syncActiveProjectNameFromIndex(index);
+      } else if (projectListLength > 0) {
+        activeProjectIdRef.current = null;
+        setActiveProjectId(null);
+        setState((prev) => ({
+          ...prev,
+          cards: [],
+          projectName: strings.defaultProjectName,
+        }));
+      } else {
+        activeProjectIdRef.current = null;
+        setActiveProjectId(null);
+        setState((prev) => ({
+          ...prev,
+          cards: [],
+          projectName: strings.defaultProjectName,
+        }));
+      }
+      return cards;
+    },
+    [
+      activeProjectIdRef,
+      projectNameDirtyRef,
+      stateRef,
+      setActiveProjectId,
+      setProjectList,
+      syncActiveProjectNameFromIndex,
+      setState,
+      loadAgentChatThreadIndexEarlyRef,
+      singleConnectorIdRef,
+      invokeLoadProjectIntoState,
+      projectListLength,
+    ],
+  );
+
   // Load saved state (once per mount — do not re-run when cluster callbacks change)
   useEffect(() => {
     if (bootCompletedRef.current) {
-      initialHydratedRef.current = true;
-      finishBootUi();
-      clearSyncingFromServerBanner(setSyncStatus);
+      void (async () => {
+        const activeId = activeProjectIdRef.current;
+        if (activeId && projectHydratedRef.current.has(activeId)) {
+          initialHydratedRef.current = true;
+          finishBootUi();
+          clearSyncingFromServerBanner(setSyncStatus);
+          return;
+        }
+        try {
+          const index = await ensureProjectIndex();
+          const repairId = activeId ?? resolveInitialProjectId(index);
+          const bootCoordinator = projectionBootRef?.current;
+          if (repairId && bootCoordinator?.selectProject) {
+            await bootCoordinator.selectProject(repairId, {
+              reason: 'repair',
+              showSwitchLoading: false,
+            });
+          } else if (repairId) {
+            await hydrateBootActiveProject(index, repairId);
+          }
+        } catch (e) {
+          console.error('Canvas boot rehydrate failed:', e);
+        }
+        initialHydratedRef.current = true;
+        finishBootUi();
+        clearSyncingFromServerBanner(setSyncStatus);
+      })();
       return undefined;
     }
     let cancelled = false;
@@ -564,6 +724,7 @@ export function useProjectSyncLifecycle({
       initialHydratedRef.current = true;
       finishBootUi();
       flushPendingPlacementTransferSync();
+      void flushPendingPlacementCommit?.();
     };
 
     (async () => {
@@ -572,53 +733,14 @@ export function useProjectSyncLifecycle({
           (async () => {
             const index = await ensureProjectIndex();
             if (cancelled) return;
-            const activeId =
-              index.activeProjectId ?? resolveActiveProjectId(index);
-            activeProjectIdRef.current = activeId;
-            setActiveProjectId(activeId);
-            setProjectList(projectsForMenuFromIndex(index));
-            if (activeId) {
-              await persistActiveProjectId(activeId);
-            }
-            if (cancelled) return;
             perfMark('boot/local');
-            if (activeId) {
-              await loadAgentChatThreadIndexEarlyRef.current(
-                activeId,
-                singleConnectorIdRef.current,
-              );
-              await loadProjectIntoStateRef.current(activeId, {
-                localOnly: true,
-                hydratePreviews: false,
-              });
-              if (
-                (lastLoadedCardsRef.current?.length ?? 0) === 0
-                && index?.projects?.length
-              ) {
-                const { findBestProjectIdWithLocalCanvas } = await import(
-                  '../../lib/projects.js'
-                );
-                const richerId = await findBestProjectIdWithLocalCanvas(index);
-                if (richerId && richerId !== activeId) {
-                  activeProjectIdRef.current = richerId;
-                  setActiveProjectId(richerId);
-                  await persistActiveProjectId(richerId);
-                  await loadAgentChatThreadIndexEarlyRef.current(
-                    richerId,
-                    singleConnectorIdRef.current,
-                  );
-                  await loadProjectIntoStateRef.current(richerId, {
-                    localOnly: true,
-                    hydratePreviews: false,
-                  });
-                }
-              }
+            const bootCoordinator = projectionBootRef?.current;
+            if (bootCoordinator?.commitBootWithRecovery) {
+              await bootCoordinator.commitBootWithRecovery(index);
             } else {
-              setState((prev) => ({
-                ...prev,
-                cards: [],
-                projectName: strings.defaultProjectName,
-              }));
+              const activeId = await resolveBootActiveProjectId(index);
+              if (cancelled) return;
+              await hydrateBootActiveProject(index, activeId);
             }
             perfMark('boot/local-done');
             perfMeasure('boot/local', 'boot/local', 'boot/local-done');
@@ -689,6 +811,7 @@ export function useProjectSyncLifecycle({
           initialHydratedRef.current = true;
           revealBootUi();
           flushPendingPlacementTransferSync();
+          void flushPendingPlacementCommit?.();
         }
       }
 
@@ -716,13 +839,15 @@ export function useProjectSyncLifecycle({
                 const localDoc = localSaved
                   ? normalizeLoadedProject(localSaved)
                   : null;
-                const localCanvasCount = projectCardCount(localDoc);
+                const localArtifactCount = projectArtifactCount(localDoc);
+                let remoteArtifactCount = 0;
                 let remote = null;
-                if (localCanvasCount === 0) {
+                if (localArtifactCount === 0) {
                   const { fetchCanvasProjectDocument } = await import(
                     '../../lib/canvasProjectsApi.js'
                   );
                   remote = await fetchCanvasProjectDocument(activeId);
+                  remoteArtifactCount = projectArtifactCount(remote?.payload);
                 }
                 const localEditAt = getLocalEditAt(activeId) ?? 0;
                 const serverAt = remote?.updatedAt
@@ -741,8 +866,10 @@ export function useProjectSyncLifecycle({
                 );
                 const keepLocalLayout =
                   !remote?.payload || decision === 'keptLocal';
+                const emptyLocalWouldEraseRemote =
+                  localArtifactCount === 0 && remoteArtifactCount > 0;
 
-                if (localDoc) {
+                if (localDoc && !emptyLocalWouldEraseRemote) {
                   const authoritativePlacements = patchPlacementsMapFromArrays(
                     localDoc.artifactPlacements ?? {},
                     localDoc.cards ?? [],
@@ -775,7 +902,7 @@ export function useProjectSyncLifecycle({
                   }
                 }
 
-                if (!keepLocalLayout) {
+                if (!keepLocalLayout || emptyLocalWouldEraseRemote) {
                   pullResult = await pullProjectDocumentIfServerNewer(activeId, {
                     force: true,
                   });
@@ -784,7 +911,7 @@ export function useProjectSyncLifecycle({
                 /* best effort — keep local paint from IDB */
               }
               perfMark('boot/server-pull');
-              if (cancelled) return;
+              if (cancelled || activeProjectIdRef.current !== activeId) return;
               if (pullResult.pulled) {
                 markBootPulledProject();
                 await applyServerPullResultRef.current(activeId, pullResult, {
@@ -798,14 +925,18 @@ export function useProjectSyncLifecycle({
                 'boot/server-pull',
                 'boot/server-pull-done',
               );
-              void requestActionSync('boot', { projectId: activeId });
+              if (activeProjectIdRef.current === activeId) {
+                void requestActionSync('boot', { projectId: activeId });
+              }
             }
-            if (cancelled) return;
+            if (cancelled || activeProjectIdRef.current !== activeId) return;
             await refreshProjectListFromServerRef.current({
               reconcileScope: 'active',
               activeProjectId: activeId,
             });
-            await touchActiveProjectInIndex(activeId);
+            if (activeProjectIdRef.current === activeId) {
+              await touchActiveProjectInIndex(activeId);
+            }
           }),
           POST_BOOT_SYNC_TIMEOUT_MS,
         );
@@ -835,7 +966,7 @@ export function useProjectSyncLifecycle({
       setProjectSwitchLoading(false);
       clearSyncingFromServerBanner(setSyncStatus);
     };
-  }, [finishBootUi]);
+  }, [finishBootUi, hydrateBootActiveProject]);
 
   // Background project + preview sync after UI is visible
   useEffect(() => {
@@ -853,8 +984,8 @@ export function useProjectSyncLifecycle({
             const localSnapshot = await loadProjectStructure(projectId, {
               localOnly: true,
             });
-            const localCanvasCount = projectCardCount(localSnapshot);
-            if (localCanvasCount === 0) {
+            const localArtifactCount = projectArtifactCount(localSnapshot);
+            if (localArtifactCount === 0) {
               const pullResult = await pullProjectDocumentIfServerNewer(projectId);
               if (cancelled) return;
               if (pullResult.pulled) {
@@ -868,7 +999,7 @@ export function useProjectSyncLifecycle({
           }
           await runProjectSyncBackground();
           const syncedCount = consumeProjectSyncRecoveryNotice();
-          if (!cancelled) {
+          if (!cancelled && activeProjectIdRef.current === projectId) {
             await refreshProjectListFromServer({
               reconcileScope: 'active',
               activeProjectId: projectId,
@@ -880,7 +1011,13 @@ export function useProjectSyncLifecycle({
             });
             setTimeout(() => setSyncStatus(null), 6000);
           }
-          if (cancelled || !projectId) return;
+          if (
+            cancelled
+            || !projectId
+            || activeProjectIdRef.current !== projectId
+          ) {
+            return;
+          }
 
           perfMark('background/hydrate-start');
           const saved = await loadProjectStructure(projectId, { localOnly: true });
@@ -987,12 +1124,15 @@ export function useProjectSyncLifecycle({
             });
           }
 
-          if (!cancelled) await refreshClusterApiHealth();
+          if (!cancelled && activeProjectIdRef.current === projectId) {
+            await refreshClusterApiHealth();
+          }
+          if (cancelled || activeProjectIdRef.current !== projectId) return;
           await applyClusterContextForProjectRef.current(
             projectId,
             stateRef.current.projectName,
           );
-          if (!cancelled) {
+          if (!cancelled && activeProjectIdRef.current === projectId) {
             const refreshedIndex = await refreshProjectListFromServer({
               reconcileScope: 'all',
               activeProjectId: projectId,
@@ -1019,7 +1159,9 @@ export function useProjectSyncLifecycle({
   ]);
 
   const persistProjectDisplayName = useCallback(async () => {
-    const projectId = activeProjectIdRef.current;
+    const projectId =
+      committedProjectIdRef?.current
+      ?? activeProjectIdRef.current;
     if (!projectId || !projectNameDirtyRef.current) return;
     const name = stateRef.current.projectName?.trim();
     if (!name) return;
@@ -1030,9 +1172,11 @@ export function useProjectSyncLifecycle({
 
   const commitProjectDisplayName = useCallback(async () => {
     if (!projectNameDirtyRef.current) return;
+    const name = stateRef.current.projectName?.trim();
+    if (!name) return;
     await persistProjectDisplayName();
     projectNameDirtyRef.current = false;
-  }, [persistProjectDisplayName]);
+  }, [persistProjectDisplayName, stateRef]);
 
   useEffect(() => {
     if (!loaded || !activeProjectId || switchingProjectRef.current || !initialHydratedRef.current) {
@@ -1088,7 +1232,7 @@ export function useProjectSyncLifecycle({
           if (!stillActive()) return;
           if (pullResult.pulled) {
             serverPulled = true;
-            const pulledCards = await loadProjectIntoStateRef.current(targetId, {
+            const pulledCards = await invokeLoadProjectIntoState(targetId, {
               switchSeq,
               localOnly: true,
               document: pullResult.localCacheWritten
@@ -1126,7 +1270,7 @@ export function useProjectSyncLifecycle({
 
         if (!stillActive()) return;
         if (!serverPulled) {
-          let hydrated = await loadProjectIntoStateRef.current(targetId, {
+          let hydrated = await invokeLoadProjectIntoState(targetId, {
             switchSeq,
             localOnly: true,
             hydratePreviews: true,
@@ -1145,7 +1289,7 @@ export function useProjectSyncLifecycle({
             });
             if (!stillActive()) return;
             if (cacheMissPull.pulled) {
-              hydrated = await loadProjectIntoStateRef.current(targetId, {
+              hydrated = await invokeLoadProjectIntoState(targetId, {
                 switchSeq,
                 localOnly: true,
                 document: cacheMissPull.payload ?? undefined,
@@ -1254,7 +1398,8 @@ export function useProjectSyncLifecycle({
         await runExclusive('post-folder-connect', async () => {
           await applyReconcileFromServer(id);
           const hasCanvasCards = (stateRef.current.cards?.length ?? 0) > 0;
-          if (!hasCanvasCards) {
+          const hasStagedCards = (stagedSyncCardsRef.current?.length ?? 0) > 0;
+          if (!hasCanvasCards && !hasStagedCards) {
             const pullResult = await pullProjectDocumentIfServerNewer(id, { force: true });
             if (pullResult.pulled) {
               await applyServerPullResult(id, pullResult, {

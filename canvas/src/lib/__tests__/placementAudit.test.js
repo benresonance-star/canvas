@@ -28,6 +28,15 @@ describe('placementAudit', () => {
     expect(console.debug).not.toHaveBeenCalled();
   });
 
+  it('is enabled with legacy canvas:placement-audit key', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((k) => (k === 'canvas:placement-audit' ? '1' : null)),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    });
+    expect(isPlacementAuditEnabled()).toBe(true);
+  });
+
   it('logs surface keys when enabled', () => {
     vi.stubGlobal('localStorage', {
       getItem: vi.fn((k) => (k === 'canvas-placement-audit' ? '1' : null)),

@@ -1,4 +1,8 @@
-import { PROJECT_INDEX_KEY, projectStorageKey } from '../constants.js';
+import {
+  LOCAL_ACTIVE_PROJECT_ID_KEY,
+  PROJECT_INDEX_KEY,
+  projectStorageKey,
+} from '../constants.js';
 import {
   getProjectDocumentSerialised,
   putProjectDocumentSerialised,
@@ -27,16 +31,59 @@ export function getLastKnownProjectPayloadById() {
   return lastKnownProjectPayloadById;
 }
 
+export async function readLocalActiveProjectId() {
+  try {
+    const result = await window.storage.get(LOCAL_ACTIVE_PROJECT_ID_KEY);
+    if (typeof result?.value === 'string') return result.value || null;
+  } catch {
+    /* storage */
+  }
+  try {
+    return localStorage.getItem(LOCAL_ACTIVE_PROJECT_ID_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeLocalActiveProjectId(projectId) {
+  const value = projectId ?? '';
+  try {
+    await window.storage.set(LOCAL_ACTIVE_PROJECT_ID_KEY, value);
+  } catch {
+    /* storage */
+  }
+  try {
+    if (projectId) {
+      localStorage.setItem(LOCAL_ACTIVE_PROJECT_ID_KEY, projectId);
+    } else {
+      localStorage.removeItem(LOCAL_ACTIVE_PROJECT_ID_KEY);
+    }
+  } catch {
+    /* localStorage */
+  }
+}
+
+async function overlayLocalActiveProjectId(index) {
+  if (!index?.projects?.length) return index;
+  const localActiveId = await readLocalActiveProjectId();
+  if (!localActiveId) return index;
+  if (!index.projects.some((p) => p.id === localActiveId && !p.archived)) {
+    return index;
+  }
+  if (index.activeProjectId === localActiveId) return index;
+  return { ...index, activeProjectId: localActiveId };
+}
+
 export async function readLocalIndex() {
   try {
     const fromIdb = await getWorkspaceIndexSerialised();
-    if (fromIdb) return JSON.parse(fromIdb);
+    if (fromIdb) return overlayLocalActiveProjectId(JSON.parse(fromIdb));
   } catch {
     /* idb */
   }
   try {
     const result = await window.storage.get(PROJECT_INDEX_KEY);
-    return result ? JSON.parse(result.value) : null;
+    return result ? overlayLocalActiveProjectId(JSON.parse(result.value)) : null;
   } catch {
     return null;
   }

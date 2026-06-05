@@ -4,7 +4,11 @@ import {
   refreshReconciledProjectList,
   isServerSyncEnabled,
 } from '../../lib/projects.js';
-import { resolveProjectDisplayName } from '../../lib/projectDisplayName.js';
+import {
+  pickAuthoritativeProjectDisplayName,
+  resolveProjectDisplayName,
+  shouldSyncIndexNameToState,
+} from '../../lib/projectDisplayName.js';
 import { findDuplicateDisplayNameGroups } from '../../lib/projectIndexNormalize.js';
 import { PROJECT_SYNC_INDEX_POLL_INTERVAL_MS } from '../../lib/projectSyncCoordinator.js';
 import { isBootSyncCompleted, runExclusive } from '../../lib/projectSyncCoordinator.js';
@@ -15,6 +19,9 @@ import { strings } from '../../content/strings.js';
  */
 export function useWorkspaceIndexSync({
   activeProjectIdRef,
+  committedProjectIdRef,
+  switchingProjectRef,
+  projectSwitchLoading,
   projectNameDirtyRef,
   stateRef,
   attemptRestoreRef,
@@ -26,17 +33,32 @@ export function useWorkspaceIndexSync({
 }) {
   const syncActiveProjectNameFromIndex = useCallback((index) => {
     if (projectNameDirtyRef.current) return;
+    if (projectSwitchLoading || switchingProjectRef?.current) return;
     const activeId = activeProjectIdRef.current;
     if (!activeId || !index?.projects?.length) return;
     if (!index.projects.some((p) => p.id === activeId)) return;
-    const displayName = resolveProjectDisplayName(index, activeId);
+    const indexName = resolveProjectDisplayName(index, activeId);
+    const stateName = stateRef.current.projectName;
+    if (!shouldSyncIndexNameToState(indexName, stateName)) return;
+    const displayName = pickAuthoritativeProjectDisplayName(
+      indexName,
+      stateName,
+    );
     stateRef.current = { ...stateRef.current, projectName: displayName };
     setState((prev) => {
       if (projectNameDirtyRef.current) return prev;
       if (prev.projectName === displayName) return prev;
       return { ...prev, projectName: displayName };
     });
-  }, [activeProjectIdRef, projectNameDirtyRef, stateRef, setState]);
+  }, [
+    activeProjectIdRef,
+    committedProjectIdRef,
+    switchingProjectRef,
+    projectSwitchLoading,
+    projectNameDirtyRef,
+    stateRef,
+    setState,
+  ]);
 
   const applyDuplicateNameBanner = useCallback((index) => {
     const groups = findDuplicateDisplayNameGroups(index?.projects ?? []);
@@ -49,18 +71,27 @@ export function useWorkspaceIndexSync({
   }, [setSyncStatus]);
 
   const refreshProjectListFromServer = useCallback(async (options = {}) => {
+    const {
+      activeProjectId: requestedActiveId = null,
+      reconcileScope = 'active',
+      ...restOptions
+    } = options;
     const activeId = activeProjectIdRef.current;
+    const refreshActiveId =
+      requestedActiveId && requestedActiveId === activeId
+        ? requestedActiveId
+        : activeId;
     const skipProjectIds =
       projectNameDirtyRef.current && activeId
         ? new Set([activeId])
         : new Set();
     const projects = await refreshReconciledProjectList({
+      ...restOptions,
       skipProjectIds,
-      activeProjectId: activeId,
-      reconcileScope: 'active',
-      ...options,
+      activeProjectId: refreshActiveId,
+      reconcileScope,
     });
-    if (projects.length) setProjectList(projects);
+    setProjectList(projects);
     const index = await loadProjectIndex();
     syncActiveProjectNameFromIndex(index);
     applyDuplicateNameBanner(index);
@@ -71,6 +102,7 @@ export function useWorkspaceIndexSync({
     return index;
   }, [
     activeProjectIdRef,
+    committedProjectIdRef,
     projectNameDirtyRef,
     setProjectList,
     syncActiveProjectNameFromIndex,

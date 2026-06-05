@@ -1,0 +1,14 @@
+# Canvas debugging entry point
+
+See the full architecture map and per-flow trace guides:
+
+**[canvas/docs/DEBUGGING_GUIDE.md](canvas/docs/DEBUGGING_GUIDE.md)**
+
+Quick enable (browser devtools, then reload):
+
+```js
+localStorage.setItem('canvas-sync-trace', '1');
+localStorage.setItem('canvas-placement-audit', '1');
+```
+
+Legacy colon keys (`canvas:sync-trace`, `canvas:placement-audit`) also work.

@@ -56,6 +56,24 @@ export async function resolveClusterId(projectId) {
   return res.rows[0]?.cluster_id ?? null;
 }
 
+export async function resolveProjectIdForCluster(clusterId) {
+  const res = await query(
+    `WITH RECURSIVE ancestors AS (
+       SELECT id, parent_cluster_id FROM cluster WHERE id = $1
+       UNION ALL
+       SELECT c.id, c.parent_cluster_id
+       FROM cluster c
+       INNER JOIN ancestors a ON a.parent_cluster_id = c.id
+     )
+     SELECT pc.project_id
+     FROM ancestors a
+     INNER JOIN project_cluster pc ON pc.cluster_id = a.id
+     LIMIT 1`,
+    [clusterId],
+  );
+  return res.rows[0]?.project_id ?? null;
+}
+
 export async function addClusterMember(clusterId, ref, addedBy = null) {
   await query(
     `INSERT INTO cluster_member (cluster_id, primitive_id, primitive_type, added_at, added_by)

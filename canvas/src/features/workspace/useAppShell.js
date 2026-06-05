@@ -13,7 +13,20 @@ import { useVisibilitySync } from '../sync/useVisibilitySync.js';
 import { useProjectCacheEviction } from '../sync/useProjectCacheEviction.js';
 import { DEFAULT_SINGLE_CONNECTOR_ID } from '../../lib/agentConnectors.js';
 import { strings } from '../../content/strings.js';
+import {
+  getClientRevision,
+  projectsForMenuFromIndex,
+  saveProjectIndex,
+} from '../../lib/projects.js';
+import { getCommittedPayload } from '../../lib/persistence.js';
+import {
+  fetchCanvasIndexDocument,
+  fetchCanvasProjectDocument,
+} from '../../lib/canvasProjectsApi.js';
+import { buildProjectionSnapshot } from '../../lib/syncProjectionInvariants.js';
+import { resolveProjectDisplayName } from '../../lib/projectDisplayName.js';
 import { buildWorkspaceViewBundles } from './buildWorkspaceViewBundles.js';
+import { useWorkspaceProjection } from './useWorkspaceProjection.js';
 
 /**
  * Composes all feature hooks and builds view props for CanvasWorkspaceView (Phase 2).
@@ -67,7 +80,18 @@ export function useAppShell() {
   const loadAgentChatThreadIndexEarlyRef = useRef(async () => {});
   const singleConnectorIdRef = useRef(DEFAULT_SINGLE_CONNECTOR_ID);
   const flushPendingPlacementTransferSyncRef = useRef(() => {});
+  /** @type {import('react').MutableRefObject<{ projectId: string, artifactPlacements?: object | null, reason?: string, traceId?: string | null } | null>} */
+  const pendingPlacementCommitRef = useRef(null);
+  const flushPendingPlacementCommitRef = useRef(async () => {});
+  const flushPendingPlacementCommitForSwitchRef = useRef(async () => {});
   const projectNameDirtyRef = useRef(false);
+  const canMutateCanvasRef = useRef(false);
+  const committedProjectIdRef = useRef(null);
+  const projectionBootRef = useRef(
+    /** @type {{ commitBootWithRecovery?: Function; selectProject?: Function } | null} */ (
+      null
+    ),
+  );
   const syncLockRef = useRef('live');
   const lastAppliedSyncLockRef = useRef('live');
   const {
@@ -87,9 +111,20 @@ export function useAppShell() {
     stateRef.current = state;
   }, [state]);
 
-  useEffect(() => {
-    activeProjectIdRef.current = activeProjectId;
-  }, [activeProjectId]);
+  const alignProjectTitleFromIndex = useCallback(
+    (projectId, index) => {
+      if (!projectId) return;
+      projectNameDirtyRef.current = false;
+      const name = resolveProjectDisplayName(
+        index,
+        projectId,
+        strings.defaultProjectName,
+      );
+      stateRef.current = { ...stateRef.current, projectName: name };
+      setState((prev) => ({ ...prev, projectName: name }));
+    },
+    [setState],
+  );
 
   const [folderHandle, setFolderHandle] = useState(null);
   /** True when this browser has a persisted folder handle for the active project. */
@@ -114,6 +149,7 @@ export function useAppShell() {
     connectorId: DEFAULT_SINGLE_CONNECTOR_ID,
   });
   const folderScanSeqRef = useRef(0);
+  const folderPickerInFlightRef = useRef(false);
   const invalidateFolderScan = useCallback(() => {
     folderScanSeqRef.current += 1;
   }, []);
@@ -139,6 +175,9 @@ export function useAppShell() {
     applyDuplicateNameBanner,
   } = useWorkspaceIndexSync({
     activeProjectIdRef,
+    committedProjectIdRef,
+    switchingProjectRef,
+    projectSwitchLoading,
     projectNameDirtyRef,
     stateRef,
     attemptRestoreRef,
@@ -241,6 +280,7 @@ export function useAppShell() {
     resetCanvasUi,
     handleRestoreDockToCanvas,
     applySyncChanges,
+    applySyncChangesFromList,
     handleCardDragMove,
     handleCardDragEnd,
     dockCardToTray,
@@ -276,6 +316,7 @@ export function useAppShell() {
       canvasViewportSizeRef,
       clusterContextProjectIdRef,
       singleConnectorIdRef,
+      canMutateCanvasRef,
     },
     deps: {
       state,
@@ -322,6 +363,7 @@ export function useAppShell() {
   } = useProjectSyncLifecycle({
     refs: {
       activeProjectIdRef,
+      committedProjectIdRef,
       projectNameDirtyRef,
       stateRef,
       stagedSyncCardsRef,
@@ -367,9 +409,15 @@ export function useAppShell() {
       applyClusterContextForProjectRef,
       flushPendingPlacementTransferSync: () =>
         flushPendingPlacementTransferSyncRef.current(),
+      flushPendingPlacementCommit: () =>
+        flushPendingPlacementCommitRef.current(),
+      flushPendingPlacementCommitForSwitch: (projectId) =>
+        flushPendingPlacementCommitForSwitchRef.current(projectId),
       loadAgentChatThreadIndexEarlyRef,
       agentChatThreadIndexRef,
       activeThreadIdRef,
+      projectionBootRef,
+      projectListLength: projectList.length,
     },
   });
 
@@ -380,6 +428,8 @@ export function useAppShell() {
     requestStructuralSync,
     requestPlacementTransferSync,
     flushPendingPlacementTransferSync,
+    flushPendingPlacementCommit,
+    flushPendingPlacementCommitForSwitch,
     commitPlacementState,
   } = useActionSync({
     refs: {
@@ -392,6 +442,8 @@ export function useAppShell() {
       initialHydratedRef,
       projectNameDirtyRef,
       pendingPlacementTransferSyncRef,
+      pendingPlacementCommitRef,
+      canMutateCanvasRef,
     },
     folderHandle,
     applyReconcileFromServer,
@@ -400,7 +452,14 @@ export function useAppShell() {
 
   useEffect(() => {
     flushPendingPlacementTransferSyncRef.current = flushPendingPlacementTransferSync;
-  }, [flushPendingPlacementTransferSync]);
+    flushPendingPlacementCommitRef.current = flushPendingPlacementCommit;
+    flushPendingPlacementCommitForSwitchRef.current =
+      flushPendingPlacementCommitForSwitch;
+  }, [
+    flushPendingPlacementTransferSync,
+    flushPendingPlacementCommit,
+    flushPendingPlacementCommitForSwitch,
+  ]);
 
   const {
     agentPanelOpen,
@@ -519,6 +578,7 @@ export function useAppShell() {
     loaded,
     activeProjectId,
     activeProjectIdRef,
+    committedProjectIdRef,
     loadProjectIntoStateRef,
     refreshProjectListFromServerRef,
     switchingProjectRef,
@@ -540,6 +600,7 @@ export function useAppShell() {
     probeFolderStoredOnDevice,
     attemptRestoreFolderForProject,
     requestFolder,
+    importFilesToDock,
     pickProjectDirectory,
     applyFolderHandleAndScan,
     handleReconnectFolder,
@@ -548,6 +609,7 @@ export function useAppShell() {
   } = useFolderLinkScan({
     refs: {
       activeProjectIdRef,
+      committedProjectIdRef,
       projectSwitchSeqRef,
       folderRestoreHandledSeqRef,
       lastLoadedCardsRef,
@@ -556,6 +618,7 @@ export function useAppShell() {
       stagedSyncCardsRef,
       folderScanSeqRef,
       folderPresentKeysRef,
+      folderPickerInFlightRef,
       switchingProjectRef,
       setChangeFolderDialog,
     },
@@ -587,6 +650,8 @@ export function useAppShell() {
       folderPresentKeys,
       projectList,
       commitPlacementState,
+      flushPendingPlacementCommit,
+      applySyncChangesFromList,
       refreshGraph,
       syncCanvasFromServerAfterFolderConnect,
       loadProjectIntoStateRef,
@@ -599,6 +664,241 @@ export function useAppShell() {
   });
 
   attemptRestoreRef.current = attemptRestoreFolderForProject;
+
+  const clearStaleSyncBannersForProjection = useCallback((prev) => {
+    if (
+      prev?.banner === strings.projects.serverRevisionStale
+      || prev?.banner === strings.projects.remoteChangesWhileEditing
+    ) {
+      return null;
+    }
+    return prev;
+  }, []);
+
+  const resetProjectUiForProjection = useCallback(() => {
+    folderRestoreHandledSeqRef.current = null;
+    setFolderLinkInProgress(false);
+    setFolderLinkProbeComplete(false);
+    setFolderHandle(null);
+    setFolderStoredOnDevice(false);
+    setFolderPresentKeys(null);
+    setChangeFolderDialog(false);
+    setSearchQuery('');
+    setShowSearch(false);
+    setArchitectureOpen(false);
+    setAgentPanelOpen(false);
+    setAgentMessages([]);
+    setActiveThreadId(null);
+    setAgentChatThreadIndex({ version: 1, activeThreadId: null, threads: [] });
+    setThreadPickerOpen(false);
+    resetCanvasUi?.();
+    resetClusterUi?.();
+  }, [
+    setFolderLinkInProgress,
+    setFolderLinkProbeComplete,
+    setFolderHandle,
+    setFolderStoredOnDevice,
+    setFolderPresentKeys,
+    setChangeFolderDialog,
+    setAgentPanelOpen,
+    setAgentMessages,
+    setActiveThreadId,
+    setAgentChatThreadIndex,
+    setThreadPickerOpen,
+    resetCanvasUi,
+    resetClusterUi,
+  ]);
+
+  const {
+    projection,
+    selectProject,
+    commitBootWithRecovery,
+    restoreWorkspaceProject,
+  } = useWorkspaceProjection({
+    refs: {
+      activeProjectIdRef,
+      stateRef,
+      stagedSyncCardsRef,
+      switchingProjectRef,
+      projectSwitchSeqRef,
+      projectHydratedRef,
+      folderRestoreHandledSeqRef,
+      folderPresentKeysRef,
+      projectNameDirtyRef,
+      lastAppliedSyncLockRef,
+      userAdjustedViewRef,
+      canMutateCanvasRef,
+      committedProjectIdRef,
+    },
+    ui: {
+      activeProjectId,
+      pendingSwitchProjectId,
+      projectSwitchLoading,
+      projectList,
+      loaded,
+      indexActiveProjectId: activeProjectId,
+      stateProjectName: state.projectName,
+      setActiveProjectId,
+      setPendingSwitchProjectId,
+      setProjectSwitchLoading,
+      setProjectList,
+      setSyncStatus,
+      setSyncLock,
+      setState,
+      setFolderLinkInProgress,
+    },
+    deps: {
+      folderHandle,
+      getClientRevision,
+      loadProjectIntoState,
+      loadProjectIntoStateRef,
+      loadAgentChatThreadIndexEarly,
+      singleConnectorId,
+      syncActiveProjectNameFromIndex,
+      alignProjectTitleFromIndex,
+      continueProjectSwitchBackground,
+      linkProjectFolder,
+      warnFolderNameMismatch,
+      scanFolder,
+      reconcileAllThreadChatCards,
+      requestStructuralSync,
+      resetProjectUi: resetProjectUiForProjection,
+      clearStaleSyncBanners: clearStaleSyncBannersForProjection,
+      flushPendingPlacementCommit,
+      flushPendingPlacementCommitForSwitch,
+    },
+  });
+
+  projectionBootRef.current = {
+    commitBootWithRecovery,
+    selectProject,
+  };
+
+  useEffect(() => {
+    if (!projection.canMutateCanvas) return;
+    void flushPendingPlacementCommitRef.current();
+  }, [projection.canMutateCanvas]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return undefined;
+    window.__canvasProjectionSnapshot = () => ({
+      ...buildProjectionSnapshot({
+        pendingSwitchProjectId,
+        activeProjectId,
+        loadedProjectId: activeProjectIdRef.current,
+        projectName: stateRef.current.projectName,
+        cardCount: stateRef.current.cards?.length ?? 0,
+        clientRevision: projection.effectiveProjectId
+          ? getClientRevision(projection.effectiveProjectId)
+          : null,
+        projectListLength: projectList.length,
+        projectSwitchLoading,
+      }),
+      phase: projection.phase,
+      hydrated: projection.hydrated,
+      canMutateCanvas: projection.canMutateCanvas,
+      canMutateCanvasRef: canMutateCanvasRef.current,
+      pendingPlacementCommit: Boolean(pendingPlacementCommitRef.current),
+      switchingProject: switchingProjectRef.current,
+      creatingProject: creatingProjectRef.current,
+    });
+    window.__canvasDocumentSnapshot = (projectId) => {
+      const id = projectId ?? activeProjectIdRef.current;
+      const payload = getCommittedPayload(id);
+      const placements = payload?.artifactPlacements ?? {};
+      const canvasKeys = Object.entries(placements)
+        .filter(([, v]) => v?.surface === 'canvas')
+        .map(([k]) => k);
+      return {
+        projectId: id,
+        cardCount: payload?.cards?.length ?? 0,
+        stagedCount: payload?.stagedSyncCards?.length ?? 0,
+        canvasPlacementKeys: canvasKeys,
+      };
+    };
+    window.__canvasPlacementPersistenceCheck = async (projectId) => {
+      const id = projectId ?? activeProjectIdRef.current;
+      const liveCards = stateRef.current.cards ?? [];
+      const liveStaged = stagedSyncCardsRef.current ?? [];
+      const committed = getCommittedPayload(id);
+      const server = id ? await fetchCanvasProjectDocument(id) : null;
+      const serverPayload = server?.payload ?? null;
+      const placementSummary = (payload) => {
+        const placements = payload?.artifactPlacements ?? {};
+        const canvasPlacementKeys = Object.entries(placements)
+          .filter(([, v]) => v?.surface === 'canvas')
+          .map(([k]) => k);
+        const dockPlacementKeys = Object.entries(placements)
+          .filter(([, v]) => v?.surface === 'dock')
+          .map(([k]) => k);
+        return {
+          cardCount: payload?.cards?.length ?? 0,
+          stagedCount: payload?.stagedSyncCards?.length ?? 0,
+          canvasPlacementKeys,
+          dockPlacementKeys,
+        };
+      };
+      const live = {
+        cardCount: liveCards.length,
+        stagedCount: liveStaged.length,
+        canvasKeys: liveCards.map((c) => c.key).filter(Boolean),
+        stagedKeys: liveStaged.map((s) => s.key).filter(Boolean),
+      };
+      const local = placementSummary(committed);
+      const remote = placementSummary(serverPayload);
+      const liveCanvas = new Set(live.canvasKeys);
+      const remoteCanvas = new Set(remote.canvasPlacementKeys);
+      const missingOnServer = [...liveCanvas].filter((key) => !remoteCanvas.has(key));
+      const serverCanvasWithoutCard = remote.canvasPlacementKeys.filter(
+        (key) =>
+          !(serverPayload?.cards ?? []).some((card) => card?.key === key),
+      );
+      const issues = [];
+      if (!id) issues.push('No active project id');
+      if (!serverPayload) issues.push('No server document for project');
+      if (missingOnServer.length) {
+        issues.push(`Canvas keys missing on server: ${missingOnServer.join(', ')}`);
+      }
+      if (serverCanvasWithoutCard.length) {
+        issues.push(
+          `Server canvas placements without cards: ${serverCanvasWithoutCard.join(', ')}`,
+        );
+      }
+      if (live.cardCount !== remote.cardCount) {
+        issues.push(`Live/server card count mismatch: ${live.cardCount}/${remote.cardCount}`);
+      }
+      if (live.stagedCount !== remote.stagedCount) {
+        issues.push(
+          `Live/server staged count mismatch: ${live.stagedCount}/${remote.stagedCount}`,
+        );
+      }
+      const result = {
+        ok: issues.length === 0,
+        projectId: id,
+        projectName: stateRef.current.projectName,
+        revision: server?.revision ?? 0,
+        updatedAt: server?.updatedAt ?? null,
+        live,
+        local,
+        server: remote,
+        issues,
+      };
+      console.info('[canvas-placement-check]', result);
+      return result;
+    };
+    return () => {
+      delete window.__canvasProjectionSnapshot;
+      delete window.__canvasDocumentSnapshot;
+      delete window.__canvasPlacementPersistenceCheck;
+    };
+  }, [
+    pendingSwitchProjectId,
+    activeProjectId,
+    projection,
+    projectList.length,
+    projectSwitchLoading,
+    getClientRevision,
+  ]);
 
   useVisibilitySync({
     loaded,
@@ -659,20 +959,16 @@ export function useAppShell() {
     deps: {
       loaded,
       activeProjectId,
+      effectiveProjectId: projection.effectiveProjectId,
+      projectSwitchLoading,
       projectList,
       projectDeleteTarget,
       folderHandle,
       resetProjectUiParts: { resetCanvasUi, resetClusterUi },
       loadProjectIntoState,
       continueProjectSwitchBackground,
-      loadAgentChatThreadIndexEarly,
-      singleConnectorId,
-      syncActiveProjectNameFromIndex,
-      linkProjectFolder,
-      warnFolderNameMismatch,
-      scanFolder,
-      reconcileAllThreadChatCards,
-      requestStructuralSync,
+      selectProject,
+      restoreWorkspaceProject,
       fitCanvasViewToCards,
       setAgentMessages,
       setAgentPanelOpen,
@@ -681,6 +977,45 @@ export function useAppShell() {
       setThreadPickerOpen,
     },
   });
+
+  const handleRefreshProjectsFromServer = useCallback(async () => {
+    try {
+      const remote = await fetchCanvasIndexDocument();
+      const index = remote.index;
+      if (index?.projects) {
+        await saveProjectIndex(index, { immediate: false });
+        setProjectList(projectsForMenuFromIndex(index));
+      } else {
+        await refreshProjectListFromServer({ reconcileScope: 'none' });
+      }
+      const targetId =
+        index?.activeProjectId
+        ?? index?.projects?.find((p) => !p.archived)?.id
+        ?? index?.projects?.[0]?.id
+        ?? null;
+      if (targetId && !activeProjectIdRef.current) {
+        await selectProject(targetId);
+      }
+      setSyncStatus({ syncSuccess: strings.projects.projectsRefreshed });
+      setTimeout(() => {
+        setSyncStatus((prev) =>
+          prev?.syncSuccess === strings.projects.projectsRefreshed ? null : prev,
+        );
+      }, 4000);
+      return index;
+    } catch (e) {
+      setSyncStatus({
+        error: e?.message || strings.projects.projectsRefreshFailed,
+      });
+      setTimeout(() => setSyncStatus(null), 6000);
+      return null;
+    }
+  }, [
+    refreshProjectListFromServer,
+    selectProject,
+    setProjectList,
+    setSyncStatus,
+  ]);
 
   // Cmd-K to open search
   useEffect(() => {
@@ -710,6 +1045,7 @@ export function useAppShell() {
     canEditCanvas,
     activeProjectId,
     pendingSwitchProjectId,
+    workspaceProjection: projection,
     projectList,
     projectSwitchLoading,
     projectNameDirtyRef,
@@ -874,6 +1210,7 @@ export function useAppShell() {
     commitProjectDisplayName,
     switchProject,
     handleRequestCreateProject,
+    handleRefreshProjectsFromServer,
     handleArchiveProject,
     handleUnarchiveProject,
     handleConfirmDeleteProject,
@@ -884,6 +1221,7 @@ export function useAppShell() {
     handleSyncClick,
     handleReconnectFolder,
     requestFolder,
+    importFilesToDock,
     beginChangeFolder,
   });
 

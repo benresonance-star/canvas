@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { LayoutGrid, Check, Archive, Trash2, RotateCcw, Plus } from 'lucide-react';
+import { LayoutGrid, Check, Archive, Trash2, RotateCcw, Plus, RefreshCw } from 'lucide-react';
 import { strings } from '../content/strings.js';
 
 function formatProjectIdSuffix(id) {
@@ -40,7 +40,7 @@ function ProjectRow({
       <div className="flex items-center gap-0.5 pr-1">
         <button
           type="button"
-          disabled={switchDisabled && !isActive}
+          disabled={switchDisabled && isActive}
           onClick={() => onSwitch(project.id)}
           className="flex-1 min-w-0 text-left px-3 py-2 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
         >
@@ -108,6 +108,7 @@ export function ProjectSwitcher({
   activeProjectId,
   onSwitch,
   onCreate,
+  onRefreshProjects,
   onArchive,
   onUnarchive,
   onDeleteRequest,
@@ -180,6 +181,21 @@ export function ProjectSwitcher({
               {strings.projects.newProject}
             </button>
           </div>
+          {onRefreshProjects && (
+            <div className="px-3 py-2 border-b border-border-subtle bg-surface">
+              <button
+                type="button"
+                onClick={() => {
+                  void onRefreshProjects();
+                  closePopover();
+                }}
+                className="sans text-[10px] uppercase tracking-wider text-secondary hover:text-primary flex items-center gap-1.5 transition"
+              >
+                <RefreshCw size={12} strokeWidth={1.8} />
+                {strings.projects.refreshProjects}
+              </button>
+            </div>
+          )}
           <div className="max-h-56 overflow-y-auto py-1">
             {active.length === 0 ? (
               <div className="px-3 py-2 sans text-[10px] text-muted italic">
@@ -193,7 +209,7 @@ export function ProjectSwitcher({
                   isActive={p.id === activeProjectId}
                   switchDisabled={switchDisabled}
                   onSwitch={(id) => {
-                    if (switchDisabled) return;
+                    if (switchDisabled && id === activeProjectId) return;
                     onSwitch(id);
                     closePopover();
                   }}
@@ -223,7 +239,7 @@ export function ProjectSwitcher({
                   archived
                   switchDisabled={switchDisabled}
                   onSwitch={(id) => {
-                    if (switchDisabled) return;
+                    if (switchDisabled && id === activeProjectId) return;
                     onSwitch(id);
                     closePopover();
                   }}

@@ -1,14 +1,21 @@
 import { canonicalKeyForEntry } from './artifactPlacement.js';
 
-const AUDIT_KEY = 'canvas-placement-audit';
+/** @type {readonly string[]} */
+export const PLACEMENT_AUDIT_STORAGE_KEYS = [
+  'canvas-placement-audit',
+  'canvas:placement-audit',
+];
 
 /**
  * Opt-in: `localStorage.setItem('canvas-placement-audit', '1')`
+ * Legacy alias: `canvas:placement-audit`
  */
 export function isPlacementAuditEnabled() {
   if (typeof localStorage === 'undefined') return false;
   try {
-    return localStorage.getItem(AUDIT_KEY) === '1';
+    return PLACEMENT_AUDIT_STORAGE_KEYS.some(
+      (key) => localStorage.getItem(key) === '1',
+    );
   } catch {
     return false;
   }

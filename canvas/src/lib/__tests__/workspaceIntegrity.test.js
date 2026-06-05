@@ -132,6 +132,30 @@ describe('workspaceIntegrity', () => {
     expect(storage.has('canvas:project:ghost')).toBe(false);
   });
 
+  it('skipOrphanRecovery does not re-add orphan index rows', async () => {
+    const { auditWorkspaceIndex } = await import('../workspaceIntegrity.js');
+    const index = {
+      version: 1,
+      activeProjectId: 'keep',
+      projects: [
+        {
+          id: 'keep',
+          name: 'Keep',
+          createdAt: 1,
+          updatedAt: 1,
+          archived: false,
+        },
+      ],
+    };
+    const result = await auditWorkspaceIndex(index, {
+      skipOrphanRecovery: true,
+      recentlyDeletedIds: ['just-deleted'],
+    });
+    expect(result.orphanRecovered).toBe(0);
+    expect(result.repairedIndex.projects).toHaveLength(1);
+    expect(result.repairedIndex.projects[0].id).toBe('keep');
+  });
+
   it('preserveMergedLocalRowsWithCards re-adds dropped local rows', async () => {
     const { preserveMergedLocalRowsWithCards } = await import('../projectSync.js');
     const localIndex = {
@@ -147,5 +171,28 @@ describe('workspaceIntegrity', () => {
     const out = preserveMergedLocalRowsWithCards(merged, localIndex, ['local-rich']);
     expect(out.projects).toHaveLength(2);
     expect(out.projects.some((p) => p.id === 'local-rich')).toBe(true);
+  });
+
+  it('preserveMergedLocalRowsWithCards skips tombstoned ids', async () => {
+    const { preserveMergedLocalRowsWithCards } = await import('../projectSync.js');
+    const { recordDeletedProjectId } = await import('../projectDeletionTombstones.js');
+    recordDeletedProjectId('tomb-gone');
+    const localIndex = {
+      projects: [
+        { id: 'tomb-gone', name: 'Gone', updatedAt: 100, archived: false },
+        { id: 'local-rich', name: 'Rich', updatedAt: 100, archived: false },
+      ],
+    };
+    const merged = {
+      version: 1,
+      activeProjectId: 'other',
+      projects: [{ id: 'other', name: 'Other', updatedAt: 200, archived: false }],
+    };
+    const out = preserveMergedLocalRowsWithCards(merged, localIndex, [
+      'local-rich',
+      'tomb-gone',
+    ]);
+    expect(out.projects.some((p) => p.id === 'local-rich')).toBe(true);
+    expect(out.projects.some((p) => p.id === 'tomb-gone')).toBe(false);
   });
 });

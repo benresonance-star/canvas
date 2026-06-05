@@ -17,9 +17,16 @@ function blobToDataUrl(blob) {
 
 export async function readFileEntry(entry, options = {}) {
   const { cacheKey } = options;
-  const file = await entry.getFile();
+  const file =
+    typeof entry?.getFile === 'function'
+      ? await entry.getFile()
+      : entry;
+  if (!file) {
+    throw new Error('File entry unavailable');
+  }
   const content_hash = await sha256Hex(file);
-  const ext = entry.name.split('.').pop().toLowerCase();
+  const name = entry.name ?? file.name;
+  const ext = name.split('.').pop().toLowerCase();
   const type = fileTypeFromExt(ext);
   const isSmall = file.size <= STORAGE_LIMIT;
   const isImageOrPdf = type === 'image' || type === 'pdf';
@@ -84,7 +91,7 @@ export async function readFileEntry(entry, options = {}) {
       (type === 'audio' && Boolean(objectUrl)));
 
   return {
-    filename: entry.name,
+    filename: name,
     content_hash,
     size: file.size,
     lastModified: file.lastModified,

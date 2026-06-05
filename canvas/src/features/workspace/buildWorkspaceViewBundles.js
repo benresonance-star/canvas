@@ -9,6 +9,7 @@ export function buildWorkspaceViewBundles(ctx) {
       canEditCanvas: ctx.canEditCanvas,
       activeProjectId: ctx.activeProjectId,
       pendingSwitchProjectId: ctx.pendingSwitchProjectId,
+      workspaceProjection: ctx.workspaceProjection,
       projectList: ctx.projectList,
       projectSwitchLoading: ctx.projectSwitchLoading,
       projectNameDirtyRef: ctx.projectNameDirtyRef,
@@ -17,6 +18,7 @@ export function buildWorkspaceViewBundles(ctx) {
       commitProjectDisplayName: ctx.commitProjectDisplayName,
       switchProject: ctx.switchProject,
       handleRequestCreateProject: ctx.handleRequestCreateProject,
+      handleRefreshProjectsFromServer: ctx.handleRefreshProjectsFromServer,
       handleArchiveProject: ctx.handleArchiveProject,
       handleUnarchiveProject: ctx.handleUnarchiveProject,
       handleConfirmDeleteProject: ctx.handleConfirmDeleteProject,
@@ -33,6 +35,7 @@ export function buildWorkspaceViewBundles(ctx) {
       handleSyncClick: ctx.handleSyncClick,
       handleReconnectFolder: ctx.handleReconnectFolder,
       requestFolder: ctx.requestFolder,
+      importFilesToDock: ctx.importFilesToDock,
       beginChangeFolder: ctx.beginChangeFolder,
     },
     sync: {

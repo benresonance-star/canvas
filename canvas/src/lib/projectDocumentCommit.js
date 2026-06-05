@@ -5,6 +5,8 @@ import {
 import { buildProjectSavePayload } from './persistence.js';
 import { resolveProjectDisplayName } from './projectDisplayName.js';
 import { slimProjectPayloadForCache } from './projectSlim.js';
+import { projectArtifactCount } from './projectDocumentShape.js';
+import { projectCardCount } from './sync/projectSyncMerge.js';
 import {
   cancelPendingProjectSave,
   flushOutgoingProjectDocument,
@@ -193,9 +195,23 @@ export async function commitProjectDocument(projectId, options) {
 
   let pushOk;
   if (pushRemote) {
+    const previousCardCount = projectCardCount(priorPayload);
+    const nextCardCount = projectCardCount(payload);
+    const previousArtifactCount = projectArtifactCount(priorPayload);
+    const nextArtifactCount = projectArtifactCount(payload);
     const pushResult = await flushOutgoingProjectDocument(projectId, payload, {
       reason,
       traceId,
+      beforePayload: priorPayload,
+      allowEmptyRemoteOverwrite:
+        nextArtifactCount === 0
+        && previousArtifactCount > 0
+        && reason !== 'boot-push',
+      allowDockOnlyRemoteOverwrite:
+        nextCardCount === 0
+        && nextArtifactCount > 0
+        && previousCardCount > 0
+        && reason === 'placementTransfer:dock',
       skipSpecDualWrite: true,
     });
     pushOk = Boolean(pushResult?.ok);

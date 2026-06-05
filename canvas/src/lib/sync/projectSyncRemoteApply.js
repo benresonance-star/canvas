@@ -12,8 +12,8 @@ import { auditPlacementStep } from '../placementAudit.js';
 import { syncTraceLog } from './syncTrace.js';
 import { applyProjectLoadFence } from '../project/loadProjectStructure.js';
 
-/** @type {{ revision: number, ops: object[], clientId?: string, traceId?: string | null } | null} */
-let pendingRemotePatch = null;
+/** @type {Map<string, { revision: number, ops: object[], clientId?: string, traceId?: string | null }>} */
+const pendingRemotePatchesByProject = new Map();
 
 /** @type {((projectId: string, applied: object) => void) | null} */
 let onRemotePatchApplied = null;
@@ -37,7 +37,12 @@ export async function applyRemoteProjectPatch(projectId, ops, serverRevision, op
 
   if (isCanvasInteractionActive()) {
     syncTraceLog(traceId, 'remote:queued', { projectId, serverRevision });
-    pendingRemotePatch = { revision: serverRevision, ops, clientId, traceId };
+    pendingRemotePatchesByProject.set(projectId, {
+      revision: serverRevision,
+      ops,
+      clientId,
+      traceId,
+    });
     return { applied: false, queued: true };
   }
 
@@ -48,9 +53,10 @@ export async function applyRemoteProjectPatch(projectId, ops, serverRevision, op
  * Flush a patch deferred during canvas interaction.
  */
 export async function flushPendingRemoteProjectPatch(projectId, localClientId) {
-  if (!pendingRemotePatch || !projectId) return null;
-  const pending = pendingRemotePatch;
-  pendingRemotePatch = null;
+  if (!projectId) return null;
+  const pending = pendingRemotePatchesByProject.get(projectId);
+  if (!pending) return null;
+  pendingRemotePatchesByProject.delete(projectId);
   if (pending.clientId && pending.clientId === localClientId) {
     return null;
   }
@@ -126,6 +132,6 @@ async function applyRemoteProjectPatchNow(projectId, ops, serverRevision, traceI
 
 /** @internal */
 export function resetProjectSyncRemoteApplyForTests() {
-  pendingRemotePatch = null;
+  pendingRemotePatchesByProject.clear();
   onRemotePatchApplied = null;
 }

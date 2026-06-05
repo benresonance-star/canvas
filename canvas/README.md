@@ -17,6 +17,8 @@ npm run dev            # Vite on :5173
 
 See **[docs/ARCHITECTURE_MASTER_SPEC.md](docs/ARCHITECTURE_MASTER_SPEC.md)** — master spec for module boundaries, debugging, testing, and remediation progress.
 
+**AI agents:** follow **[AGENTS.md](AGENTS.md)** for sync trace protocol and menu/canvas invariant rules.
+
 | Document | Topic |
 |----------|-------|
 | [PROJECT_SYNC_API.md](docs/PROJECT_SYNC_API.md) | Frozen `projectSync.js` exports |
@@ -49,8 +51,8 @@ node scripts/capture-architecture-baseline.mjs
 ## Debugging sync
 
 ```js
-localStorage.setItem('canvas:sync-trace', '1');
-localStorage.setItem('canvas:placement-audit', '1');
+localStorage.setItem('canvas-sync-trace', '1');
+localStorage.setItem('canvas-placement-audit', '1');
 // reload app
 ```
 

@@ -9,6 +9,7 @@ import {
   ZoomOut,
   Network,
   CircuitBoard,
+  Upload,
 } from 'lucide-react';
 import { strings } from '../content/strings.js';
 import { resolveSyncBanner, shouldShowRefreshFromServer } from '../lib/syncUi.js';
@@ -86,6 +87,7 @@ export function CanvasChrome({
   onSwitchProject,
   projectSwitchLoading = false,
   onCreateProject,
+  onRefreshProjects,
   onArchiveProject,
   onUnarchiveProject,
   onDeleteProjectRequest,
@@ -118,13 +120,16 @@ export function CanvasChrome({
   folderNeedsConnect = false,
   folderFooterSyncHidden = false,
   folderLinked,
+  showChangeFolder = false,
   onChangeFolder,
   onNewNote,
   onAddLink,
+  onImportFiles,
   onSync,
   onReconnectFolder,
   onConnectFolder,
   cardCount,
+  artifactCountAudit = null,
   selectedCardCount,
   clusterApiAvailable = true,
   clusterApiUnavailableMessage = null,
@@ -132,11 +137,25 @@ export function CanvasChrome({
   showDesktopControls = true,
 }) {
   const bannerMessage = resolveSyncBanner(syncLock, syncStatus?.banner);
+  const folderPickerBusy = Boolean(syncStatus?.folderPickerInProgress);
+  const folderScanBusy = Boolean(syncStatus?.scanning);
+  const folderActionBusy = folderPickerBusy || folderScanBusy;
+  const importInputRef = useRef(null);
+  const importDisabled =
+    syncLock !== 'live' || folderActionBusy || Boolean(syncStatus?.manualSyncing);
   const showRefresh = shouldShowRefreshFromServer(
     syncLock,
     syncStatus?.banner,
     Boolean(onRefreshFromServer),
   );
+
+  const handleImportFilesChange = (event) => {
+    const { files } = event.currentTarget;
+    if (files?.length) {
+      void onImportFiles?.(files);
+    }
+    event.currentTarget.value = '';
+  };
 
   return (
     <div className="fixed inset-0 z-30 pointer-events-none" aria-hidden={false}>
@@ -148,6 +167,7 @@ export function CanvasChrome({
             switchDisabled={projectSwitchLoading}
             onSwitch={onSwitchProject}
             onCreate={onCreateProject}
+            onRefreshProjects={onRefreshProjects}
             onArchive={onArchiveProject}
             onUnarchive={onUnarchiveProject}
             onDeleteRequest={onDeleteProjectRequest}
@@ -381,7 +401,7 @@ export function CanvasChrome({
               <button
                 type="button"
                 onClick={onConnectFolder}
-                disabled={syncStatus?.scanning}
+                disabled={folderActionBusy || syncStatus?.manualSyncing}
                 className="sans text-xs bg-accent hover:bg-accent-hover text-on-accent px-3 py-1.5 rounded-full transition disabled:opacity-50"
               >
                 {strings.sync.connectFolderAction}
@@ -400,7 +420,7 @@ export function CanvasChrome({
               <button
                 type="button"
                 onClick={onReconnectFolder}
-                disabled={syncStatus?.scanning}
+                disabled={folderActionBusy || syncStatus?.manualSyncing}
                 className="sans text-xs bg-warning/20 text-warning border border-warning/40 hover:bg-warning/30 px-3 py-1.5 rounded-full transition disabled:opacity-50"
               >
                 {strings.sync.reconnectFolderAction}
@@ -431,6 +451,16 @@ export function CanvasChrome({
           )}
         </div>
         <div className="pointer-events-auto flex items-center gap-0.5 bg-surface/80 backdrop-blur border border-border rounded-full pl-2 pr-1 py-1 max-w-[min(100vw-3rem,22rem)]">
+          {onImportFiles && (
+            <input
+              ref={importInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleImportFilesChange}
+              aria-label={strings.sync.importFiles}
+            />
+          )}
           {folderDisplayName && (folderLinked || connectedFolderName) && (
             <>
               <span
@@ -442,7 +472,7 @@ export function CanvasChrome({
               <span className="w-px h-3 bg-border shrink-0" aria-hidden />
             </>
           )}
-          {folderLinked && (
+          {showChangeFolder && onChangeFolder && (
             <>
               <button
                 type="button"
@@ -454,32 +484,77 @@ export function CanvasChrome({
               <span className="w-px h-3 bg-border shrink-0" aria-hidden />
             </>
           )}
+          {onImportFiles && (
+            <>
+              <button
+                type="button"
+                onClick={() => importInputRef.current?.click()}
+                disabled={importDisabled}
+                title={strings.sync.importFiles}
+                aria-label={strings.sync.importFiles}
+                className="p-1.5 text-muted hover:text-secondary transition disabled:opacity-50 shrink-0"
+              >
+                <Upload size={13} strokeWidth={1.8} />
+              </button>
+              <span className="w-px h-3 bg-border shrink-0" aria-hidden />
+            </>
+          )}
           {!folderFooterSyncHidden && (
             <button
               type="button"
               onClick={onSync}
-              disabled={syncStatus?.scanning || syncStatus?.manualSyncing}
+              disabled={folderActionBusy || syncStatus?.manualSyncing}
               className="sans flex items-center gap-1.5 bg-accent hover:bg-accent-hover text-on-accent text-xs px-3 py-1.5 rounded-full transition disabled:opacity-50 shrink-0"
             >
               <RefreshCw
                 size={13}
                 strokeWidth={1.8}
                 className={
-                  syncStatus?.scanning || syncStatus?.manualSyncing ? 'animate-spin' : ''
+                  folderActionBusy || syncStatus?.manualSyncing ? 'animate-spin' : ''
                 }
               />
               {folderLinked
-                ? strings.sync.sync
+                ? strings.sync.scanFolder
                 : folderNeedsReconnect
                   ? strings.sync.reconnectFolderAction
                   : strings.sync.connectFolder}
             </button>
           )}
         </div>
-        {cardCount > 0 && (
-          <div className="sans text-[10px] uppercase tracking-wider text-muted pointer-events-auto">
-            {cardCount}{' '}
+        {(cardCount > 0 || artifactCountAudit) && (
+          <div
+            className={`sans text-[10px] uppercase tracking-wider pointer-events-auto text-right ${
+              artifactCountAudit?.status === 'mismatch'
+                ? 'text-danger'
+                : artifactCountAudit?.status === 'match'
+                  ? 'text-success'
+                  : 'text-muted'
+            }`}
+            title={
+              artifactCountAudit?.updatedAt
+                ? `DB revision ${artifactCountAudit.revision ?? 0} | ${artifactCountAudit.updatedAt}`
+                : undefined
+            }
+          >
+            UI {cardCount}{' '}
             {cardCount === 1 ? strings.sync.artefact : strings.sync.artefacts}
+            {artifactCountAudit?.loading && ' | DB LOADING'}
+            {artifactCountAudit?.missing && ' | DB MISSING'}
+            {artifactCountAudit?.error && ' | DB UNAVAILABLE'}
+            {artifactCountAudit
+              && !artifactCountAudit.loading
+              && !artifactCountAudit.error
+              && !artifactCountAudit.missing && (
+              <>
+                {' | '}DB CANVAS {artifactCountAudit.dbCanvas}
+                {' | '}DB DOCK {artifactCountAudit.dbDock}
+                {' | '}DB PLACEMENTS {artifactCountAudit.placementCanvas}/
+                {artifactCountAudit.placementDock}
+                {' | '}DB TOTAL {artifactCountAudit.dbTotal}
+                {' | '}
+                {artifactCountAudit.status === 'match' ? 'MATCH' : 'MISMATCH'}
+              </>
+            )}
           </div>
         )}
       </div>
