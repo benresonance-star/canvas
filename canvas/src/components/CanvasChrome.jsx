@@ -514,7 +514,7 @@ export function CanvasChrome({
                 }
               />
               {folderLinked
-                ? strings.sync.scanFolder
+                ? strings.sync.sync
                 : folderNeedsReconnect
                   ? strings.sync.reconnectFolderAction
                   : strings.sync.connectFolder}
@@ -538,7 +538,15 @@ export function CanvasChrome({
           >
             UI {cardCount}{' '}
             {cardCount === 1 ? strings.sync.artefact : strings.sync.artefacts}
-            {artifactCountAudit?.loading && ' | DB LOADING'}
+            {artifactCountAudit?.loading
+              && (artifactCountAudit?.syncing ? (
+                <>
+                  {' | '}
+                  <span className="inline-flex items-center rounded-full border border-danger-border bg-danger-muted px-1.5 py-0.5 text-danger animate-pulse">
+                    DB SYNCING
+                  </span>
+                </>
+              ) : ' | DB LOADING')}
             {artifactCountAudit?.missing && ' | DB MISSING'}
             {artifactCountAudit?.error && ' | DB UNAVAILABLE'}
             {artifactCountAudit

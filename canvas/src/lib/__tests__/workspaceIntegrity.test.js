@@ -102,16 +102,21 @@ describe('workspaceIntegrity', () => {
     expect(storage.has('canvas:project:active-only')).toBe(true);
   });
 
-  it('auditWorkspaceIndex marks ghost rows missing without deleting storage', async () => {
+  it('auditWorkspaceIndex prunes ghost rows missing locally and on the server', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url) => {
       if (String(url).includes('/meta')) {
-        return { status: 404, json: async () => ({}) };
+        return { ok: false, status: 404, json: async () => ({}) };
       }
       return { ok: false, status: 404, json: async () => ({}) };
     }));
 
     const { auditWorkspaceIndex } = await import('../workspaceIntegrity.js');
-    const { repairedIndex, ghostsMarked } = await auditWorkspaceIndex(
+    const {
+      repairedIndex,
+      ghostsMarked,
+      ghostsPruned,
+      ghostPrunedIds,
+    } = await auditWorkspaceIndex(
       {
         version: 1,
         activeProjectId: 'ghost',
@@ -128,8 +133,48 @@ describe('workspaceIntegrity', () => {
       { checkServerGhosts: true, serverSyncEnabled: true },
     );
     expect(ghostsMarked).toBe(1);
-    expect(repairedIndex.projects[0].syncState).toBe('missing');
+    expect(ghostsPruned).toBe(1);
+    expect(ghostPrunedIds).toEqual(['ghost']);
+    expect(repairedIndex.activeProjectId).toBeNull();
+    expect(repairedIndex.projects).toHaveLength(0);
     expect(storage.has('canvas:project:ghost')).toBe(false);
+  });
+
+  it('auditWorkspaceIndex keeps rows that are missing locally but exist on the server', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      if (String(url).includes('/meta')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ revision: 2, updatedAt: '2026-06-05T00:00:00.000Z' }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const { auditWorkspaceIndex } = await import('../workspaceIntegrity.js');
+    const { repairedIndex, ghostsMarked, ghostsPruned, ghostPrunedIds } =
+      await auditWorkspaceIndex(
+        {
+          version: 1,
+          activeProjectId: 'server-backed',
+          projects: [
+            {
+              id: 'server-backed',
+              name: 'Server Backed',
+              createdAt: 1,
+              updatedAt: 1,
+              archived: false,
+            },
+          ],
+        },
+        { checkServerGhosts: true, serverSyncEnabled: true },
+      );
+    expect(ghostsMarked).toBe(0);
+    expect(ghostsPruned).toBe(0);
+    expect(ghostPrunedIds).toEqual([]);
+    expect(repairedIndex.activeProjectId).toBe('server-backed');
+    expect(repairedIndex.projects).toHaveLength(1);
   });
 
   it('skipOrphanRecovery does not re-add orphan index rows', async () => {

@@ -162,6 +162,7 @@ export function buildWorkspaceViewBundles(ctx) {
       handleRetryChatSync: ctx.handleRetryChatSync,
       handleClearAgentChat: ctx.handleClearAgentChat,
       activeThreadId: ctx.activeThreadId,
+      handleRemoveContextCard: ctx.handleRemoveContextCard,
       agentChatThreadIndex: ctx.agentChatThreadIndex,
       threadPickerOpen: ctx.threadPickerOpen,
       handleSelectAgentThread: ctx.handleSelectAgentThread,

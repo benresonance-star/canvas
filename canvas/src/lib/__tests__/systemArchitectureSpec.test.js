@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ARCHITECTURE_SPEC_VERSION,
   ARCHITECTURE_ENTITY_STORAGE,
+  IMPLEMENTATION_PRIORITIES,
   buildArchitectureMarkdown,
   buildArchitectureMermaid,
 } from '../systemArchitectureSpec.js';
@@ -16,6 +17,7 @@ describe('systemArchitectureSpec', () => {
     expect(md).toContain('## Placement model (current)');
     expect(md).toContain('artifactPlacement');
     expect(md).toContain('## Sync model (current)');
+    expect(md).toContain('DB truth');
     expect(md).toContain('SYNC dialog is not for placement');
     expect(md).toContain('revision');
     expect(md).toContain('reconcileActiveProject');
@@ -23,6 +25,22 @@ describe('systemArchitectureSpec', () => {
     expect(md).toContain('spec_canvas_state');
     expect(md).toContain('```mermaid');
     expect(md).toContain('## Load performance roadmap');
+    expect(md).toContain('## Current implementation priorities');
+  });
+
+  it('documents the six current implementation priorities', () => {
+    expect(IMPLEMENTATION_PRIORITIES).toHaveLength(6);
+    const titles = IMPLEMENTATION_PRIORITIES.map((item) => item.title);
+    expect(titles).toContain('Server-side project/index integrity');
+    expect(titles).toContain('DB authority unless local edit pending');
+    expect(titles).toContain('Layout/meta-only loading surface');
+    expect(titles).toContain('Per-project operation queues');
+    expect(titles).toContain('Sync test stabilization');
+    expect(titles).toContain('Spec canvas authority clarified');
+
+    const md = buildArchitectureMarkdown();
+    expect(md).toContain('canvas_project_document');
+    expect(md).toContain('spec_canvas_state` is a secondary');
   });
 
   it('documents entity storage for projects, graph, and agent chat', () => {

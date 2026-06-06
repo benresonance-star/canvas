@@ -232,7 +232,10 @@ async function pushProjectDocumentIfLocalNewerInner(
     return { ok: false, reason: 'offline' };
   }
   if (!meta) {
-    return pushProjectPayloadToServer(projectId, payload, pushOpts);
+    return pushProjectPayloadToServer(projectId, payload, {
+      ...pushOpts,
+      expectedRevision: 0,
+    });
   }
 
   await ensureClientRevision(projectId);
@@ -340,6 +343,18 @@ async function reconcileActiveProjectInner(projectId, options = {}) {
     return { lock: 'offline', serverRevision: 0, action: 'offline' };
   }
   if (!meta) {
+    const localDoc = await getPendingOrCachedProjectDoc(projectId);
+    if (projectArtifactCount(localDoc) > 0) {
+      const pushResult = await pushProjectDocumentIfLocalNewerInner(projectId, localDoc);
+      if (pushResult.ok) {
+        return {
+          lock: 'live',
+          serverRevision: getClientRevision(projectId),
+          action: 'pushed',
+          pushed: true,
+        };
+      }
+    }
     notifySyncLock(projectId, 'live');
     return { lock: 'live', serverRevision: 0, action: 'none' };
   }
@@ -377,6 +392,28 @@ async function reconcileActiveProjectInner(projectId, options = {}) {
   const serverAt = parseServerUpdatedAt(meta.updatedAt);
   const knownServerAt = getLastServerUpdatedAt(projectId) ?? serverAt;
   const hasPending = hasPendingProjectSave(projectId);
+  const localArtifacts = projectArtifactCount(localDoc);
+  const serverArtifacts = projectArtifactCount(serverDoc);
+
+  if (
+    serverDoc
+    && pullOnServerWin
+    && !hasPending
+    && serverRev > clientRev
+    && serverAt >= localEditAt
+    && serverArtifacts > localArtifacts
+  ) {
+    const pullResult = await pullProjectDocumentIfServerNewer(projectId, { force: true });
+    notifySyncLock(projectId, 'live');
+    return {
+      lock: 'live',
+      serverRevision: getClientRevision(projectId),
+      action: 'pulled',
+      pulled: pullResult.pulled,
+      payload: pullResult.payload,
+      localCacheWritten: pullResult.localCacheWritten,
+    };
+  }
 
   if (localDoc && (hasPending || localEditAt > knownServerAt)) {
     const pushResult = await pushProjectDocumentIfLocalNewerInner(projectId, localDoc);
@@ -399,8 +436,6 @@ async function reconcileActiveProjectInner(projectId, options = {}) {
     }
   }
 
-  const localArtifacts = projectArtifactCount(localDoc);
-  const serverArtifacts = projectArtifactCount(serverDoc);
   const layoutDiffers =
     localDoc && serverDoc && !payloadsEquivalent(localDoc, serverDoc);
   const placementShouldWin =
@@ -778,6 +813,13 @@ export async function pullProjectDocumentIfServerNewer(projectId, options = {}) 
 
   const serverAt = parseServerUpdatedAt(remote.updatedAt);
   const localEditAt = getLocalEditAt(projectId) ?? 0;
+  const serverRevision = Number(remote.revision) || 0;
+  await ensureClientRevision(projectId);
+  const clientRevision = getClientRevision(projectId);
+  const preferRemote =
+    serverRevision >= clientRevision
+    && serverAt >= localEditAt
+    && !hasPendingProjectSave(projectId);
 
   flowTrace('project:pull-pending-read-start', { projectId });
   const pendingOrLocal =
@@ -799,6 +841,7 @@ export async function pullProjectDocumentIfServerNewer(projectId, options = {}) 
       projectId,
       placementSource,
       reason: 'pull',
+      preferRemote,
     },
   );
 
@@ -865,23 +908,6 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
     projectId,
     localArtifacts,
   });
-  if (localDoc && localArtifacts > 0) {
-    flowTrace('project:switch-reconcile-push-local-start', { projectId });
-    const pushResult = await pushProjectDocumentIfLocalNewer(projectId, localDoc);
-    flowTrace('project:switch-reconcile-push-local-done', {
-      projectId,
-      ok: Boolean(pushResult.ok),
-    });
-    if (pushResult.ok) {
-      return {
-        pulled: false,
-        payload: localDoc,
-        localCacheWritten: true,
-        keptLocal: true,
-        pushed: true,
-      };
-    }
-  }
 
   let meta;
   try {
@@ -1086,12 +1112,24 @@ export async function loadSyncedProjectDocument(projectId, { localOnly = false }
     const remote = await fetchCanvasProjectDocument(projectId);
     if (remote?.payload) {
       const { mergeProjectDocuments } = await import('../projectDocumentMerge.js');
+      const serverAt = parseServerUpdatedAt(remote.updatedAt);
+      const localEditAt = getLocalEditAt(projectId) ?? 0;
+      const serverRevision = Number(remote.revision) || 0;
+      await ensureClientRevision(projectId);
+      const clientRevision = getClientRevision(projectId);
+      const preferRemote =
+        serverRevision >= clientRevision
+        && serverAt >= localEditAt
+        && !hasPendingProjectSave(projectId);
       const { merged, skipWrite, decision } = mergeProjectDocuments(
         localDoc,
         remote.payload,
         {
           projectId,
           reason: 'load',
+          localEditAt,
+          serverAt,
+          preferRemote,
         },
       );
       if (skipWrite || decision === 'keptLocal') {

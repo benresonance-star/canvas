@@ -842,13 +842,11 @@ export function useProjectSyncLifecycle({
                 const localArtifactCount = projectArtifactCount(localDoc);
                 let remoteArtifactCount = 0;
                 let remote = null;
-                if (localArtifactCount === 0) {
-                  const { fetchCanvasProjectDocument } = await import(
-                    '../../lib/canvasProjectsApi.js'
-                  );
-                  remote = await fetchCanvasProjectDocument(activeId);
-                  remoteArtifactCount = projectArtifactCount(remote?.payload);
-                }
+                const { fetchCanvasProjectDocument } = await import(
+                  '../../lib/canvasProjectsApi.js'
+                );
+                remote = await fetchCanvasProjectDocument(activeId);
+                remoteArtifactCount = projectArtifactCount(remote?.payload);
                 const localEditAt = getLocalEditAt(activeId) ?? 0;
                 const serverAt = remote?.updatedAt
                   ? parseServerUpdatedAt(remote.updatedAt)
@@ -862,10 +860,14 @@ export function useProjectSyncLifecycle({
                     projectId: activeId,
                     placementSource: localDoc,
                     reason: 'boot',
+                    preferRemote:
+                      Boolean(remote?.payload)
+                      && serverAt >= localEditAt,
                   },
                 );
                 const keepLocalLayout =
-                  !remote?.payload || decision === 'keptLocal';
+                  !remote?.payload
+                  || (decision === 'keptLocal' && localEditAt > serverAt);
                 const emptyLocalWouldEraseRemote =
                   localArtifactCount === 0 && remoteArtifactCount > 0;
 

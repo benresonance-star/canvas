@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile.js';
 import {
   getProjectSyncMode,
@@ -46,6 +46,9 @@ import { ProjectCreateNamePrompt } from '../../components/ProjectCreateNamePromp
 import { EmptyWorkspacePrompt } from '../../components/EmptyWorkspacePrompt.jsx';
 import { RightDock } from '../../components/RightDock.jsx';
 import { CreateClusterDialog } from '../../components/CreateClusterDialog.jsx';
+
+const ARTIFACT_AUDIT_RETRY_MS = 500;
+const ARTIFACT_AUDIT_MAX_RETRIES = 10;
 
 /**
  * Loaded-state workspace UI extracted from App.jsx (Phase 1c).
@@ -230,6 +233,7 @@ export function CanvasWorkspaceView({
     chatSyncRetrying,
     handleRetryChatSync,
     handleClearAgentChat,
+    handleRemoveContextCard,
     activeThreadId,
     agentChatThreadIndex,
     threadPickerOpen,
@@ -353,21 +357,66 @@ export function CanvasWorkspaceView({
   }, [state.cards, selectedCardIds, clusterMemberOptions]);
 
   const [artifactCountAudit, setArtifactCountAudit] = useState(null);
+  const [artifactAuditRetry, setArtifactAuditRetry] = useState({
+    signature: '',
+    attempt: 0,
+  });
+  const artifactAuditRetryTimerRef = useRef(null);
 
   useEffect(() => {
     if (!effectiveProjectId || !isServerSyncEnabled()) {
+      setArtifactCountAudit(null);
       return undefined;
     }
     let cancelled = false;
+    const signature = `${effectiveProjectId}:${state.cards.length}:${stagedSyncCards.length}`;
+    const attempt =
+      artifactAuditRetry.signature === signature ? artifactAuditRetry.attempt : 0;
+    const scheduleRetry = () => {
+      if (attempt >= ARTIFACT_AUDIT_MAX_RETRIES) return false;
+      artifactAuditRetryTimerRef.current = setTimeout(() => {
+        setArtifactAuditRetry({ signature, attempt: attempt + 1 });
+      }, ARTIFACT_AUDIT_RETRY_MS);
+      return true;
+    };
+    setArtifactCountAudit((prev) => ({
+      ...(prev?.projectId === effectiveProjectId ? prev : {}),
+      projectId: effectiveProjectId,
+      loading: true,
+      syncing: true,
+      status: 'unknown',
+    }));
     void fetchCanvasProjectDocument(effectiveProjectId)
       .then((remote) => {
         if (cancelled) return;
         const counts = summarizeArtifactDatabaseCounts(remote?.payload);
         if (!counts) {
+          if (scheduleRetry()) {
+            setArtifactCountAudit({
+              projectId: effectiveProjectId,
+              loading: true,
+              syncing: true,
+              status: 'unknown',
+            });
+            return;
+          }
           setArtifactCountAudit({
             projectId: effectiveProjectId,
             loading: false,
             missing: true,
+            status: 'unknown',
+          });
+          return;
+        }
+        const status = artifactCountAuditStatus(state.cards.length, counts);
+        if (status !== 'match' && scheduleRetry()) {
+          setArtifactCountAudit({
+            projectId: effectiveProjectId,
+            loading: true,
+            syncing: true,
+            revision: remote?.revision ?? 0,
+            updatedAt: remote?.updatedAt ?? null,
+            ...counts,
             status: 'unknown',
           });
           return;
@@ -378,11 +427,20 @@ export function CanvasWorkspaceView({
           revision: remote?.revision ?? 0,
           updatedAt: remote?.updatedAt ?? null,
           ...counts,
-          status: artifactCountAuditStatus(state.cards.length, counts),
+          status,
         });
       })
       .catch(() => {
         if (cancelled) return;
+        if (scheduleRetry()) {
+          setArtifactCountAudit({
+            projectId: effectiveProjectId,
+            loading: true,
+            syncing: true,
+            status: 'unknown',
+          });
+          return;
+        }
         setArtifactCountAudit({
           projectId: effectiveProjectId,
           loading: false,
@@ -392,8 +450,17 @@ export function CanvasWorkspaceView({
       });
     return () => {
       cancelled = true;
+      if (artifactAuditRetryTimerRef.current) {
+        clearTimeout(artifactAuditRetryTimerRef.current);
+        artifactAuditRetryTimerRef.current = null;
+      }
     };
-  }, [effectiveProjectId, state.cards.length, stagedSyncCards.length]);
+  }, [
+    effectiveProjectId,
+    state.cards.length,
+    stagedSyncCards.length,
+    artifactAuditRetry,
+  ]);
 
   const visibleArtifactCountAudit =
     artifactCountAudit?.projectId === effectiveProjectId ? artifactCountAudit : null;
@@ -580,6 +647,7 @@ export function CanvasWorkspaceView({
           connectedFolderName={connectedFolderName}
           folderNeedsReconnect={folderNeedsReconnect}
           folderNeedsConnect={folderNeedsConnectUi}
+          folderFooterSyncHidden={folderNeedsConnectUi || folderNeedsReconnect}
           folderLinked={folderConnected}
           showChangeFolder={showChangeFolder}
           onChangeFolder={() => setChangeFolderDialog(true)}
@@ -812,7 +880,7 @@ export function CanvasWorkspaceView({
             viewportSize: canvasViewportSize,
             onFocusContextCard: (cardId) => setActiveCardId(cardId),
             agentSelectionClick: agentPanelOpen && agentContextMode === 'selected',
-            onRemoveContextCard: removeCardFromSelection,
+            onRemoveContextCard: handleRemoveContextCard,
             messages: agentMessages,
             onSendMessage: handleAgentSendMessage,
             onComingSoon: showAgentComingSoon,

@@ -52,7 +52,7 @@ export async function listClusterPrimitives(clusterId, { type, limit = 100 } = {
 
   if (!type || type === 'relationship') {
     const rels = await query(
-      `SELECT r.id, r.type, r.from_id, r.to_id, r.created_at
+      `SELECT r.id, r.type, r.from_id, r.from_type, r.to_id, r.to_type, r.created_at
        FROM relationship r
        INNER JOIN cluster_member cm ON cm.primitive_id = r.id AND cm.primitive_type = 'relationship'
        WHERE cm.cluster_id = $1
@@ -66,6 +66,10 @@ export async function listClusterPrimitives(clusterId, { type, limit = 100 } = {
         summary: `${row.type} ${truncate(row.from_id, 8)} → ${truncate(row.to_id, 8)}`,
         status: null,
         subtype: row.type,
+        from_id: row.from_id,
+        from_type: row.from_type,
+        to_id: row.to_id,
+        to_type: row.to_type,
         created_at: row.created_at,
       });
     }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Layers, Trash2, Link2 } from 'lucide-react';
+import { Bot, Box, Layers, Trash2, Link2 } from 'lucide-react';
 import { getCardPixelSize } from '../lib/cards.js';
 import { cardHeaderLabel } from '../lib/filename.js';
 import { strings } from '../content/strings.js';
@@ -162,6 +162,21 @@ export function CanvasCard({
                   onApply={(color) => onUpdateCard(card.id, { audioSkinColor: color })}
                   compact
                 />
+              )}
+              {card.type === 'agent_chat' && (
+                <button
+                  type="button"
+                  title="Open chat thread"
+                  aria-label="Open chat thread"
+                  className="p-1 text-[#39ff14] hover:text-[#7cff5a] transition pointer-events-auto"
+                  onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpen();
+                  }}
+                >
+                  <Bot size={14} strokeWidth={1.8} />
+                </button>
               )}
               {pinned?.artifactRef && onInspectArtifact && (
                 <button

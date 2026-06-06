@@ -1224,6 +1224,40 @@ export function useAgentChatShell({
     setTimeout(() => setSyncStatus(null), 3000);
   }, [requestThreadTranscriptSync, setSyncStatus]);
 
+  const handleRemoveContextCard = useCallback(
+    (cardId) => {
+      removeCardFromSelection(cardId);
+
+      const registry = agentContextRegistryRef.current;
+      const entry = registry.byCardId.get(cardId);
+      if (!entry) return;
+
+      unregisterContextCard(registry, cardId);
+      setAgentContextStatusByCardId((prev) => {
+        if (!Object.prototype.hasOwnProperty.call(prev, cardId)) return prev;
+        const next = { ...prev };
+        delete next[cardId];
+        return next;
+      });
+
+      const now = Date.now();
+      const removeMsg = {
+        id: `ctx-rm-${++agentChatIdRef.current}`,
+        role: 'user',
+        kind: 'context_remove',
+        content: formatContextRemoveMessage([{ label: entry.label }]),
+        labels: [entry.label],
+        at: now,
+      };
+      const nextMessages = [...agentChatMessagesRef.current, removeMsg];
+      setAgentChatMessages(nextMessages);
+      void requestThreadTranscriptSync(nextMessages, { reason: 'contextRemove' });
+      setSyncStatus({ toast: strings.agent.contextFilesRemovedToast(1) });
+      setTimeout(() => setSyncStatus(null), 3000);
+    },
+    [removeCardFromSelection, requestThreadTranscriptSync, setSyncStatus],
+  );
+
   const handleAgentSendMessage = useCallback(
     async (payload) => {
       const { text, contextMode: mode, contextCards = [] } =
@@ -1513,6 +1547,7 @@ export function useAgentChatShell({
     handleRetryChatSync,
     handleClearAgentChat,
     handleRefreshContextSession,
+    handleRemoveContextCard,
     handleAgentSendMessage,
     handleAgentChatCardActivate,
     showAgentComingSoon,

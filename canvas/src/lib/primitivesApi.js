@@ -197,7 +197,13 @@ export async function createTask(clusterId, fields) {
 export async function fetchHealth() {
   try {
     const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(2000) });
-    const data = await res.json().catch(() => ({}));
+    const data = await res.json().catch(() => null);
+    const hasHealthShape =
+      data
+      && (typeof data.ok === 'boolean' || typeof data.dbReady === 'boolean');
+    if (!hasHealthShape) {
+      return { apiReachable: false, ok: false, dbReady: false, error: null };
+    }
     return {
       apiReachable: true,
       ok: data.ok === true,

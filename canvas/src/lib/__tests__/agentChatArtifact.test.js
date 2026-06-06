@@ -72,6 +72,44 @@ describe('agentChatArtifact', () => {
     expect(parsed[1].content).toBe('Hi there');
   });
 
+  it('parseAgentChatTranscript preserves assistant paragraphs and lists', () => {
+    const md = formatAgentChatTranscript(
+      [
+        {
+          id: 'u1',
+          role: 'user',
+          content: 'What lessons can we learn?',
+          at: Date.UTC(2026, 4, 29, 12, 0, 0),
+        },
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: [
+            'Based on the content from two documents, here are some lessons.',
+            '',
+            '1. **Classification by Behavior:** Group data structures by behavior.',
+            '',
+            '2. **Separation of Concerns:** Keep logic separate from storage.',
+            '',
+            '8. **Governance and Budgeting:** Track complexity and resource usage.',
+          ].join('\n'),
+          at: Date.UTC(2026, 4, 29, 12, 0, 5),
+        },
+      ],
+      {
+        projectName: 'P',
+        connectorId: 'openai',
+        threadId: 'dbfadeb5-3a5e-4c26-baa8-694ada8eae45',
+        title: 'Data Structures',
+      },
+    );
+    const parsed = parseAgentChatTranscript(md);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[1].role).toBe('assistant');
+    expect(parsed[1].content).toContain('1. **Classification by Behavior:**');
+    expect(parsed[1].content).toContain('8. **Governance and Budgeting:**');
+  });
+
   it('parseAgentChatTranscript restores context events', () => {
     const md = formatAgentChatTranscript(
       [

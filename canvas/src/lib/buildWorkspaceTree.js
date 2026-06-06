@@ -71,6 +71,42 @@ function groupItemsBySubtype(items, subtypeKeys, getSubtype) {
   return buckets;
 }
 
+function stripPrimitivePrefix(summary) {
+  return summary?.replace(/^[^:]+:\s*/, '') || '';
+}
+
+function truncateId(id, n = 8) {
+  if (!id) return '';
+  return id.length > n ? `${id.slice(0, n)}...` : id;
+}
+
+function primitiveLabelIndex(items) {
+  const byKey = new Map();
+  for (const item of items) {
+    if (!item?.type || !item?.id) continue;
+    let label = stripPrimitivePrefix(item.summary) || item.id;
+    if (item.type !== 'artifact') {
+      label = item.summary || `${item.type}:${truncateId(item.id)}`;
+    }
+    byKey.set(`${item.type}:${item.id}`, label);
+  }
+  return byKey;
+}
+
+function relationshipEndpointLabel(rel, isFrom, labelsByRef) {
+  const id = isFrom ? rel.from_id : rel.to_id;
+  const type = isFrom ? rel.from_type : rel.to_type;
+  if (!id || !type) return '';
+  return labelsByRef.get(`${type}:${id}`) || `${type}:${truncateId(id)}`;
+}
+
+function relationshipLeafLabel(rel, labelsByRef) {
+  const from = relationshipEndpointLabel(rel, true, labelsByRef);
+  const to = relationshipEndpointLabel(rel, false, labelsByRef);
+  if (from && to) return `${from} -> ${to}`;
+  return rel.summary || rel.id;
+}
+
 function artifactSection(items) {
   const artifacts = items.filter((i) => i.type === 'artifact');
   const keys = [...ARTIFACT_TYPES];
@@ -85,7 +121,7 @@ function artifactSection(items) {
       .map((i) =>
         makeLeaf({
           id: `artifact-${i.id}`,
-          label: i.summary?.replace(/^[^:]+:\s*/, '') || i.id,
+          label: stripPrimitivePrefix(i.summary) || i.id,
           color: getSubtypeColor('artifacts', t),
           primitiveRef: { type: 'artifact', id: i.id },
           created_at: i.created_at,
@@ -124,6 +160,7 @@ function notesSection(items) {
 
 function relationshipsSection(items) {
   const rels = items.filter((i) => i.type === 'relationship');
+  const labelsByRef = primitiveLabelIndex(items);
   const buckets = groupItemsBySubtype(rels, [...RELATION_TYPES], (i) => i.subtype);
   const subtypes = RELATION_TYPES.map((t) => {
     const leaves = (buckets.get(t) || [])
@@ -131,7 +168,7 @@ function relationshipsSection(items) {
       .map((i) =>
         makeLeaf({
           id: `relationship-${i.id}`,
-          label: i.summary || i.id,
+          label: relationshipLeafLabel(i, labelsByRef),
           color: getSubtypeColor('relationships', t),
           primitiveRef: { type: 'relationship', id: i.id },
           created_at: i.created_at,

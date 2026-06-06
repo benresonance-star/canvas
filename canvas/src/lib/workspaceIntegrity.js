@@ -139,7 +139,7 @@ export async function readLocalProjectPayload(projectId) {
 }
 
 /**
- * Index rows with no local body (optional server meta check).
+ * Index rows with no local body and, when enabled, no server document.
  * @param {object} index
  * @param {{ checkServer?: boolean, serverSyncEnabled?: boolean }} [options]
  * @returns {Promise<string[]>}
@@ -152,10 +152,6 @@ export async function listGhostProjectIds(
   for (const row of index?.projects ?? []) {
     if (!row?.id) continue;
     if (await hasLocalProjectBody(row.id)) continue;
-    if (row.syncState === 'missing') {
-      ghosts.push(row.id);
-      continue;
-    }
     if (checkServer && serverSyncEnabled) {
       try {
         const meta = await fetchCanvasProjectMeta(row.id);
@@ -163,8 +159,12 @@ export async function listGhostProjectIds(
       } catch {
         continue;
       }
+      ghosts.push(row.id);
+      continue;
     }
-    ghosts.push(row.id);
+    if (row.syncState === 'missing') {
+      ghosts.push(row.id);
+    }
   }
   return ghosts;
 }
@@ -267,7 +267,7 @@ function patchRowNameFromDocument(row, payload) {
 }
 
 /**
- * Audit workspace index; repair orphans, active id, ghost flags, names from documents.
+ * Audit workspace index; repair orphans, active id, ghost rows, names from documents.
  * @param {object | null | undefined} index
  * @param {{
  *   checkServerGhosts?: boolean,
@@ -281,6 +281,8 @@ function patchRowNameFromDocument(row, payload) {
  *   actions: string[],
  *   orphanRecovered: number,
  *   ghostsMarked: number,
+ *   ghostsPruned: number,
+ *   ghostPrunedIds: string[],
  * }>}
  */
 export async function auditWorkspaceIndex(index, options = {}) {
@@ -298,6 +300,8 @@ export async function auditWorkspaceIndex(index, options = {}) {
     : (index ?? null);
   let orphanPurged = 0;
   let ghostsMarked = 0;
+  let ghostsPruned = 0;
+  let ghostPrunedIds = [];
   let orphanRecovered = 0;
 
   if (!skipOrphanRecovery) {
@@ -327,6 +331,11 @@ export async function auditWorkspaceIndex(index, options = {}) {
   }
 
   if (!repaired?.projects?.length) {
+    if (repaired && repaired.activeProjectId != null) {
+      repaired.activeProjectId = null;
+      actions.push('fixed_active_project_id');
+      issues.push({ type: 'invalid_active_project_id' });
+    }
     return {
       issues,
       repairedIndex: repaired,
@@ -334,6 +343,8 @@ export async function auditWorkspaceIndex(index, options = {}) {
       orphanPurged,
       orphanRecovered,
       ghostsMarked: 0,
+      ghostsPruned: 0,
+      ghostPrunedIds: [],
     };
   }
 
@@ -341,16 +352,17 @@ export async function auditWorkspaceIndex(index, options = {}) {
     checkServer: checkServerGhosts,
     serverSyncEnabled,
   });
-  for (const projectId of ghostIds) {
-    const row = repaired.projects.find((p) => p.id === projectId);
-    if (!row) continue;
+  if (ghostIds.length > 0) {
+    const ghostSet = new Set(ghostIds);
+    const beforeCount = repaired.projects.length;
+    repaired.projects = repaired.projects.filter((row) => !ghostSet.has(row?.id));
+    ghostPrunedIds = ghostIds.filter((id) => !repaired.projects.some((row) => row.id === id));
+    ghostsPruned = beforeCount - repaired.projects.length;
+  }
+  for (const projectId of ghostPrunedIds) {
     issues.push({ type: 'ghost_index_row', projectId });
-    if (row.syncState !== 'missing') {
-      row.syncState = 'missing';
-      row.updatedAt = Date.now();
-      ghostsMarked += 1;
-      actions.push(`marked_missing:${projectId}`);
-    }
+    ghostsMarked += 1;
+    actions.push(`pruned_ghost:${projectId}`);
   }
 
   for (const row of repaired.projects) {
@@ -369,7 +381,7 @@ export async function auditWorkspaceIndex(index, options = {}) {
     repaired,
     repaired.activeProjectId,
   );
-  if (resolvedActive && repaired.activeProjectId !== resolvedActive) {
+  if (repaired.activeProjectId !== resolvedActive) {
     repaired.activeProjectId = resolvedActive;
     actions.push('fixed_active_project_id');
     issues.push({ type: 'invalid_active_project_id' });
@@ -382,5 +394,7 @@ export async function auditWorkspaceIndex(index, options = {}) {
     orphanPurged,
     orphanRecovered,
     ghostsMarked,
+    ghostsPruned,
+    ghostPrunedIds,
   };
 }

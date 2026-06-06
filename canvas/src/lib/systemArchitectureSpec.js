@@ -1,5 +1,5 @@
 /** Bump when architecture or shipped load behavior changes. */
-export const ARCHITECTURE_SPEC_VERSION = '2026-05-31-sync-identity';
+export const ARCHITECTURE_SPEC_VERSION = '2026-06-06-db-authoritative-sync';
 
 export const ARCHITECTURE_LAYERS = [
   {
@@ -45,8 +45,9 @@ export const ARCHITECTURE_LAYERS = [
 export const ARCHITECTURE_FEATURES = [
   {
     id: 'revision-sync',
-    title: 'Revision-authoritative sync',
+    title: 'DB-authoritative project sync',
     shortDescription:
+      'Server `canvas_project_document` is the canvas source of truth unless the browser has an explicit pending/newer local edit. IndexedDB `canvas-projects` is a cache. ' +
       'Monotonic `revision` on `canvas_project_document`. Implementation split into `lib/sync/*` (`projectSyncDocument`, `Revision`, `Index`, `Pending`, …) with `projectSync.js` barrel. Action-based sync on layout commit; create/rename/migrate/pagehide push. Project bodies in IndexedDB `canvas-projects`; slim payloads + placement refs v2; LRU eviction when quota tight.',
     layerIds: ['client', 'api', 'data'],
     tags: ['sync'],
@@ -170,9 +171,9 @@ export const ARCHITECTURE_FEATURES = [
   },
   {
     id: 'load-target',
-    title: 'Cache-first load',
+    title: 'DB-convergent cache-first load',
     shortDescription:
-      'Switch/boot: paint from local cache quickly; server reconcile and preview hydration in background.',
+      'Switch/boot: paint from local cache quickly, then converge to the server document when there is no pending local edit; preview hydration remains background work.',
     layerIds: ['client'],
     tags: ['performance'],
     status: 'current',
@@ -268,6 +269,7 @@ const CORE_API_ROUTES = [
   'GET /health',
   'GET|PUT /canvas/index',
   'GET /canvas/projects/:id/meta',
+  'GET /canvas/projects/:id/layout (target: layout-only payload for fast cross-browser convergence)',
   'GET|PUT /canvas/projects/:id (revision, expectedRevision → 409)',
   'GET|PUT /canvas/projects/:id/spec-canvas (layout/viewport CAS)',
   'GET /spec/resources/:id (reference count)',
@@ -286,8 +288,47 @@ const LOAD_ROADMAP = [
   { id: 'D', label: 'Dev perf marks (boot/switch/hydrate)' },
 ];
 
+export const IMPLEMENTATION_PRIORITIES = [
+  {
+    id: 1,
+    title: 'Server-side project/index integrity',
+    summary:
+      'The API must not return index rows for projects whose `canvas_project_document` row is missing. Missing-document ghosts should be pruned or repaired server-side before browsers can treat them as selectable projects.',
+  },
+  {
+    id: 2,
+    title: 'DB authority unless local edit pending',
+    summary:
+      'On boot, refresh, project switch, and cross-browser sync, the DB project document wins when the browser has no explicit pending/newer local mutation. IndexedDB is a paint cache, not a competing authority.',
+  },
+  {
+    id: 3,
+    title: 'Layout/meta-only loading surface',
+    summary:
+      'Add a lightweight read path for revision, counts, cards, staged cards, placements, viewport, and sync status without shipping preview/content-heavy project JSON for every convergence check.',
+  },
+  {
+    id: 4,
+    title: 'Per-project operation queues',
+    summary:
+      'Replace broad global sync blocking with scoped lanes so folder scans, index writes, project layout writes, graph refresh, preview hydration, and placement changes do not unnecessarily block each other.',
+  },
+  {
+    id: 5,
+    title: 'Sync test stabilization',
+    summary:
+      'Split oversized sync tests into focused invariants, especially stale-cache cross-browser cases, index/document consistency, pending-local edit conflicts, and layout-only convergence.',
+  },
+  {
+    id: 6,
+    title: 'Spec canvas authority clarified',
+    summary:
+      '`spec_canvas_state` remains a secondary diagnostic/projection table until explicit cutover. Drift is logged or repaired from project JSON; spec rows must not decide the rendered canvas.',
+  },
+];
+
 const SPEC_MIGRATION_NOTE =
-  'North star: `Specs/Canvas data architecture Spec -Claude.md`. Shipped: placement SSOT, `artifactPlacements`, folder sync identity (`syncStaging`), agent dock sync, `lib/sync/*` project sync modules, `spec_*` tables + dual-write. Not yet: shared resource store on disk, UUID-only identity, DB-authoritative layout, `note_links`-only connectors UI.';
+  'North star: `Specs/Canvas data architecture Spec -Claude.md`. Current decision: `canvas_project_document` is the rendered-canvas authority; `spec_canvas_state` is a secondary projection until explicit cutover. Shipped: placement SSOT, `artifactPlacements`, folder sync identity (`syncStaging`), agent dock sync, `lib/sync/*` project sync modules, `spec_*` tables + dual-write. Not yet: relational project index, layout-only read path, shared resource store on disk, UUID-only identity, `note_links`-only connectors UI.';
 
 export function buildArchitectureMermaid() {
   return `flowchart TB
@@ -370,7 +411,8 @@ export function buildArchitectureMarkdown(runtime) {
     '- **Agent chats** default to the dock; canvas only when `thread.cardId` points at a live card or user drags from tray.',
     '',
     '## Sync model (current)',
-    '- Server **revision** is authority for the project document JSON (`canvas_project_document`)',
+    '- Server **project document JSON** (`canvas_project_document`) is the rendered-canvas authority unless the browser has an explicit pending/newer local edit',
+    '- IndexedDB `canvas-projects` is a cache used for fast paint; after server metadata/document arrives, it must converge to the DB truth',
     '- **`reconcileActiveProject`:** revision match → live; equivalent payloads → adopt revision only; local newer/pending → `pushProjectDocumentIfLocalNewer`; server wins → auto-pull + toast',
     '- **Action sync:** pointer-up layout/view commit, structural changes, placement transfer, project switch, folder scan, visibility resume',
     '- **PATCH sync (when `VITE_CANVAS_PATCH_SYNC` enabled):** small `projectPatchOps` per event; `PATCH /canvas/projects/:id`; SSE `project_updated` to other tabs; full `PUT` fallback on conflict or large diffs',
@@ -396,7 +438,7 @@ export function buildArchitectureMarkdown(runtime) {
     '## Spec data plane (partial)',
     `- ${SPEC_MIGRATION_NOTE}`,
     '- Dual-write: save also `PUT`s layout/viewport to `spec_canvas_state` (version CAS)',
-    '- Load: compare spec row to JSON; **JSON wins** if they differ',
+    '- Load: compare spec row to JSON; **project JSON wins** if they differ until an explicit spec cutover is implemented',
     '',
     '## Data stores (summary)',
     '- **Workspace index:** `canvas/index` — project list, `activeProjectId`, connected folder names',
@@ -424,6 +466,9 @@ export function buildArchitectureMarkdown(runtime) {
     '',
     '## Load performance roadmap',
     ...LOAD_ROADMAP.map((item) => `- Phase ${item.id}: ${item.label}`),
+    '',
+    '## Current implementation priorities',
+    ...IMPLEMENTATION_PRIORITIES.map((item) => `- ${item.id}. **${item.title}:** ${item.summary}`),
     '',
   ];
 

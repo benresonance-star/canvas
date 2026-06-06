@@ -14,9 +14,20 @@ describe('buildWorkspaceTree', () => {
           created_at: '2025-01-02T00:00:00Z',
         },
         {
+          type: 'artifact',
+          id: 'a2',
+          status: 'pdf',
+          summary: 'pdf: brief.pdf',
+          created_at: '2025-01-02T00:00:00Z',
+        },
+        {
           type: 'relationship',
           id: 'r1',
           subtype: 'references',
+          from_id: 'a1',
+          from_type: 'artifact',
+          to_id: 'a2',
+          to_type: 'artifact',
           summary: 'references abc → def',
           created_at: '2025-01-01T00:00:00Z',
         },
@@ -35,6 +46,7 @@ describe('buildWorkspaceTree', () => {
 
     const relationships = tree.children.find((c) => c.id === 'relationships');
     const refSubtype = relationships.children.find((c) => c.label === 'references');
+    expect(refSubtype.children[0].label).toBe('photo.png -> brief.pdf');
     expect(refSubtype.children[0].primitiveRef).toEqual({ type: 'relationship', id: 'r1' });
   });
 

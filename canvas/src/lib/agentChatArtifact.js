@@ -49,6 +49,84 @@ export function parseAgentChatTranscript(markdown) {
   const body = (sep >= 0 ? markdown.slice(sep + 5) : markdown).trim();
   if (!body) return [];
 
+  {
+    const headerPattern =
+      /^\[(\d{2}:\d{2}:\d{2})\]\s+(Context: sent to AI|Context: removed|User|Assistant)(?::)?(?:\s+(?:\u2014|â€”)\s+(.+?))?\s*$/gm;
+    const headers = [...body.matchAll(headerPattern)];
+    if (headers.length > 0) {
+      const parsedMessages = [];
+      let fallbackAt = Date.now() - headers.length * 1000;
+
+      for (let i = 0; i < headers.length; i += 1) {
+        const header = headers[i];
+        const nextHeader = headers[i + 1];
+        const timeStr = header[1];
+        const type = header[2];
+        const inlineValue = header[3]?.trim() ?? '';
+        const rest = body
+          .slice((header.index ?? 0) + header[0].length, nextHeader?.index ?? body.length)
+          .trim();
+
+        if (type === 'Context: sent to AI') {
+          const labelText = inlineValue || rest;
+          const labels = labelText.split(',').map((s) => s.trim()).filter(Boolean);
+          const at = parseTranscriptTime(timeStr, fallbackAt);
+          fallbackAt = at + 1;
+          parsedMessages.push({
+            id: nextParseId('ctx-add'),
+            role: 'user',
+            kind: 'context_add',
+            content: `Context: sent to AI â€” ${labelText}`,
+            labels,
+            at,
+          });
+          continue;
+        }
+
+        if (type === 'Context: removed') {
+          const labelText = inlineValue || rest;
+          const labels = labelText.split(',').map((s) => s.trim()).filter(Boolean);
+          const at = parseTranscriptTime(timeStr, fallbackAt);
+          fallbackAt = at + 1;
+          parsedMessages.push({
+            id: nextParseId('ctx-rm'),
+            role: 'user',
+            kind: 'context_remove',
+            content: `Context: removed â€” ${labelText}`,
+            labels,
+            at,
+          });
+          continue;
+        }
+
+        if (type === 'User') {
+          const at = parseTranscriptTime(timeStr, fallbackAt);
+          fallbackAt = at + 1;
+          parsedMessages.push({
+            id: nextParseId('u'),
+            role: 'user',
+            content: rest,
+            at,
+          });
+          continue;
+        }
+
+        if (type === 'Assistant') {
+          const at = parseTranscriptTime(timeStr, fallbackAt);
+          fallbackAt = at + 1;
+          parsedMessages.push({
+            id: nextParseId('a'),
+            role: 'assistant',
+            content: rest,
+            at,
+          });
+        }
+      }
+
+      return parsedMessages;
+    }
+  }
+
   const blocks = body.split(/\n\n+/);
   const messages = [];
   let fallbackAt = Date.now() - blocks.length * 1000;

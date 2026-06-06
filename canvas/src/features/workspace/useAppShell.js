@@ -521,6 +521,7 @@ export function useAppShell() {
     handleRetryChatSync,
     handleClearAgentChat,
     handleRefreshContextSession,
+    handleRemoveContextCard,
     handleAgentSendMessage,
     handleAgentChatCardActivate,
     showAgentComingSoon,

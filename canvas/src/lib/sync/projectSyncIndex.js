@@ -141,6 +141,9 @@ export async function patchIndexDocumentRevision(projectId, revision, updatedAt)
   row.documentRevision = revision;
   row.documentUpdatedAt = updatedAt ?? null;
   row.updatedAt = Date.now();
+  if ((Number(revision) || 0) > 0 && row.syncState) {
+    delete row.syncState;
+  }
   await writeLocalIndex(index);
   if (getPendingIndexPayload()?.projects) {
     const pendingRow = getPendingIndexPayload().projects.find((p) => p.id === projectId);
@@ -148,6 +151,9 @@ export async function patchIndexDocumentRevision(projectId, revision, updatedAt)
       pendingRow.documentRevision = revision;
       pendingRow.documentUpdatedAt = updatedAt ?? null;
       pendingRow.updatedAt = row.updatedAt;
+      if ((Number(revision) || 0) > 0 && pendingRow.syncState) {
+        delete pendingRow.syncState;
+      }
     }
   } else if (getServerSyncEnabled()) {
     scheduleIndexRemoteSave(index);
@@ -176,11 +182,17 @@ export async function applyWorkspaceIntegrityRepair(index, options = {}) {
   const changed =
     beforeSig !== afterSig
     || (result.orphanPurged ?? result.orphanRecovered ?? 0) > 0
+    || (result.ghostsPruned ?? 0) > 0
     || result.ghostsMarked > 0
     || index?.activeProjectId !== result.repairedIndex.activeProjectId;
 
   if (changed) {
     await writeLocalIndex(result.repairedIndex);
+    if ((result.ghostPrunedIds?.length ?? 0) > 0 && getServerSyncEnabled()) {
+      await pushIndexToServer(result.repairedIndex, {
+        deletedProjectIds: result.ghostPrunedIds,
+      });
+    }
   }
   return result;
 }

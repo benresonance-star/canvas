@@ -101,6 +101,7 @@ export function preserveCanvasCardsInMergedPayload(mergedPayload, ctx = {}) {
  *   projectId?: string,
  *   placementSource?: object | null,
  *   reason?: string,
+ *   preferRemote?: boolean,
  * }} [options]
  * @returns {{
  *   merged: object | null,
@@ -115,6 +116,7 @@ export function mergeProjectDocuments(localDoc, remoteDoc, options = {}) {
     projectId,
     placementSource = localDoc,
     reason = 'merge',
+    preferRemote = false,
   } = options;
 
   if (!remoteDoc) {
@@ -137,6 +139,13 @@ export function mergeProjectDocuments(localDoc, remoteDoc, options = {}) {
   const remotePatched = patchLocalDocFromArrays(remoteDoc);
   const localArtifactCount = projectArtifactCount(localPatched);
   const remoteArtifactCount = projectArtifactCount(remotePatched);
+  if (preferRemote && remoteArtifactCount > 0) {
+    return {
+      merged: remotePatched,
+      decision: 'adoptedRemote',
+      skipWrite: false,
+    };
+  }
   const emptyLocalWouldHideRemote =
     localArtifactCount === 0 && remoteArtifactCount > 0;
   const placementRef = placementSource

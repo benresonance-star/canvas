@@ -5,12 +5,35 @@ import {
   getPrimitiveDetail,
   fetchArtifactEdges,
   deleteRelationship,
+  listPrimitives,
 } from '../lib/primitivesApi.js';
 import { LinkTargetDialog } from './LinkTargetDialog.jsx';
 import { ClusterManagementSection } from './ClusterManagementSection.jsx';
 import { buildArtifactToCardMap } from '../lib/graph/clusterGraph.js';
 import { formatDurationSec } from '../lib/audio/parseAudioTags.js';
 import { FieldRow } from './FieldRow.jsx';
+
+function stripPrimitivePrefix(summary) {
+  return summary?.replace(/^[^:]+:\s*/, '') || '';
+}
+
+function truncateId(id, n = 8) {
+  if (!id) return '';
+  return id.length > n ? `${id.slice(0, n)}...` : id;
+}
+
+function buildPrimitiveLabelMap(items = []) {
+  const labels = new Map();
+  for (const item of items) {
+    if (!item?.type || !item?.id) continue;
+    const label =
+      item.type === 'artifact'
+        ? stripPrimitivePrefix(item.summary) || item.id
+        : item.summary || `${item.type}:${truncateId(item.id)}`;
+    labels.set(`${item.type}:${item.id}`, label);
+  }
+  return labels;
+}
 
 export function PrimitiveInspectorPanel({
   variant = 'overlay',
@@ -36,6 +59,7 @@ export function PrimitiveInspectorPanel({
   const [error, setError] = useState(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [primitiveLabels, setPrimitiveLabels] = useState(() => new Map());
 
   const artifactMap = useMemo(() => buildArtifactToCardMap(cards), [cards]);
 
@@ -43,6 +67,9 @@ export function PrimitiveInspectorPanel({
 
   const labelForArtifact = (artifactId) => {
     const hit = artifactMap.get(artifactId);
+    if (hit) return `${hit.name} (${hit.cardKey})`;
+    const primitiveLabel = primitiveLabels.get(`artifact:${artifactId}`);
+    if (primitiveLabel) return primitiveLabel;
     return hit ? `${hit.name} (${hit.cardKey})` : `${artifactId.slice(0, 12)}…`;
   };
 
@@ -53,6 +80,24 @@ export function PrimitiveInspectorPanel({
     if (type === 'note') return `note:${id.slice(0, 8)}…`;
     return `${type}:${id.slice(0, 8)}…`;
   };
+
+  useEffect(() => {
+    if (!clusterId) {
+      setPrimitiveLabels(new Map());
+      return undefined;
+    }
+    let cancelled = false;
+    listPrimitives(clusterId, { limit: 500 })
+      .then((data) => {
+        if (!cancelled) setPrimitiveLabels(buildPrimitiveLabelMap(data.items || []));
+      })
+      .catch(() => {
+        if (!cancelled) setPrimitiveLabels(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clusterId, clusterInspectorReload, reloadKey]);
 
   useEffect(() => {
     if (!selection || isClusterSelection) {
