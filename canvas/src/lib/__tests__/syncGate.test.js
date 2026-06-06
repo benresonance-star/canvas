@@ -79,4 +79,82 @@ describe('syncGate', () => {
     releaseStructural();
     await expect(structural).resolves.toBe('structural');
   });
+
+  it('allows different project scopes to run concurrently', async () => {
+    let releaseP1;
+    const p1Block = new Promise((resolve) => {
+      releaseP1 = resolve;
+    });
+    let p1Ran = false;
+    let p2Ran = false;
+
+    const p1 = runSyncGate('push-if-newer', async () => {
+      p1Ran = true;
+      await p1Block;
+      return 'p1';
+    }, { scope: 'project:p1' });
+
+    await Promise.resolve();
+    const p2 = runSyncGate('push-if-newer', async () => {
+      p2Ran = true;
+      return 'p2';
+    }, { scope: 'project:p2' });
+
+    await Promise.resolve();
+    expect(p1Ran).toBe(true);
+    expect(p2Ran).toBe(true);
+    await expect(p2).resolves.toBe('p2');
+    releaseP1();
+    await expect(p1).resolves.toBe('p1');
+  });
+
+  it('serializes work in the same project scope', async () => {
+    let releaseFirst;
+    const firstBlock = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    let secondRan = false;
+
+    const first = runSyncGate('push-if-newer', async () => {
+      await firstBlock;
+      return 'first';
+    }, { scope: 'project:p1' });
+
+    await Promise.resolve();
+    const second = runSyncGate('reconcile', async () => {
+      secondRan = true;
+      return 'second';
+    }, { scope: 'project:p1' });
+
+    await Promise.resolve();
+    expect(secondRan).toBe(false);
+    releaseFirst();
+    await expect(first).resolves.toBe('first');
+    await expect(second).resolves.toBe('second');
+  });
+
+  it('global work waits for active project scopes', async () => {
+    let releaseProject;
+    const projectBlock = new Promise((resolve) => {
+      releaseProject = resolve;
+    });
+    let globalRan = false;
+
+    const project = runSyncGate('push-if-newer', async () => {
+      await projectBlock;
+      return 'project';
+    }, { scope: 'project:p1' });
+
+    await Promise.resolve();
+    const global = runSyncGate('exclusive:boot', async () => {
+      globalRan = true;
+      return 'global';
+    });
+
+    await Promise.resolve();
+    expect(globalRan).toBe(false);
+    releaseProject();
+    await expect(project).resolves.toBe('project');
+    await expect(global).resolves.toBe('global');
+  });
 });

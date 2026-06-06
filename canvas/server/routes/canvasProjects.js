@@ -3,6 +3,7 @@ import {
   putCanvasIndex,
   getCanvasProject,
   getCanvasProjectMeta,
+  getCanvasProjectLayout,
   putCanvasProject,
   patchCanvasProject,
   deleteCanvasProject,
@@ -55,6 +56,7 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
       }
       const result = await putCanvasIndex(index, expectedRevision, {
         deletedProjectIds: Array.isArray(deletedProjectIds) ? deletedProjectIds : [],
+        enforceDocumentIntegrity: true,
       });
       if (!result.ok) {
         return res.status(409).json({
@@ -120,6 +122,16 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
       const row = await getCanvasProjectMeta(req.params.projectId);
       if (!row) return res.status(404).json({ error: 'project not found' });
       res.json({ revision: row.revision, updatedAt: row.updatedAt });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/canvas/projects/:projectId/layout', async (req, res) => {
+    try {
+      const row = await getCanvasProjectLayout(req.params.projectId);
+      if (!row) return res.status(404).json({ error: 'project not found' });
+      res.json(row);
     } catch (e) {
       res.status(500).json({ error: e.message });
     }

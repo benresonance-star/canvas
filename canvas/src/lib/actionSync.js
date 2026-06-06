@@ -210,6 +210,7 @@ export function requestActionSync(reason, options = {}) {
       willBypass: busy !== 'action:placementTransfer',
     });
   }
+  const scopedProjectId = options.projectId ?? null;
   return runSyncGate(`action:${reason}`, async () => {
     if (reason === 'placementTransfer') {
       syncTraceLog(traceId, 'actionSync:gate-enter', {
@@ -325,7 +326,7 @@ export function requestActionSync(reason, options = {}) {
         await handlers.reconcileInbound(projectId, { showPullToast: false });
       }
     }
-  });
+  }, { scope: scopedProjectId ? `project:${scopedProjectId}` : 'global' });
 }
 
 async function flushLocalAndPush(projectId, reason) {

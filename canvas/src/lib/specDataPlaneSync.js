@@ -1,19 +1,11 @@
 import {
-  applySpecCanvasLayoutToPayload,
   projectPayloadToSpecLayout,
   projectPayloadToSpecViewport,
   specLayoutDrift,
 } from './specDataPlane.js';
 import { fetchSpecCanvasState, saveSpecCanvasState } from './specDataPlaneApi.js';
-import { fetchCanvasProjectMeta } from './canvasProjectsApi.js';
 import { isApiAvailable } from './primitivesApi.js';
 import { enqueueSpecSyncRetry } from './specSyncOutbox.js';
-
-function parseUpdatedAt(value) {
-  if (!value) return 0;
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? ms : 0;
-}
 
 /**
  * Dual-write project payload to spec_canvas_state (best-effort).
@@ -54,8 +46,9 @@ export async function syncSpecCanvasStateFromPayload(projectId, payload) {
 }
 
 /**
- * Load spec canvas row; when its timestamp is at least as fresh as the project document,
- * spec layout wins for canvas placement/viewport.
+ * Load spec canvas row for diagnostics/projection only.
+ * canvas_project_document remains the rendered-canvas authority until an
+ * explicit spec cutover is implemented.
  * @param {string} projectId
  * @param {object} payload
  */
@@ -68,28 +61,10 @@ export async function reconcileSpecCanvasOnLoad(projectId, payload) {
     const remote = await fetchSpecCanvasState(projectId);
     if (!remote?.layout) return payload;
 
-    const meta = await fetchCanvasProjectMeta(projectId);
     const specVersion = Number(remote.version) || 0;
-    const specUpdatedAt = parseUpdatedAt(remote.updatedAt);
-    const docUpdatedAt = parseUpdatedAt(meta?.updatedAt);
-    const specOnlySource = !meta && specUpdatedAt > 0;
-    const specAtLeastDocument =
-      meta && specUpdatedAt > 0 && (
-        docUpdatedAt === 0 || specUpdatedAt >= docUpdatedAt
-      );
-
-    if (specOnlySource || specAtLeastDocument) {
-      if (specLayoutDrift(payload, remote.layout)) {
-        console.info(
-          `[spec] layout drift for project ${projectId} — applying spec_canvas_state (revision ${specVersion})`,
-        );
-      }
-      return applySpecCanvasLayoutToPayload(payload, remote);
-    }
-
     if (specLayoutDrift(payload, remote.layout)) {
       console.info(
-        `[spec] layout drift for project ${projectId} — project JSON remains authoritative`,
+        `[spec] layout drift for project ${projectId} - project JSON remains authoritative (spec revision ${specVersion})`,
       );
     }
     return {

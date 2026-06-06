@@ -80,12 +80,18 @@ import {
 import { syncSpecCanvasStateFromPayload } from '../specDataPlaneSync.js';
 import { auditPlacementStep } from '../placementAudit.js';
 
+function projectSyncScope(projectId) {
+  return projectId ? `project:${projectId}` : 'global';
+}
+
 function scheduleProjectRemoteSave(projectId, payload) {
   if (!getServerSyncEnabled()) return;
   recordLocalProjectEdit(projectId);
   scheduleProjectRemoteSavePending(projectId, payload, (id, doc) => {
-    void runSyncGate('debounced-push', () =>
-      pushProjectDocumentIfLocalNewerInner(id, doc),
+    void runSyncGate(
+      'debounced-push',
+      () => pushProjectDocumentIfLocalNewerInner(id, doc),
+      { scope: projectSyncScope(id) },
     );
   });
 }
@@ -200,8 +206,10 @@ export async function pushProjectDocumentIfLocalNewer(projectId, payload) {
   if (!getServerSyncEnabled() || !projectId || !payload) {
     return { ok: false, skipped: true, reason: 'no_sync' };
   }
-  return runSyncGate('push-if-newer', () =>
-    pushProjectDocumentIfLocalNewerInner(projectId, payload),
+  return runSyncGate(
+    'push-if-newer',
+    () => pushProjectDocumentIfLocalNewerInner(projectId, payload),
+    { scope: projectSyncScope(projectId) },
   );
 }
 
@@ -327,8 +335,10 @@ export async function reconcileActiveProject(projectId, options = {}) {
   if (!projectId || !getServerSyncEnabled()) {
     return { lock: 'live', serverRevision: 0, action: 'none' };
   }
-  return runSyncGate('reconcile', () =>
-    reconcileActiveProjectInner(projectId, options),
+  return runSyncGate(
+    'reconcile',
+    () => reconcileActiveProjectInner(projectId, options),
+    { scope: projectSyncScope(projectId) },
   );
 }
 
@@ -734,12 +744,14 @@ export async function flushOutgoingProjectDocument(projectId, payload, options =
       return patchResult;
     }
   }
-  const result = await runSyncGate('flush-outgoing', () =>
-    pushProjectDocumentIfLocalNewerInner(projectId, payload, {
+  const result = await runSyncGate(
+    'flush-outgoing',
+    () => pushProjectDocumentIfLocalNewerInner(projectId, payload, {
       traceId,
       allowEmptyRemoteOverwrite,
       allowDockOnlyRemoteOverwrite,
     }),
+    { scope: projectSyncScope(projectId) },
   );
   if (result?.ok) {
     if (!skipSpecDualWrite) {

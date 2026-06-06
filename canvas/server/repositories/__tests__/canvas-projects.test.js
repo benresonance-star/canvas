@@ -8,8 +8,10 @@ import { query } from '../../db.js';
 import {
   getCanvasIndex,
   putCanvasIndex,
+  pruneWorkspaceIndexToDocumentIds,
   getCanvasProject,
   getCanvasProjectMeta,
+  buildCanvasProjectLayoutDocument,
   putCanvasProject,
   patchCanvasProject,
   deleteCanvasProject,
@@ -35,6 +37,83 @@ describe('canvas-projects repository', () => {
     );
   });
 
+  it('pruneWorkspaceIndexToDocumentIds removes rows without backing project documents', () => {
+    const result = pruneWorkspaceIndexToDocumentIds(
+      {
+        version: 1,
+        activeProjectId: 'ghost',
+        projects: [
+          { id: 'live', name: 'LIVE', updatedAt: 1, archived: false },
+          { id: 'ghost', name: 'GHOST', updatedAt: 2, archived: false },
+        ],
+      },
+      ['live'],
+    );
+
+    expect(result.removedProjectIds).toEqual(['ghost']);
+    expect(result.payload.projects.map((row) => row.id)).toEqual(['live']);
+    expect(result.payload.activeProjectId).toBe('live');
+  });
+
+  it('getCanvasIndex repairs ghost project rows before returning the index', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce({
+        rows: [{
+          revision: '4',
+          payload: {
+            version: 1,
+            activeProjectId: 'ghost',
+            projects: [
+              { id: 'live', name: 'LIVE', updatedAt: 1, archived: false },
+              { id: 'ghost', name: 'GHOST', updatedAt: 2, archived: false },
+            ],
+          },
+          updated_at: '2026-06-06T00:00:00.000Z',
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ project_id: 'live' }] })
+      .mockResolvedValueOnce({ rows: [{ revision: '5', updated_at: '2026-06-06T00:00:01.000Z' }] });
+
+    const row = await getCanvasIndex();
+
+    expect(row.payload.projects.map((project) => project.id)).toEqual(['live']);
+    expect(row.payload.activeProjectId).toBe('live');
+    expect(row.revision).toBe(5);
+    expect(row.removedProjectIds).toEqual(['ghost']);
+    expect(query.mock.calls[2][0]).toContain('UPDATE canvas_workspace_index');
+  });
+
+  it('putCanvasIndex can enforce document integrity on incoming writes', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce({
+        rows: [{
+          revision: '7',
+          payload: {
+            version: 1,
+            activeProjectId: 'live',
+            projects: [{ id: 'live', name: 'LIVE', updatedAt: 1, archived: false }],
+          },
+          updated_at: '2026-06-06T00:00:00.000Z',
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ project_id: 'live' }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await putCanvasIndex({
+      version: 1,
+      activeProjectId: 'ghost',
+      projects: [
+        { id: 'live', name: 'LIVE', updatedAt: 1, archived: false },
+        { id: 'ghost', name: 'GHOST', updatedAt: 2, archived: false },
+      ],
+    }, 7, { enforceDocumentIntegrity: true });
+
+    expect(result.ok).toBe(true);
+    const savedPayload = JSON.parse(query.mock.calls[2][1][1]);
+    expect(savedPayload.projects.map((row) => row.id)).toEqual(['live']);
+    expect(savedPayload.activeProjectId).toBe('live');
+  });
+
   it('getCanvasProject returns payload and revision', async () => {
     vi.mocked(query).mockResolvedValue({
       rows: [{ payload: { cards: [] }, updated_at: '2020-01-01', revision: '3' }],
@@ -42,6 +121,44 @@ describe('canvas-projects repository', () => {
     const row = await getCanvasProject('abc');
     expect(row.payload).toEqual({ cards: [] });
     expect(row.revision).toBe(3);
+  });
+
+  it('buildCanvasProjectLayoutDocument strips heavy content while preserving layout metadata', () => {
+    const layout = buildCanvasProjectLayoutDocument('p1', {
+      revision: '8',
+      updatedAt: '2026-06-06T00:00:00.000Z',
+      payload: {
+        projectName: 'Layout Project',
+        canvasView: { x: 1, y: 2, zoom: 0.5 },
+        artifactPlacementsVersion: 2,
+        artifactPlacements: {
+          one: { surface: 'canvas', cardId: 'c1' },
+          two: { surface: 'dock', stagingId: 's1' },
+        },
+        cards: [{
+          id: 'c1',
+          key: 'one',
+          x: 10,
+          y: 20,
+          content: 'large text',
+          versions: [{ title: 'v1', dataUrl: 'data:image/png;base64,abc', previewCacheKey: 'p1' }],
+        }],
+        stagedSyncCards: [{ stagingId: 's1', key: 'two', text: 'large dock text' }],
+      },
+    });
+
+    expect(layout.revision).toBe(8);
+    expect(layout.layout.cards[0]).toMatchObject({ id: 'c1', key: 'one', x: 10, y: 20 });
+    expect(layout.layout.cards[0].content).toBeUndefined();
+    expect(layout.layout.cards[0].versions[0].dataUrl).toBeUndefined();
+    expect(layout.layout.cards[0].versions[0].previewCacheKey).toBe('p1');
+    expect(layout.layout.stagedSyncCards[0].text).toBeUndefined();
+    expect(layout.counts).toEqual({
+      cards: 1,
+      stagedSyncCards: 1,
+      artifactPlacements: 2,
+      totalArtifacts: 2,
+    });
   });
 
   it('getCanvasProjectMeta returns revision only', async () => {

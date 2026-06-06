@@ -139,6 +139,32 @@ export async function fetchCanvasProjectDocument(projectId) {
   };
 }
 
+/**
+ * @param {string} projectId
+ * @returns {Promise<{ projectId: string, projectName: string | null, revision: number, updatedAt: string | null, layout: object, counts: object } | null>}
+ */
+export async function fetchCanvasProjectLayout(projectId) {
+  const res = await fetch(`${API_BASE}/canvas/projects/${encodeURIComponent(projectId)}/layout`, {
+    headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const msg = data.error || res.statusText || 'API error';
+    throw new Error(msg);
+  }
+  if (!data?.layout) return null;
+  return {
+    projectId: data.projectId ?? projectId,
+    projectName: data.projectName ?? null,
+    revision: Number(data.revision) || 0,
+    updatedAt: data.updatedAt ?? null,
+    layout: data.layout,
+    counts: data.counts ?? {},
+  };
+}
+
 /** @deprecated Prefer fetchCanvasProjectDocument for updatedAt */
 export async function fetchCanvasProject(projectId) {
   const row = await fetchCanvasProjectDocument(projectId);

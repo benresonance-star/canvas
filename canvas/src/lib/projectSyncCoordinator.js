@@ -51,11 +51,11 @@ export function getSyncInFlightLabel() {
  * @template T
  * @param {string} label
  * @param {() => Promise<T>} fn
- * @param {{ mode?: 'wait' | 'skip' }} [options]
+ * @param {{ mode?: 'wait' | 'skip', scope?: string }} [options]
  * @returns {Promise<T | null>}
  */
-export async function runExclusive(label, fn, { mode = 'wait' } = {}) {
-  return runSyncGate(`exclusive:${label}`, fn, { mode });
+export async function runExclusive(label, fn, { mode = 'wait', scope } = {}) {
+  return runSyncGate(`exclusive:${label}`, fn, { mode, scope });
 }
 
 /** @internal tests */

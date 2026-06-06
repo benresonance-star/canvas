@@ -15,6 +15,44 @@ function projectArtifactCount(payload) {
   return canvasCardCount(payload) + dockCards;
 }
 
+const LAYOUT_STRIPPED_CARD_FIELDS = [
+  'content',
+  'body',
+  'markdown',
+  'rawMarkdown',
+  'html',
+  'rawHtml',
+  'text',
+  'rawText',
+  'transcript',
+  'messages',
+  'dataUrl',
+  'previewDataUrl',
+  'base64',
+  'blob',
+  'arrayBuffer',
+  'sourceText',
+  'extractedText',
+  'pages',
+];
+
+function stripContentFields(record) {
+  if (!record || typeof record !== 'object') return record;
+  const next = { ...record };
+  for (const field of LAYOUT_STRIPPED_CARD_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(next, field)) {
+      delete next[field];
+    }
+  }
+  if (Array.isArray(next.versions)) {
+    next.versions = next.versions.map((version) => stripContentFields(version));
+  }
+  if (next.currentVersion && typeof next.currentVersion === 'object') {
+    next.currentVersion = stripContentFields(next.currentVersion);
+  }
+  return next;
+}
+
 function emptyPayloadWouldEraseServer(payload, existingPayload, allowEmptyRemoteOverwrite) {
   return (
     !allowEmptyRemoteOverwrite
@@ -49,6 +87,83 @@ function fallbackActiveProjectId(index) {
   return pool.reduce((a, b) =>
     ((a.updatedAt ?? 0) >= (b.updatedAt ?? 0) ? a : b),
   ).id;
+}
+
+function uniqueProjectIdsFromIndex(payload) {
+  return [
+    ...new Set(
+      (payload?.projects ?? [])
+        .map((row) => row?.id)
+        .filter((id) => typeof id === 'string' && id.trim()),
+    ),
+  ];
+}
+
+export function pruneWorkspaceIndexToDocumentIds(payload, documentIds = []) {
+  const docs = new Set(documentIds.filter(Boolean));
+  const projects = Array.isArray(payload?.projects) ? payload.projects : [];
+  const nextProjects = projects.filter((row) => row?.id && docs.has(row.id));
+  const removedProjectIds = projects
+    .filter((row) => row?.id && !docs.has(row.id))
+    .map((row) => row.id);
+  const nextPayload = {
+    ...payload,
+    projects: nextProjects,
+  };
+  if (!activeProjectIdIsValid(nextPayload, nextPayload.activeProjectId)) {
+    nextPayload.activeProjectId = fallbackActiveProjectId(nextPayload);
+  }
+  return {
+    payload: nextPayload,
+    removedProjectIds,
+  };
+}
+
+async function existingDocumentIdsForIndex(payload) {
+  const ids = uniqueProjectIdsFromIndex(payload);
+  if (ids.length === 0) return [];
+  const res = await query(
+    'SELECT project_id FROM canvas_project_document WHERE project_id = ANY($1::text[])',
+    [ids],
+  );
+  return res.rows.map((row) => row.project_id).filter(Boolean);
+}
+
+async function pruneWorkspaceIndexAgainstDocuments(payload) {
+  const ids = uniqueProjectIdsFromIndex(payload);
+  if (ids.length === 0) {
+    return { payload: { ...payload, projects: [] }, removedProjectIds: [] };
+  }
+  const documentIds = await existingDocumentIdsForIndex(payload);
+  return pruneWorkspaceIndexToDocumentIds(payload, documentIds);
+}
+
+async function repairWorkspaceIndexAgainstDocuments(row) {
+  const currentRevision = Number(row.revision) || 1;
+  const pruned = await pruneWorkspaceIndexAgainstDocuments(row.payload);
+  if (pruned.removedProjectIds.length === 0) {
+    return {
+      payload: row.payload,
+      updatedAt: row.updated_at,
+      revision: currentRevision,
+      removedProjectIds: [],
+    };
+  }
+
+  const now = new Date().toISOString();
+  const update = await query(
+    `UPDATE canvas_workspace_index
+     SET payload = $2::jsonb, updated_at = $3, revision = revision + 1
+     WHERE id = $1 AND revision = $4
+     RETURNING updated_at, revision`,
+    [INDEX_ID, JSON.stringify(pruned.payload), now, currentRevision],
+  );
+  return {
+    payload: pruned.payload,
+    updatedAt: update.rows[0]?.updated_at ?? now,
+    revision: Number(update.rows[0]?.revision) || currentRevision + 1,
+    removedProjectIds: pruned.removedProjectIds,
+  };
 }
 
 function workspaceIndexForPersistence(
@@ -86,10 +201,12 @@ export async function getCanvasIndex() {
     [INDEX_ID],
   );
   if (!res.rows[0]) return null;
+  const repaired = await repairWorkspaceIndexAgainstDocuments(res.rows[0]);
   return {
-    payload: res.rows[0].payload,
-    updatedAt: res.rows[0].updated_at,
-    revision: Number(res.rows[0].revision) || 1,
+    payload: repaired.payload,
+    updatedAt: repaired.updatedAt,
+    revision: repaired.revision,
+    removedProjectIds: repaired.removedProjectIds,
   };
 }
 
@@ -119,7 +236,10 @@ export async function putCanvasIndex(payload, expectedRevision = 0, options = {}
         updatedAt: null,
       };
     }
-    const persistedPayload = workspaceIndexForPersistence(payload, null, options);
+    let persistedPayload = workspaceIndexForPersistence(payload, null, options);
+    if (options.enforceDocumentIntegrity) {
+      persistedPayload = (await pruneWorkspaceIndexAgainstDocuments(persistedPayload)).payload;
+    }
     await query(
       `INSERT INTO canvas_workspace_index (id, payload, updated_at, revision)
        VALUES ($1, $2::jsonb, $3, 1)`,
@@ -140,11 +260,14 @@ export async function putCanvasIndex(payload, expectedRevision = 0, options = {}
   }
 
   const nextRevision = currentRevision + 1;
-  const persistedPayload = workspaceIndexForPersistence(
+  let persistedPayload = workspaceIndexForPersistence(
     payload,
     existing.rows[0].payload,
     options,
   );
+  if (options.enforceDocumentIntegrity) {
+    persistedPayload = (await pruneWorkspaceIndexAgainstDocuments(persistedPayload)).payload;
+  }
   await query(
     `UPDATE canvas_workspace_index
      SET payload = $2::jsonb, updated_at = $3, revision = $4
@@ -230,6 +353,45 @@ export async function getCanvasProject(projectId) {
     updatedAt: res.rows[0].updated_at,
     revision: Number(res.rows[0].revision),
   };
+}
+
+export function buildCanvasProjectLayoutDocument(projectId, row) {
+  const payload = row?.payload ?? {};
+  const cards = Array.isArray(payload.cards) ? payload.cards.map(stripContentFields) : [];
+  const stagedSyncCards = Array.isArray(payload.stagedSyncCards)
+    ? payload.stagedSyncCards.map(stripContentFields)
+    : [];
+  const artifactPlacements = payload.artifactPlacements && typeof payload.artifactPlacements === 'object'
+    ? payload.artifactPlacements
+    : {};
+  return {
+    projectId,
+    projectName: payload.projectName ?? null,
+    revision: Number(row?.revision) || 0,
+    updatedAt: row?.updatedAt ?? row?.updated_at ?? null,
+    layout: {
+      cards,
+      stagedSyncCards,
+      artifactPlacements,
+      artifactPlacementsVersion: Number(payload.artifactPlacementsVersion) || 0,
+      canvasView: payload.canvasView ?? null,
+      suppressedSyncKeys: Array.isArray(payload.suppressedSyncKeys)
+        ? payload.suppressedSyncKeys
+        : [],
+    },
+    counts: {
+      cards: cards.length,
+      stagedSyncCards: stagedSyncCards.length,
+      artifactPlacements: Object.keys(artifactPlacements).length,
+      totalArtifacts: cards.length + stagedSyncCards.length,
+    },
+  };
+}
+
+export async function getCanvasProjectLayout(projectId) {
+  const row = await getCanvasProject(projectId);
+  if (!row) return null;
+  return buildCanvasProjectLayoutDocument(projectId, row);
 }
 
 /**
