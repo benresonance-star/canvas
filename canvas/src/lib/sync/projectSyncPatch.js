@@ -20,6 +20,7 @@ import { getServerSyncEnabled } from './projectSyncState.js';
 import { patchIndexDocumentRevision } from './projectSyncIndex.js';
 import { writeLocalProjectSerialised } from './projectSyncLocal.js';
 import { projectCardCount } from './projectSyncMerge.js';
+import { slimProjectPayloadForCache } from '../projectSlim.js';
 import {
   needsProjectConflictResolution,
   recordProjectConflict,
@@ -65,11 +66,16 @@ export async function pushProjectPatchIfEnabled(
     syncTraceLog(traceId, 'patch:skipped', { projectId, reason: 'sync_disabled' });
     return null;
   }
+  const { payload: syncPayload, serialised: syncSerialised } =
+    slimProjectPayloadForCache(payload);
+  const { payload: syncBeforePayload } = beforePayload
+    ? slimProjectPayloadForCache(beforePayload)
+    : { payload: null };
   const before =
-    beforePayload
+    syncBeforePayload
     ?? getPriorPayloadForPatch(projectId)
     ?? getCommittedPayload(projectId);
-  const ops = buildPatchOpsFromCommit(before, payload, reason);
+  const ops = buildPatchOpsFromCommit(before, syncPayload, reason);
   if (!shouldUsePatchForOps(ops)) {
     syncTraceLog(traceId, 'patch:skipped', {
       projectId,
@@ -110,7 +116,7 @@ export async function pushProjectPatchIfEnabled(
       });
       if (result.ok) {
         applyServerProjectRevision(projectId, result.updatedAt, result.revision);
-        await writeLocalProjectSerialised(projectId, JSON.stringify(payload));
+        await writeLocalProjectSerialised(projectId, syncSerialised);
         await patchIndexDocumentRevision(
           projectId,
           result.revision,
@@ -126,11 +132,11 @@ export async function pushProjectPatchIfEnabled(
         const serverPayload = result.payload;
         if (
           serverPayload
-          && needsProjectConflictResolution(payload, serverPayload)
+          && needsProjectConflictResolution(syncPayload, serverPayload)
         ) {
           recordProjectConflict(
             projectId,
-            payload,
+            syncPayload,
             serverPayload,
             result.revision,
           );
@@ -142,14 +148,14 @@ export async function pushProjectPatchIfEnabled(
             patched: true,
           };
         }
-        if (serverPayload && projectPayloadsStructurallyEqual(payload, serverPayload)) {
+        if (serverPayload && projectPayloadsStructurallyEqual(syncPayload, serverPayload)) {
           applyServerProjectRevision(projectId, result.updatedAt, result.revision);
           clearProjectConflict(projectId);
           notifySyncLock(projectId, 'live');
           return { ok: true, adopted: true, patched: true };
         }
         applyServerProjectRevision(projectId, result.updatedAt, result.revision);
-        const localCards = projectCardCount(payload);
+        const localCards = projectCardCount(syncPayload);
         const serverCards = projectCardCount(serverPayload);
         if (serverPayload && serverCards > localCards) {
           await writeLocalProjectSerialised(
@@ -172,7 +178,7 @@ export async function pushProjectPatchIfEnabled(
           });
           if (retry.ok) {
             applyServerProjectRevision(projectId, retry.updatedAt, retry.revision);
-            await writeLocalProjectSerialised(projectId, JSON.stringify(payload));
+            await writeLocalProjectSerialised(projectId, syncSerialised);
             clearProjectConflict(projectId);
             notifySyncLock(projectId, 'live');
             return { ok: true, patched: true, revision: retry.revision };

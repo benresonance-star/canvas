@@ -26,6 +26,7 @@ describe('projectDocumentCommit', () => {
   });
 
   it('persists authoritative placement map from transfer', async () => {
+    const dataUrl = `data:image/png;base64,${'A'.repeat(1000)}`;
     const state = {
       projectName: 'P',
       cards: [
@@ -35,7 +36,12 @@ describe('projectDocumentCommit', () => {
           type: 'markdown',
           x: 10,
           y: 20,
-          versions: [{ version: 1, filename: 'notes__a-v1.md' }],
+          versions: [{
+            version: 1,
+            filename: 'notes__a-v1.md',
+            dataUrl,
+            previewCacheKey: 'p:notes__a:v1',
+          }],
         },
       ],
       canvasView: { x: 0, y: 0, zoom: 1 },
@@ -59,6 +65,8 @@ describe('projectDocumentCommit', () => {
     expect(persistProjectDocumentLocally).toHaveBeenCalled();
     const cached = getCommittedPayload('p1');
     expect(cached?.artifactPlacements?.notes__a?.surface).toBe('canvas');
+    expect(cached?.artifactPlacements?.notes__a?.record).toBeUndefined();
+    expect(cached?.cards?.[0]?.versions?.[0]?.dataUrl).toBeNull();
     expect(cached?.cards).toHaveLength(1);
   });
 

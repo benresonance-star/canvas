@@ -74,6 +74,26 @@ export function stripCardForPersist(card, opts = {}) {
   };
 }
 
+export function stripArtifactPlacementsForPersist(artifactPlacements) {
+  if (
+    !artifactPlacements
+    || typeof artifactPlacements !== 'object'
+    || Array.isArray(artifactPlacements)
+  ) {
+    return artifactPlacements;
+  }
+  return Object.fromEntries(
+    Object.entries(artifactPlacements).map(([key, entry]) => [
+      key,
+      {
+        surface: entry?.surface,
+        placement: entry?.placement ?? entry?.ref ?? null,
+        ...(entry?.ref && !entry?.placement ? { ref: entry.ref } : {}),
+      },
+    ]),
+  );
+}
+
 /**
  * @param {object} payload
  * @param {{ stripNoteContent?: boolean }} [opts]
@@ -82,17 +102,7 @@ export function stripCardForPersist(card, opts = {}) {
 export function slimProjectPayloadForCache(payload, opts = {}) {
   const stripOpts = { stripNoteContent: opts.stripNoteContent ?? false };
   const slimCards = SLIM_PROJECT_PERSIST_ENABLED;
-  const slimPlacements = payload.artifactPlacements
-    ? Object.fromEntries(
-      Object.entries(payload.artifactPlacements).map(([key, entry]) => [
-        key,
-        {
-          surface: entry?.surface,
-          placement: entry?.placement,
-        },
-      ]),
-    )
-    : payload.artifactPlacements;
+  const slimPlacements = stripArtifactPlacementsForPersist(payload.artifactPlacements);
 
   let slim = {
     ...payload,

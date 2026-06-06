@@ -155,7 +155,7 @@ export async function commitProjectDocument(projectId, options) {
     /* index unavailable — keep state title for offline */
   }
 
-  const payload = buildProjectSavePayload(
+  const builtPayload = buildProjectSavePayload(
     { ...state, projectName: displayName },
     stagedSyncCards,
     suppressedSyncKeys,
@@ -164,10 +164,12 @@ export async function commitProjectDocument(projectId, options) {
       authoritativePlacements,
     },
   );
+  const { payload, serialised } = slimProjectPayloadForCache(builtPayload, {
+    stripNoteContent,
+  });
 
   auditPlacementStep(`commit:${reason}`, payload, { projectId });
 
-  const { serialised } = slimProjectPayloadForCache(payload, { stripNoteContent });
   const localCacheWritten = await persistProjectDocumentLocally(projectId, serialised, {
     stripNoteContent,
   });

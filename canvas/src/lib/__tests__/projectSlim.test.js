@@ -37,6 +37,36 @@ describe('slimProjectPayloadForCache', () => {
     expect(serialised.length).toBeLessThan(fat.length);
   });
 
+  it('strips placement records and staged dataUrls from persisted payloads', () => {
+    const largeDataUrl = `data:application/pdf;base64,${'A'.repeat(1000)}`;
+    const staged = {
+      stagingId: 's1',
+      key: 'pdf__large',
+      type: 'pdf',
+      versions: [{
+        version: 1,
+        dataUrl: largeDataUrl,
+        previewCacheKey: 'p:pdf__large:v1',
+      }],
+    };
+    const { payload, serialised } = slimProjectPayloadForCache({
+      cards: [],
+      stagedSyncCards: [staged],
+      artifactPlacements: {
+        pdf__large: {
+          surface: 'dock',
+          placement: { key: 'pdf__large', stagingId: 's1' },
+          record: staged,
+        },
+      },
+    });
+
+    expect(payload.stagedSyncCards[0].versions[0].dataUrl).toBeNull();
+    expect(payload.stagedSyncCards[0].versions[0].previewCacheKey).toBe('p:pdf__large:v1');
+    expect(payload.artifactPlacements.pdf__large.record).toBeUndefined();
+    expect(serialised).not.toContain(largeDataUrl);
+  });
+
   it('triggers trim when over trim target', () => {
     const cards = [
       {

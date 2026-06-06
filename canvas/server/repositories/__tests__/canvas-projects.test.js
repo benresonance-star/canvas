@@ -132,8 +132,16 @@ describe('canvas-projects repository', () => {
         canvasView: { x: 1, y: 2, zoom: 0.5 },
         artifactPlacementsVersion: 2,
         artifactPlacements: {
-          one: { surface: 'canvas', cardId: 'c1' },
-          two: { surface: 'dock', stagingId: 's1' },
+          one: {
+            surface: 'canvas',
+            placement: { key: 'one', cardId: 'c1' },
+            record: { versions: [{ dataUrl: 'data:image/png;base64,abc' }] },
+          },
+          two: {
+            surface: 'dock',
+            ref: { key: 'two', stagingId: 's1' },
+            record: { versions: [{ dataUrl: 'data:application/pdf;base64,abc' }] },
+          },
         },
         cards: [{
           id: 'c1',
@@ -153,6 +161,9 @@ describe('canvas-projects repository', () => {
     expect(layout.layout.cards[0].versions[0].dataUrl).toBeUndefined();
     expect(layout.layout.cards[0].versions[0].previewCacheKey).toBe('p1');
     expect(layout.layout.stagedSyncCards[0].text).toBeUndefined();
+    expect(layout.layout.artifactPlacements.one.record).toBeUndefined();
+    expect(layout.layout.artifactPlacements.one.placement).toEqual({ key: 'one', cardId: 'c1' });
+    expect(layout.layout.artifactPlacements.two.placement).toEqual({ key: 'two', stagingId: 's1' });
     expect(layout.counts).toEqual({
       cards: 1,
       stagedSyncCards: 1,

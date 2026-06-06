@@ -121,6 +121,10 @@ async function pushProjectPayloadToServer(
   if (!getServerSyncEnabled() || !projectId || !payload) {
     return { ok: false };
   }
+  const {
+    payload: payloadToSave,
+    serialised: serialisedToSave,
+  } = slimProjectPayloadForCache(payload);
   if (!_retrying) {
     const { alignClientRevisionWithServerMeta } = await import('./projectSyncRevision.js');
     await alignClientRevisionWithServerMeta(projectId, traceId);
@@ -129,13 +133,13 @@ async function pushProjectPayloadToServer(
   const revision =
     expectedRevision !== undefined ? expectedRevision : getClientRevision(projectId);
   try {
-    const result = await saveCanvasProject(projectId, payload, revision, {
+    const result = await saveCanvasProject(projectId, payloadToSave, revision, {
       allowEmptyRemoteOverwrite,
       allowDockOnlyRemoteOverwrite,
     });
     if (result.ok) {
       applyServerProjectRevision(projectId, result.updatedAt, result.revision);
-      await writeLocalProjectSerialised(projectId, JSON.stringify(payload));
+      await writeLocalProjectSerialised(projectId, serialisedToSave);
       await patchIndexDocumentRevision(projectId, result.revision, result.updatedAt);
       notifySyncLock(projectId, 'live');
       return { ok: true, revision: result.revision, updatedAt: result.updatedAt };
@@ -144,11 +148,11 @@ async function pushProjectPayloadToServer(
       const serverPayload = result.payload;
       if (
         serverPayload
-        && needsProjectConflictResolution(payload, serverPayload)
+        && needsProjectConflictResolution(payloadToSave, serverPayload)
       ) {
         recordProjectConflict(
           projectId,
-          payload,
+          payloadToSave,
           serverPayload,
           result.revision,
         );
@@ -160,7 +164,7 @@ async function pushProjectPayloadToServer(
           serverRevision: result.revision,
         };
       }
-      if (serverPayload && projectPayloadsStructurallyEqual(payload, serverPayload)) {
+      if (serverPayload && projectPayloadsStructurallyEqual(payloadToSave, serverPayload)) {
         applyServerProjectRevision(projectId, result.updatedAt, result.revision);
         clearProjectConflict(projectId);
         notifySyncLock(projectId, 'live');
@@ -168,7 +172,7 @@ async function pushProjectPayloadToServer(
       }
       applyServerProjectRevision(projectId, result.updatedAt, result.revision);
       if (serverPayload) {
-        const localArtifacts = projectArtifactCount(payload);
+        const localArtifacts = projectArtifactCount(payloadToSave);
         const serverArtifacts = projectArtifactCount(serverPayload);
         if (serverArtifacts > localArtifacts) {
           await writeLocalProjectSerialised(
@@ -181,7 +185,7 @@ async function pushProjectPayloadToServer(
         }
         const clientBehind = getClientRevision(projectId) < (Number(result.revision) || 0);
         if ((localArtifacts > serverArtifacts || clientBehind) && !_retrying) {
-          const retry = await pushProjectPayloadToServer(projectId, payload, {
+          const retry = await pushProjectPayloadToServer(projectId, payloadToSave, {
             expectedRevision: result.revision,
             _retrying: true,
             traceId,
@@ -669,13 +673,17 @@ export async function flushOutgoingProjectDocument(projectId, payload, options =
     allowDockOnlyRemoteOverwrite = false,
     skipSpecDualWrite = false,
   } = options;
-  getLastKnownProjectPayloadById().set(projectId, payload);
+  const { payload: syncPayload } = slimProjectPayloadForCache(payload);
+  const { payload: syncBeforePayload } = beforePayload
+    ? slimProjectPayloadForCache(beforePayload)
+    : { payload: null };
+  getLastKnownProjectPayloadById().set(projectId, syncPayload);
   cancelPendingProjectSave(projectId);
   if (!getServerSyncEnabled()) {
     return { ok: true, skipped: true, reason: 'no_sync' };
   }
 
-  const localArtifacts = projectArtifactCount(payload);
+  const localArtifacts = projectArtifactCount(syncPayload);
   if (localArtifacts === 0 && !allowEmptyRemoteOverwrite) {
     try {
       const remote = await fetchCanvasProjectDocument(projectId);
@@ -698,7 +706,7 @@ export async function flushOutgoingProjectDocument(projectId, payload, options =
     }
   }
 
-  const localShape = summarizeProjectDocumentShape(payload);
+  const localShape = summarizeProjectDocumentShape(syncPayload);
   if (localShape.isDockOnly && !allowDockOnlyRemoteOverwrite) {
     try {
       const remote = await fetchCanvasProjectDocument(projectId);
@@ -726,9 +734,9 @@ export async function flushOutgoingProjectDocument(projectId, payload, options =
     await import('./projectSyncPatch.js');
   const patchResult = await pushProjectPatchIfEnabled(
     projectId,
-    payload,
+    syncPayload,
     reason,
-    beforePayload,
+    syncBeforePayload,
     traceId,
     allowEmptyRemoteOverwrite,
     allowDockOnlyRemoteOverwrite,
@@ -736,7 +744,7 @@ export async function flushOutgoingProjectDocument(projectId, payload, options =
   if (patchResult !== null) {
     if (patchResult?.ok) {
       if (!skipSpecDualWrite) {
-        void syncSpecCanvasStateFromPayload(projectId, payload);
+        void syncSpecCanvasStateFromPayload(projectId, syncPayload);
       }
       return patchResult;
     }
@@ -746,7 +754,7 @@ export async function flushOutgoingProjectDocument(projectId, payload, options =
   }
   const result = await runSyncGate(
     'flush-outgoing',
-    () => pushProjectDocumentIfLocalNewerInner(projectId, payload, {
+    () => pushProjectDocumentIfLocalNewerInner(projectId, syncPayload, {
       traceId,
       allowEmptyRemoteOverwrite,
       allowDockOnlyRemoteOverwrite,
@@ -755,7 +763,7 @@ export async function flushOutgoingProjectDocument(projectId, payload, options =
   );
   if (result?.ok) {
     if (!skipSpecDualWrite) {
-      void syncSpecCanvasStateFromPayload(projectId, payload);
+      void syncSpecCanvasStateFromPayload(projectId, syncPayload);
     }
   }
   return result;

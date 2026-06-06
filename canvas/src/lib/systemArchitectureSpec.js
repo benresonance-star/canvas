@@ -1,5 +1,5 @@
 /** Bump when architecture or shipped load behavior changes. */
-export const ARCHITECTURE_SPEC_VERSION = '2026-06-06-db-authoritative-sync';
+export const ARCHITECTURE_SPEC_VERSION = '2026-06-06-db-authoritative-slim-sync';
 
 export const ARCHITECTURE_LAYERS = [
   {
@@ -93,7 +93,7 @@ export const ARCHITECTURE_FEATURES = [
     id: 'artifact-placements-map',
     title: 'artifactPlacements map (persisted)',
     shortDescription:
-      'Project JSON includes `artifactPlacements` (canonical sync key → surface + record). Built on save; legacy projects migrate on load. Denormalized `cards` / `stagedSyncCards` kept for compatibility.',
+      'Project JSON includes `artifactPlacements` (canonical sync key -> surface + placement ref only). Built on save; legacy projects migrate on load. Denormalized `cards` / `stagedSyncCards` kept for compatibility.',
     layerIds: ['client', 'data'],
     tags: ['placement', 'storage'],
     status: 'current',
@@ -269,7 +269,7 @@ const CORE_API_ROUTES = [
   'GET /health',
   'GET|PUT /canvas/index',
   'GET /canvas/projects/:id/meta',
-  'GET /canvas/projects/:id/layout (target: layout-only payload for fast cross-browser convergence)',
+  'GET /canvas/projects/:id/layout (layout-only payload for fast cross-browser convergence)',
   'GET|PUT /canvas/projects/:id (revision, expectedRevision → 409)',
   'GET|PUT /canvas/projects/:id/spec-canvas (layout/viewport CAS)',
   'GET /spec/resources/:id (reference count)',
@@ -305,7 +305,7 @@ export const IMPLEMENTATION_PRIORITIES = [
     id: 3,
     title: 'Layout/meta-only loading surface',
     summary:
-      'Add a lightweight read path for revision, counts, cards, staged cards, placements, viewport, and sync status without shipping preview/content-heavy project JSON for every convergence check.',
+      'Keep the lightweight read path for revision, counts, cards, staged cards, placements, viewport, and sync status free of preview/content-heavy project JSON.',
   },
   {
     id: 4,
@@ -328,7 +328,7 @@ export const IMPLEMENTATION_PRIORITIES = [
 ];
 
 const SPEC_MIGRATION_NOTE =
-  'North star: `Specs/Canvas data architecture Spec -Claude.md`. Current decision: `canvas_project_document` is the rendered-canvas authority; `spec_canvas_state` is a secondary projection until explicit cutover. Shipped: placement SSOT, `artifactPlacements`, folder sync identity (`syncStaging`), agent dock sync, `lib/sync/*` project sync modules, `spec_*` tables + dual-write. Not yet: relational project index, layout-only read path, shared resource store on disk, UUID-only identity, `note_links`-only connectors UI.';
+  'North star: `Specs/Canvas data architecture Spec -Claude.md`. Current decision: `canvas_project_document` is the rendered-canvas authority; `spec_canvas_state` is a secondary projection until explicit cutover. Shipped: placement SSOT, slim `artifactPlacements`, folder sync identity (`syncStaging`), agent dock sync, `lib/sync/*` project sync modules, layout/meta reads, `spec_*` tables + dual-write. Not yet: relational project index, shared resource store on disk, UUID-only identity, `note_links`-only connectors UI.';
 
 export function buildArchitectureMermaid() {
   return `flowchart TB
@@ -406,7 +406,7 @@ export function buildArchitectureMarkdown(runtime) {
     '- Each folder-backed artifact is keyed by a **canonical sync key** (`toCanonicalSyncKey` / filename `fullBase`).',
     '- **Exactly one surface per key:** canvas (`cards`) **or** dock (`stagedSyncCards`), never both.',
     '- **`artifactPlacement.js`** is the runtime authority for moves and healing duplicates.',
-    '- **`artifactPlacements`** in saved JSON records surface + card/staged payload (migrated on load if missing).',
+    '- **`artifactPlacements`** in saved JSON records surface + placement ref only (migrated on load if missing).',
     '- **`migrateFolderBackedCardKeys`** rewrites legacy `-v1` card keys from version filenames on load.',
     '- **Agent chats** default to the dock; canvas only when `thread.cardId` points at a live card or user drags from tray.',
     '',
@@ -442,7 +442,7 @@ export function buildArchitectureMarkdown(runtime) {
     '',
     '## Data stores (summary)',
     '- **Workspace index:** `canvas/index` — project list, `activeProjectId`, connected folder names',
-    '- **Project document:** cards, stagedSyncCards, artifactPlacements, canvasView (~48MB soft limit)',
+    '- **Project document:** slim cards, stagedSyncCards, artifactPlacements refs, canvasView; preview bytes stay out of project JSON when cache/blob refs exist',
     '- **Previews:** `previewCacheKey` → IndexedDB; optional `canvas_preview_blob`',
     '- **Folder handles:** `canvas-folders` IndexedDB per projectId',
     '- **Integrity:** `auditWorkspaceIndex` — orphan recovery, ghost index rows',

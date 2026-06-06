@@ -53,6 +53,25 @@ function stripContentFields(record) {
   return next;
 }
 
+function stripLayoutPlacementMap(artifactPlacements) {
+  if (
+    !artifactPlacements
+    || typeof artifactPlacements !== 'object'
+    || Array.isArray(artifactPlacements)
+  ) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(artifactPlacements).map(([key, entry]) => [
+      key,
+      {
+        surface: entry?.surface ?? null,
+        placement: entry?.placement ?? entry?.ref ?? null,
+      },
+    ]),
+  );
+}
+
 function emptyPayloadWouldEraseServer(payload, existingPayload, allowEmptyRemoteOverwrite) {
   return (
     !allowEmptyRemoteOverwrite
@@ -361,9 +380,7 @@ export function buildCanvasProjectLayoutDocument(projectId, row) {
   const stagedSyncCards = Array.isArray(payload.stagedSyncCards)
     ? payload.stagedSyncCards.map(stripContentFields)
     : [];
-  const artifactPlacements = payload.artifactPlacements && typeof payload.artifactPlacements === 'object'
-    ? payload.artifactPlacements
-    : {};
+  const artifactPlacements = stripLayoutPlacementMap(payload.artifactPlacements);
   return {
     projectId,
     projectName: payload.projectName ?? null,
