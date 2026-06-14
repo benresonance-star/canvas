@@ -41,6 +41,45 @@ async function openProjectMenu(page) {
   await page.getByText('New project', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
 }
 
+async function readHeaderProjectName(page) {
+  const textbox = page.getByRole('textbox').first();
+  await textbox.waitFor({ state: 'visible', timeout: 5000 });
+  const value = await textbox.inputValue().catch(async () => textbox.textContent());
+  return (value ?? '').trim();
+}
+
+async function readCheckedProjectName(page) {
+  await openProjectMenu(page);
+  const checkedName = await page.evaluate(() => {
+    const rows = document.querySelectorAll('div.rounded-md button.flex-1');
+    for (const row of rows) {
+      if (row.querySelector('svg')) {
+        return (row.innerText ?? '').split('\n')[0]?.trim() ?? '';
+      }
+    }
+    return '';
+  });
+  await page.keyboard.press('Escape');
+  return checkedName;
+}
+
+async function assertMenuMatchesHeader(page, label) {
+  await waitForProjectSettled(page);
+  const headerName = await readHeaderProjectName(page);
+  const checkedName = await readCheckedProjectName(page);
+  if (!headerName || !checkedName) {
+    throw new Error(
+      `I1 failed (${label}): header="${headerName}" checked="${checkedName}"`,
+    );
+  }
+  if (headerName.trim().toLowerCase() !== checkedName.trim().toLowerCase()) {
+    throw new Error(
+      `I1 failed (${label}): header="${headerName}" checked="${checkedName}"`,
+    );
+  }
+  log('I1', `${label}: ${checkedName}`);
+}
+
 function projectRowButtons(page) {
   return page.locator('div.rounded-md').locator('button.flex-1');
 }
@@ -144,6 +183,7 @@ async function main() {
   if (!originProjectId) throw new Error('No active project id after boot');
 
   await ensureAtLeastTwoProjects(page);
+  await assertMenuMatchesHeader(page, 'after boot');
 
   await openProjectMenu(page);
   const originLabel = await page.evaluate(() => {
@@ -180,7 +220,9 @@ async function main() {
   const otherId = others[0].id;
 
   await switchToProjectById(page, otherId);
+  await assertMenuMatchesHeader(page, 'after switch away');
   await switchToProjectById(page, originId);
+  await assertMenuMatchesHeader(page, 'after switch back');
   await page.waitForTimeout(2000);
 
   const cardsAfterReturn = await page.locator('[data-card-id]').count();

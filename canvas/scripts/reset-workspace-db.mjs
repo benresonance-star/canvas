@@ -28,6 +28,7 @@ try {
       version: 1,
       activeProjectId: null,
       projects: [],
+      resetAt: new Date().toISOString(),
     };
 
     const idxUpdate = await client.query(

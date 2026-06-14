@@ -29,5 +29,5 @@ Run before and after Phase 0/1 (`projectSync` split). Record pass/fail and date.
 
 ## References
 
-- [SPEC_MIGRATION.md](./SPEC_MIGRATION.md)
+- [ARCHITECTURE_MASTER_SPEC.md](./ARCHITECTURE_MASTER_SPEC.md)
 - [PROJECT_SYNC_API.md](./PROJECT_SYNC_API.md)

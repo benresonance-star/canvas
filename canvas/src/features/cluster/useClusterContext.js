@@ -388,14 +388,21 @@ export function useClusterContext({
   }, [loaded, refreshClusterApiHealth]);
 
   useEffect(() => {
-    if (!loaded || !activeProjectId || switchingProjectRef.current) return;
+    if (!loaded || !activeProjectId || projectSwitchLoading || switchingProjectRef.current) return;
     if (!clusterApiAvailable) return;
     if (clusterContextProjectIdRef.current === activeProjectId && clusterId) return;
     void applyClusterContextForProject(
       activeProjectId,
       stateRef.current.projectName,
     );
-  }, [activeProjectId, loaded, clusterApiAvailable, clusterId, applyClusterContextForProject]);
+  }, [
+    activeProjectId,
+    loaded,
+    projectSwitchLoading,
+    clusterApiAvailable,
+    clusterId,
+    applyClusterContextForProject,
+  ]);
 
   useEffect(() => {
     if (

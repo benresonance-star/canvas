@@ -1,9 +1,19 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026-06-02-remediation-v1  
-**Status:** Active — update this document as remediation phases land.
+**Version:** 2026-06-14-consolidated-spec  
+**Status:** Active — this is the single spec authority.
 
-This is the single source of truth for target architecture, module boundaries, debugging, and testing after the structural remediation program (Phases 0–6).
+This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
+
+### Authority model
+
+| Scope | Authority |
+|-------|-----------|
+| Rendered canvas today | `canvas_project_document` remains authoritative until the spec-read/write cutover gates pass |
+| Spec projection today | `spec_canvas_state` and related `spec_*` tables are a secondary projection maintained by dual-write |
+| Target structure | Postgres is authoritative for projects, resources, notes, URL links, clusters, relationships, and canvas layout |
+| Content blobs | Filesystem stores bytes only; Postgres rows and IDs remain structural truth |
+| Client cache | IndexedDB/localStorage are caches and recovery aids, never durable authority |
 
 ---
 
@@ -171,7 +181,381 @@ When `commitProjectDocument` pushes, `flushOutgoingProjectDocument` receives `sk
 
 ---
 
-## 5. Server routes (Phase 2)
+## 5. Data architecture target
+
+This section is prescriptive for the end-state data model. Where this section says MUST, treat it as a hard rule for new work and for the spec cutover.
+
+### Core principles
+
+1. **Postgres is the source of truth for structure.** Projects, resources, notes, URL links, clusters, their relationships, and canvas layout live in Postgres.
+2. **The filesystem is the source of truth for content blobs only.** Resource bodies, note bodies, and chat files are referenced by ID and path metadata from Postgres.
+3. **Identity is a UUID, never a file path.** Paths can change; IDs do not.
+4. **Resources are shared; notes and URL links are project-specific.** Editing a shared resource updates it everywhere; notes and URL links belong to exactly one project.
+5. **Content is never duplicated implicitly.** Resource duplication happens only through an explicit Detach action.
+6. **Normal user actions soft-delete.** Resource bytes are purged only when nothing references them and an explicit purge job runs.
+7. **Every durable write is tagged with `project_id` where project scope matters.** Stale writes are rejected with optimistic concurrency.
+
+### Identifiers
+
+- Every project, resource, note, URL link, chat, and cluster MUST get a UUID at creation time.
+- The ID is generated once, is immutable, and is never reused after delete.
+- File paths and sync filenames may be stored as aliases during migration, but MUST NOT become primary identity.
+
+### Filesystem layout
+
+There are two storage locations:
+
+```text
+<project_root>/
+  notes/
+    <note_id>.md
+  chats/
+    <chat_id>.md
+  project.json
+
+<shared_store>/
+  resources/
+    <resource_id>.<ext>
+```
+
+Rules:
+
+- Note and chat blobs live under the project's `root_path` and are project-specific.
+- Resource blobs live in the shared store exactly once, regardless of how many projects reference them.
+- `notes.file_path` and `chats.file_path` are relative to `projects.root_path`.
+- A file with no matching Postgres row is an orphan. Orphan sweeps may remove unmatched shared-resource blobs, but project folders are user-owned and should only be reported, not auto-deleted.
+
+### Target tables
+
+Current migrations use `spec_*` table names while the app migrates. The target model below describes the durable structure those tables converge on.
+
+```sql
+CREATE TABLE projects (
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL,
+  root_path TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  version BIGINT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE resources (
+  id UUID PRIMARY KEY,
+  kind TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  version BIGINT NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+
+CREATE TABLE project_resources (
+  project_id UUID NOT NULL REFERENCES projects(id),
+  resource_id UUID NOT NULL REFERENCES resources(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (project_id, resource_id)
+);
+
+CREATE TABLE notes (
+  id UUID PRIMARY KEY,
+  project_id UUID NOT NULL REFERENCES projects(id),
+  title TEXT,
+  file_path TEXT NOT NULL,
+  version BIGINT NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+
+CREATE TABLE note_links (
+  note_id UUID NOT NULL REFERENCES notes(id),
+  resource_id UUID NOT NULL REFERENCES resources(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (note_id, resource_id)
+);
+
+CREATE TABLE url_links (
+  id UUID PRIMARY KEY,
+  project_id UUID NOT NULL REFERENCES projects(id),
+  url TEXT NOT NULL,
+  title TEXT,
+  description TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+
+CREATE TABLE clusters (
+  id UUID PRIMARY KEY,
+  project_id UUID NOT NULL REFERENCES projects(id),
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+
+CREATE TABLE cluster_members (
+  cluster_id UUID NOT NULL REFERENCES clusters(id),
+  resource_id UUID NOT NULL REFERENCES resources(id),
+  PRIMARY KEY (cluster_id, resource_id)
+);
+
+CREATE TABLE canvas_state (
+  project_id UUID PRIMARY KEY REFERENCES projects(id),
+  layout JSONB NOT NULL,
+  viewport JSONB NOT NULL,
+  version BIGINT NOT NULL DEFAULT 1,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE chats (
+  id UUID PRIMARY KEY,
+  project_id UUID NOT NULL REFERENCES projects(id),
+  agent_id TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  ordering INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+```
+
+Foreign keys MUST stay enforced. A note may only link to a resource referenced by the same project through `project_resources`.
+
+### Canvas state
+
+Placement is per-project even when content is shared. Placeable node kinds are `resource`, `note`, and `url`; each placed node is identified by `kind` plus `id`.
+
+```json
+{
+  "placed": [
+    { "kind": "resource", "id": "<uuid>", "x": 120, "y": 80, "w": 240, "h": 160, "cluster_id": null },
+    { "kind": "note", "id": "<uuid>", "x": 400, "y": 80, "w": 200, "h": 140 },
+    { "kind": "url", "id": "<uuid>", "x": 640, "y": 80, "w": 200, "h": 80 }
+  ]
+}
+```
+
+```json
+{ "x": 0.0, "y": 0.0, "zoom": 1.0 }
+```
+
+- `cluster_id` applies to resource nodes only.
+- Connectors from notes to resources are rendered from `note_links`, not stored in layout.
+- Selection, hover, and in-flight drag position are React-only view state.
+- Persistent canvas changes are debounced and flushed on blur / unload; drag frames are not individually persisted.
+
+### Shared resources and Detach
+
+- Adding a resource to a project inserts `project_resources(project_id, resource_id)` and does not copy bytes.
+- Editing a resource writes the new blob, recomputes `content_hash`, updates the resource row with a version check, and becomes visible to other referencing projects on next load.
+- Detach is the only implicit-copy escape hatch: mint a new resource ID, copy bytes, insert the new resource row, and in one transaction repoint the current project's project-resource row, canvas placements, cluster membership, and note links.
+- The UI should expose the reference count for shared resources.
+
+### Write ordering and deletes
+
+- For rows with file bodies, write the blob first, then insert/update the Postgres row.
+- Concurrent resource or note edits use optimistic concurrency and retry once after re-fetch.
+- Multi-table operations run in one transaction.
+- Removing a resource from a project removes that project's reference, note links, cluster memberships, and canvas placement; shared bytes survive while any project references them.
+- Deleting notes, URL links, and projects is soft-delete. Project deletion removes project-specific references without deleting resources still used elsewhere.
+
+### Target API surface
+
+Minimum target endpoints:
+
+```text
+POST   /projects
+GET    /projects
+GET    /projects/:id
+DELETE /projects/:id
+
+POST   /resources
+GET    /resources/:id
+PUT    /resources/:id
+DELETE /resources/:id
+
+POST   /projects/:id/resources
+DELETE /projects/:id/resources/:rid
+POST   /projects/:id/resources/:rid/detach
+
+POST   /projects/:id/notes
+GET    /projects/:id/notes
+PUT    /notes/:id
+DELETE /notes/:id
+POST   /notes/:id/links
+DELETE /notes/:id/links/:rid
+
+POST   /projects/:id/urls
+GET    /projects/:id/urls
+PUT    /urls/:id
+DELETE /urls/:id
+
+GET    /projects/:id/canvas
+PUT    /projects/:id/canvas
+
+POST   /projects/:id/clusters
+PUT    /clusters/:id/members
+
+POST   /projects/:id/chats
+GET    /projects/:id/chats
+```
+
+### Target acceptance criteria
+
+1. Refresh restores the exact canvas layout and viewport for the open project.
+2. Switching projects and switching back shows each project's own canvas unchanged.
+3. A slow save for Project A that completes after switching to B does not alter B.
+4. Editing a shared resource in one project updates another project that references it on next load, without duplicating files.
+5. Detaching a resource creates an independent copy and repoints the detaching project's placement, cluster membership, and note links.
+6. Deleting a project does not remove resources still referenced by another project.
+7. Resource bytes are removed only after no projects reference them and only via purge.
+8. Notes and URL links created in one project never appear in another project.
+9. Note-resource links persist across refresh and project switch, and connectors render from `note_links`.
+10. A note cannot link to a resource its project does not reference.
+11. Deleting a note removes its links but leaves linked resources intact.
+12. A failed create never leaves a Postgres row pointing at a missing file.
+13. Two tabs editing the same resource or note do not silently overwrite each other.
+14. The UI shows how many projects reference a shared resource.
+
+### Anti-patterns
+
+- Do not use file paths or filenames as primary identity.
+- Do not store canvas state only in localStorage or React state.
+- Do not share notes or URL links between projects.
+- Do not duplicate resource bytes except through Detach.
+- Do not store a resource's position on the resource.
+- Do not store note-resource connectors in layout JSON.
+- Do not let a note link to a resource its project does not reference.
+- Do not delete resource bytes while any project still references them.
+- Do not write a DB row before its file is safely on disk.
+- Do not hard-delete on normal delete actions.
+- Do not save canvas state on every drag frame.
+- Do not apply a save response for a project that is no longer active.
+- Do not poll for live cross-project resource edits; use a notification channel if live propagation is added.
+
+---
+
+## 6. Spec data plane migration
+
+### Phase 2 (shipped): `artifactPlacements` in project JSON
+
+- **Field:** `artifactPlacements` — map of canonical sync key to `{ surface, record }`
+- **Version:** `artifactPlacementsVersion: 1`
+- **Load:** `normalizeLoadedProject` → `reconcileArtifactPlacements`; the map is authoritative when present and legacy arrays migrate on first load
+- **Save:** `buildProjectSavePayload` → `attachArtifactPlacementsToPayload`
+- **Compatibility:** `cards` and `stagedSyncCards` remain in the payload until cutover
+
+### Phase 3 (partial): Postgres spec tables and dual-write
+
+Implemented by `server/migrations/0010_spec_data_plane.sql`:
+
+- `spec_resource`, `spec_project_resource`
+- `spec_note`, `spec_url_link`, `spec_note_link`
+- `spec_canvas_state` (layout, viewport, version)
+- `spec_chat`
+
+Spec routes:
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/canvas/projects/:id/spec-canvas` | Fetch spec layout/viewport |
+| PUT | `/canvas/projects/:id/spec-canvas` | Save with `expectedVersion` CAS |
+| GET | `/spec/resources/:id` | Resource + reference count |
+| POST | `/canvas/projects/:id/spec-resources/:rid/link` | Add project reference |
+| POST | `/canvas/projects/:id/spec-resources/:rid/detach` | Detach / repoint reference |
+| GET/POST/DELETE | `/spec/notes/:noteId/links` | Note-resource links |
+
+Workspace index realtime: `GET /canvas/index/stream` broadcasts `index_updated` after successful `PUT /canvas/index`, including `clientId` so the origin tab can skip redundant refresh.
+
+Client dual-write:
+
+- **Save:** `writeThroughSpecCanvasFromPayload` runs on every layout/placement commit through `structure/canvasWriteThrough.js`; project document PUT paths can also sync spec state.
+- **Load:** `reconcileSpecCanvasOnLoad` applies `spec_canvas_state` when the version matches document revision, when spec-only data exists, or when spec version is at least the document revision. Otherwise project JSON remains authoritative and drift is logged.
+
+Current gaps before the target data architecture is complete:
+
+- Shared resource store on disk under `<shared_store>/resources/`
+- `projects.root_path` with `notes/` and `chats/` migration
+- UUID-only identity everywhere; filename/sync keys still exist in JSON paths
+- Live cross-project resource propagation
+- UI reference count from `spec_project_resource`
+- Connectors rendered only from `spec_note_link`
+- Hard cutover to DB-only layout without full `canvas_project_document`
+
+### Phase 4+ cutover design
+
+Current invariant: `canvas_project_document` remains the rendered-canvas authority. `spec_canvas_state` is a secondary projection until every gate below passes in tests and browser smoke.
+
+1. **Identity and soft-delete foundation**
+   - Add `deleted_at`, `deleted_by`, and `delete_reason` to removable project, resource-link, note-link, and canvas-state rows.
+   - Keep hard deletes only for cache/blob cleanup tables and test reset scripts.
+   - Normalize client-generated IDs at creation boundaries.
+   - Store legacy filename/sync keys as aliases, not primary identity.
+   - Gate: deleting a project removes it from `canvas_workspace_index` and marks server rows deleted without allowing stale local caches to recreate the row.
+
+2. **Shared resource store**
+   - Use content hash plus UUID: hash dedupes bytes; UUID remains app-facing identity.
+   - Store bytes under `<shared_store>/resources/<sha256-prefix>/<sha256>` for large blobs.
+   - Project membership lives in `spec_project_resource(project_id, resource_id, role, created_at, deleted_at)`.
+   - Gate: importing the same file into two projects creates one resource row and two project-resource rows; deleting one project leaves the resource available to the other.
+
+3. **DB-only canvas state shadow mode**
+   - Extend `spec_canvas_state.layout` to render card placement, staging placement, and artifact placement map entries.
+   - On every `commitProjectDocument`, dual-write project JSON and spec layout with CAS; retry once and enqueue outbox on remaining conflict.
+   - Add a diagnostic loader that builds a project payload from `spec_canvas_state` and compares it to `canvas_project_document`.
+   - Gate: JSON -> spec -> JSON round-trip tests cover canvas cards, staging cards, viewport, and artifact placements.
+
+4. **Read cutover**
+   - Feature flag: `canvas-spec-layout-read=1`.
+   - `loadProjectStructure` reads `spec_canvas_state` first behind the flag, then falls back to project JSON if spec is missing or stale.
+   - SSE remains notification-only; clients still validate `version` / `revision` before applying data.
+   - Rollback: disable the flag and keep project JSON writes active.
+   - Gate: browser smoke passes project switch, placement, refresh, and rapid switch with spec-read enabled.
+
+5. **Write cutover**
+   - `commitProjectDocument` writes `spec_canvas_state` as the primary command and writes a slim `canvas_project_document` snapshot only for rollback/export.
+   - CAS authority moves from document `revision` to spec `version` for layout changes. Project metadata keeps its own workspace index revision.
+   - Gate: stale layout writes conflict on `spec_canvas_state.version` and cannot overwrite newer card positions.
+
+6. **Cleanup and compatibility removal**
+   - Stop writing full layout arrays to `canvas_project_document`.
+   - Remove legacy localStorage project-body recovery for spec-read clients after a migration window.
+   - Keep export/import support by generating the old JSON shape from spec rows.
+   - Gate: reset, delete-all-projects, and browser reconnect cannot resurrect projects from old local caches.
+
+### Required gates before cutover
+
+- `npm run test:sync` covers project sync, project CRUD, route/SSE, Postgres CAS, IndexedDB cache, and spec dual-write tests.
+- Add browser smoke with `canvas-spec-layout-read=1` before enabling spec-read by default.
+- Add a Postgres-backed test that creates one shared resource, links it to two projects, soft-deletes one project, and verifies the resource remains linked to the other.
+- Add migration idempotence tests: running the backfill twice produces the same row counts and no duplicate aliases.
+- Add rollback test: after spec-read is disabled, the project still loads from `canvas_project_document`.
+
+### Applying migrations
+
+```bash
+cd canvas
+npm run db:migrate
+```
+
+### Interim document revision sync
+
+Until layout is fully authoritative in `spec_canvas_state`, the client keeps `canvas_project_document.revision` in sync via:
+
+- `reconcileActiveProject` on poll, visibility resume, and project switch; it adopts revision when payloads match and pushes or pulls otherwise
+- `seedClientRevisionFromMeta` after cache-first project load
+- automatic revision healing instead of a blocking stale-tab state when possible
+
+### Migration verification
+
+1. Verify dock-only chats do not trigger repeat sync modals and do not create canvas+dock duplicates.
+2. Save a project and inspect JSON for `artifactPlacements`.
+3. With API and Postgres up, `GET /canvas/projects/{id}/spec-canvas` returns layout mirroring cards/staging.
+
+---
+
+## 7. Server routes (Phase 2)
 
 | Router file | Prefix / paths |
 |-------------|----------------|
@@ -189,7 +573,7 @@ When `commitProjectDocument` pushes, `flushOutgoingProjectDocument` receives `sk
 
 ---
 
-## 6. Schema validation (Phase 3)
+## 8. Schema validation (Phase 3)
 
 Shared Zod schemas in `lib/schemas/`:
 
@@ -203,7 +587,7 @@ Run validation via `lib/schemas/validate.js` helpers.
 
 ---
 
-## 7. Debugging
+## 9. Debugging
 
 See **[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)** for the full system map, per-flow trace stages, and symptom tables.
 
@@ -325,7 +709,7 @@ node scripts/reset-workspace-db.mjs
 
 ---
 
-## 8. Testing
+## 10. Testing
 
 ### Commands
 
@@ -363,7 +747,7 @@ node scripts/verify-project-sync-exports.mjs
 
 ---
 
-## 9. Baseline metrics
+## 11. Baseline metrics
 
 Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediation:
 
@@ -377,7 +761,7 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 
 ---
 
-## 10. Remediation progress
+## 12. Remediation progress
 
 | Phase | Description | Status |
 |-------|-------------|--------|
@@ -442,19 +826,24 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 
 ---
 
-## 11. Related documents
+## 13. Related documents
 
 | Document | Purpose |
 |----------|---------|
 | [PROJECT_SYNC_API.md](./PROJECT_SYNC_API.md) | Frozen `projectSync.js` barrel exports |
-| [SPEC_MIGRATION.md](./SPEC_MIGRATION.md) | Spec data plane cutover runbook |
 | [placement-persistence-qa.md](./placement-persistence-qa.md) | Placement QA scenarios |
 | [P0_MANUAL_CHECKLIST.md](./P0_MANUAL_CHECKLIST.md) | Manual release checklist |
 | [structure/README.md](../src/lib/structure/README.md) | Postgres write-through |
 
 ---
 
-## 12. Changelog
+## 14. Changelog
+
+### 2026-06-14 — Spec consolidation (implemented)
+
+- Folded the target data architecture spec and spec migration runbook into this master spec.
+- Clarified current `canvas_project_document` authority versus target Postgres structure authority.
+- Retired duplicate spec documents so this file is the only spec authority.
 
 ### 2026-06-03 — Phase 4 dual-model fence complete (implemented)
 

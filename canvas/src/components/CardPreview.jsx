@@ -13,6 +13,7 @@ import { AudioPlayer } from './AudioPlayer.jsx';
 import { BookmarkPreview } from './BookmarkPreview.jsx';
 import { BookmarkInlineEditor } from './BookmarkInlineEditor.jsx';
 import { audioSkinUsesDarkText, resolveAudioSkinColor } from '../lib/audioSkin.js';
+import { buildHtmlPreviewSrcDoc } from '../lib/htmlPreviewDocument.js';
 
 export function CardPreview({
   card,
@@ -239,7 +240,7 @@ export function CardPreview({
       <div className="h-full overflow-hidden relative">
         <iframe
           key={`${card.id}-v${pinned.version}-html`}
-          srcDoc={pinned.content}
+          srcDoc={buildHtmlPreviewSrcDoc(pinned.content)}
           sandbox="allow-same-origin"
           className={`w-full h-full border-0 bg-preview-bg ${isActive ? '' : 'pointer-events-none'}`}
           title={card.name}

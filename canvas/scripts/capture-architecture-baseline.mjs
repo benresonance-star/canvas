@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Capture architecture baseline metrics for ARCHITECTURE_MASTER_SPEC.md §9.
+ * Capture architecture baseline metrics for ARCHITECTURE_MASTER_SPEC.md §11.
  * Usage: node scripts/capture-architecture-baseline.mjs
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';

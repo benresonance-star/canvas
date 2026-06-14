@@ -65,7 +65,23 @@ describe('ensureProjectIndex', () => {
         return { ok: true, json: async () => ({ updatedAt: 'now' }) };
       }
       if (String(url).endsWith('/canvas/index')) {
-        return { ok: true, json: async () => ({ index: serverIndex }) };
+        return {
+          ok: true,
+          json: async () => ({
+            index: serverIndex,
+            revision: 1,
+            updatedAt: '2026-06-05T00:00:00.000Z',
+          }),
+        };
+      }
+      if (String(url).endsWith('/meta')) {
+        return {
+          ok: true,
+          json: async () => ({
+            revision: 1,
+            updatedAt: '2026-06-05T00:00:01.000Z',
+          }),
+        };
       }
       return { ok: false, status: 404, json: async () => ({}) };
     }));
@@ -439,6 +455,186 @@ describe('createProject', () => {
     expect(putForNew.body.payload.cards).toEqual([]);
   });
 
+  it('does not push a new project index before the backing document exists', async () => {
+    vi.useFakeTimers();
+    const events = [];
+    let resolveProjectPut;
+    const projectPutStarted = new Promise((resolve) => {
+      vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+        const u = String(url);
+        if (u.endsWith('/health')) {
+          return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+        }
+        if (u.endsWith('/canvas/index')) {
+          if (options?.method === 'PUT') {
+            events.push('index-put');
+            return { ok: true, json: async () => ({ updatedAt: 'index-now', revision: 1 }) };
+          }
+          return { ok: true, json: async () => ({ index: null, revision: 0 }) };
+        }
+        if (u.includes('/canvas/projects/') && options?.method === 'PUT') {
+          events.push('project-put-start');
+          resolve();
+          await new Promise((resolvePut) => {
+            resolveProjectPut = resolvePut;
+          });
+          events.push('project-put-done');
+          return { ok: true, json: async () => ({ updatedAt: 'project-now', revision: 1 }) };
+        }
+        if (u.includes('/meta')) {
+          return { ok: true, json: async () => ({ revision: 1, updatedAt: 'project-now' }) };
+        }
+        return { ok: true, json: async () => ({}) };
+      }));
+    });
+
+    const { createProject } = await import('../projects.js');
+    const { resetProjectSyncState } = await import('../projectSync.js');
+    resetProjectSyncState();
+
+    const createPromise = createProject('Slow Create');
+    await projectPutStarted;
+    await vi.advanceTimersByTimeAsync(700);
+
+    expect(events).toEqual(['project-put-start']);
+
+    resolveProjectPut();
+    await createPromise;
+
+    expect(events).toEqual(['project-put-start', 'project-put-done', 'index-put']);
+    vi.useRealTimers();
+  });
+
+  it('updates the local active project override when creating a project', async () => {
+    const oldId = 'old-active-project';
+    storage.set('canvas:active-project-id', oldId);
+    storage.set(
+      'canvas:project-index',
+      JSON.stringify({
+        version: 1,
+        activeProjectId: oldId,
+        projects: [
+          {
+            id: oldId,
+            name: 'Old Active',
+            createdAt: 1,
+            updatedAt: 1,
+            archived: false,
+          },
+        ],
+      }),
+    );
+    storage.set(
+      `canvas:project:${oldId}`,
+      JSON.stringify({
+        projectName: 'Old Active',
+        cards: [],
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      }),
+    );
+
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      const u = String(url);
+      if (u.endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (u.endsWith('/canvas/index')) {
+        if (options?.method === 'PUT') {
+          return { ok: true, json: async () => ({ updatedAt: 'index-now', revision: 1 }) };
+        }
+        return { ok: true, json: async () => ({ index: null, revision: 0 }) };
+      }
+      if (u.includes('/canvas/projects/') && options?.method === 'PUT') {
+        return { ok: true, json: async () => ({ updatedAt: 'project-now', revision: 1 }) };
+      }
+      if (u.includes('/meta')) {
+        return { ok: true, json: async () => ({ revision: 1, updatedAt: 'project-now' }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    }));
+
+    const { createProject, loadProjectIndex } = await import('../projects.js');
+    const { resetProjectSyncState } = await import('../projectSync.js');
+    resetProjectSyncState();
+
+    const { projectId } = await createProject('New Active');
+    const reloaded = await loadProjectIndex();
+
+    expect(storage.get('canvas:active-project-id')).toBe(projectId);
+    expect(reloaded.activeProjectId).toBe(projectId);
+  });
+
+  it('preserves reset generation and ignores old orphan caches when creating after reset', async () => {
+    const resetAt = '2026-06-14T02:10:36.360Z';
+    storage.set(
+      'canvas:project:old-untitled',
+      JSON.stringify({
+        projectName: 'Untitled Project',
+        cards: [],
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      }),
+    );
+
+    let serverIndex = {
+      version: 1,
+      activeProjectId: null,
+      projects: [],
+      resetAt,
+    };
+    let serverRevision = 12;
+    const indexBodies = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      const u = String(url);
+      if (u.endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (u.endsWith('/canvas/index')) {
+        if (options?.method === 'PUT') {
+          const body = JSON.parse(options.body);
+          indexBodies.push(body);
+          serverIndex = body.index;
+          serverRevision += 1;
+          return {
+            ok: true,
+            json: async () => ({ updatedAt: 'index-now', revision: serverRevision }),
+          };
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            index: serverIndex,
+            revision: serverRevision,
+            updatedAt: resetAt,
+          }),
+        };
+      }
+      if (u.includes('/canvas/projects/') && options?.method === 'PUT') {
+        return { ok: true, json: async () => ({ updatedAt: 'project-now', revision: 1 }) };
+      }
+      if (u.includes('/meta')) {
+        return { ok: true, json: async () => ({ revision: 1, updatedAt: 'project-now' }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    }));
+
+    const { createProject, loadProjectIndex } = await import('../projects.js');
+    const {
+      pullAndMergeProjectIndex,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+    resetProjectSyncState();
+
+    const { index, projectId } = await createProject('TEST 1');
+    const refreshed = await pullAndMergeProjectIndex({ reconcileScope: 'none' });
+    const reloaded = await loadProjectIndex();
+
+    expect(indexBodies.at(-1).index.resetAt).toBe(resetAt);
+    expect(index.projects.map((project) => project.name)).toEqual(['TEST 1']);
+    expect(refreshed.projects.map((project) => project.id)).toEqual([projectId]);
+    expect(reloaded.projects.map((project) => project.name)).toEqual(['TEST 1']);
+    expect(storage.has('canvas:project:old-untitled')).toBe(false);
+  });
+
   it('serializes concurrent createProject and only adds one row', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url) => {
       const u = String(url);
@@ -730,6 +926,87 @@ describe('deleteProject', () => {
     await deleteProject(dropId);
     expect(order).toEqual(['index-put', 'doc-delete']);
     expect(indexBodies[0].deletedProjectIds).toEqual([dropId]);
+  });
+
+  it('sends accumulated tombstones when deleting the final local project', async () => {
+    const previousDeletedId = 'deleted-earlier';
+    const finalId = 'final-visible';
+    storage.set('canvas:deleted-project-ids', JSON.stringify([previousDeletedId]));
+    storage.set(
+      'canvas:project-index',
+      JSON.stringify({
+        version: 1,
+        activeProjectId: finalId,
+        projects: [
+          {
+            id: finalId,
+            name: 'Untitled Project',
+            createdAt: 1,
+            updatedAt: 1,
+            archived: false,
+          },
+        ],
+      }),
+    );
+    storage.set(
+      `canvas:project:${finalId}`,
+      JSON.stringify({
+        projectName: 'Untitled Project',
+        cards: [],
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      }),
+    );
+
+    const indexBodies = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      const u = String(url);
+      if (u.endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (u.endsWith('/canvas/index') && options?.method === 'PUT') {
+        indexBodies.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({ updatedAt: 'now', revision: 4 }) };
+      }
+      if (u.endsWith('/canvas/index')) {
+        return {
+          ok: true,
+          json: async () => ({
+            index: {
+              version: 1,
+              activeProjectId: previousDeletedId,
+              projects: [
+                { id: previousDeletedId, name: 'Untitled Project', updatedAt: 2, archived: false },
+                { id: finalId, name: 'Untitled Project', updatedAt: 3, archived: false },
+              ],
+            },
+            revision: 3,
+          }),
+        };
+      }
+      if (u.includes(`/canvas/projects/${finalId}`) && options?.method === 'DELETE') {
+        return { ok: true, json: async () => ({ ok: true }) };
+      }
+      if (u.endsWith('/meta')) {
+        return { ok: true, json: async () => ({ revision: 1, updatedAt: 'now' }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    }));
+
+    const { deleteProject, loadProjectIndex } = await import('../projects.js');
+    const { resetProjectSyncState } = await import('../projectSync.js');
+    resetProjectSyncState();
+
+    await deleteProject(finalId);
+
+    expect(indexBodies[0].index.projects).toEqual([]);
+    expect(indexBodies[0].index.activeProjectId).toBe(null);
+    expect(indexBodies[0].deletedProjectIds.sort()).toEqual([
+      finalId,
+      previousDeletedId,
+    ].sort());
+    const stored = await loadProjectIndex();
+    expect(stored.projects).toEqual([]);
+    expect(stored.activeProjectId).toBe(null);
   });
 });
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../sync/projectSyncState.js', () => ({
   isServerSyncEnabled: () => true,
@@ -16,6 +16,11 @@ vi.mock('../sync/projectSyncClientId.js', () => ({
 describe('workspaceIndexSyncStream', () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('exposes stream URL helper', async () => {
@@ -43,6 +48,76 @@ describe('workspaceIndexSyncStream', () => {
     expect(created).toHaveLength(1);
     expect(created[0].url).toContain('/canvas/index/stream');
     stopWorkspaceIndexSyncStream();
-    vi.unstubAllGlobals();
+  });
+
+  it('applies remote index updates and invokes refresh callback only for newer remote revisions', async () => {
+    const listeners = {};
+    class FakeEventSource {
+      constructor() {
+        this.closed = false;
+      }
+
+      addEventListener(type, handler) {
+        listeners[type] = handler;
+      }
+
+      close() {
+        this.closed = true;
+      }
+    }
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const revisionModule = await import('../workspaceIndexRevision.js');
+    revisionModule.getClientWorkspaceIndexRevision.mockReturnValue(1);
+    const onIndexUpdated = vi.fn();
+
+    const { startWorkspaceIndexSyncStream, stopWorkspaceIndexSyncStream } =
+      await import('../sync/workspaceIndexSyncStream.js');
+    startWorkspaceIndexSyncStream(onIndexUpdated);
+
+    listeners.index_updated({
+      data: JSON.stringify({ revision: 2, updatedAt: 'remote', clientId: 'remote-tab' }),
+    });
+
+    expect(revisionModule.applyServerWorkspaceIndexRevision).toHaveBeenCalledWith(2);
+    expect(onIndexUpdated).toHaveBeenCalledWith({
+      revision: 2,
+      updatedAt: 'remote',
+      clientId: 'remote-tab',
+    });
+
+    revisionModule.getClientWorkspaceIndexRevision.mockReturnValue(2);
+    listeners.index_updated({
+      data: JSON.stringify({ revision: 2, updatedAt: 'stale', clientId: 'remote-tab' }),
+    });
+
+    expect(onIndexUpdated).toHaveBeenCalledTimes(1);
+    stopWorkspaceIndexSyncStream();
+  });
+
+  it('updates revision but skips refresh callback for same-client echoes', async () => {
+    const listeners = {};
+    class FakeEventSource {
+      addEventListener(type, handler) {
+        listeners[type] = handler;
+      }
+
+      close() {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const revisionModule = await import('../workspaceIndexRevision.js');
+    revisionModule.getClientWorkspaceIndexRevision.mockReturnValue(1);
+    const onIndexUpdated = vi.fn();
+
+    const { startWorkspaceIndexSyncStream, stopWorkspaceIndexSyncStream } =
+      await import('../sync/workspaceIndexSyncStream.js');
+    startWorkspaceIndexSyncStream(onIndexUpdated);
+
+    listeners.index_updated({
+      data: JSON.stringify({ revision: 3, updatedAt: 'echo', clientId: 'local-tab' }),
+    });
+
+    expect(revisionModule.applyServerWorkspaceIndexRevision).toHaveBeenCalledWith(3);
+    expect(onIndexUpdated).not.toHaveBeenCalled();
+    stopWorkspaceIndexSyncStream();
   });
 });

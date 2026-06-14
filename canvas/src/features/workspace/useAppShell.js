@@ -441,12 +441,16 @@ export function useAppShell() {
       creatingProjectRef,
       initialHydratedRef,
       projectNameDirtyRef,
+      agentChatThreadIndexRef,
       pendingPlacementTransferSyncRef,
       pendingPlacementCommitRef,
       canMutateCanvasRef,
     },
     folderHandle,
     applyReconcileFromServer,
+    setState,
+    setStagedSyncCards,
+    setAgentChatThreadIndex: (...args) => setAgentChatThreadIndexRef.current(...args),
     setSyncStatus,
   });
 

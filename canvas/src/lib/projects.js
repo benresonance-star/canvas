@@ -25,7 +25,10 @@ import {
   readLocalProjectPayload,
 } from './workspaceIntegrity.js';
 import { projectCardCount } from './sync/projectSyncMerge.js';
-import { recordDeletedProjectId } from './projectDeletionTombstones.js';
+import {
+  getDeletedProjectIds,
+  recordDeletedProjectId,
+} from './projectDeletionTombstones.js';
 import { flowTrace } from './sync/syncTrace.js';
 import {
   initializeProjectSync,
@@ -349,9 +352,9 @@ export async function loadProjectIndex() {
 
 export async function saveProjectIndex(
   index,
-  { immediate = false, deletedProjectIds = [] } = {},
+  { immediate = false, deletedProjectIds = [], localOnly = false } = {},
 ) {
-  await saveSyncedProjectIndex(index, { immediate, deletedProjectIds });
+  await saveSyncedProjectIndex(index, { immediate, deletedProjectIds, localOnly });
 }
 
 export async function migrateLegacyProjectIfNeeded() {
@@ -489,6 +492,23 @@ export function uniqueProjectNameForIndex(index, requestedName) {
   return `${trimmed} (${crypto.randomUUID().slice(0, 8)})`;
 }
 
+async function preserveServerResetGeneration(index) {
+  if (!isServerSyncEnabled() || typeof index?.resetAt === 'string') return index;
+  try {
+    const { index: serverIndex } = await fetchCanvasIndexDocument();
+    if (typeof serverIndex?.resetAt === 'string' && serverIndex.resetAt) {
+      index.resetAt = serverIndex.resetAt;
+      if (!serverIndex.projects?.length) {
+        index.activeProjectId = null;
+        index.projects = [];
+      }
+    }
+  } catch {
+    /* keep create local-first when the index endpoint is unavailable */
+  }
+  return index;
+}
+
 /**
  * Ensure workspace index exists; does not create projects without user action.
  * @param {{ serverPull?: boolean }} [options] — set serverPull false during create to avoid index races
@@ -590,7 +610,9 @@ export async function createProject(name = strings.defaultProjectName) {
 }
 
 async function createProjectBody(name = strings.defaultProjectName) {
-  const index = await ensureProjectIndex({ serverPull: false });
+  const index = await preserveServerResetGeneration(
+    await ensureProjectIndex({ serverPull: false }),
+  );
   const id = crypto.randomUUID();
   flowTrace('project:create-start', { projectId: id, name });
   const now = Date.now();
@@ -604,7 +626,8 @@ async function createProjectBody(name = strings.defaultProjectName) {
     createdBy: 'user',
   });
   index.activeProjectId = id;
-  await saveProjectIndex(index, { immediate: false });
+  await writeLocalActiveProjectId(id);
+  await saveProjectIndex(index, { localOnly: true });
   const emptyState = createEmptyProjectState(trimmed);
   const saveResult = await saveProjectById(id, emptyState, [], {
     pushRemote: true,
@@ -632,6 +655,7 @@ async function createProjectBody(name = strings.defaultProjectName) {
   }
   const integrity = await repairWorkspaceIndex(repaired, {
     checkServerGhosts: isServerSyncEnabled(),
+    skipOrphanRecovery: true,
   });
   repaired = integrity.repairedIndex ?? repaired;
   const healed = await healDuplicateProjectNames(repaired, id);
@@ -744,7 +768,7 @@ export async function deleteProject(projectId) {
 
   await saveProjectIndex(repaired, {
     immediate: true,
-    deletedProjectIds: [projectId],
+    deletedProjectIds: getDeletedProjectIds(),
   });
   await deleteSyncedProjectDocument(projectId);
   flowTrace('project:delete-done', {

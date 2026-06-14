@@ -2,7 +2,7 @@
 
 Instructions for Cursor Composer and other coding agents working on this app.
 
-**Architecture reference:** [docs/ARCHITECTURE_MASTER_SPEC.md](docs/ARCHITECTURE_MASTER_SPEC.md) (load/commit authority §4, debugging §7).
+**Architecture reference:** [docs/ARCHITECTURE_MASTER_SPEC.md](docs/ARCHITECTURE_MASTER_SPEC.md) (load/commit authority §4, debugging §9).
 
 ## Mental model
 

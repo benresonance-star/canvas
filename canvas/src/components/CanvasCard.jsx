@@ -49,6 +49,7 @@ export function CanvasCard({
     versions.find((v) => v.version === card.pinnedVersion) || versions[0];
   const hasNewerDraft = versions.some((v) => v.version > card.pinnedVersion);
   const hasMultipleVersions = versions.length > 1;
+  const pendingArtifactSync = pinned?.artifactSyncState === 'pending';
 
   const { w: cw, h: ch } = getCardPixelSize(card);
 
@@ -121,6 +122,14 @@ export function CanvasCard({
               {linkCount > 0 && (
                 <span className="ml-1 sans text-[9px] text-accent normal-case tracking-normal">
                   {strings.graph.linkBadge(linkCount)}
+                </span>
+              )}
+              {pendingArtifactSync && (
+                <span
+                  className="ml-1 sans text-[9px] text-warning normal-case tracking-normal"
+                  title="Waiting for database sync"
+                >
+                  DB pending
                 </span>
               )}
             </div>

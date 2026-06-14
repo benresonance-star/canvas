@@ -233,6 +233,7 @@ export function CanvasWorkspaceView({
     chatSyncRetrying,
     handleRetryChatSync,
     handleClearAgentChat,
+    refreshAgentConnectors,
     handleRemoveContextCard,
     activeThreadId,
     agentChatThreadIndex,
@@ -349,6 +350,10 @@ export function CanvasWorkspaceView({
         folderKeySet,
         cardKey: openCard.key,
       }),
+  );
+  const artifactAgentSelectedCardIds = useMemo(
+    () => new Set(openCard ? [openCard.id] : []),
+    [openCard?.id],
   );
 
   const clusterSelectionStats = useMemo(() => {
@@ -1010,6 +1015,74 @@ export function CanvasWorkspaceView({
           }}
           onGraphRefresh={refreshGraph}
           onSaveStatus={handleNoteSaveStatus}
+          agentPanelProps={{
+            panelMode: 'single',
+            panelModeLocked: true,
+            contextScope: 'artifact',
+            onOpen: refreshAgentConnectors,
+            singleConnectorId,
+            onSingleConnectorChange: setSingleConnectorId,
+            connectors: agentConnectors,
+            secretsConfigured: agentSecretsConfigured,
+            connectorsOffline: agentConnectorsOffline,
+            openaiReachable: agentOpenaiReachable,
+            openaiReachabilityError: agentOpenaiReachabilityError,
+            onSaveApiKey: handleSaveAgentApiKey,
+            apiKeySaving,
+            onClearApiKey: handleClearAgentApiKey,
+            chatMessages: agentChatMessages,
+            chatLoading: agentChatLoading,
+            chatError: agentChatError,
+            contextMode: 'artifact',
+            onContextModeChange: () => {},
+            enabledAgentIds,
+            onToggleAgent: toggleEnabledAgent,
+            cards: state.cards,
+            contextCards: [openCard],
+            selectedCardIds: artifactAgentSelectedCardIds,
+            canvasView: state.canvasView,
+            viewportSize: canvasViewportSize,
+            onFocusContextCard: (cardId) => setActiveCardId(cardId),
+            agentSelectionClick: false,
+            onComingSoon: showAgentComingSoon,
+            messages: agentMessages,
+            onSendMessage: handleAgentSendMessage,
+            folderLinked: Boolean(folderHandle),
+            folderNeedsReconnect,
+            folderNeedsConnect,
+            connectedFolderName,
+            contextStatusByCardId: agentContextStatusByCardId,
+            contextDeliveryByCardId: agentContextDeliveryByCardId,
+            contextDeliveryState: { sentKeys: new Set(), pendingAdd: [], pendingRemove: [], stable: [] },
+            agentExtendedContext,
+            onAgentExtendedContextChange: setAgentExtendedContextPersisted,
+            contextEstimates: [],
+            contextProfileLimits: getContextLimits(
+              agentExtendedContext ? 'extended' : 'standard',
+            ),
+            lastTokenEstimate: agentLastTokenEstimate,
+            chatArtifactRef: agentChatArtifactRef,
+            chatArtifactSyncFailed: Boolean(agentChatArtifactSyncReason),
+            chatArtifactSyncReason: agentChatArtifactSyncReason,
+            chatPersistTrimmed: agentChatPersistTrimmed,
+            chatSyncRetrying,
+            onRetryChatSync: handleRetryChatSync,
+            onOpenChatArtifact: (artifactId) => {
+              openInspector({ type: 'artifact', id: artifactId });
+            },
+            onClearChat: handleClearAgentChat,
+            chatThreads: agentChatThreadIndex.threads,
+            activeThreadId,
+            activeThreadTitle: agentChatThreadIndex.threads.find(
+              (t) => t.threadId === activeThreadId,
+            )?.title,
+            threadPickerOpen,
+            onSelectThread: handleSelectAgentThread,
+            onCreateThread: handleCreateAgentThread,
+            onRenameThread: handleRenameAgentThread,
+            onSwitchThread: handleSwitchAgentThread,
+            onDeleteThread: handleDeleteAgentThread,
+          }}
         />
       )}
     </div>

@@ -17,4 +17,4 @@ Canvas gestures should persist **structure** to Postgres, not only to `canvas_pr
 - Retire filename keys in project JSON
 - Spec-canvas SSE stream (today: project document SSE + spec poll on load)
 
-See [SPEC_MIGRATION.md](../../docs/SPEC_MIGRATION.md) and [placement-persistence-qa.md](../../docs/placement-persistence-qa.md) for verification.
+See [ARCHITECTURE_MASTER_SPEC.md](../../docs/ARCHITECTURE_MASTER_SPEC.md) and [placement-persistence-qa.md](../../docs/placement-persistence-qa.md) for verification.

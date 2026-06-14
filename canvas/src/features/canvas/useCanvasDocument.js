@@ -840,7 +840,7 @@ export function useCanvasDocument({ refs, deps }) {
           projectId,
           force: true,
         });
-      } else if (result.ingest.reason === 'api_unavailable') {
+      } else if (!result.ingest.ok) {
         setSyncStatus({ toast: strings.sync.primitivesNotUpdated });
         setTimeout(() => setSyncStatus(null), 4000);
       }
@@ -897,6 +897,14 @@ export function useCanvasDocument({ refs, deps }) {
     if (!projectId) return;
     setSavingLink(true);
     try {
+      if (folderHandle) {
+        const canWrite = await ensureWritePermission(folderHandle);
+        if (!canWrite) {
+          setSyncStatus({ error: strings.userNote.writeDenied });
+          setTimeout(() => setSyncStatus(null), 4000);
+          return;
+        }
+      }
       const result = await createBookmarkArtifact({
         projectId,
         projectName: stateRef.current.projectName,
@@ -906,6 +914,7 @@ export function useCanvasDocument({ refs, deps }) {
         linkTargetRefs,
         clusterId,
         cards: stateRef.current.cards,
+        folderHandle,
       });
       if (result.ingest.ok && result.ingest.clusterId) {
         clusterContextProjectIdRef.current = projectId;
@@ -915,7 +924,7 @@ export function useCanvasDocument({ refs, deps }) {
           projectId,
           force: true,
         });
-      } else if (result.ingest.reason === 'api_unavailable') {
+      } else if (!result.ingest.ok) {
         setSyncStatus({ toast: strings.bookmark.primitivesNotUpdated });
         setTimeout(() => setSyncStatus(null), 4000);
       }
@@ -945,6 +954,7 @@ export function useCanvasDocument({ refs, deps }) {
   }, [
     activeProjectIdRef,
     stateRef,
+    folderHandle,
     clusterId,
     refreshGraph,
     requestStructuralSync,

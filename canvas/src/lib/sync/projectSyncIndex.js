@@ -4,7 +4,12 @@
   saveCanvasIndex,
   saveCanvasProject,
 } from '../canvasProjectsApi.js';
-import { auditWorkspaceIndex, readLocalProjectPayload, projectCardCountFromDoc } from '../workspaceIntegrity.js';
+import {
+  auditWorkspaceIndex,
+  purgeOrphanProjectBodies,
+  readLocalProjectPayload,
+  projectCardCountFromDoc,
+} from '../workspaceIntegrity.js';
 import { normalizeWorkspaceIndex } from '../projectIndexNormalize.js';
 import {
   registerProjectSyncResetHook,
@@ -306,7 +311,22 @@ async function pullAndMergeProjectIndexBody(options = {}) {
   const localIndex = await readLocalIndex();
   const serverHas = Boolean(serverIndex?.projects?.length);
   const localHas = Boolean(localIndex?.projects?.length);
+  const serverResetAt = typeof serverIndex?.resetAt === 'string' && serverIndex.resetAt;
 
+  if (!serverHas && serverResetAt) {
+    const emptyIndex = {
+      ...serverIndex,
+      activeProjectId: null,
+      projects: [],
+    };
+    await writeLocalIndex(emptyIndex);
+    await purgeOrphanProjectBodies(emptyIndex);
+    const serverIndexMs = parseServerUpdatedAt(serverIndexUpdatedAt);
+    if (serverIndexMs > 0) {
+      lastServerWorkspaceIndexUpdatedAt = serverIndexMs;
+    }
+    return emptyIndex;
+  }
   if (!serverHas && !localHas) return localIndex;
   if (!serverHas) return localIndex;
 
@@ -457,11 +477,14 @@ export async function loadSyncedProjectIndex() {
 
 export async function saveSyncedProjectIndex(
   index,
-  { immediate = false, deletedProjectIds = [] } = {},
+  { immediate = false, deletedProjectIds = [], localOnly = false } = {},
 ) {
   const { index: normalized } = normalizeWorkspaceIndex(index ?? { projects: [] });
   await writeLocalIndex(normalized);
   index = normalized;
+  if (localOnly) {
+    return;
+  }
   if (immediate) {
     await pushIndexToServer(normalized, { deletedProjectIds });
   } else {

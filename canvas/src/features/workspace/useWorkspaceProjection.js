@@ -374,6 +374,41 @@ export function useWorkspaceProjection({
               hydratePreviews: false,
             });
           }
+          if (
+            loadedCards == null
+            && isServerSyncEnabled()
+            && shouldRetrySwitchLoad(
+              loadedCards,
+              targetId,
+              activeProjectIdRef.current,
+              switchSeq,
+              projectSwitchSeqRef.current,
+            )
+          ) {
+            try {
+              flowTrace('project:switch-server-pull-start', { projectId: targetId });
+              const pullResult = await pullProjectDocumentIfServerNewer(targetId, {
+                force: true,
+              });
+              flowTrace('project:switch-server-pull-done', {
+                projectId: targetId,
+                pulled: Boolean(pullResult.pulled),
+              });
+              if (pullResult.pulled && pullResult.payload) {
+                loadedCards = await loadProjectIntoStateStableRef.current(targetId, {
+                  localOnly: true,
+                  hydratePreviews: false,
+                  document: pullResult.payload,
+                });
+              }
+            } catch (e) {
+              flowTrace('project:switch-server-pull-failed', {
+                projectId: targetId,
+                message: e?.message,
+              });
+              console.warn('Switch server pull for target project failed:', e);
+            }
+          }
           cards = loadedCards;
         });
         perfMark('switch/paint');

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Box, File, Pin, X, Trash2 } from 'lucide-react';
+import { Bot, Box, File, Pin, X, Trash2 } from 'lucide-react';
 import {
   canOpenArtifactExternally,
   openArtifactExternally,
@@ -13,6 +13,7 @@ import { strings } from '../content/strings.js';
 import { ModalContent } from './ModalContent.jsx';
 import { UserNoteEditor } from './UserNoteEditor.jsx';
 import { BookmarkCardEditor } from './BookmarkCardEditor.jsx';
+import { AgentSidePanel } from './AgentSidePanel.jsx';
 import { ARTIFACT_SIDEBAR_STORAGE_KEY } from '../lib/constants.js';
 
 function readStoredSidebarOpen() {
@@ -53,9 +54,11 @@ export function CardModal({
   bookmarkSaving = false,
   onSaveNoteToProject,
   onUpdateCard,
+  agentPanelProps = null,
 }) {
   const [currentVersion, setCurrentVersion] = useState(card?.pinnedVersion ?? 1);
   const [sidebarOpen, setSidebarOpen] = useState(readStoredSidebarOpen);
+  const [agentOpen, setAgentOpen] = useState(false);
   const [editName, setEditName] = useState(card?.name ?? '');
   const noteEditorRef = useRef(null);
   const version = card?.versions.find(v => v.version === currentVersion);
@@ -65,6 +68,7 @@ export function CardModal({
 
   useEffect(() => {
     setEditName(card?.name ?? '');
+    setAgentOpen(false);
   }, [card?.id, card?.name]);
 
   const toggleSidebar = useCallback(() => {
@@ -159,6 +163,30 @@ export function CardModal({
               className="sans flex items-center gap-1 text-xs text-on-overlay/80 hover:text-on-overlay px-2 py-1 rounded transition hover:bg-on-overlay/10"
             >
               <File size={14} strokeWidth={1.5} aria-hidden />
+            </button>
+          )}
+          {agentPanelProps && !isBookmark && !isUserNote && (
+            <button
+              type="button"
+              title={strings.agent.askAboutArtifact}
+              aria-pressed={agentOpen}
+              onClick={() => {
+                setAgentOpen((open) => {
+                  const next = !open;
+                  if (next) {
+                    void agentPanelProps.onOpen?.();
+                  }
+                  return next;
+                });
+              }}
+              className={`sans flex items-center gap-1 text-xs px-2 py-1 rounded transition ${
+                agentOpen
+                  ? 'text-on-overlay bg-on-overlay/15'
+                  : 'text-on-overlay/80 hover:text-on-overlay hover:bg-on-overlay/10'
+              }`}
+            >
+              <Bot size={14} strokeWidth={1.5} aria-hidden />
+              {strings.agent.openAgentMode}
             </button>
           )}
           {!isUserNote && (
@@ -299,6 +327,18 @@ export function CardModal({
                 </>
               )}
             </aside>
+            {agentOpen && agentPanelProps && (
+              <aside
+                aria-label={strings.agent.askAboutArtifact}
+                className="shrink-0 bg-surface flex flex-col min-h-[18rem] max-md:max-h-[55vh] max-md:border-t max-md:border-border md:w-96 md:border-l md:border-border"
+              >
+                <AgentSidePanel
+                  className="flex-1 min-h-0"
+                  onClose={() => setAgentOpen(false)}
+                  {...agentPanelProps}
+                />
+              </aside>
+            )}
           </div>
         )}
       </div>

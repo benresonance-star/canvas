@@ -15,14 +15,13 @@ npm run dev            # Vite on :5173
 
 ## Architecture
 
-See **[docs/ARCHITECTURE_MASTER_SPEC.md](docs/ARCHITECTURE_MASTER_SPEC.md)** — master spec for module boundaries, debugging, testing, and remediation progress.
+See **[docs/ARCHITECTURE_MASTER_SPEC.md](docs/ARCHITECTURE_MASTER_SPEC.md)** — consolidated spec for module boundaries, target data architecture, spec migration, debugging, testing, and remediation progress.
 
 **AI agents:** follow **[AGENTS.md](AGENTS.md)** for sync trace protocol and menu/canvas invariant rules.
 
 | Document | Topic |
 |----------|-------|
 | [PROJECT_SYNC_API.md](docs/PROJECT_SYNC_API.md) | Frozen `projectSync.js` exports |
-| [SPEC_MIGRATION.md](docs/SPEC_MIGRATION.md) | Spec data plane cutover |
 | [placement-persistence-qa.md](docs/placement-persistence-qa.md) | Placement QA |
 
 ### Layer map
@@ -56,7 +55,7 @@ localStorage.setItem('canvas-placement-audit', '1');
 // reload app
 ```
 
-See master spec §7 for full debugging guide.
+See master spec §9 for full debugging guide.
 
 ## Stack
 

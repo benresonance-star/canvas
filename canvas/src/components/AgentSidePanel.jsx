@@ -327,6 +327,7 @@ export function AgentSidePanel({
   className = '',
   panelMode = 'multi',
   onPanelModeChange,
+  panelModeLocked = false,
   singleConnectorId,
   onSingleConnectorChange,
   connectors = [],
@@ -363,6 +364,7 @@ export function AgentSidePanel({
   contextStatusByCardId = {},
   contextDeliveryByCardId = {},
   contextDeliveryState = null,
+  contextScope = 'workspace',
   onRefreshContextSession,
   agentExtendedContext = false,
   onAgentExtendedContextChange,
@@ -396,6 +398,7 @@ export function AgentSidePanel({
   const selectedCount = selectedCardIds?.size ?? 0;
   const enabledAgents = AGENT_PROFILES.filter((a) => enabledAgentIds.has(a.id));
   const isSingle = panelMode === 'single';
+  const artifactScoped = contextScope === 'artifact';
 
   const connectorDef = getConnectorById(singleConnectorId) ?? CONNECTORS[0] ?? null;
   const connectorMeta = connectorDef
@@ -500,19 +503,21 @@ export function AgentSidePanel({
           className="shrink-0"
           bodyClassName="!space-y-1.5"
         >
-        <label className="block">
-          <span className="sans text-[10px] uppercase tracking-wider text-muted">
-            {strings.agent.modeLabel}
-          </span>
-          <select
-            className="mt-0.5 w-full sans text-xs bg-surface border border-border rounded px-2 py-1 text-primary"
-            value={panelMode}
-            onChange={(e) => onPanelModeChange?.(e.target.value)}
-          >
-            <option value="multi">{strings.agent.modeMultiAgent}</option>
-            <option value="single">{strings.agent.modeSingleAgent}</option>
-          </select>
-        </label>
+        {!panelModeLocked && (
+          <label className="block">
+            <span className="sans text-[10px] uppercase tracking-wider text-muted">
+              {strings.agent.modeLabel}
+            </span>
+            <select
+              className="mt-0.5 w-full sans text-xs bg-surface border border-border rounded px-2 py-1 text-primary"
+              value={panelMode}
+              onChange={(e) => onPanelModeChange?.(e.target.value)}
+            >
+              <option value="multi">{strings.agent.modeMultiAgent}</option>
+              <option value="single">{strings.agent.modeSingleAgent}</option>
+            </select>
+          </label>
+        )}
 
         {isSingle ? (
           <>
@@ -789,7 +794,7 @@ export function AgentSidePanel({
               contextEstimates={contextEstimates}
             />
           )}
-          {isSingle && onRefreshContextSession && (
+          {isSingle && onRefreshContextSession && !artifactScoped && (
             <button
               type="button"
               className="sans text-[10px] text-link hover:underline mb-1"
@@ -799,85 +804,113 @@ export function AgentSidePanel({
             </button>
           )}
           <div className="space-y-1.5">
-            <button
-              type="button"
-              onClick={() => onContextModeChange('visible')}
-              className={`w-full text-left rounded-md border px-2 py-1.5 transition ${
-                contextMode === 'visible'
-                  ? 'border-border bg-surface-muted'
-                  : 'border-border-subtle hover:border-border'
-              }`}
-            >
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
-                    contextMode === 'visible' ? 'border-primary bg-primary' : 'border-muted'
-                  }`}
-                />
-                <span className="sans text-[11px] text-primary">{strings.agent.contextVisible}</span>
-              </div>
-              <p className="sans text-[9px] text-muted mt-0.5 ml-3 leading-snug">
-                {strings.agent.contextVisibleHint}
-                {contextMode === 'visible' ? ` (${contextCards.length})` : ''}
-              </p>
-              {contextMode === 'visible' && contextCards.length > 0 && (
-                <>
-                  <p className="sans text-[9px] uppercase tracking-wider text-muted mt-1 ml-3">
-                    {strings.agent.contextListHeading}
-                  </p>
-                  <ContextCardList
-                    cards={contextCards}
-                    statusByCardId={contextStatusByCardId}
-                    deliveryByCardId={contextDeliveryByCardId}
-                  />
-                </>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => onContextModeChange('selected')}
-              className={`w-full text-left rounded-md border px-2 py-1.5 transition ${
-                contextMode === 'selected'
-                  ? contextCards.length > 0
-                    ? 'border-success-border bg-success-muted'
-                    : 'border-border bg-surface-muted'
-                  : 'border-border-subtle hover:border-border'
-              }`}
-            >
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
-                    contextMode === 'selected' ? 'border-primary bg-primary' : 'border-muted'
-                  }`}
-                />
-                <span className="sans text-[11px] text-primary">{strings.agent.contextSelected}</span>
-              </div>
-              <p className="sans text-[9px] text-muted mt-0.5 ml-3 leading-snug">
-                {strings.agent.contextSelectedHint(
-                  contextMode === 'selected' ? contextCards.length : selectedCount,
-                )}
-              </p>
-              {contextMode === 'selected' && contextCards.length === 0 && (
-                <p className="sans text-[9px] text-muted/80 mt-0.5 ml-3 italic leading-snug">
-                  {agentSelectionClick
-                    ? strings.agent.contextSelectedEmpty
-                    : strings.agent.contextSelectedEmptyShift}
+            {artifactScoped ? (
+              <div className="w-full rounded-md border border-success-border bg-success-muted px-2 py-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full border border-primary bg-primary shrink-0" />
+                  <span className="sans text-[11px] text-primary">
+                    {strings.agent.contextArtifact}
+                  </span>
+                </div>
+                <p className="sans text-[9px] text-muted mt-0.5 ml-3 leading-snug">
+                  {strings.agent.contextArtifactHint}
                 </p>
-              )}
-              {contextMode === 'selected' && contextCards.length > 0 && (
-                <>
-                  <p className="sans text-[9px] uppercase tracking-wider text-muted mt-1 ml-3">
-                    {strings.agent.contextListHeading}
+                {contextCards.length > 0 && (
+                  <>
+                    <p className="sans text-[9px] uppercase tracking-wider text-muted mt-1 ml-3">
+                      {strings.agent.contextListHeading}
+                    </p>
+                    <ContextCardList
+                      cards={contextCards}
+                      statusByCardId={contextStatusByCardId}
+                      deliveryByCardId={contextDeliveryByCardId}
+                    />
+                  </>
+                )}
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onContextModeChange('visible')}
+                  className={`w-full text-left rounded-md border px-2 py-1.5 transition ${
+                    contextMode === 'visible'
+                      ? 'border-border bg-surface-muted'
+                      : 'border-border-subtle hover:border-border'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
+                        contextMode === 'visible' ? 'border-primary bg-primary' : 'border-muted'
+                      }`}
+                    />
+                    <span className="sans text-[11px] text-primary">{strings.agent.contextVisible}</span>
+                  </div>
+                  <p className="sans text-[9px] text-muted mt-0.5 ml-3 leading-snug">
+                    {strings.agent.contextVisibleHint}
+                    {contextMode === 'visible' ? ` (${contextCards.length})` : ''}
                   </p>
-                  <ContextCardList
-                    cards={contextCards}
-                    statusByCardId={contextStatusByCardId}
-                    deliveryByCardId={contextDeliveryByCardId}
-                    onRemoveCard={onRemoveContextCard}
-                  />
-                </>
-              )}
-            </button>
+                  {contextMode === 'visible' && contextCards.length > 0 && (
+                    <>
+                      <p className="sans text-[9px] uppercase tracking-wider text-muted mt-1 ml-3">
+                        {strings.agent.contextListHeading}
+                      </p>
+                      <ContextCardList
+                        cards={contextCards}
+                        statusByCardId={contextStatusByCardId}
+                        deliveryByCardId={contextDeliveryByCardId}
+                      />
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onContextModeChange('selected')}
+                  className={`w-full text-left rounded-md border px-2 py-1.5 transition ${
+                    contextMode === 'selected'
+                      ? contextCards.length > 0
+                        ? 'border-success-border bg-success-muted'
+                        : 'border-border bg-surface-muted'
+                      : 'border-border-subtle hover:border-border'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
+                        contextMode === 'selected' ? 'border-primary bg-primary' : 'border-muted'
+                      }`}
+                    />
+                    <span className="sans text-[11px] text-primary">{strings.agent.contextSelected}</span>
+                  </div>
+                  <p className="sans text-[9px] text-muted mt-0.5 ml-3 leading-snug">
+                    {strings.agent.contextSelectedHint(
+                      contextMode === 'selected' ? contextCards.length : selectedCount,
+                    )}
+                  </p>
+                  {contextMode === 'selected' && contextCards.length === 0 && (
+                    <p className="sans text-[9px] text-muted/80 mt-0.5 ml-3 italic leading-snug">
+                      {agentSelectionClick
+                        ? strings.agent.contextSelectedEmpty
+                        : strings.agent.contextSelectedEmptyShift}
+                    </p>
+                  )}
+                  {contextMode === 'selected' && contextCards.length > 0 && (
+                    <>
+                      <p className="sans text-[9px] uppercase tracking-wider text-muted mt-1 ml-3">
+                        {strings.agent.contextListHeading}
+                      </p>
+                      <ContextCardList
+                        cards={contextCards}
+                        statusByCardId={contextStatusByCardId}
+                        deliveryByCardId={contextDeliveryByCardId}
+                        onRemoveCard={onRemoveContextCard}
+                      />
+                    </>
+                  )}
+                </button>
+              </>
+            )}
           </div>
           {isSingle && (
             <label className="flex items-start gap-1.5 mt-1.5 pt-1.5 border-t border-border-subtle cursor-pointer">

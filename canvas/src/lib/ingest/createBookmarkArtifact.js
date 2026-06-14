@@ -7,6 +7,8 @@ import {
 } from '../bookmarkUrl.js';
 import { parseFilename } from '../filename.js';
 import { previewCacheKey, putPreview } from '../previewStore.js';
+import { writeBookmarkFile } from '../folderWrite.js';
+import { enqueueArtifactSyncRetry } from '../artifactSyncOutbox.js';
 import {
   ingestArtifacts,
   ensureClusterForProject,
@@ -58,6 +60,7 @@ export async function createBookmarkArtifact({
   titleOverride = '',
   linkTargetRefs = [],
   clusterId = null,
+  folderHandle = null,
 }) {
   const normalizedUrl = normalizeBookmarkUrl(url);
   if (!normalizedUrl) {
@@ -73,43 +76,77 @@ export async function createBookmarkArtifact({
   const cardKey = bookmarkCardKeyFromUrl(normalizedUrl);
   const fetchedAt = bookmarkPreview.fetchedAt;
 
+  if (folderHandle) {
+    await writeBookmarkFile(folderHandle, { filename, url: normalizedUrl });
+  }
+
   const available = await isApiAvailable();
   let artifactRef = null;
   let effectiveClusterId = clusterId;
+  let ingestOk = available;
+  let ingestReason = available ? undefined : 'api_unavailable';
 
   if (available) {
-    const cluster = await ensureClusterForProject(projectId, projectName);
-    effectiveClusterId = cluster.id;
-    const ingestRes = await ingestArtifacts(projectId, {
-      files: [{
-        type: 'other',
-        uri: normalizedUrl,
-        content_hash: contentHash,
-        version: '1',
-        retrieved_at: fetchedAt,
-        payload_text: null,
-        metadata: {
-          canvas_kind: 'bookmark',
-          external_url: normalizedUrl,
-          title: displayName,
-          description: bookmarkPreview.description,
-          site_name: bookmarkPreview.siteName,
-          image_url: bookmarkPreview.imageUrl,
-          favicon_url: bookmarkPreview.faviconUrl,
-          fetched_at: fetchedAt,
-          filename,
-          cardKey,
-        },
-      }],
-      relationships: [],
-    });
-    const row = ingestRes.artifacts?.[0];
-    artifactRef = row?.artifactRef ?? null;
-    effectiveClusterId = ingestRes.clusterId || effectiveClusterId;
+    try {
+      const cluster = await ensureClusterForProject(projectId, projectName);
+      effectiveClusterId = cluster.id;
+      const ingestRes = await ingestArtifacts(projectId, {
+        files: [{
+          type: 'other',
+          uri: normalizedUrl,
+          content_hash: contentHash,
+          version: '1',
+          retrieved_at: fetchedAt,
+          payload_text: null,
+          metadata: {
+            canvas_kind: 'bookmark',
+            external_url: normalizedUrl,
+            title: displayName,
+            description: bookmarkPreview.description,
+            site_name: bookmarkPreview.siteName,
+            image_url: bookmarkPreview.imageUrl,
+            favicon_url: bookmarkPreview.faviconUrl,
+            fetched_at: fetchedAt,
+            filename,
+            cardKey,
+          },
+        }],
+        relationships: [],
+      });
+      const row = ingestRes.artifacts?.[0];
+      artifactRef = row?.artifactRef ?? null;
+      effectiveClusterId = ingestRes.clusterId || effectiveClusterId;
 
-    if (artifactRef && effectiveClusterId && linkTargetRefs.length > 0) {
-      await createLinksFromSource(effectiveClusterId, artifactRef, linkTargetRefs);
+      if (artifactRef && effectiveClusterId && linkTargetRefs.length > 0) {
+        await createLinksFromSource(effectiveClusterId, artifactRef, linkTargetRefs);
+      }
+      ingestOk = Boolean(artifactRef);
+      ingestReason = artifactRef ? undefined : 'ingest_failed';
+    } catch (e) {
+      ingestOk = false;
+      ingestReason = e?.message ?? 'ingest_failed';
     }
+  }
+
+  if (!artifactRef) {
+    enqueueArtifactSyncRetry({
+      kind: 'bookmark',
+      projectId,
+      projectName,
+      cardKey,
+      filename,
+      url: normalizedUrl,
+      title: displayName,
+      description: bookmarkPreview.description,
+      siteName: bookmarkPreview.siteName,
+      imageUrl: bookmarkPreview.imageUrl,
+      faviconUrl: bookmarkPreview.faviconUrl,
+      fetchedAt,
+      retrievedAt: fetchedAt,
+      contentHash,
+      linkTargetRefs,
+      lastError: ingestReason,
+    });
   }
 
   const previewCacheKeyForCard = await cacheBookmarkThumbnail(
@@ -127,6 +164,7 @@ export async function createBookmarkArtifact({
     externalUrl: normalizedUrl,
     bookmarkPreview,
     artifactRef,
+    artifactSyncState: artifactRef ? 'synced' : 'pending',
     content_hash: contentHash,
     lastModified: Date.now(),
     ...(previewCacheKeyForCard ? { previewCacheKey: previewCacheKeyForCard } : {}),
@@ -134,8 +172,8 @@ export async function createBookmarkArtifact({
 
   return {
     ingest: {
-      ok: available,
-      reason: available ? undefined : 'api_unavailable',
+      ok: ingestOk,
+      reason: ingestReason,
       clusterId: effectiveClusterId,
     },
     filename,

@@ -440,6 +440,8 @@ export const strings = {
     contextSelectedHint: (n) => `Focus on ${n} item${n === 1 ? '' : 's'}`,
     contextSelectedEmpty: 'Click cards on the canvas to add them',
     contextSelectedEmptyShift: 'Shift+click cards to multi-select',
+    contextArtifact: 'This artifact',
+    contextArtifactHint: 'Agent context is locked to the open artifact.',
     contextListHeading: 'In context',
     contextRemoveItem: 'Remove from context',
     contextIncluded: 'included',
@@ -499,7 +501,12 @@ export const strings = {
     contextLargeTokenConfirm: (tokens, usd) =>
       `This message will use about ${tokens.toLocaleString()} input tokens (~$${usd.toFixed(4)}). Continue?`,
     contextMessageSummary: (mode, n, labels) => {
-      const kind = mode === 'visible' ? 'visible canvas' : 'selected items';
+      const kind =
+        mode === 'visible'
+          ? 'visible canvas'
+          : mode === 'artifact'
+            ? 'open artifact'
+            : 'selected items';
       if (n === 0) return `Context: no ${kind}`;
       const preview = labels.length ? labels.slice(0, 3).join(', ') : '';
       const more = labels.length > 3 ? ` +${labels.length - 3} more` : '';
@@ -511,6 +518,7 @@ export const strings = {
     send: 'Send',
     disclaimer: 'Agents can make mistakes. Verify important info.',
     openAgentMode: 'Agent mode',
+    askAboutArtifact: 'Ask Agent about this artifact',
     toggleAgent: 'Agent mode',
   },
   assertion: {

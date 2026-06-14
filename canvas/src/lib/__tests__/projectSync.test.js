@@ -30,7 +30,13 @@ describe('projectSync', () => {
     vi.resetModules();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    try {
+      const { resetProjectSyncState } = await import('../projectSync.js');
+      resetProjectSyncState();
+    } catch {
+      /* module may not have been imported in skipped tests */
+    }
     vi.unstubAllGlobals();
   });
 
@@ -210,6 +216,31 @@ describe('projectSync', () => {
     expect(index.projects.map((p) => p.id).sort()).toEqual(['a', 'b']);
   });
 
+  it('mergeProjectIndices preserves server resetAt during conflict recovery', async () => {
+    const resetAt = '2026-06-14T02:28:29.132Z';
+    const { mergeProjectIndices } = await import('../projectSync.js');
+    const { index } = mergeProjectIndices(
+      {
+        version: 1,
+        activeProjectId: 'fresh',
+        resetAt,
+        projects: [
+          { id: 'fresh', name: 'TEST 1', createdAt: 20, updatedAt: 20, archived: false },
+        ],
+      },
+      {
+        version: 1,
+        activeProjectId: null,
+        resetAt,
+        projects: [],
+      },
+    );
+
+    expect(index.resetAt).toBe(resetAt);
+    expect(index.projects.map((p) => p.id)).toEqual(['fresh']);
+    expect(index.activeProjectId).toBe('fresh');
+  });
+
   it('mergeProjectIndices unions distinct projects and prefers local active id', async () => {
     const { mergeProjectIndices } = await import('../projectSync.js');
     const { index, merged, localOnlyIds } = mergeProjectIndices(
@@ -247,6 +278,14 @@ describe('projectSync', () => {
         ],
       }),
     );
+    storage.set(
+      'canvas:project:local-only',
+      JSON.stringify({
+        projectName: 'Untitled Project',
+        cards: [{ id: 'local-card' }],
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      }),
+    );
 
     const serverIndex = {
       version: 1,
@@ -277,7 +316,23 @@ describe('projectSync', () => {
         return { ok: true, json: async () => ({ updatedAt: 'now' }) };
       }
       if (String(url).endsWith('/canvas/index')) {
-        return { ok: true, json: async () => ({ index: serverIndex }) };
+        return {
+          ok: true,
+          json: async () => ({
+            index: serverIndex,
+            revision: 1,
+            updatedAt: '2026-06-05T00:00:00.000Z',
+          }),
+        };
+      }
+      if (String(url).endsWith('/meta')) {
+        return {
+          ok: true,
+          json: async () => ({
+            revision: 1,
+            updatedAt: '2026-06-05T00:00:01.000Z',
+          }),
+        };
       }
       return { ok: false, status: 404, json: async () => ({}) };
     }));
@@ -319,6 +374,7 @@ describe('projectSync', () => {
     );
 
     const putCalls = [];
+    let projectSaved = false;
     vi.stubGlobal('fetch', vi.fn(async (url, options) => {
       if (String(url).endsWith('/health')) {
         return { ok: true, json: async () => ({ ok: true }) };
@@ -332,7 +388,11 @@ describe('projectSync', () => {
       }
       if (String(url).includes('/canvas/projects/local-1') && options?.method === 'PUT') {
         putCalls.push(JSON.parse(options.body));
-        return { ok: true, json: async () => ({ updatedAt: 'now' }) };
+        projectSaved = true;
+        return { ok: true, json: async () => ({ revision: 1, updatedAt: 'now' }) };
+      }
+      if (String(url).endsWith('/meta') && projectSaved) {
+        return { ok: true, json: async () => ({ revision: 1, updatedAt: 'now' }) };
       }
       return { ok: false, status: 404, json: async () => ({}) };
     }));
@@ -345,6 +405,150 @@ describe('projectSync', () => {
     await runProjectSyncBackground();
     expect(putCalls.some((b) => b.index?.activeProjectId === 'local-1')).toBe(true);
     expect(putCalls.some((b) => b.payload?.cards?.[0]?.id === 'c1')).toBe(true);
+  });
+
+  it('honors explicit empty server index instead of re-migrating stale local projects', async () => {
+    storage.set(
+      'canvas:project-index',
+      JSON.stringify({
+        version: 1,
+        activeProjectId: 'stale-local',
+        projects: [
+          {
+            id: 'stale-local',
+            name: 'Untitled Project',
+            createdAt: 1,
+            updatedAt: 1,
+            archived: false,
+          },
+        ],
+      }),
+    );
+    storage.set(
+      'canvas:project:stale-local',
+      JSON.stringify({
+        projectName: 'Untitled Project',
+        cards: [{ id: 'c1' }],
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      }),
+    );
+
+    const putCalls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      const u = String(url);
+      if (u.endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true }) };
+      }
+      if (u.endsWith('/canvas/index') && options?.method === 'PUT') {
+        putCalls.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({ revision: 6, updatedAt: 'now' }) };
+      }
+      if (u.endsWith('/canvas/index')) {
+        return {
+          ok: true,
+          json: async () => ({
+            index: { version: 1, activeProjectId: null, projects: [] },
+            revision: 5,
+            updatedAt: '2026-06-14T01:30:00.000Z',
+          }),
+        };
+      }
+      if (u.includes('/canvas/projects/')) {
+        throw new Error(`Unexpected project request: ${u}`);
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      loadSyncedProjectIndex,
+      runProjectSyncBackground,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+    resetProjectSyncState();
+
+    await initializeProjectSync();
+    await runProjectSyncBackground();
+
+    const index = await loadSyncedProjectIndex();
+    expect(index.projects).toEqual([]);
+    expect(index.activeProjectId).toBe(null);
+    expect(storage.has('canvas:project:stale-local')).toBe(false);
+    expect(putCalls).toEqual([]);
+  });
+
+  it('pullAndMergeProjectIndex clears local menu rows after server resetAt', async () => {
+    storage.set(
+      'canvas:project-index',
+      JSON.stringify({
+        version: 1,
+        activeProjectId: 'stale-menu',
+        projects: [
+          {
+            id: 'stale-menu',
+            name: 'Untitled Project',
+            createdAt: 1,
+            updatedAt: 1,
+            archived: false,
+          },
+        ],
+      }),
+    );
+    storage.set(
+      'canvas:project:stale-menu',
+      JSON.stringify({
+        projectName: 'Untitled Project',
+        cards: [{ id: 'c1' }],
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      }),
+    );
+
+    const putCalls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      const u = String(url);
+      if (u.endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true }) };
+      }
+      if (u.endsWith('/canvas/index') && options?.method === 'PUT') {
+        putCalls.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({ revision: 13, updatedAt: 'now' }) };
+      }
+      if (u.endsWith('/canvas/index')) {
+        return {
+          ok: true,
+          json: async () => ({
+            index: {
+              version: 1,
+              activeProjectId: null,
+              projects: [],
+              resetAt: '2026-06-14T02:10:36.360Z',
+            },
+            revision: 12,
+            updatedAt: '2026-06-14T02:10:36.360Z',
+          }),
+        };
+      }
+      if (u.includes('/canvas/projects/')) {
+        throw new Error(`Unexpected project request: ${u}`);
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      pullAndMergeProjectIndex,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+    resetProjectSyncState();
+
+    await initializeProjectSync();
+    const index = await pullAndMergeProjectIndex({ reconcileScope: 'none' });
+
+    expect(index.projects).toEqual([]);
+    expect(index.activeProjectId).toBe(null);
+    expect(index.resetAt).toBe('2026-06-14T02:10:36.360Z');
+    expect(storage.has('canvas:project:stale-menu')).toBe(false);
+    expect(putCalls).toEqual([]);
   });
 
   it('parseServerUpdatedAt parses ISO strings and rejects invalid', async () => {
@@ -868,6 +1072,10 @@ describe('projectSync', () => {
     };
     storage.set(`canvas:project:${projectId}`, JSON.stringify(localPayload));
     storage.set(`canvas:project-rev:${projectId}`, JSON.stringify(0));
+    storage.set(
+      `canvas:project-local-edit-at:${projectId}`,
+      JSON.stringify(Date.parse('2025-06-02T00:00:00.000Z')),
+    );
 
     const putBodies = [];
     vi.stubGlobal('fetch', vi.fn(async (url, options) => {
@@ -946,6 +1154,10 @@ describe('projectSync', () => {
     };
     storage.set(`canvas:project:${projectId}`, JSON.stringify(localPayload));
     storage.set(`canvas:project-rev:${projectId}`, JSON.stringify(0));
+    storage.set(
+      `canvas:project-local-edit-at:${projectId}`,
+      JSON.stringify(Date.parse('2025-06-02T00:00:00.000Z')),
+    );
 
     const putBodies = [];
     vi.stubGlobal('fetch', vi.fn(async (url, options) => {
@@ -1388,6 +1600,7 @@ describe('projectSync', () => {
     const {
       initializeProjectSync,
       saveSyncedProjectDocument,
+      saveSyncedProjectIndex,
       flushProjectSync,
       resetProjectSyncState,
     } = await import('../projectSync.js');
@@ -1399,6 +1612,7 @@ describe('projectSync', () => {
       cards: [{ id: 'c1', key: 'k1', versions: [{ version: 1 }] }],
       canvasView: { x: 0, y: 0, zoom: 1 },
     };
+    await saveSyncedProjectIndex(JSON.parse(storage.get('canvas:project-index')));
     await saveSyncedProjectDocument(
       projectId,
       payload,

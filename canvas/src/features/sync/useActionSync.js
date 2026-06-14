@@ -18,6 +18,10 @@ import {
 } from '../../lib/projects.js';
 import { suppressedKeysForSave } from '../../lib/syncSuppressedKeys.js';
 import { syncTraceLog } from '../../lib/sync/syncTrace.js';
+import { syncKeysMatch } from '../../lib/filename.js';
+import { flushArtifactSyncOutbox } from '../../lib/artifactSyncOutbox.js';
+import { processArtifactSyncRetryEntry } from '../../lib/artifactSyncRetry.js';
+import { saveThreadIndexLocal } from '../../lib/agentChatThreads.js';
 import {
   isPlacementCommitBlocked,
   placementCommitBlockedResult,
@@ -38,12 +42,16 @@ export function useActionSync({
     creatingProjectRef,
     initialHydratedRef,
     projectNameDirtyRef,
+    agentChatThreadIndexRef,
     pendingPlacementTransferSyncRef,
     pendingPlacementCommitRef,
     canMutateCanvasRef,
   },
   folderHandle,
   applyReconcileFromServer,
+  setState,
+  setStagedSyncCards,
+  setAgentChatThreadIndex,
   setSyncStatus,
 }) {
   const requestStructuralSync = useCallback((options = {}) => {
@@ -201,6 +209,86 @@ export function useActionSync({
     ],
   );
 
+  const applyArtifactRetryResultToRows = useCallback((rows, result) =>
+    (rows ?? []).map((card) => {
+      let changed = false;
+      const nextVersions = (card.versions ?? []).map((version) => {
+        const matches =
+          (result.filename && syncKeysMatch(version.filename, result.filename))
+          || (!result.filename && result.cardKey && syncKeysMatch(card.key, result.cardKey));
+        if (!matches) return version;
+        changed = true;
+        return {
+          ...version,
+          artifactRef: result.artifactRef ?? version.artifactRef,
+          content_hash: result.contentHash ?? version.content_hash,
+          artifactSyncState: result.artifactRef ? 'synced' : version.artifactSyncState,
+        };
+      });
+      return changed ? { ...card, versions: nextVersions } : card;
+    }), []);
+
+  const flushArtifactRetriesForActiveProject = useCallback(async (projectId) => {
+    if (!projectId) return { flushed: 0, remaining: 0 };
+    const applied = [];
+    const result = await flushArtifactSyncOutbox(async (entry) => {
+      const retry = await processArtifactSyncRetryEntry(entry);
+      if (retry?.ok && retry.artifactRef) {
+        applied.push({
+          ...retry,
+          cardKey: retry.cardKey ?? entry.cardKey,
+          filename: retry.filename ?? entry.filename,
+        });
+      }
+      return retry;
+    }, { projectId });
+
+    if (applied.length > 0) {
+      let nextCards = stateRef.current.cards ?? [];
+      let nextStaged = stagedSyncCardsRef.current ?? [];
+      for (const retry of applied) {
+        nextCards = applyArtifactRetryResultToRows(nextCards, retry);
+        nextStaged = applyArtifactRetryResultToRows(nextStaged, retry);
+      }
+      stateRef.current = { ...stateRef.current, cards: nextCards };
+      stagedSyncCardsRef.current = nextStaged;
+      setState((prev) => ({ ...prev, cards: nextCards }));
+      setStagedSyncCards(nextStaged);
+      const chatRetry = applied.find((retry) => retry.kind === 'agent_chat' && retry.threadId);
+      if (chatRetry && agentChatThreadIndexRef?.current) {
+        const nextIndex = {
+          ...agentChatThreadIndexRef.current,
+          threads: (agentChatThreadIndexRef.current.threads ?? []).map((thread) =>
+            thread.threadId === chatRetry.threadId
+              ? {
+                  ...thread,
+                  artifactRef: chatRetry.artifactRef,
+                  filename: chatRetry.filename ?? thread.filename,
+                  updatedAt: Date.now(),
+                }
+              : thread,
+          ),
+        };
+        agentChatThreadIndexRef.current = nextIndex;
+        setAgentChatThreadIndex?.(nextIndex);
+        if (chatRetry.connectorId) {
+          saveThreadIndexLocal(projectId, chatRetry.connectorId, nextIndex);
+        }
+      }
+      await saveProjectById(projectId, stateRef.current, nextStaged, { pushRemote: true });
+    }
+
+    return result;
+  }, [
+    applyArtifactRetryResultToRows,
+    stateRef,
+    stagedSyncCardsRef,
+    agentChatThreadIndexRef,
+    setState,
+    setStagedSyncCards,
+    setAgentChatThreadIndex,
+  ]);
+
   const flushPendingPlacementCommit = useCallback(async () => {
     const pending = pendingPlacementCommitRef?.current;
     if (!pending) return;
@@ -303,6 +391,7 @@ export function useActionSync({
         applyReconcileFromServer(projectId, opts),
       flushActiveProject: async (projectId) => {
         if (projectId !== activeProjectIdRef.current) return;
+        await flushArtifactRetriesForActiveProject(projectId);
         if (projectNameDirtyRef.current) {
           await setProjectDisplayName(projectId, stateRef.current.projectName);
           projectNameDirtyRef.current = false;
@@ -317,6 +406,7 @@ export function useActionSync({
       flushAll: async () => {
         const projectId = activeProjectIdRef.current;
         if (projectId) {
+          await flushArtifactRetriesForActiveProject(projectId);
           if (projectNameDirtyRef.current) {
             await setProjectDisplayName(projectId, stateRef.current.projectName);
             projectNameDirtyRef.current = false;
@@ -335,12 +425,14 @@ export function useActionSync({
   }, [
     applyReconcileFromServer,
     commitProjectDocumentForSync,
+    flushArtifactRetriesForActiveProject,
     folderHandle,
     activeProjectIdRef,
     stateRef,
     stagedSyncCardsRef,
     folderPresentKeysRef,
     projectNameDirtyRef,
+    agentChatThreadIndexRef,
     setSyncStatus,
   ]);
 

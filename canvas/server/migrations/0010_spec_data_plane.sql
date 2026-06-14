@@ -1,4 +1,4 @@
--- Spec-aligned data plane (Canvas data architecture Spec)
+-- Spec-aligned data plane (ARCHITECTURE_MASTER_SPEC.md §5-6)
 -- Coexists with canvas_project_document during dual-write migration.
 
 CREATE TABLE IF NOT EXISTS spec_resource (

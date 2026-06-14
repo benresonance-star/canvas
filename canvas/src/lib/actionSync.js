@@ -308,6 +308,9 @@ export function requestActionSync(reason, options = {}) {
 
     if (reason === 'folderScan') {
       pendingFolderScanProjectId = null;
+      if (handlers.flushActiveProject && handlers.getProjectId() === projectId) {
+        await handlers.flushActiveProject(projectId);
+      }
       const builtBefore = getCommittedPayload(projectId)
         ?? buildPayloadForProject(projectId)?.payload;
       const serverSnapshot = getLastKnownProjectPayloadById().get(projectId);

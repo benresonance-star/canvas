@@ -195,6 +195,9 @@ export function mergeProjectIndices(localIndex, serverIndex, options = {}) {
   const serverOnlyIds = serverProjects.filter((p) => !localIds.has(p.id)).map((p) => p.id);
 
   const version = localIndex?.version ?? serverIndex?.version ?? 1;
+  const resetAt = typeof serverIndex?.resetAt === 'string'
+    ? serverIndex.resetAt
+    : localIndex?.resetAt;
   let activeProjectId = null;
   const localActive = localIndex?.activeProjectId;
   const serverActive = serverIndex?.activeProjectId;
@@ -225,6 +228,7 @@ export function mergeProjectIndices(localIndex, serverIndex, options = {}) {
     version,
     activeProjectId,
     projects,
+    ...(typeof resetAt === 'string' && resetAt ? { resetAt } : {}),
   }).index;
 
   return {

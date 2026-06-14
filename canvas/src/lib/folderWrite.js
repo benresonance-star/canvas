@@ -29,6 +29,15 @@ export async function writeUserNoteFile(handle, { prefix, name, body, version = 
   return filename;
 }
 
+export function buildBookmarkShortcutFile(url) {
+  return `[InternetShortcut]\r\nURL=${url}\r\n`;
+}
+
+export async function writeBookmarkFile(handle, { filename, url }) {
+  await writeTextFileToFolder(handle, filename, buildBookmarkShortcutFile(url));
+  return filename;
+}
+
 export async function overwriteUserNoteFile(handle, filename, body) {
   await writeTextFileToFolder(handle, filename, body);
   return filename;

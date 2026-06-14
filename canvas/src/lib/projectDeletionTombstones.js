@@ -35,6 +35,10 @@ export function isDeletedProjectId(projectId) {
   return readSet().has(projectId);
 }
 
+export function getDeletedProjectIds() {
+  return [...readSet()];
+}
+
 /** @param {string[]} projectIds */
 export function filterOutDeletedProjectIds(projectIds) {
   const set = readSet();

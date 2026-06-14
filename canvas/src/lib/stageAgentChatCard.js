@@ -22,6 +22,7 @@ export function buildAgentChatStagedRow({ filename, title, threadId, syncResult 
         filename,
         content_hash: syncResult?.content_hash ?? '',
         artifactRef: syncResult?.artifactRef ?? null,
+        artifactSyncState: syncResult?.artifactRef ? 'synced' : syncResult?.artifactSyncState,
       },
     ],
     pinnedVersion: 1,
@@ -55,6 +56,10 @@ export function stageAgentChatCard(stagedCards, canvasCards, params) {
           filename: params.filename,
           content_hash: params.syncResult?.content_hash ?? existing.versions?.[0]?.content_hash ?? '',
           artifactRef: params.syncResult?.artifactRef ?? existing.versions?.[0]?.artifactRef ?? null,
+          artifactSyncState:
+            params.syncResult?.artifactRef
+              ? 'synced'
+              : params.syncResult?.artifactSyncState ?? existing.versions?.[0]?.artifactSyncState,
         },
       ],
     };

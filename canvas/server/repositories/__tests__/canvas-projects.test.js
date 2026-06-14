@@ -17,6 +17,10 @@ import {
   deleteCanvasProject,
 } from '../canvas-projects.js';
 
+function updateReturning(revision = 1, updatedAt = '2026-06-14T00:00:00.000Z') {
+  return { rows: [{ revision, updated_at: updatedAt }] };
+}
+
 describe('canvas-projects repository', () => {
   beforeEach(() => {
     vi.mocked(query).mockReset();
@@ -97,7 +101,7 @@ describe('canvas-projects repository', () => {
         }],
       })
       .mockResolvedValueOnce({ rows: [{ project_id: 'live' }] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce(updateReturning(8));
 
     const result = await putCanvasIndex({
       version: 1,
@@ -226,10 +230,33 @@ describe('canvas-projects repository', () => {
       .mockResolvedValueOnce({
         rows: [{ revision: '2', payload: {}, updated_at: '2020-01-01' }],
       })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce(updateReturning(3));
     const result = await putCanvasProject('p1', { cards: [{ id: 'a' }] }, 2);
     expect(result.ok).toBe(true);
     expect(result.revision).toBe(3);
+  });
+
+  it('putCanvasProject returns conflict when atomic update loses the revision race', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce({
+        rows: [{ revision: '2', payload: { cards: [{ id: 'before' }] }, updated_at: 'before' }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{
+          revision: '3',
+          payload: { cards: [{ id: 'winner' }] },
+          updated_at: 'after',
+        }],
+      });
+
+    const result = await putCanvasProject('p1', { cards: [{ id: 'client' }] }, 2);
+
+    expect(result.ok).toBe(false);
+    expect(result.conflict).toBe(true);
+    expect(result.revision).toBe(3);
+    expect(result.payload.cards[0].id).toBe('winner');
+    expect(query.mock.calls[1][0]).toContain('revision = $5');
   });
 
   it('putCanvasIndex preserves existing active project across stale client writes', async () => {
@@ -248,7 +275,7 @@ describe('canvas-projects repository', () => {
           updated_at: '2026-06-05',
         }],
       })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce(updateReturning(8));
 
     const result = await putCanvasIndex({
       version: 1,
@@ -262,6 +289,51 @@ describe('canvas-projects repository', () => {
     expect(result.ok).toBe(true);
     const savedPayload = JSON.parse(query.mock.calls[1][1][1]);
     expect(savedPayload.activeProjectId).toBe('earthrise');
+  });
+
+  it('putCanvasIndex returns conflict when atomic update loses the revision race', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce({
+        rows: [{
+          revision: '7',
+          payload: {
+            version: 1,
+            activeProjectId: 'earthrise',
+            projects: [
+              { id: 'earthrise', name: 'EARTHRISE', updatedAt: 10, archived: false },
+            ],
+          },
+          updated_at: 'before',
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{
+          revision: '8',
+          payload: {
+            version: 1,
+            activeProjectId: 'treefrog',
+            projects: [
+              { id: 'treefrog', name: 'TREEFROG', updatedAt: 20, archived: false },
+            ],
+          },
+          updated_at: 'after',
+        }],
+      });
+
+    const result = await putCanvasIndex({
+      version: 1,
+      activeProjectId: 'earthrise',
+      projects: [
+        { id: 'earthrise', name: 'EARTHRISE', updatedAt: 11, archived: false },
+      ],
+    }, 7);
+
+    expect(result.ok).toBe(false);
+    expect(result.conflict).toBe(true);
+    expect(result.revision).toBe(8);
+    expect(result.payload.activeProjectId).toBe('treefrog');
+    expect(query.mock.calls[1][0]).toContain('revision = $5');
   });
 
   it('putCanvasIndex preserves omitted existing project rows from stale clients', async () => {
@@ -280,7 +352,7 @@ describe('canvas-projects repository', () => {
           updated_at: '2026-06-05',
         }],
       })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce(updateReturning(8));
 
     const result = await putCanvasIndex({
       version: 1,
@@ -312,7 +384,7 @@ describe('canvas-projects repository', () => {
           updated_at: '2026-06-05',
         }],
       })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce(updateReturning(8));
 
     const result = await putCanvasIndex({
       version: 1,
@@ -326,6 +398,177 @@ describe('canvas-projects repository', () => {
     const savedPayload = JSON.parse(query.mock.calls[1][1][1]);
     expect(savedPayload.projects.map((p) => p.id)).toEqual(['treefrog']);
     expect(savedPayload.activeProjectId).toBe('treefrog');
+  });
+
+  it('putCanvasIndex allows an empty workspace when all stale server rows are deleted', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce({
+        rows: [{
+          revision: '7',
+          payload: {
+            version: 1,
+            activeProjectId: 'earthrise',
+            projects: [
+              { id: 'earthrise', name: 'EARTHRISE', updatedAt: 10, archived: false },
+              { id: 'treefrog', name: 'TREEFROG', updatedAt: 20, archived: false },
+            ],
+          },
+          updated_at: '2026-06-05',
+        }],
+      })
+      .mockResolvedValueOnce(updateReturning(8));
+
+    const result = await putCanvasIndex({
+      version: 1,
+      activeProjectId: null,
+      projects: [],
+    }, 7, { deletedProjectIds: ['earthrise', 'treefrog'] });
+
+    expect(result.ok).toBe(true);
+    const savedPayload = JSON.parse(query.mock.calls[1][1][1]);
+    expect(savedPayload.projects).toEqual([]);
+    expect(savedPayload.activeProjectId).toBe(null);
+  });
+
+  it('putCanvasIndex rejects stale local rows after an explicit empty workspace reset', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce({
+        rows: [{
+          revision: '9',
+          payload: {
+            version: 1,
+            activeProjectId: null,
+            projects: [],
+          },
+          updated_at: '2026-06-14T01:31:53.000Z',
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce(updateReturning(10));
+
+    const result = await putCanvasIndex({
+      version: 1,
+      activeProjectId: 'stale-a',
+      projects: [
+        {
+          id: 'stale-a',
+          name: 'Untitled Project',
+          createdAt: Date.parse('2026-06-14T01:20:00.000Z'),
+          updatedAt: Date.parse('2026-06-14T01:20:00.000Z'),
+          archived: false,
+        },
+        {
+          id: 'stale-b',
+          name: 'Untitled Project',
+          createdAt: Date.parse('2026-06-14T01:21:00.000Z'),
+          updatedAt: Date.parse('2026-06-14T01:21:00.000Z'),
+          archived: false,
+        },
+      ],
+    }, 9);
+
+    expect(result.ok).toBe(true);
+    const deleteCall = query.mock.calls.find(([sql]) =>
+      String(sql).includes('DELETE FROM canvas_project_document'),
+    );
+    expect(deleteCall?.[1][0].sort()).toEqual(['stale-a', 'stale-b']);
+    const updateCall = query.mock.calls.find(([sql]) =>
+      String(sql).includes('UPDATE canvas_workspace_index'),
+    );
+    const savedPayload = JSON.parse(updateCall[1][1]);
+    expect(savedPayload.projects).toEqual([]);
+    expect(savedPayload.activeProjectId).toBe(null);
+  });
+
+  it('putCanvasIndex keeps reset generation when stale clients omit resetAt', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce({
+        rows: [{
+          revision: '11',
+          payload: {
+            version: 1,
+            activeProjectId: null,
+            projects: [],
+            resetAt: '2026-06-14T02:00:00.000Z',
+          },
+          updated_at: '2026-06-14T02:00:00.000Z',
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce(updateReturning(12));
+
+    const result = await putCanvasIndex({
+      version: 1,
+      activeProjectId: 'stale-local',
+      projects: [
+        {
+          id: 'stale-local',
+          name: 'Untitled Project',
+          createdAt: Date.parse('2026-06-14T02:01:00.000Z'),
+          updatedAt: Date.parse('2026-06-14T02:01:00.000Z'),
+          archived: false,
+        },
+      ],
+    }, 11);
+
+    expect(result.ok).toBe(true);
+    const deleteCall = query.mock.calls.find(([sql]) =>
+      String(sql).includes('DELETE FROM canvas_project_document'),
+    );
+    expect(deleteCall?.[1][0]).toEqual(['stale-local']);
+    const updateCall = query.mock.calls.find(([sql]) =>
+      String(sql).includes('UPDATE canvas_workspace_index'),
+    );
+    const savedPayload = JSON.parse(updateCall[1][1]);
+    expect(savedPayload.projects).toEqual([]);
+    expect(savedPayload.activeProjectId).toBe(null);
+    expect(savedPayload.resetAt).toBe('2026-06-14T02:00:00.000Z');
+  });
+
+  it('putCanvasIndex compares fresh rows to resetAt, not later empty-index updates', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce({
+        rows: [{
+          revision: '14',
+          payload: {
+            version: 1,
+            activeProjectId: null,
+            projects: [],
+            resetAt: '2026-06-14T02:28:29.132Z',
+          },
+          updated_at: '2026-06-14T02:46:59.077Z',
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ project_id: 'fresh-project' }] })
+      .mockResolvedValueOnce(updateReturning(15));
+
+    const result = await putCanvasIndex({
+      version: 1,
+      activeProjectId: 'fresh-project',
+      resetAt: '2026-06-14T02:28:29.132Z',
+      projects: [
+        {
+          id: 'fresh-project',
+          name: 'TEST 1',
+          createdAt: Date.parse('2026-06-14T02:46:58.000Z'),
+          updatedAt: Date.parse('2026-06-14T02:46:58.000Z'),
+          archived: false,
+        },
+      ],
+    }, 14, { enforceDocumentIntegrity: true });
+
+    expect(result.ok).toBe(true);
+    const deleteCall = query.mock.calls.find(([sql]) =>
+      String(sql).includes('DELETE FROM canvas_project_document'),
+    );
+    expect(deleteCall).toBeUndefined();
+    const updateCall = query.mock.calls.find(([sql]) =>
+      String(sql).includes('UPDATE canvas_workspace_index'),
+    );
+    const savedPayload = JSON.parse(updateCall[1][1]);
+    expect(savedPayload.projects.map((project) => project.id)).toEqual(['fresh-project']);
+    expect(savedPayload.activeProjectId).toBe('fresh-project');
+    expect(savedPayload.resetAt).toBe('2026-06-14T02:28:29.132Z');
   });
 
   it('putCanvasProject rejects empty overwrite of non-empty server document', async () => {
@@ -389,7 +632,7 @@ describe('canvas-projects repository', () => {
           updated_at: '2020-01-01',
         }],
       })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce(updateReturning(5));
 
     const result = await putCanvasProject(
       'p1',
@@ -445,7 +688,7 @@ describe('canvas-projects repository', () => {
           updated_at: '2020-01-01',
         }],
       })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce(updateReturning(5));
 
     const result = await putCanvasProject(
       'p1',
@@ -515,12 +758,45 @@ describe('canvas-projects repository', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 
+  it('patchCanvasProject returns conflict when atomic update loses the revision race', async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce({
+        rows: [{
+          revision: '4',
+          payload: { projectName: 'Server', cards: [{ id: 'before' }] },
+          updated_at: 'before',
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{
+          revision: '5',
+          payload: { projectName: 'Server', cards: [{ id: 'winner' }] },
+          updated_at: 'after',
+        }],
+      });
+
+    const result = await patchCanvasProject('p1', {
+      expectedRevision: 4,
+      ops: [{
+        op: 'replaceDocument',
+        payload: { projectName: 'Client', cards: [{ id: 'client' }] },
+      }],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.conflict).toBe(true);
+    expect(result.revision).toBe(5);
+    expect(result.payload.cards[0].id).toBe('winner');
+    expect(query.mock.calls[1][0]).toContain('revision = $5');
+  });
+
   it('putCanvasProject syncs index name and deletes project', async () => {
     vi.mocked(query)
       .mockResolvedValueOnce({
         rows: [{ revision: '1', payload: {}, updated_at: '2020-01-01' }],
       })
-      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce(updateReturning(2))
       .mockResolvedValueOnce({
         rows: [{
           payload: {
@@ -536,7 +812,7 @@ describe('canvas-projects repository', () => {
           updated_at: '2020-01-01',
         }],
       })
-      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce(updateReturning(2))
       .mockResolvedValueOnce({ rows: [] });
     await putCanvasProject('p1', { projectName: 'New Name', cards: [] }, 1);
     await deleteCanvasProject('p1');

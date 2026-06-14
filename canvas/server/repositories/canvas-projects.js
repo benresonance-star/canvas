@@ -214,6 +214,80 @@ function workspaceIndexForPersistence(
   return { ...next, activeProjectId: fallbackActiveProjectId(next) };
 }
 
+function timestampMs(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (value instanceof Date) {
+    const parsed = value.getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function removeRowsStaleAfterExplicitEmptyIndex(nextPayload, existingRow) {
+  const projects = Array.isArray(nextPayload?.projects) ? nextPayload.projects : [];
+  const existingProjects = existingRow?.payload?.projects;
+  const resetGenerationMs = timestampMs(existingRow?.payload?.resetAt);
+  const emptyIndexMs = resetGenerationMs > 0
+    ? resetGenerationMs
+    : timestampMs(existingRow?.updated_at);
+  if (
+    projects.length === 0
+    || !Array.isArray(existingProjects)
+    || existingProjects.length !== 0
+    || emptyIndexMs <= 0
+  ) {
+    return { payload: nextPayload, removedProjectIds: [] };
+  }
+
+  const freshProjects = [];
+  const removedProjectIds = [];
+  for (const row of projects) {
+    const rowMs = timestampMs(row?.updatedAt ?? row?.createdAt);
+    if (row?.id && rowMs > emptyIndexMs) {
+      freshProjects.push(row);
+    } else if (row?.id) {
+      removedProjectIds.push(row.id);
+    }
+  }
+
+  if (removedProjectIds.length === 0) {
+    return { payload: nextPayload, removedProjectIds };
+  }
+
+  const payload = {
+    ...nextPayload,
+    projects: freshProjects,
+  };
+  if (!activeProjectIdIsValid(payload, payload.activeProjectId)) {
+    payload.activeProjectId = fallbackActiveProjectId(payload);
+  }
+  return { payload, removedProjectIds };
+}
+
+function keepExplicitResetGeneration(nextPayload, existingRow) {
+  const existingResetAt = existingRow?.payload?.resetAt;
+  if (
+    typeof existingResetAt !== 'string'
+    || !existingResetAt
+    || nextPayload?.resetAt === existingResetAt
+  ) {
+    return { payload: nextPayload, removedProjectIds: [] };
+  }
+
+  return {
+    payload: {
+      ...existingRow.payload,
+      activeProjectId: null,
+      projects: [],
+    },
+    removedProjectIds: uniqueProjectIdsFromIndex(nextPayload),
+  };
+}
+
 export async function getCanvasIndex() {
   const res = await query(
     'SELECT payload, updated_at, revision FROM canvas_workspace_index WHERE id = $1',
@@ -284,16 +358,57 @@ export async function putCanvasIndex(payload, expectedRevision = 0, options = {}
     existing.rows[0].payload,
     options,
   );
+  const resetGeneration = keepExplicitResetGeneration(
+    persistedPayload,
+    existing.rows[0],
+  );
+  persistedPayload = resetGeneration.payload;
+  const staleLocalRows = removeRowsStaleAfterExplicitEmptyIndex(
+    persistedPayload,
+    existing.rows[0],
+  );
+  persistedPayload = staleLocalRows.payload;
   if (options.enforceDocumentIntegrity) {
     persistedPayload = (await pruneWorkspaceIndexAgainstDocuments(persistedPayload)).payload;
   }
-  await query(
+  const removedProjectIds = [
+    ...new Set([
+      ...resetGeneration.removedProjectIds,
+      ...staleLocalRows.removedProjectIds,
+    ]),
+  ];
+  if (removedProjectIds.length > 0) {
+    await query(
+      'DELETE FROM canvas_project_document WHERE project_id = ANY($1::text[])',
+      [removedProjectIds],
+    );
+  }
+  const updated = await query(
     `UPDATE canvas_workspace_index
      SET payload = $2::jsonb, updated_at = $3, revision = $4
-     WHERE id = $1`,
-    [INDEX_ID, JSON.stringify(persistedPayload), now, nextRevision],
+     WHERE id = $1 AND revision = $5
+     RETURNING updated_at, revision`,
+    [INDEX_ID, JSON.stringify(persistedPayload), now, nextRevision, currentRevision],
   );
-  return { ok: true, revision: nextRevision, updatedAt: now };
+  if (!updated.rows[0]) {
+    const current = await query(
+      'SELECT revision, payload, updated_at FROM canvas_workspace_index WHERE id = $1',
+      [INDEX_ID],
+    );
+    const row = current.rows[0];
+    return {
+      ok: false,
+      conflict: true,
+      revision: Number(row?.revision) || currentRevision,
+      payload: row?.payload ?? existing.rows[0].payload,
+      updatedAt: row?.updated_at ?? existing.rows[0].updated_at,
+    };
+  }
+  return {
+    ok: true,
+    revision: Number(updated.rows[0].revision) || nextRevision,
+    updatedAt: updated.rows[0].updated_at ?? now,
+  };
 }
 
 /**
@@ -543,13 +658,32 @@ export async function putCanvasProject(
   }
 
   const nextRevision = currentRevision + 1;
-  await query(
+  const updated = await query(
     `UPDATE canvas_project_document
      SET payload = $2::jsonb, updated_at = $3, revision = $4
-     WHERE project_id = $1`,
-    [projectId, JSON.stringify(payload), now, nextRevision],
+     WHERE project_id = $1 AND revision = $5
+     RETURNING revision, updated_at`,
+    [projectId, JSON.stringify(payload), now, nextRevision, currentRevision],
   );
-  return { ok: true, revision: nextRevision, updatedAt: now };
+  if (!updated.rows[0]) {
+    const current = await query(
+      'SELECT revision, payload, updated_at FROM canvas_project_document WHERE project_id = $1',
+      [projectId],
+    );
+    const row = current.rows[0];
+    return {
+      ok: false,
+      conflict: true,
+      revision: Number(row?.revision) || currentRevision,
+      payload: row?.payload ?? existing.rows[0].payload,
+      updatedAt: row?.updated_at ?? existing.rows[0].updated_at,
+    };
+  }
+  return {
+    ok: true,
+    revision: Number(updated.rows[0].revision) || nextRevision,
+    updatedAt: updated.rows[0].updated_at ?? now,
+  };
 }
 
 /**
@@ -702,12 +836,32 @@ export async function patchCanvasProject(
   const nextRevision = currentRevision + 1;
   syncTraceLog(traceId, 'db:patch-update', { projectId, nextRevision });
   try {
-    await query(
+    const updated = await query(
       `UPDATE canvas_project_document
        SET payload = $2::jsonb, updated_at = $3, revision = $4
-       WHERE project_id = $1`,
-      [projectId, JSON.stringify(merged), now, nextRevision],
+       WHERE project_id = $1 AND revision = $5
+       RETURNING revision, updated_at`,
+      [projectId, JSON.stringify(merged), now, nextRevision, currentRevision],
     );
+    if (!updated.rows[0]) {
+      const current = await query(
+        'SELECT revision, payload, updated_at FROM canvas_project_document WHERE project_id = $1',
+        [projectId],
+      );
+      const row = current.rows[0];
+      syncTraceLog(traceId, 'db:patch-conflict', {
+        projectId,
+        expected,
+        currentRevision: Number(row?.revision) || currentRevision,
+      });
+      return {
+        ok: false,
+        conflict: true,
+        revision: Number(row?.revision) || currentRevision,
+        payload: row?.payload ?? existing.rows[0].payload,
+        updatedAt: row?.updated_at ?? existing.rows[0].updated_at,
+      };
+    }
   } catch (e) {
     syncTraceLog(traceId, 'db:patch-error', { projectId, error: e.message });
     throw e;

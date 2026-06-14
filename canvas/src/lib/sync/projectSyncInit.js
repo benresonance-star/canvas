@@ -1,4 +1,9 @@
-﻿import { migrateLocalStorageProjectsToIdb } from '../projectDocumentStore.js';
+﻿import {
+  deleteProjectDocumentSerialised,
+  migrateLocalStorageProjectsToIdb,
+} from '../projectDocumentStore.js';
+import { projectStorageKey } from '../constants.js';
+import { projectRevisionStorageKey } from '../projectRevision.js';
 import {
   fetchCanvasIndexDocument,
   saveCanvasIndex,
@@ -64,9 +69,11 @@ async function runQuickInitBody() {
   setPendingDatabaseUnavailable(false);
 
   let serverIndex = null;
+  let serverIndexRevision = 0;
   try {
     const remote = await fetchCanvasIndexDocument();
     serverIndex = remote.index;
+    serverIndexRevision = Number(remote.revision) || 0;
     const initServerMs = parseServerUpdatedAt(remote.updatedAt);
     if (initServerMs > 0) {
       setLastServerWorkspaceIndexUpdatedAt(initServerMs);
@@ -81,6 +88,11 @@ async function runQuickInitBody() {
   const localIndex = await readLocalIndex();
   const serverHasProjects = Boolean(serverIndex?.projects?.length);
   const localHasProjects = Boolean(localIndex?.projects?.length);
+  const serverHasExplicitEmptyIndex =
+    Boolean(serverIndex)
+    && Array.isArray(serverIndex.projects)
+    && serverIndex.projects.length === 0
+    && serverIndexRevision > 0;
 
   setPendingColdBrowserHint(!localHasProjects && !serverHasProjects);
 
@@ -105,6 +117,35 @@ async function runQuickInitBody() {
     await writeLocalIndex(serverIndex);
     setServerSyncEnabled(true);
     setPendingBackgroundMode('mirror_from_server');
+  } else if (localHasProjects && serverHasExplicitEmptyIndex) {
+    const emptyIndex = {
+      ...serverIndex,
+      activeProjectId: null,
+      projects: [],
+    };
+    await writeLocalIndex(emptyIndex);
+    for (const row of localIndex.projects ?? []) {
+      if (!row?.id) continue;
+      try {
+        await deleteProjectDocumentSerialised(row.id);
+      } catch {
+        /* ignore cache cleanup failures */
+      }
+      try {
+        localStorage.removeItem(projectStorageKey(row.id));
+        localStorage.removeItem(projectRevisionStorageKey(row.id));
+      } catch {
+        /* localStorage may be unavailable */
+      }
+    }
+    try {
+      const { purgeOrphanProjectBodies } = await import('../workspaceIntegrity.js');
+      await purgeOrphanProjectBodies(emptyIndex);
+    } catch (e) {
+      console.warn('Could not purge local projects after empty server sync:', e?.message ?? e);
+    }
+    setServerSyncEnabled(true);
+    setPendingBackgroundMode('none');
   } else if (localHasProjects) {
     setServerSyncEnabled(true);
     setPendingBackgroundMode('migrate_local');
@@ -193,8 +234,8 @@ async function runBackgroundSyncBody() {
       if (!raw) continue;
       try {
         const payload = JSON.parse(raw);
-        const result = await saveCanvasProject(row.id, payload);
-        applyServerProjectRevision(row.id, result.updatedAt);
+        const result = await saveCanvasProject(row.id, payload, 0);
+        applyServerProjectRevision(row.id, result.updatedAt, result.revision);
         migrated += 1;
       } catch (e) {
         console.error(`Failed to migrate project ${row.id}:`, e);
@@ -233,7 +274,7 @@ async function runBackgroundSyncBody() {
       const raw = await readLocalProjectSerialised(projectId);
       if (!raw) continue;
       try {
-        const result = await saveCanvasProject(projectId, JSON.parse(raw));
+        const result = await saveCanvasProject(projectId, JSON.parse(raw), 0);
         if (result.ok) {
           applyServerProjectRevision(projectId, result.updatedAt, result.revision);
           await patchIndexDocumentRevision(projectId, result.revision, result.updatedAt);

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   formatAgentChatTranscript,
   parseAgentChatTranscript,
@@ -6,6 +6,11 @@ import {
 } from '../agentChatArtifact.js';
 
 describe('agentChatArtifact', () => {
+  afterEach(() => {
+    vi.doUnmock('../primitivesApi.js');
+    vi.resetModules();
+  });
+
   it('buildAgentChatFilename uses legacy name without thread slug', () => {
     expect(buildAgentChatFilename('openai', 'legacy')).toBe('notes__agent-chat-openai-v1.md');
   });
@@ -126,5 +131,48 @@ describe('agentChatArtifact', () => {
     expect(parsed).toHaveLength(1);
     expect(parsed[0].kind).toBe('context_add');
     expect(parsed[0].labels).toEqual(['a.pdf']);
+  });
+
+  it('writes transcript to folder even when artifact API is unavailable', async () => {
+    vi.resetModules();
+    vi.doMock('../primitivesApi.js', () => ({
+      isApiAvailable: vi.fn(async () => false),
+      updateArtifactContent: vi.fn(),
+      ingestArtifacts: vi.fn(),
+      ensureClusterForProject: vi.fn(),
+    }));
+    const writable = {
+      write: vi.fn(),
+      close: vi.fn(),
+    };
+    const fileHandle = {
+      createWritable: vi.fn(async () => writable),
+    };
+    const folderHandle = {
+      getFileHandle: vi.fn(async () => fileHandle),
+    };
+    const { syncAgentChatArtifact } = await import('../agentChatArtifact.js');
+
+    const result = await syncAgentChatArtifact({
+      projectId: 'p1',
+      projectName: 'Project',
+      folderHandle,
+      connectorId: 'openai',
+      threadId: 'abcd1234-5678-90ab-cdef-1234567890ab',
+      title: 'Outage test',
+      messages: [{ role: 'user', content: 'Hello', at: Date.UTC(2026, 4, 29, 12, 0, 0) }],
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'api_unavailable',
+      filename: 'notes__agent-chat-openai-abcd1234-v1.md',
+    });
+    expect(folderHandle.getFileHandle).toHaveBeenCalledWith(
+      'notes__agent-chat-openai-abcd1234-v1.md',
+      { create: true },
+    );
+    expect(writable.write).toHaveBeenCalledWith(expect.stringContaining('Hello'));
+    expect(writable.close).toHaveBeenCalled();
   });
 });

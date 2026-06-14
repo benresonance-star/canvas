@@ -2,6 +2,7 @@ import { parseFilename, buildFilename } from '../filename.js';
 import { previewCacheKey } from '../previewStore.js';
 import { readFileEntry } from '../readFile.js';
 import { writeUserNoteFile } from '../folderWrite.js';
+import { enqueueArtifactSyncRetry } from '../artifactSyncOutbox.js';
 import { ingestFoundFiles } from './syncIngest.js';
 import {
   createLinksFromSource,
@@ -34,10 +35,37 @@ export async function createUserNoteArtifact({
     filename,
   }];
 
-  const ingest = await ingestFoundFiles(projectId, projectName, flat, {});
+  let ingest;
+  try {
+    ingest = await ingestFoundFiles(projectId, projectName, flat, {});
+  } catch (e) {
+    ingest = {
+      ok: false,
+      reason: e?.message ?? 'ingest_failed',
+      byFilename: {},
+    };
+  }
 
   const artifactRef = ingest.byFilename[filename]?.artifactRef ?? null;
   const effectiveClusterId = ingest.clusterId || clusterId;
+
+  if (!artifactRef) {
+    enqueueArtifactSyncRetry({
+      kind: 'user_note',
+      projectId,
+      projectName,
+      cardKey: parsed.fullBase,
+      filename,
+      prefix: parsed.prefix,
+      name: parsed.name,
+      cardType: 'user_note',
+      version: parsed.version,
+      content: file.content ?? body,
+      contentHash: file.content_hash,
+      retrievedAt: new Date(file.lastModified || Date.now()).toISOString(),
+      lastError: ingest.reason ?? 'ingest_failed',
+    });
+  }
 
   if (artifactRef && effectiveClusterId && linkTargetRefs.length > 0) {
     await createLinksFromSource(effectiveClusterId, artifactRef, linkTargetRefs);
@@ -72,6 +100,7 @@ export async function createUserNoteArtifact({
         ...file,
         ...parsed,
         artifactRef,
+        artifactSyncState: artifactRef ? 'synced' : 'pending',
         content_hash: file.content_hash,
       }],
       pinnedVersion: parsed.version,

@@ -117,7 +117,11 @@ export async function putProjectDocumentSerialised(projectId, serialised) {
     notifyProjectCacheChanged(projectId);
     return;
   }
-  await idbPut(STORE_DOCUMENTS, projectId, serialised);
+  try {
+    await idbPut(STORE_DOCUMENTS, projectId, serialised);
+  } catch {
+    memoryDocuments.set(projectId, serialised);
+  }
   notifyProjectCacheChanged(projectId);
 }
 
@@ -130,7 +134,8 @@ export async function getProjectDocumentSerialised(projectId) {
     return memoryDocuments.get(projectId) ?? null;
   }
   try {
-    return await idbGet(STORE_DOCUMENTS, projectId);
+    const value = await idbGet(STORE_DOCUMENTS, projectId);
+    return value ?? memoryDocuments.get(projectId) ?? null;
   } catch {
     return memoryDocuments.get(projectId) ?? null;
   }
@@ -150,7 +155,11 @@ export async function putWorkspaceIndexSerialised(serialised) {
     memoryMeta.set(PROJECT_INDEX_KEY, serialised);
     return;
   }
-  await idbPut(STORE_META, PROJECT_INDEX_KEY, serialised);
+  try {
+    await idbPut(STORE_META, PROJECT_INDEX_KEY, serialised);
+  } catch {
+    memoryMeta.set(PROJECT_INDEX_KEY, serialised);
+  }
 }
 
 export async function getWorkspaceIndexSerialised() {
@@ -158,7 +167,8 @@ export async function getWorkspaceIndexSerialised() {
     return memoryMeta.get(PROJECT_INDEX_KEY) ?? null;
   }
   try {
-    return await idbGet(STORE_META, PROJECT_INDEX_KEY);
+    const value = await idbGet(STORE_META, PROJECT_INDEX_KEY);
+    return value ?? memoryMeta.get(PROJECT_INDEX_KEY) ?? null;
   } catch {
     return memoryMeta.get(PROJECT_INDEX_KEY) ?? null;
   }

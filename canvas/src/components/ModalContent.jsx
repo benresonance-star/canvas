@@ -3,6 +3,7 @@ import { Download } from 'lucide-react';
 import { strings } from '../content/strings.js';
 import { normalizeCardType } from '../lib/filename.js';
 import { useArtifactPayloadText } from '../hooks/useArtifactPayloadText.js';
+import { buildHtmlPreviewSrcDoc } from '../lib/htmlPreviewDocument.js';
 import { PdfPreviewFrame } from './PdfPreviewFrame.jsx';
 import { SpreadsheetPreviewFrame } from './SpreadsheetPreviewFrame.jsx';
 import { AudioPlayer } from './AudioPlayer.jsx';
@@ -163,7 +164,7 @@ export function ModalContent({ card, version }) {
   if (card.type === 'html' && version.content) {
     return (
       <iframe
-        srcDoc={version.content}
+        srcDoc={buildHtmlPreviewSrcDoc(version.content, { interceptInternalLinks: true })}
         sandbox="allow-same-origin allow-scripts"
         className="w-full h-full border-0 bg-surface"
         title={card.name}

@@ -338,29 +338,40 @@ export async function syncAgentChatArtifact(params) {
   });
   const content_hash = await sha256HexFromString(markdown);
 
-  const available = await isApiAvailable();
-  if (!available) {
-    return { ok: false, reason: 'api_unavailable' };
-  }
-
   const filename =
     existingFilename
     || (threadId
       ? buildAgentChatFilename(connectorId, threadId)
       : buildAgentChatFilename(connectorId, 'legacy'));
 
+  if (folderHandle) {
+    try {
+      if (artifactRef?.id) {
+        await overwriteUserNoteFile(folderHandle, filename, markdown);
+      } else {
+        await writeTextFileToFolder(folderHandle, filename, markdown);
+      }
+    } catch {
+      /* folder transcript write is best-effort */
+    }
+  }
+
+  const available = await isApiAvailable();
+  if (!available) {
+    return {
+      ok: false,
+      reason: 'api_unavailable',
+      filename,
+      content_hash,
+      markdown,
+    };
+  }
+
   if (artifactRef?.id) {
     await updateArtifactContent(artifactRef.id, {
       content_hash,
       payload_text: markdown,
     });
-    if (folderHandle) {
-      try {
-        await overwriteUserNoteFile(folderHandle, filename, markdown);
-      } catch {
-        /* folder write optional */
-      }
-    }
     return {
       ok: true,
       artifactRef: { id: artifactRef.id, type: 'artifact' },
@@ -373,7 +384,6 @@ export async function syncAgentChatArtifact(params) {
   const uriThread = threadId || 'legacy';
 
   if (folderHandle) {
-    await writeTextFileToFolder(folderHandle, filename, markdown);
     const entry = await folderHandle.getFileHandle(filename);
     const cacheKey = previewCacheKey(projectId, cardKey, 1);
     const file = await readFileEntry(entry, { cacheKey });
@@ -394,7 +404,13 @@ export async function syncAgentChatArtifact(params) {
     const ingest = await ingestFoundFiles(projectId, projectName || 'Project', flat, {});
     const ref = ingest.byFilename[filename]?.artifactRef;
     if (!ref) {
-      return { ok: false, reason: 'ingest_failed' };
+      return {
+        ok: false,
+        reason: 'ingest_failed',
+        filename,
+        content_hash,
+        markdown,
+      };
     }
     return { ok: true, artifactRef: ref, filename, content_hash };
   }
@@ -424,7 +440,13 @@ export async function syncAgentChatArtifact(params) {
 
   const row = ingestRes.artifacts?.[0];
   if (!row?.artifactRef) {
-    return { ok: false, reason: 'ingest_failed' };
+    return {
+      ok: false,
+      reason: 'ingest_failed',
+      filename,
+      content_hash,
+      markdown,
+    };
   }
   return {
     ok: true,

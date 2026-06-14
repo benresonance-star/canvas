@@ -1,5 +1,5 @@
 /** Bump when architecture or shipped load behavior changes. */
-export const ARCHITECTURE_SPEC_VERSION = '2026-06-06-db-authoritative-slim-sync';
+export const ARCHITECTURE_SPEC_VERSION = '2026-06-14-consolidated-spec';
 
 export const ARCHITECTURE_LAYERS = [
   {
@@ -327,8 +327,8 @@ export const IMPLEMENTATION_PRIORITIES = [
   },
 ];
 
-const SPEC_MIGRATION_NOTE =
-  'North star: `Specs/Canvas data architecture Spec -Claude.md`. Current decision: `canvas_project_document` is the rendered-canvas authority; `spec_canvas_state` is a secondary projection until explicit cutover. Shipped: placement SSOT, slim `artifactPlacements`, folder sync identity (`syncStaging`), agent dock sync, `lib/sync/*` project sync modules, layout/meta reads, `spec_*` tables + dual-write. Not yet: relational project index, shared resource store on disk, UUID-only identity, `note_links`-only connectors UI.';
+const CONSOLIDATED_SPEC_NOTE =
+  'Consolidated authority: `docs/ARCHITECTURE_MASTER_SPEC.md`. Current decision: `canvas_project_document` is the rendered-canvas authority; `spec_canvas_state` is a secondary projection until explicit cutover. Target: Postgres-authoritative structure, shared resource store on disk, UUID-only identity, and connectors rendered from `note_links`. Shipped: placement SSOT, slim `artifactPlacements`, folder sync identity (`syncStaging`), agent dock sync, `lib/sync/*` project sync modules, layout/meta reads, `spec_*` tables + dual-write.';
 
 export function buildArchitectureMermaid() {
   return `flowchart TB
@@ -436,7 +436,7 @@ export function buildArchitectureMarkdown(runtime) {
     '- Not folder-backed; persisted in project JSON only',
     '',
     '## Spec data plane (partial)',
-    `- ${SPEC_MIGRATION_NOTE}`,
+    `- ${CONSOLIDATED_SPEC_NOTE}`,
     '- Dual-write: save also `PUT`s layout/viewport to `spec_canvas_state` (version CAS)',
     '- Load: compare spec row to JSON; **project JSON wins** if they differ until an explicit spec cutover is implemented',
     '',

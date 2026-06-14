@@ -47,6 +47,7 @@ import {
 import { addSuppressedSyncKey, readSuppressedSyncKeys } from '../../lib/syncSuppressedKeys.js';
 import { ensureAgentChatCardOnCanvas } from '../../lib/ensureAgentChatCardOnCanvas.js';
 import { stageAgentChatCard } from '../../lib/stageAgentChatCard.js';
+import { enqueueArtifactSyncRetry } from '../../lib/artifactSyncOutbox.js';
 import {
   getAgentHealth,
   listAgentConnectors,
@@ -416,6 +417,41 @@ export function useAgentChatShell({
             saveThreadIndexLocal(projectId, connectorId, nextIndex);
           }
         } else {
+          if (syncResult.filename) {
+            enqueueArtifactSyncRetry({
+              kind: 'agent_chat',
+              projectId,
+              projectName: stateProjectName,
+              connectorId,
+              connectorLabel: connector?.label ?? connectorId,
+              threadId,
+              filename: syncResult.filename,
+              cardKey: syncResult.filename.replace(/-v\d+\.[^.]+$/, ''),
+              title: title ?? undefined,
+              markdown: syncResult.markdown ?? null,
+              contentHash: syncResult.content_hash ?? null,
+              lastError: syncResult.reason ?? 'ingest_failed',
+            });
+            const stagedResult = stageAgentChatCard(
+              stagedSyncCardsRef.current,
+              stateRef.current.cards,
+              {
+                filename: syncResult.filename,
+                title,
+                threadId,
+                syncResult: {
+                  content_hash: syncResult.content_hash,
+                  artifactRef: null,
+                  artifactSyncState: 'pending',
+                },
+              },
+            );
+            if (stagedResult.stagedCards !== stagedSyncCardsRef.current) {
+              setStagedSyncCards(stagedResult.stagedCards);
+              stagedSyncCardsRef.current = stagedResult.stagedCards;
+              requestStructuralSync();
+            }
+          }
           setAgentChatArtifactSyncReason(
             syncResult.reason === 'ingest_failed' ? 'ingest_failed' : 'api_unavailable',
           );
@@ -1546,6 +1582,7 @@ export function useAgentChatShell({
     handleDeleteAgentThread,
     handleRetryChatSync,
     handleClearAgentChat,
+    refreshAgentConnectors,
     handleRefreshContextSession,
     handleRemoveContextCard,
     handleAgentSendMessage,
