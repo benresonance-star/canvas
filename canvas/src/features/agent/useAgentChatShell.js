@@ -295,6 +295,7 @@ export function useAgentChatShell({
         : {
             artifactRef: threadMeta?.artifactRef ?? null,
             filename: threadMeta?.filename ?? null,
+            relativePath: threadMeta?.relativePath ?? null,
             cardId: threadMeta?.cardId ?? null,
           };
 
@@ -303,6 +304,7 @@ export function useAgentChatShell({
         registry: serializeRegistry(registry),
         artifactRef: meta.artifactRef,
         filename: meta.filename,
+        relativePath: meta.relativePath ?? null,
         title,
         cardId: meta.cardId,
       };
@@ -335,6 +337,7 @@ export function useAgentChatShell({
             agentChatArtifactMetaRef.current = {
               artifactRef: syncResult.artifactRef,
               filename: syncResult.filename ?? meta.filename,
+              relativePath: meta.relativePath ?? null,
               cardId: meta.cardId,
             };
             setAgentChatArtifactRef(syncResult.artifactRef);
@@ -343,6 +346,7 @@ export function useAgentChatShell({
               ...threadMeta,
               threadId,
               filename: syncResult.filename ?? meta.filename,
+              relativePath: meta.relativePath ?? null,
               artifactRef: syncResult.artifactRef,
               updatedAt: Date.now(),
             });
@@ -386,6 +390,7 @@ export function useAgentChatShell({
               threadId,
               cardId: resolvedCardId,
               filename,
+              relativePath: meta.relativePath ?? null,
               artifactRef: syncResult.artifactRef,
               updatedAt: Date.now(),
             });
@@ -401,6 +406,7 @@ export function useAgentChatShell({
               ...savePayload,
               artifactRef: syncResult.artifactRef,
               filename: syncResult.filename ?? meta.filename,
+              relativePath: meta.relativePath ?? null,
               cardId: resolvedCardId,
             });
             setAgentChatTranscriptRevision((r) => r + 1);
@@ -643,6 +649,7 @@ export function useAgentChatShell({
     const artifactRef =
       session?.artifactRef ?? threadMeta?.artifactRef ?? null;
     const filename = session?.filename ?? threadMeta?.filename ?? null;
+    const relativePath = session?.relativePath ?? threadMeta?.relativePath ?? null;
     const cardId = session?.cardId ?? threadMeta?.cardId ?? null;
 
     let messages = [];
@@ -650,6 +657,7 @@ export function useAgentChatShell({
       folderHandle,
       artifactRef,
       filename,
+      relativePath,
     });
     if (markdown) {
       messages = parseAgentChatTranscript(markdown);
@@ -664,6 +672,7 @@ export function useAgentChatShell({
     agentChatArtifactMetaRef.current = {
       artifactRef,
       filename,
+      relativePath,
       cardId,
     };
     setAgentChatArtifactRef(artifactRef);
@@ -689,6 +698,7 @@ export function useAgentChatShell({
           registry: serializeRegistry(agentContextRegistryRef.current),
           artifactRef,
           filename,
+          relativePath,
           title: threadMeta?.title ?? session.title,
           cardId: cardIdResolved,
         });
@@ -785,6 +795,7 @@ export function useAgentChatShell({
     agentChatArtifactMetaRef.current = {
       artifactRef: null,
       filename: meta.filename,
+      relativePath: null,
       cardId: null,
     };
     setAgentChatArtifactRef(null);
@@ -972,7 +983,12 @@ export function useAgentChatShell({
     setActiveThreadId(null);
     setAgentChatMessages([]);
     setThreadPickerOpen(true);
-    agentChatArtifactMetaRef.current = { artifactRef: null, filename: null, cardId: null };
+    agentChatArtifactMetaRef.current = {
+      artifactRef: null,
+      filename: null,
+      relativePath: null,
+      cardId: null,
+    };
     setAgentChatArtifactRef(null);
   }, [singleConnectorId, activeProjectIdRef, stateRef, setState]);
 
@@ -1020,6 +1036,7 @@ export function useAgentChatShell({
         agentChatArtifactMetaRef.current = {
           artifactRef: null,
           filename: null,
+          relativePath: null,
           cardId: null,
         };
         setAgentChatArtifactRef(null);
@@ -1118,6 +1135,7 @@ export function useAgentChatShell({
         registry: serializeRegistry(createContextRegistry()),
         artifactRef: threadMeta?.artifactRef ?? null,
         filename: threadMeta?.filename ?? null,
+        relativePath: threadMeta?.relativePath ?? null,
         title: threadMeta?.title ?? null,
         cardId: threadMeta?.cardId ?? null,
       });
@@ -1131,6 +1149,7 @@ export function useAgentChatShell({
     agentChatArtifactMetaRef.current = {
       artifactRef: threadMeta?.artifactRef ?? null,
       filename: threadMeta?.filename ?? null,
+      relativePath: threadMeta?.relativePath ?? null,
       cardId: threadMeta?.cardId ?? null,
     };
     setAgentChatArtifactRef(threadMeta?.artifactRef ?? null);
@@ -1155,7 +1174,7 @@ export function useAgentChatShell({
         setAgentChatMessages([]);
         setAgentChatError(null);
         agentContextRegistryRef.current = createContextRegistry();
-        agentChatArtifactMetaRef.current = { artifactRef: null, filename: null };
+        agentChatArtifactMetaRef.current = { artifactRef: null, filename: null, relativePath: null };
         setAgentChatArtifactRef(null);
         await refreshAgentConnectors();
       } catch (e) {

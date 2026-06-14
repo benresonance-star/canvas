@@ -1,6 +1,25 @@
 import { buildFilename } from './filename.js';
 import { readFileEntry } from './readFile.js';
 
+function splitRelativePath(path) {
+  return String(path ?? '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean);
+}
+
+export async function getFileHandleAtPath(handle, relativePath, options) {
+  const parts = splitRelativePath(relativePath);
+  if (!handle || parts.length === 0) {
+    throw new DOMException('File path unavailable', 'NotFoundError');
+  }
+  let dir = handle;
+  for (const segment of parts.slice(0, -1)) {
+    dir = await dir.getDirectoryHandle(segment, { create: false });
+  }
+  return dir.getFileHandle(parts[parts.length - 1], options);
+}
+
 export async function ensureWritePermission(handle) {
   if (!handle) return false;
   try {

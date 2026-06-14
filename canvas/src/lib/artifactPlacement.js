@@ -1,4 +1,9 @@
-import { cardKeyFromFilename, syncKeysMatch, toCanonicalSyncKey } from './filename.js';
+import {
+  cardKeyFromFilename,
+  folderRelativePathFromVersion,
+  syncKeysMatch,
+  toCanonicalSyncKey,
+} from './filename.js';
 import { getCardPixelSize } from './cards.js';
 import {
   dockCardFromCanvas,
@@ -16,7 +21,7 @@ export const AGENT_CHAT_SPAWN_BASE_Y = 80;
  */
 export function canonicalKeyForEntry(entry) {
   if (!entry) return '';
-  const fromFile = entry.versions?.[0]?.filename;
+  const fromFile = folderRelativePathFromVersion(entry.versions?.[0]);
   if (fromFile) return cardKeyFromFilename(fromFile);
   return toCanonicalSyncKey(entry.key);
 }
@@ -72,7 +77,9 @@ function resolveDuplicateWinner(canvasEntry, stagedEntry, opts = {}) {
   const threadForCanvas = threads.find((t) => t.cardId === canvasEntry?.id);
   if (threadForCanvas) return 'canvas';
 
-  const filename = canvasEntry?.versions?.[0]?.filename ?? stagedEntry?.versions?.[0]?.filename;
+  const filename =
+    folderRelativePathFromVersion(canvasEntry?.versions?.[0])
+    || folderRelativePathFromVersion(stagedEntry?.versions?.[0]);
   const threadByFile = filename
     ? threads.find((t) => t.filename && syncKeysMatch(t.filename, filename))
     : null;

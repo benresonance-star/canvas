@@ -1,10 +1,15 @@
 import {
   ensureWritePermission,
+  getFileHandleAtPath,
   overwriteUserNoteFile,
   renameUserNoteFile,
   fileExistsInFolder,
 } from '../folderWrite.js';
-import { parseFilename, buildFilename } from '../filename.js';
+import {
+  buildFilename,
+  folderRelativePathFromVersion,
+  parseFilename,
+} from '../filename.js';
 import { readFileEntry } from '../readFile.js';
 import { updateArtifactContent, isApiAvailable } from '../primitivesApi.js';
 import { ingestFoundFiles } from './syncIngest.js';
@@ -22,14 +27,19 @@ export function validateUserNoteName(name) {
 }
 
 async function refreshVersionFromFile(folderHandle, ver, filename) {
-  const entry = await folderHandle.getFileHandle(filename);
-  const file = await readFileEntry(entry, { cacheKey: ver.previewCacheKey ?? undefined });
+  const relativePath = folderRelativePathFromVersion({ ...ver, filename });
+  const entry = await getFileHandleAtPath(folderHandle, relativePath);
+  const file = await readFileEntry(entry, {
+    cacheKey: ver.previewCacheKey ?? undefined,
+    relativePath,
+  });
   const parsed = parseFilename(filename);
   return {
     ...ver,
     ...file,
     ...parsed,
     filename,
+    ...(relativePath && relativePath !== filename ? { relativePath } : {}),
     content: file.content ?? ver.content,
   };
 }
@@ -95,8 +105,12 @@ async function patchArtifactAndLinks({
   body,
   cards,
 }) {
-  const entry = await folderHandle.getFileHandle(ver.filename);
-  const file = await readFileEntry(entry, { cacheKey: ver.previewCacheKey ?? undefined });
+  const relativePath = folderRelativePathFromVersion(ver);
+  const entry = await getFileHandleAtPath(folderHandle, relativePath);
+  const file = await readFileEntry(entry, {
+    cacheKey: ver.previewCacheKey ?? undefined,
+    relativePath,
+  });
 
   const updatedVersion = {
     ...ver,
@@ -125,7 +139,7 @@ async function patchArtifactAndLinks({
         cardType: 'user_note',
       }];
       const ingest = await ingestFoundFiles(projectId, projectName, flat, {});
-      const ing = ingest.byFilename?.[ver.filename];
+      const ing = ingest.byFilename?.[relativePath];
       if (ing?.artifactRef) artifactRef = ing.artifactRef;
       else apiUnavailable = !ingest.ok;
     } catch {

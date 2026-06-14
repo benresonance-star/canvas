@@ -1,5 +1,10 @@
 import { readFileEntry } from './readFile.js';
-import { isFolderBackedCanvasCard } from './filename.js';
+import {
+  folderKeySetMatchesCard,
+  folderRelativePathFromVersion,
+  isFolderBackedCanvasCard,
+} from './filename.js';
+import { getFileHandleAtPath } from './folderWrite.js';
 
 /**
  * Re-load note bodies stripped from cache when folder is linked.
@@ -23,7 +28,7 @@ export async function hydrateStrippedCardContent(cards, opts = {}) {
       next.push(card);
       continue;
     }
-    if (!card.key || !keySet.has(card.key)) {
+    if (!folderKeySetMatchesCard(keySet, card)) {
       next.push(card);
       continue;
     }
@@ -36,7 +41,11 @@ export async function hydrateStrippedCardContent(cards, opts = {}) {
         continue;
       }
       try {
-        const entry = await folderHandle.getFileHandle(v.filename, { create: false });
+        const entry = await getFileHandleAtPath(
+          folderHandle,
+          folderRelativePathFromVersion(v),
+          { create: false },
+        );
         const file = await readFileEntry(entry, { cacheKey: v.previewCacheKey });
         if (file?.content != null) {
           versions.push({

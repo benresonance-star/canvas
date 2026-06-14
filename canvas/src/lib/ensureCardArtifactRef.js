@@ -1,6 +1,8 @@
 import { readFileEntry } from './readFile.js';
 import { isApiAvailable } from './primitivesApi.js';
 import { ingestFoundFiles } from './ingest/syncIngest.js';
+import { folderRelativePathFromVersion } from './filename.js';
+import { getFileHandleAtPath } from './folderWrite.js';
 
 /**
  * Resolve or create a primitives artifact ref for a canvas card's pinned version.
@@ -40,9 +42,11 @@ export async function ensureCardArtifactRef({
   }
 
   try {
-    const entry = await folderHandle.getFileHandle(pinned.filename);
+    const relativePath = folderRelativePathFromVersion(pinned);
+    const entry = await getFileHandleAtPath(folderHandle, relativePath);
     const file = await readFileEntry(entry, {
       cacheKey: pinned.previewCacheKey ?? undefined,
+      relativePath,
     });
     const flat = [
       {
@@ -51,6 +55,7 @@ export async function ensureCardArtifactRef({
         cardKey: card.key,
         cardType: card.type,
         filename: pinned.filename,
+        relativePath,
       },
     ];
     const ingest = await ingestFoundFiles(
@@ -59,7 +64,7 @@ export async function ensureCardArtifactRef({
       flat,
       {},
     );
-    const ing = ingest.byFilename?.[pinned.filename];
+    const ing = ingest.byFilename?.[relativePath];
     if (!ing?.artifactRef?.id) {
       return {
         ok: false,

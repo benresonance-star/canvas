@@ -1,5 +1,5 @@
 /** Bump when architecture or shipped load behavior changes. */
-export const ARCHITECTURE_SPEC_VERSION = '2026-06-14-consolidated-spec';
+export const ARCHITECTURE_SPEC_VERSION = '2026-06-14-subfolder-artifacts';
 
 export const ARCHITECTURE_LAYERS = [
   {
@@ -398,12 +398,12 @@ export function buildArchitectureMarkdown(runtime) {
     '',
     '## Code layout (client sync)',
     '- **`lib/sync/*`:** `projectSyncState`, `Revision`, `Merge`, `Local`, `Index`, `Document`, `Pending`, `Init` — barrel export `projectSync.js`',
-    '- **`syncStaging.js`:** folder scan diff (`buildSyncChangesFromFolder`), SYNC confirm list (`buildConfirmChangesForDialog`), staged tray helpers',
+    '- **`syncStaging.js`:** path-aware folder scan diff (`buildSyncChangesFromFolder`), SYNC confirm list (`buildConfirmChangesForDialog`), staged tray helpers',
     '- **`artifactPlacement.js`:** canvas XOR dock exclusivity (`moveToCanvas`, `moveToDock`, `enforceExclusivePlacement`)',
     '- **`actionSync.js`:** action-based flush/reconcile (layout commit, structural change, folder scan, boot)',
     '',
     '## Placement model (current)',
-    '- Each folder-backed artifact is keyed by a **canonical sync key** (`toCanonicalSyncKey` / filename `fullBase`).',
+    '- Each folder-backed artifact is keyed by a **canonical sync key** (`toCanonicalSyncKey`); root files use filename `fullBase`, nested files include normalized `relativePath`.',
     '- **Exactly one surface per key:** canvas (`cards`) **or** dock (`stagedSyncCards`), never both.',
     '- **`artifactPlacement.js`** is the runtime authority for moves and healing duplicates.',
     '- **`artifactPlacements`** in saved JSON records surface + placement ref only (migrated on load if missing).',
@@ -420,7 +420,7 @@ export function buildArchitectureMarkdown(runtime) {
     '- **`seedClientRevisionFromMeta`** after cache-first load prevents idle false-stale',
     '- Canvas editable unless **offline**; no mandatory Refresh banner (`shouldShowRefreshFromServer` disabled)',
     '- Footer **Sync** = pull (if server on) + folder scan/reconnect; revision heal is automatic',
-    '- **Folder scan (`scanFolder`):** groups disk files; `agent_chat` auto-stages to dock; other **new disk files** open SYNC confirm',
+    '- **Folder scan (`scanFolder`):** recursively groups disk files by path-aware keys; `agent_chat` auto-stages to dock; other **new disk files** open SYNC confirm',
     '- **SYNC dialog is not for placement:** dock→canvas drag re-validates against live `stateRef` + `stagedSyncCardsRef`; stale in-flight scans are cancelled',
     '- `runExclusive` serializes boot, poll, switch, refresh, and storage-tab updates',
     '',
@@ -428,7 +428,7 @@ export function buildArchitectureMarkdown(runtime) {
     '- Card type **`user_note`** (`notes | NOTE`) — not legacy `markdown` for `notes__` files (migrated on load)',
     '- **Canvas:** title + `UserNoteInlineEditor` when active (zoom ≥ 0.5); editing always enabled in UI',
     '- **Fullscreen:** editable title in `CardModal`; body via `UserNoteEditor`',
-    '- **Folder:** `saveUserNote` when folder linked and key in scan set; else `saveUserNoteToProject`',
+    '- **Folder:** `saveUserNote` when folder linked and root key is in scan set; nested folder notes are read-only-first-slice and save to project JSON',
     '- Missing from folder scan still shown via red ring (`isCardMissingFromFolder`)',
     '',
     '## Bookmarks (current)',

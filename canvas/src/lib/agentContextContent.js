@@ -1,10 +1,11 @@
 import { cardLabel } from './agentContext.js';
-import { normalizeCardType } from './filename.js';
+import { folderRelativePathFromVersion, normalizeCardType } from './filename.js';
 import { readFileEntry } from './readFile.js';
 import { extractPdfText, getPdfPageCount } from './extractPdfText.js';
 import { getArtifact } from './agentApi.js';
 import { getPreview } from './previewStore.js';
 import { STORAGE_LIMIT } from './constants.js';
+import { getFileHandleAtPath } from './folderWrite.js';
 
 export const CONTEXT_PROFILES = {
   standard: {
@@ -91,8 +92,12 @@ async function loadImageDataUrlForPinned(pinned, folderHandle) {
     if (blob) return blobToDataUrl(blob);
   }
   if (folderHandle && pinned.filename) {
-    const entry = await folderHandle.getFileHandle(pinned.filename);
-    const file = await readFileEntry(entry, { cacheKey: pinned.previewCacheKey ?? undefined });
+    const relativePath = folderRelativePathFromVersion(pinned);
+    const entry = await getFileHandleAtPath(folderHandle, relativePath);
+    const file = await readFileEntry(entry, {
+      cacheKey: pinned.previewCacheKey ?? undefined,
+      relativePath,
+    });
     if (file.dataUrl) return file.dataUrl;
     if (file.objectUrl) {
       const res = await fetch(file.objectUrl);
@@ -299,9 +304,10 @@ export async function loadContextDocumentForCard(card, options = {}) {
 
   if (!text && folderHandle && pinned.filename) {
     try {
-      const entry = await folderHandle.getFileHandle(pinned.filename);
+      const relativePath = folderRelativePathFromVersion(pinned);
+      const entry = await getFileHandleAtPath(folderHandle, relativePath);
       if (TEXT_TYPES.has(type)) {
-        const file = await readFileEntry(entry);
+        const file = await readFileEntry(entry, { relativePath });
         if (file.content?.trim()) {
           text = file.content.trim();
         }
@@ -432,7 +438,10 @@ export async function estimateContextDocument(card, options = {}) {
 
   if (type === 'pdf' && folderHandle && pinned.filename) {
     try {
-      const entry = await folderHandle.getFileHandle(pinned.filename);
+      const entry = await getFileHandleAtPath(
+        folderHandle,
+        folderRelativePathFromVersion(pinned),
+      );
       const rawFile = await entry.getFile();
       pdfPagesTotal = await getPdfPageCount(rawFile);
       if (!estimatedChars) {

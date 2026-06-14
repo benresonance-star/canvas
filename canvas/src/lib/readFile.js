@@ -16,7 +16,7 @@ function blobToDataUrl(blob) {
 }
 
 export async function readFileEntry(entry, options = {}) {
-  const { cacheKey } = options;
+  const { cacheKey, relativePath = null } = options;
   const file =
     typeof entry?.getFile === 'function'
       ? await entry.getFile()
@@ -92,6 +92,7 @@ export async function readFileEntry(entry, options = {}) {
 
   return {
     filename: name,
+    ...(relativePath ? { relativePath } : {}),
     content_hash,
     size: file.size,
     lastModified: file.lastModified,

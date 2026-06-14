@@ -1,4 +1,4 @@
-import { cardKeyFromFilename } from './filename.js';
+import { cardKeyFromFilename, normalizeFolderRelativePath } from './filename.js';
 import {
   ensureClusterForProject,
   ingestArtifacts,
@@ -8,10 +8,16 @@ import { artifactTypeFromFile } from './ingest/artifactType.js';
 import { createLinksFromSource } from './ingest/linkIngest.js';
 
 function baseMetadata(entry) {
+  const relativePath = normalizeFolderRelativePath(entry.relativePath ?? entry.filename);
   return {
     filename: entry.filename,
-    cardKey: entry.cardKey ?? (entry.filename ? cardKeyFromFilename(entry.filename) : null),
+    relativePath: relativePath || null,
+    cardKey: entry.cardKey ?? (relativePath ? cardKeyFromFilename(relativePath) : null),
   };
+}
+
+function entryRelativePath(entry) {
+  return normalizeFolderRelativePath(entry.relativePath ?? entry.filename);
 }
 
 function fileForOutboxEntry(entry) {
@@ -57,7 +63,7 @@ function fileForOutboxEntry(entry) {
 
   return {
     type: artifactTypeFromFile(entry.filename, { cardType: entry.cardType ?? 'user_note' }),
-    uri: `folder-relative:${entry.projectId}/${entry.filename}`,
+    uri: `folder-relative:${entry.projectId}/${entryRelativePath(entry)}`,
     content_hash: entry.contentHash,
     version: String(entry.version ?? 1),
     retrieved_at: entry.retrievedAt ?? new Date().toISOString(),

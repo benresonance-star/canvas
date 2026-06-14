@@ -20,9 +20,42 @@ export function buildFilename({ prefix, name, version = 1, ext = 'md' }) {
   return ext ? `${base}.${ext}` : base;
 }
 
+export function normalizeFolderRelativePath(path) {
+  if (!path) return '';
+  return String(path)
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .join('/');
+}
+
+export function folderPathDirname(relativePath) {
+  const normalized = normalizeFolderRelativePath(relativePath);
+  const idx = normalized.lastIndexOf('/');
+  return idx >= 0 ? normalized.slice(0, idx) : '';
+}
+
+export function folderPathBasename(relativePath) {
+  const normalized = normalizeFolderRelativePath(relativePath);
+  const idx = normalized.lastIndexOf('/');
+  return idx >= 0 ? normalized.slice(idx + 1) : normalized;
+}
+
+export function folderKeyFromRelativePath(relativePath) {
+  const normalized = normalizeFolderRelativePath(relativePath);
+  if (!normalized) return '';
+  const dir = folderPathDirname(normalized);
+  const baseKey = parseFilename(folderPathBasename(normalized)).fullBase;
+  return dir ? `${dir}/${baseKey}` : baseKey;
+}
+
+export function folderRelativePathFromVersion(version) {
+  return normalizeFolderRelativePath(version?.relativePath ?? version?.path ?? version?.filename);
+}
+
 /** Canonical workspace card key (matches folder sync grouped keys). */
 export function cardKeyFromFilename(filename) {
-  return parseFilename(filename).fullBase;
+  return folderKeyFromRelativePath(filename);
 }
 
 /**
@@ -31,10 +64,13 @@ export function cardKeyFromFilename(filename) {
  */
 export function toCanonicalSyncKey(keyOrFilename) {
   if (!keyOrFilename) return '';
-  const s = String(keyOrFilename);
-  if (s.includes('.')) return parseFilename(s).fullBase;
-  const legacyVersion = s.match(/^(.+)-v(\d+)$/);
-  return legacyVersion ? legacyVersion[1] : s;
+  const s = normalizeFolderRelativePath(keyOrFilename);
+  if (s.includes('.')) return folderKeyFromRelativePath(s);
+  const dir = folderPathDirname(s);
+  const base = folderPathBasename(s);
+  const legacyVersion = base.match(/^(.+)-v(\d+)$/);
+  const normalizedBase = legacyVersion ? legacyVersion[1] : base;
+  return dir ? `${dir}/${normalizedBase}` : normalizedBase;
 }
 
 /** @param {string} a @param {string} b */
@@ -100,6 +136,13 @@ export function isFolderBackedCanvasCard(card) {
   return true;
 }
 
+export function cardHasNestedFolderPath(card) {
+  return (card?.versions ?? []).some((version) => {
+    const relativePath = folderRelativePathFromVersion(version);
+    return relativePath.includes('/');
+  });
+}
+
 /**
  * @param {{ key?: string, type?: string, prefix?: string, name?: string, versions?: Array<{ filename?: string }> }} card
  */
@@ -107,7 +150,8 @@ function cardCanonicalKeysForPresence(card) {
   const keys = new Set();
   if (card?.key) keys.add(toCanonicalSyncKey(card.key));
   for (const v of card.versions ?? []) {
-    if (v?.filename) keys.add(cardKeyFromFilename(v.filename));
+    const relativePath = folderRelativePathFromVersion(v);
+    if (relativePath) keys.add(cardKeyFromFilename(relativePath));
   }
   const prefix = card.prefix ?? '';
   const name = card.name;
@@ -184,6 +228,7 @@ export function noteRequiresProjectOnlySave({
   card = null,
 } = {}) {
   if (!folderHandle) return true;
+  if (cardHasNestedFolderPath(card)) return true;
   if (
     folderConnected
     && folderKeySet

@@ -6,6 +6,7 @@ import {
   cardHeaderLabel,
   isTextMarkdownPreviewType,
   cardKeyFromFilename,
+  folderKeyFromRelativePath,
   toCanonicalSyncKey,
   syncKeysMatch,
   resolveLoadedCardType,
@@ -32,6 +33,32 @@ describe('sync key helpers', () => {
       syncKeysMatch(
         'notes__agent-chat-openai-abc12345-v1',
         'notes__agent-chat-openai-abc12345',
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps root file keys backward compatible', () => {
+    expect(folderKeyFromRelativePath('notes__site-plan-v2.md')).toBe('notes__site-plan');
+    expect(toCanonicalSyncKey('notes__site-plan-v2.md')).toBe('notes__site-plan');
+  });
+
+  it('uses normalized relative paths for nested file keys', () => {
+    expect(folderKeyFromRelativePath('refs/images/img__photo-v3.png')).toBe(
+      'refs/images/img__photo',
+    );
+    expect(cardKeyFromFilename('refs\\images\\img__photo-v3.png')).toBe(
+      'refs/images/img__photo',
+    );
+    expect(toCanonicalSyncKey('refs/images/img__photo-v3.png')).toBe(
+      'refs/images/img__photo',
+    );
+  });
+
+  it('matches nested filename and nested card key', () => {
+    expect(
+      syncKeysMatch(
+        'refs/images/img__photo-v3.png',
+        'refs/images/img__photo',
       ),
     ).toBe(true);
   });
@@ -199,5 +226,21 @@ describe('noteRequiresProjectOnlySave', () => {
         card: { key: 'notes__a', type: 'user_note', prefix: 'notes' },
       }),
     ).toBe(false);
+  });
+
+  it('uses project-only save for nested folder-backed notes in the first slice', () => {
+    expect(
+      noteRequiresProjectOnlySave({
+        folderHandle: {},
+        folderConnected: true,
+        folderKeySet: new Set(['notes/sub/notes__a']),
+        card: {
+          key: 'notes/sub/notes__a',
+          type: 'user_note',
+          prefix: 'notes',
+          versions: [{ filename: 'notes__a-v1.md', relativePath: 'notes/sub/notes__a-v1.md' }],
+        },
+      }),
+    ).toBe(true);
   });
 });

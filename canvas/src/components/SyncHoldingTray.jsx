@@ -86,7 +86,9 @@ export function SyncHoldingTray({
     (s) => s.stagingId === hoveredStagingId,
   );
   const hoverLabel =
-    hoveredStaged && !dragging ? hoveredStaged.name : null;
+    hoveredStaged && !dragging
+      ? (hoveredStaged.folderPath || hoveredStaged.relativePath || hoveredStaged.name)
+      : null;
 
   const endDrag = useCallback(
     (clientX, clientY) => {

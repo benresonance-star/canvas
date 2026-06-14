@@ -1,6 +1,6 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026-06-14-consolidated-spec  
+**Version:** 2026-06-14-subfolder-artifacts  
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -446,6 +446,24 @@ GET    /projects/:id/chats
 - **Save:** `buildProjectSavePayload` → `attachArtifactPlacementsToPayload`
 - **Compatibility:** `cards` and `stagedSyncCards` remain in the payload until cutover
 
+### Linked-folder subfolder artifacts (read-only first slice)
+
+Linked folder scans are recursive. Root-level files keep their historical canonical sync keys, while nested files include their normalized relative path so duplicate basenames do not collide:
+
+| Disk path | Canonical sync key |
+|-----------|--------------------|
+| `notes__site-v1.md` | `notes__site` |
+| `refs/notes__site-v1.md` | `refs/notes__site` |
+| `refs/archive/notes__site-v1.md` | `refs/archive/notes__site` |
+
+Rules:
+
+- `scanFolderFiles` walks directory handles recursively with stale-scan cancellation, ignored folders (`node_modules`, `.git`, hidden/system folders), max-depth, and max-file limits.
+- Folder-backed versions may carry both `filename` (basename) and `relativePath` (normalized path from the linked root). Consumers must resolve file reads through `relativePath` when present.
+- Preview cache keys, staging, `folderPresentKeys`, artifact ingest URIs, outbox entries, agent context reads, external open, and stripped-content hydration use the path-aware canonical key.
+- App-created notes, bookmarks, and agent chat transcripts still write to the linked-folder root. Nested files are read and staged from subfolders, but app writes into subfolders require a separate explicit create-in-folder flow.
+- Dock hover UI may show nested `relativePath` for disambiguation; root files keep the existing label behavior.
+
 ### Phase 3 (partial): Postgres spec tables and dual-write
 
 Implemented by `server/migrations/0010_spec_data_plane.sql`:
@@ -838,6 +856,12 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-06-14 — Linked-folder subfolder artifacts (implemented)
+
+- Added recursive linked-folder scans with path-aware canonical sync keys.
+- Preserved root-file key compatibility while using `relativePath` for nested artifact reads, previews, ingest, staging, and agent context.
+- Kept app-created notes, bookmarks, and agent chat transcript writes at the linked-folder root for the first subfolder slice.
 
 ### 2026-06-14 — Spec consolidation (implemented)
 

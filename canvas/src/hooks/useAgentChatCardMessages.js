@@ -18,7 +18,12 @@ export function resolveAgentChatTranscriptSources({
     ?? threadMeta?.filename
     ?? card?.versions?.[0]?.filename
     ?? null;
-  return { localTranscript, effectiveArtifactRef, filename };
+  const relativePath =
+    pinned?.relativePath
+    ?? threadMeta?.relativePath
+    ?? card?.versions?.[0]?.relativePath
+    ?? null;
+  return { localTranscript, effectiveArtifactRef, filename, relativePath };
 }
 
 /**
@@ -26,7 +31,7 @@ export function resolveAgentChatTranscriptSources({
  * @param {{
  *   card: object | null,
  *   pinned?: object | null,
- *   threadMeta?: { artifactRef?: { id: string } | null, filename?: string | null } | null,
+ *   threadMeta?: { artifactRef?: { id: string } | null, filename?: string | null, relativePath?: string | null } | null,
  *   folderHandle?: FileSystemDirectoryHandle | null,
  *   liveMessages: object[] | null,
  *   liveCardId: string | null,
@@ -42,7 +47,7 @@ export function useAgentChatCardMessages({
   liveCardId,
   transcriptRevision = 0,
 }) {
-  const { localTranscript, effectiveArtifactRef, filename } =
+  const { localTranscript, effectiveArtifactRef, filename, relativePath } =
     resolveAgentChatTranscriptSources({ pinned, threadMeta, card });
 
   const isLive = Boolean(
@@ -87,6 +92,7 @@ export function useAgentChatCardMessages({
       folderHandle,
       artifactRef: effectiveArtifactRef,
       filename,
+      relativePath,
     })
       .then((text) => {
         if (cancelled) return;
@@ -117,6 +123,7 @@ export function useAgentChatCardMessages({
     folderHandle,
     effectiveArtifactRef?.id,
     filename,
+    relativePath,
     transcriptRevision,
   ]);
 

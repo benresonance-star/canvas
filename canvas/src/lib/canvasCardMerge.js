@@ -1,5 +1,6 @@
 import {
   cardKeyFromFilename,
+  folderRelativePathFromVersion,
   isFolderBackedCanvasCard,
   toCanonicalSyncKey,
 } from './filename.js';
@@ -189,7 +190,8 @@ export function dedupeAgentChatStagedForConnector(stagedCards, connectorId) {
 
 function canonicalKeyFromVersions(entry) {
   for (const v of entry?.versions ?? []) {
-    if (v?.filename) return cardKeyFromFilename(v.filename);
+    const relativePath = folderRelativePathFromVersion(v);
+    if (relativePath) return cardKeyFromFilename(relativePath);
   }
   return toCanonicalSyncKey(entry?.key);
 }
@@ -237,9 +239,9 @@ export function migrateAgentChatCardKeys(cards) {
   let changed = false;
   const next = (cards ?? []).map((card) => {
     if (card.type !== 'agent_chat') return card;
-    const filename = card.versions?.[0]?.filename;
-    const canonical = filename
-      ? cardKeyFromFilename(filename)
+    const relativePath = folderRelativePathFromVersion(card.versions?.[0]);
+    const canonical = relativePath
+      ? cardKeyFromFilename(relativePath)
       : toCanonicalSyncKey(card.key);
     if (canonical && card.key !== canonical) {
       changed = true;
@@ -257,9 +259,9 @@ export function migrateAgentChatStagedKeys(stagedCards) {
   let changed = false;
   const next = (stagedCards ?? []).map((staged) => {
     if (staged.type !== 'agent_chat') return staged;
-    const filename = staged.versions?.[0]?.filename;
-    const canonical = filename
-      ? cardKeyFromFilename(filename)
+    const relativePath = folderRelativePathFromVersion(staged.versions?.[0]);
+    const canonical = relativePath
+      ? cardKeyFromFilename(relativePath)
       : toCanonicalSyncKey(staged.key);
     if (canonical && staged.key !== canonical) {
       changed = true;

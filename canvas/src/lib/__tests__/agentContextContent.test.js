@@ -14,6 +14,7 @@ import {
   dataUrlByteLength,
   CONTEXT_PROFILES,
   getContextLimits,
+  loadContextDocumentForCard,
 } from '../agentContextContent.js';
 
 describe('agentContextContent', () => {
@@ -36,6 +37,47 @@ describe('agentContextContent', () => {
     ]);
     expect(ctx).toContain('## Doc (markdown)');
     expect(ctx).toContain('Hello world');
+  });
+
+  it('loads markdown context from nested folder-relative paths', async () => {
+    const fileHandle = {
+      async getFile() {
+        return new File(['Nested context body'], 'notes__nested-v1.md', {
+          type: 'text/markdown',
+        });
+      },
+    };
+    const nestedDir = {
+      getFileHandle: async (name) => {
+        expect(name).toBe('notes__nested-v1.md');
+        return fileHandle;
+      },
+    };
+    const folderHandle = {
+      getDirectoryHandle: async (name) => {
+        expect(name).toBe('docs');
+        return nestedDir;
+      },
+    };
+
+    const doc = await loadContextDocumentForCard(
+      {
+        id: 'card-1',
+        key: 'docs/notes__nested',
+        name: 'Nested',
+        type: 'markdown',
+        pinnedVersion: 1,
+        versions: [{
+          version: 1,
+          filename: 'notes__nested-v1.md',
+          relativePath: 'docs/notes__nested-v1.md',
+        }],
+      },
+      { folderHandle, fetchArtifact: async () => ({ artifact: null }) },
+    );
+
+    expect(doc.status).toBe('included');
+    expect(doc.text).toContain('Nested context body');
   });
 
   it('formatAgentSystemContext notes missing content', () => {

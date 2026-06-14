@@ -2,6 +2,7 @@ import { cardTypeFromSync } from './ingest/artifactType.js';
 import {
   cardKeyFromFilename,
   cardPrefixFromRow,
+  folderRelativePathFromVersion,
   normalizeCardType,
   syncKeysMatch,
   toCanonicalSyncKey,
@@ -26,6 +27,12 @@ export function buildStagedSyncCardFromChange(change) {
   return {
     stagingId: crypto.randomUUID(),
     key: change.key,
+    ...(change.group.versions?.[0]?.relativePath
+      ? {
+          relativePath: change.group.versions[0].relativePath,
+          folderPath: change.group.versions[0].relativePath,
+        }
+      : {}),
     prefix: change.group.parsed.prefix,
     name: change.group.parsed.name,
     type,
@@ -61,7 +68,8 @@ export function mergeNewlyStaged(stagedCards, newlyStaged) {
 function canonicalKeyForSyncEntry(entry) {
   if (!entry) return '';
   for (const v of entry.versions ?? []) {
-    if (v?.filename) return cardKeyFromFilename(v.filename);
+    const relativePath = folderRelativePathFromVersion(v);
+    if (relativePath) return cardKeyFromFilename(relativePath);
   }
   return toCanonicalSyncKey(entry.key);
 }
@@ -74,7 +82,8 @@ function entryMatchesFolderKey(entry, folderKey) {
   if (!entry || !folderKey) return false;
   if (syncKeysMatch(canonicalKeyForSyncEntry(entry), folderKey)) return true;
   for (const v of entry.versions ?? []) {
-    if (v?.filename && syncKeysMatch(v.filename, folderKey)) return true;
+    const relativePath = folderRelativePathFromVersion(v);
+    if (relativePath && syncKeysMatch(relativePath, folderKey)) return true;
   }
   const prefix = entry.prefix ?? cardPrefixFromRow(entry);
   const name = entry.name;
@@ -343,6 +352,7 @@ export function stagedSyncCardToCanvasCard(staged, worldX, worldY) {
   return {
     id: crypto.randomUUID(),
     key: staged.key,
+    ...(staged.relativePath ? { relativePath: staged.relativePath, folderPath: staged.relativePath } : {}),
     prefix: staged.prefix,
     name: staged.name,
     type: staged.type,
@@ -375,9 +385,11 @@ export function placeStagedCardOnCanvas(cards, staged, worldX, worldY) {
  * @param {{ id: string, key?: string, prefix?: string, name?: string, type: string, versions?: unknown[], pinnedVersion?: number, audioSkinColor?: string }} card
  */
 export function canvasCardToStaged(card) {
+  const relativePath = card.relativePath ?? card.versions?.[0]?.relativePath ?? null;
   return {
     stagingId: crypto.randomUUID(),
     key: card.key ?? card.id,
+    ...(relativePath ? { relativePath, folderPath: relativePath } : {}),
     prefix: card.prefix ?? '',
     name: card.name ?? card.key ?? card.id,
     type: card.type,

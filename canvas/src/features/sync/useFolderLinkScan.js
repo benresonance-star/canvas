@@ -18,14 +18,13 @@ import {
   isFolderPickerIdError,
   pickProjectDirectoryHandle,
 } from '../../lib/folderPicker.js';
-import { readFileEntry } from '../../lib/readFile.js';
+import { scanFolderFiles } from '../../lib/folderScan.js';
 import {
   parseFilename,
   toCanonicalSyncKey,
   unionFolderPresentKeys,
 } from '../../lib/filename.js';
 import { cardTypeFromSync } from '../../lib/ingest/artifactType.js';
-import { previewCacheKey } from '../../lib/previewStore.js';
 import {
   hydrateCardsPreviews,
   cardsPreviewsChanged,
@@ -305,18 +304,19 @@ export function useFolderLinkScan({
     let exitStatus = null;
     let folderScanProjectId = null;
     try {
-    const found = [];
+    let found = [];
     try {
-      for await (const entry of handle.values()) {
-        if (isScanStale()) break;
-        if (!entry.kind || entry.kind === 'file') {
-          const parsed = parseFilename(entry.name);
-          const cacheKey = projectId
-            ? previewCacheKey(projectId, parsed.fullBase, parsed.version)
-            : null;
-          const file = await readFileEntry(entry, { cacheKey });
-          found.push(file);
-        }
+      const scan = await scanFolderFiles(handle, {
+        projectId,
+        isStale: isScanStale,
+      });
+      found = scan.found;
+      if (scan.truncated) {
+        flowTrace('folder:scan-truncated', {
+          projectId,
+          scanSeq,
+          foundCount: found.length,
+        });
       }
     } catch (e) {
       exitStatus = { error: e.message };
@@ -326,7 +326,7 @@ export function useFolderLinkScan({
     const grouped = {};
     found.forEach(f => {
       const parsed = parseFilename(f.filename);
-      const key = parsed.fullBase;
+      const key = f.cardKey || toCanonicalSyncKey(f.relativePath || f.filename);
       if (!grouped[key]) grouped[key] = { parsed, versions: [] };
       grouped[key].versions.push({ ...f, ...parsed });
     });

@@ -12,6 +12,7 @@ function entryKey(entry) {
     entry?.connectorId ?? '',
     entry?.threadId ?? '',
     entry?.cardKey ?? '',
+    entry?.relativePath ?? '',
     entry?.filename ?? '',
     entry?.url ?? '',
   ].join('|');

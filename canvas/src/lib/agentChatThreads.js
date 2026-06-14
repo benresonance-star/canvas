@@ -1,4 +1,9 @@
-import { buildFilename, cardKeyFromFilename } from './filename.js';
+import {
+  buildFilename,
+  cardKeyFromFilename,
+  folderPathBasename,
+  folderRelativePathFromVersion,
+} from './filename.js';
 import {
   fetchAgentChatThreadIndex,
   saveAgentChatThreadIndexRemote,
@@ -358,7 +363,9 @@ export function removeThreadFromIndex(index, threadId) {
 export function collectKnownAgentChatKeys(threadIndex) {
   const keys = new Set();
   for (const t of threadIndex?.threads ?? []) {
-    if (t.filename) keys.add(cardKeyFromFilename(t.filename));
+    if (t.relativePath || t.filename) {
+      keys.add(cardKeyFromFilename(t.relativePath || t.filename));
+    }
   }
   return keys;
 }
@@ -373,16 +380,19 @@ export function discoverThreadsFromStaged(stagedCards, connectorId) {
   const discovered = [];
 
   for (const staged of stagedCards || []) {
-    if (staged.type !== 'agent_chat' || !staged.key?.startsWith(prefix)) continue;
+    const keyBasename = folderPathBasename(staged.key);
+    if (staged.type !== 'agent_chat' || !keyBasename.startsWith(prefix)) continue;
     const filename =
       staged.versions?.[0]?.filename
       || `${staged.key}.md`;
+    const relativePath = folderRelativePathFromVersion(staged.versions?.[0]);
     discovered.push({
       threadId: null,
       title: staged.name || 'Chat transcript',
       createdAt: 0,
       updatedAt: 0,
       filename,
+      relativePath: relativePath || null,
       artifactRef: staged.versions?.[0]?.artifactRef ?? null,
       cardId: null,
       key: staged.key,
@@ -397,16 +407,19 @@ export function discoverThreadsFromCanvas(cards, connectorId) {
   const discovered = [];
 
   for (const card of cards || []) {
-    if (card.type !== 'agent_chat' || !card.key?.startsWith(prefix)) continue;
+    const keyBasename = folderPathBasename(card.key);
+    if (card.type !== 'agent_chat' || !keyBasename.startsWith(prefix)) continue;
     const filename =
       card.versions?.[0]?.filename
       || `${card.key}.md`;
+    const relativePath = folderRelativePathFromVersion(card.versions?.[0]);
     discovered.push({
       threadId: null,
       title: card.name || 'Chat transcript',
       createdAt: 0,
       updatedAt: 0,
       filename,
+      relativePath: relativePath || null,
       artifactRef: card.versions?.[0]?.artifactRef ?? null,
       cardId: card.id,
       key: card.key,

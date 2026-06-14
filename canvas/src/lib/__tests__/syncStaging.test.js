@@ -46,6 +46,25 @@ describe('buildStagedSyncCardFromChange', () => {
     expect(staged.x).toBeUndefined();
     expect(staged.y).toBeUndefined();
   });
+
+  it('preserves relative path metadata for nested staged cards', () => {
+    const staged = buildStagedSyncCardFromChange({
+      key: 'refs/img__photo',
+      group: {
+        parsed: { ext: 'png', prefix: 'img', name: 'photo' },
+        versions: [{
+          version: 1,
+          filename: 'img__photo-v1.png',
+          relativePath: 'refs/img__photo-v1.png',
+        }],
+      },
+    });
+    expect(staged).toMatchObject({
+      key: 'refs/img__photo',
+      relativePath: 'refs/img__photo-v1.png',
+      folderPath: 'refs/img__photo-v1.png',
+    });
+  });
 });
 
 describe('mergeNewlyStaged', () => {
@@ -99,6 +118,40 @@ describe('buildSyncChangesFromFolder', () => {
     }];
     const { changes } = buildSyncChangesFromFolder(grouped, canvas, []);
     expect(changes.filter((c) => c.type === 'new')).toHaveLength(0);
+  });
+
+  it('treats duplicate basenames in different subfolders as different artifacts', () => {
+    const grouped = {
+      'floor1/img__photo': {
+        parsed: { name: 'photo', prefix: 'img', ext: 'png' },
+        versions: [{
+          version: 1,
+          filename: 'img__photo-v1.png',
+          relativePath: 'floor1/img__photo-v1.png',
+        }],
+      },
+      'floor2/img__photo': {
+        parsed: { name: 'photo', prefix: 'img', ext: 'png' },
+        versions: [{
+          version: 1,
+          filename: 'img__photo-v1.png',
+          relativePath: 'floor2/img__photo-v1.png',
+        }],
+      },
+    };
+    const canvas = [{
+      key: 'floor1/img__photo',
+      type: 'image',
+      versions: [{
+        version: 1,
+        filename: 'img__photo-v1.png',
+        relativePath: 'floor1/img__photo-v1.png',
+      }],
+    }];
+    const { changes } = buildSyncChangesFromFolder(grouped, canvas, []);
+    expect(changes).toHaveLength(1);
+    expect(changes[0].key).toBe('floor2/img__photo');
+    expect(changes[0].type).toBe('new');
   });
 
   it('does not mark general html legacy -v1 canvas key as new', () => {
@@ -401,6 +454,22 @@ describe('canvasCardToStaged', () => {
     expect(staged.x).toBeUndefined();
   });
 
+  it('preserves nested relative path from canvas card', () => {
+    const staged = canvasCardToStaged({
+      id: 'card-1',
+      key: 'refs/img__photo',
+      prefix: 'img',
+      name: 'photo',
+      type: 'image',
+      versions: [{
+        version: 1,
+        filename: 'img__photo-v1.png',
+        relativePath: 'refs/img__photo-v1.png',
+      }],
+    });
+    expect(staged.relativePath).toBe('refs/img__photo-v1.png');
+  });
+
   it('falls back to card id when key is missing', () => {
     const staged = canvasCardToStaged({
       id: 'note-1',
@@ -492,6 +561,21 @@ describe('stagedSyncCardToCanvasCard', () => {
     expect(card.x).toBeLessThan(500);
     expect(card.y).toBeLessThan(400);
     expect(card.x + card.y).toBeGreaterThan(0);
+  });
+
+  it('preserves nested relative path on canvas cards', () => {
+    const staged = {
+      stagingId: 's1',
+      key: 'refs/img__photo',
+      relativePath: 'refs/img__photo-v1.png',
+      prefix: 'img',
+      name: 'photo',
+      type: 'image',
+      versions: [{ version: 1, filename: 'img__photo-v1.png', relativePath: 'refs/img__photo-v1.png' }],
+      pinnedVersion: 1,
+    };
+    const card = stagedSyncCardToCanvasCard(staged, 500, 400);
+    expect(card.relativePath).toBe('refs/img__photo-v1.png');
   });
 });
 

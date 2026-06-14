@@ -1,5 +1,9 @@
 import { sha256HexFromString } from './ingest/hashFile.js';
-import { writeTextFileToFolder, overwriteUserNoteFile } from './folderWrite.js';
+import {
+  getFileHandleAtPath,
+  writeTextFileToFolder,
+  overwriteUserNoteFile,
+} from './folderWrite.js';
 import { readFileEntry } from './readFile.js';
 import { previewCacheKey } from './previewStore.js';
 import { ingestFoundFiles } from './ingest/syncIngest.js';
@@ -209,6 +213,7 @@ export function parseAgentChatTranscript(markdown) {
  *   folderHandle?: FileSystemDirectoryHandle | null,
  *   artifactRef?: { id: string } | null,
  *   filename?: string | null,
+ *   relativePath?: string | null,
  * }} params
  * @returns {Promise<string | null>}
  */
@@ -216,10 +221,15 @@ export async function loadThreadTranscript({
   folderHandle = null,
   artifactRef = null,
   filename = null,
+  relativePath = null,
 } = {}) {
   if (folderHandle && filename) {
     try {
-      const entry = await folderHandle.getFileHandle(filename, { create: false });
+      const entry = await getFileHandleAtPath(
+        folderHandle,
+        relativePath || filename,
+        { create: false },
+      );
       const file = await entry.getFile();
       return await file.text();
     } catch {

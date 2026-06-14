@@ -1,6 +1,10 @@
 import { artifactTypeFromFile } from './artifactType.js';
-import { syncKeysMatch } from '../filename.js';
+import { normalizeFolderRelativePath, syncKeysMatch } from '../filename.js';
 import { ingestArtifacts, ensureClusterForProject, isApiAvailable } from '../primitivesApi.js';
+
+function artifactFileKey(version) {
+  return normalizeFolderRelativePath(version?.relativePath ?? version?.filename);
+}
 
 /**
  * Ingest synced files as artifacts; return map filename -> { artifactRef, content_hash }
@@ -15,13 +19,14 @@ export async function ingestFoundFiles(projectId, projectName, flatVersions, pre
 
   const files = flatVersions.map((v) => ({
     type: artifactTypeFromFile(v.filename, { cardType: v.cardType }),
-    uri: `folder-relative:${projectId}/${v.filename}`,
+    uri: `folder-relative:${projectId}/${artifactFileKey(v)}`,
     content_hash: v.content_hash,
     version: String(v.version ?? 1),
     retrieved_at: new Date(v.lastModified || Date.now()).toISOString(),
     payload_text: v.content ?? null,
     metadata: {
       filename: v.filename,
+      relativePath: v.relativePath ?? null,
       cardKey: v.cardKey ?? null,
       prefix: v.prefix,
       name: v.name,
@@ -46,10 +51,13 @@ export async function ingestFoundFiles(projectId, projectName, flatVersions, pre
   for (const a of ingestRes.artifacts || []) {
     for (const v of flatVersions) {
       if (v.content_hash === a.content_hash) {
-        byFilename[v.filename] = {
+        const key = artifactFileKey(v);
+        const value = {
           content_hash: a.content_hash,
           artifactRef: a.artifactRef,
         };
+        byFilename[key] = value;
+        if (!v.relativePath) byFilename[v.filename] = value;
       }
     }
   }
@@ -57,7 +65,7 @@ export async function ingestFoundFiles(projectId, projectName, flatVersions, pre
   const relationships = [];
   for (const v of flatVersions) {
     const prev = previousArtifactsByKey[v.cardKey];
-    const current = byFilename[v.filename]?.artifactRef;
+    const current = byFilename[artifactFileKey(v)]?.artifactRef;
     if (prev?.id && current?.id && prev.id !== current.id) {
       relationships.push({
         from_ref: current,
@@ -78,16 +86,19 @@ export async function ingestFoundFiles(projectId, projectName, flatVersions, pre
     const cardKeyToRef = buildCardKeyToArtifactRef(
       [],
       Object.fromEntries(
-        flatVersions.map((v) => [v.cardKey, { versions: [{ ...v, artifactRef: byFilename[v.filename]?.artifactRef }] }]),
+        flatVersions.map((v) => [
+          v.cardKey,
+          { versions: [{ ...v, artifactRef: byFilename[artifactFileKey(v)]?.artifactRef }] },
+        ]),
       ),
     );
     for (const v of flatVersions) {
-      const ing = byFilename[v.filename];
+      const ing = byFilename[artifactFileKey(v)];
       if (ing?.artifactRef) cardKeyToRef.set(v.cardKey, ing.artifactRef);
     }
     const flatWithRefs = flatVersions.map((v) => ({
       ...v,
-      artifactRef: byFilename[v.filename]?.artifactRef,
+      artifactRef: byFilename[artifactFileKey(v)]?.artifactRef,
     }));
     await ingestLinksFromVersions({
       clusterId,
@@ -154,7 +165,7 @@ export function applyArtifactRefsToGrouped(grouped, byFilename) {
     out[key] = {
       ...group,
       versions: (group.versions ?? []).map((v) => {
-        const ing = byFilename[v.filename];
+        const ing = byFilename[artifactFileKey(v)];
         if (!ing?.artifactRef) return v;
         return {
           ...v,

@@ -1,4 +1,6 @@
 import { getPreview } from './previewStore.js';
+import { folderRelativePathFromVersion } from './filename.js';
+import { getFileHandleAtPath } from './folderWrite.js';
 
 const MIME_BY_EXT = {
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -107,7 +109,10 @@ async function resolveArtifactFile({ folderHandle, version }) {
 
   if (folderHandle && version.filename) {
     try {
-      const entry = await folderHandle.getFileHandle(version.filename);
+      const entry = await getFileHandleAtPath(
+        folderHandle,
+        folderRelativePathFromVersion(version),
+      );
       const file = await entry.getFile();
       const ext = extFromVersion(version);
       const mime = file.type || mimeFromExt(ext);

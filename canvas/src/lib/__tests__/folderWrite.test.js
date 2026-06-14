@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildBookmarkShortcutFile, writeBookmarkFile } from '../folderWrite.js';
+import {
+  buildBookmarkShortcutFile,
+  getFileHandleAtPath,
+  writeBookmarkFile,
+} from '../folderWrite.js';
 
 describe('bookmark folder writes', () => {
   it('builds an Internet Shortcut file body', () => {
@@ -34,5 +38,26 @@ describe('bookmark folder writes', () => {
       '[InternetShortcut]\r\nURL=https://example.com/\r\n',
     );
     expect(writable.close).toHaveBeenCalled();
+  });
+});
+
+describe('folder path reads', () => {
+  it('resolves nested file handles from a linked folder root', async () => {
+    const fileHandle = {};
+    const nestedDir = {
+      getFileHandle: vi.fn(async () => fileHandle),
+    };
+    const root = {
+      getDirectoryHandle: vi.fn(async () => nestedDir),
+    };
+
+    await expect(getFileHandleAtPath(root, 'refs/img__photo-v1.png')).resolves.toBe(
+      fileHandle,
+    );
+    expect(root.getDirectoryHandle).toHaveBeenCalledWith('refs', { create: false });
+    expect(nestedDir.getFileHandle).toHaveBeenCalledWith(
+      'img__photo-v1.png',
+      undefined,
+    );
   });
 });
