@@ -70,7 +70,7 @@ describe('projectDocumentCommit', () => {
     expect(cached?.cards).toHaveLength(1);
   });
 
-  it('patches existing local map when saving layout without new authoritative map', async () => {
+  it('does not resurrect stale local dock rows when current dock is empty', async () => {
     const localDoc = {
       projectName: 'P',
       cards: [],
@@ -129,6 +129,48 @@ describe('projectDocumentCommit', () => {
 
     const cached = getCommittedPayload('p1');
     expect(cached?.artifactPlacements?.notes__a?.surface).toBe('canvas');
+    expect(cached?.artifactPlacements?.notes__b).toBeUndefined();
+    expect(cached?.stagedSyncCards).toEqual([]);
+  });
+
+  it('falls back to local dock rows only when staged rows are omitted', async () => {
+    const localDoc = {
+      projectName: 'P',
+      cards: [],
+      stagedSyncCards: [
+        {
+          stagingId: 's1',
+          key: 'notes__b',
+          type: 'markdown',
+          versions: [{ version: 1, filename: 'notes__b-v1.md' }],
+        },
+      ],
+      artifactPlacements: {
+        notes__b: {
+          surface: 'dock',
+          record: {
+            stagingId: 's1',
+            key: 'notes__b',
+            type: 'markdown',
+            versions: [{ version: 1, filename: 'notes__b-v1.md' }],
+          },
+        },
+      },
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    readLocalProjectSerialised.mockResolvedValue(JSON.stringify(localDoc));
+
+    await commitProjectDocument('p1', {
+      state: {
+        projectName: 'P',
+        cards: [],
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      },
+      reason: 'legacyCommit',
+    });
+
+    const cached = getCommittedPayload('p1');
+    expect(cached?.stagedSyncCards).toHaveLength(1);
     expect(cached?.artifactPlacements?.notes__b?.surface).toBe('dock');
   });
 

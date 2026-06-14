@@ -266,6 +266,10 @@ export function useWorkspaceProjection({
         outgoingProjectId,
       });
       switchingProjectRef.current = true;
+      if (showSwitchLoading) {
+        setProjectSwitchLoading(true);
+      }
+      setPendingSwitchProjectId(targetId);
 
       const previousActiveId = activeProjectIdRef.current;
       const restoreProjectId =
@@ -311,7 +315,7 @@ export function useWorkspaceProjection({
               && Boolean(folderPresentKeysRef.current?.length)
               && isServerSyncEnabled(),
             reason: 'projectSwitch:outgoing',
-            pushRemote: true,
+            pushRemote: false,
           });
           clearCommittedPayloadCache(outgoingProjectId);
           flowTrace('project:switch-outgoing-done', {
@@ -323,11 +327,6 @@ export function useWorkspaceProjection({
           console.warn('Outgoing project local commit during switch failed:', e);
         }
       }
-
-      if (showSwitchLoading) {
-        setProjectSwitchLoading(true);
-      }
-      setPendingSwitchProjectId(targetId);
 
       try {
         let cards = null;
@@ -349,12 +348,7 @@ export function useWorkspaceProjection({
 
           folderRestoreHandledSeqRef.current = null;
 
-          await Promise.all([
-            loadAgentChatThreadIndexEarly(targetId, singleConnectorId),
-            isServerSyncEnabled()
-              ? reconcileProjectDocumentOnSwitch(targetId)
-              : Promise.resolve(null),
-          ]);
+          await loadAgentChatThreadIndexEarly(targetId, singleConnectorId);
           let loadedCards = await loadProjectIntoStateStableRef.current(targetId, {
             switchSeq,
             hydratePreviews: false,
@@ -471,7 +465,7 @@ export function useWorkspaceProjection({
             };
             try {
               switchLinkResult = await linkProjectFolder(targetId, {
-                requestIfNeeded: true,
+                requestIfNeeded: false,
                 switchSeq,
               });
               if (projectSwitchSeqRef.current !== switchSeq) return;

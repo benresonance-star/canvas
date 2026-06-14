@@ -27,3 +27,14 @@ export function placementCommitBlockedResult(canMutateCanvasRef) {
   if (!isPlacementCommitBlocked(canMutateCanvasRef)) return null;
   return { ok: false, skipped: 'projection_not_ready', deferred: true };
 }
+
+/**
+ * A placement sync must wait for the matching local placement commit; otherwise
+ * it can push the previous dock-only payload while the UI already shows canvas.
+ * @param {string | null | undefined} projectId
+ * @param {{ projectId?: string | null } | null | undefined} pendingCommit
+ * @returns {boolean}
+ */
+export function shouldDeferPlacementSyncForPendingCommit(projectId, pendingCommit) {
+  return Boolean(projectId && pendingCommit?.projectId === projectId);
+}

@@ -16,6 +16,7 @@ import {
   isPlacementCommitBlocked,
   placementCommitBlockedResult,
   shouldGatePlacementCommit,
+  shouldDeferPlacementSyncForPendingCommit,
 } from '../placementCommitGate.js';
 import { transferStagedToCanvas } from '../placementTransfer.js';
 import {
@@ -51,6 +52,22 @@ describe('placementCommitGate (H1b mechanism)', () => {
     expect(isPlacementCommitBlocked({ current: true })).toBe(false);
     expect(placementCommitBlockedResult({ current: true })).toBe(null);
     expect(isPlacementCommitBlocked(null)).toBe(false);
+  });
+
+  it('defers placement sync while the matching placement commit is pending', () => {
+    expect(
+      shouldDeferPlacementSyncForPendingCommit('p1', {
+        projectId: 'p1',
+        reason: 'placementTransfer:canvas',
+      }),
+    ).toBe(true);
+    expect(
+      shouldDeferPlacementSyncForPendingCommit('p1', {
+        projectId: 'p2',
+        reason: 'placementTransfer:canvas',
+      }),
+    ).toBe(false);
+    expect(shouldDeferPlacementSyncForPendingCommit('p1', null)).toBe(false);
   });
 });
 

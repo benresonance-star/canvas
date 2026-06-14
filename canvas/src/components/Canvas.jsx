@@ -841,6 +841,7 @@ export function Canvas({
             isLinkDropHighlight={linkDrag?.hoverCardId === card.id}
             canLinkFrom={card.type === 'user_note'}
             isMultiSelected={selectedCardIds?.has(card.id)}
+            agentSelectionMode={agentSelectionMode}
             isBeingDragged={draggingCard?.id === card.id}
             onActivate={(e) => {
               const threadForCard =

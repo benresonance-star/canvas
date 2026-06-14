@@ -6,6 +6,7 @@ vi.mock('../folderStore.js', () => ({
 
 import { loadFolderHandle } from '../folderStore.js';
 import {
+  getStoredFolderHandleForRepair,
   linkFolderForProject,
   restoreFolderForProject,
   reconnectFolderForProject,
@@ -74,6 +75,15 @@ describe('restoreFolder', () => {
     expect(result.granted).toBe(false);
     expect(result.needsPermission).toBe(true);
     expect(handle.requestPermission).not.toHaveBeenCalled();
+    expect(getCachedFolderHandle('p1')).toBe(handle);
+  });
+
+  it('getStoredFolderHandleForRepair caches IDB handle before permission repair', async () => {
+    const handle = mockHandle(['prompt']);
+    vi.mocked(loadFolderHandle).mockResolvedValue(handle);
+    const result = await getStoredFolderHandleForRepair('p1');
+    expect(result).toBe(handle);
+    expect(getCachedFolderHandle('p1')).toBe(handle);
   });
 
   it('linkFolderForProject requests permission when requestIfNeeded is true', async () => {
@@ -94,6 +104,16 @@ describe('restoreFolder', () => {
     expect(result.handle).toBe(handle);
     expect(handle.requestPermission).toHaveBeenCalled();
     expect(getCachedFolderHandle('p1')).toBe(handle);
+  });
+
+  it('reconnectFolderForProject uses cached handle without IDB read', async () => {
+    const handle = mockHandle(['prompt', 'granted']);
+    setCachedFolderHandle('p1', handle);
+    const result = await reconnectFolderForProject('p1');
+    expect(result.ok).toBe(true);
+    expect(result.handle).toBe(handle);
+    expect(loadFolderHandle).not.toHaveBeenCalled();
+    expect(handle.requestPermission).toHaveBeenCalled();
   });
 
   it('reconnectFolderForProject returns not_stored when missing', async () => {

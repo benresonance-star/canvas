@@ -74,6 +74,7 @@ function ContextCardList({
   statusByCardId = {},
   deliveryByCardId = {},
   onRemoveCard,
+  showRemoveControls = false,
   maxRows = 6,
 }) {
   if (!cards.length) return null;
@@ -89,33 +90,36 @@ function ContextCardList({
           !deliveryBadge && loadStatus ? loadStatusLabel(loadStatus, card.type) : null;
         const badge = deliveryBadge || loadBadge;
         const badgeStatus = delivery || loadStatus;
+        const canRemove = typeof onRemoveCard === 'function';
+        const showRemove = showRemoveControls || canRemove;
         return (
-          <li
-            key={card.id}
-            className="sans text-[10px] text-secondary flex items-center gap-1 min-w-0"
-            title={cardLabel(card)}
-          >
-            <span className="truncate flex-1">{cardLabel(card)}</span>
+          <li key={card.id} className="sans text-[10px] text-secondary min-w-0" title={cardLabel(card)}>
+            <div className="flex items-center gap-1.5 min-w-0">
+              {showRemove && (
+                <button
+                  type="button"
+                  disabled={!canRemove}
+                  className="shrink-0 inline-flex h-3 w-3 items-center justify-center rounded-full border border-white/80 bg-red-600 text-[9px] font-bold leading-none text-white shadow-sm transition hover:scale-105 hover:bg-red-500 focus:outline-none focus:ring-2 focus:ring-danger-ring disabled:opacity-70"
+                  aria-label={`${strings.agent.contextRemoveItem}: ${cardLabel(card)}`}
+                  title={strings.agent.contextRemoveItem}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onRemoveCard?.(card.id);
+                  }}
+                >
+                  <span aria-hidden>×</span>
+                </button>
+              )}
+              <span className="block truncate min-w-0 flex-1">{cardLabel(card)}</span>
+            </div>
             {badge && (
-              <span
-                className={`shrink-0 text-[9px] ${deliveryBadgeClass(badgeStatus)}`}
-              >
-                {badge}
-              </span>
-            )}
-            {onRemoveCard && (
-              <button
-                type="button"
-                className="shrink-0 p-0.5 rounded text-muted hover:text-danger transition"
-                aria-label={strings.agent.contextRemoveItem}
-                title={strings.agent.contextRemoveItem}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemoveCard(card.id);
-                }}
-              >
-                <X size={10} strokeWidth={2} aria-hidden />
-              </button>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className={showRemove ? 'shrink-0 w-3' : 'hidden'} aria-hidden />
+                <span className={`block truncate text-[9px] ${deliveryBadgeClass(badgeStatus)}`}>
+                  {badge}
+                </span>
+              </div>
             )}
           </li>
         );
@@ -864,10 +868,8 @@ export function AgentSidePanel({
                     </>
                   )}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => onContextModeChange('selected')}
-                  className={`w-full text-left rounded-md border px-2 py-1.5 transition ${
+                <div
+                  className={`w-full rounded-md border px-2 py-1.5 transition ${
                     contextMode === 'selected'
                       ? contextCards.length > 0
                         ? 'border-success-border bg-success-muted'
@@ -875,19 +877,25 @@ export function AgentSidePanel({
                       : 'border-border-subtle hover:border-border'
                   }`}
                 >
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
-                        contextMode === 'selected' ? 'border-primary bg-primary' : 'border-muted'
-                      }`}
-                    />
-                    <span className="sans text-[11px] text-primary">{strings.agent.contextSelected}</span>
-                  </div>
-                  <p className="sans text-[9px] text-muted mt-0.5 ml-3 leading-snug">
-                    {strings.agent.contextSelectedHint(
-                      contextMode === 'selected' ? contextCards.length : selectedCount,
-                    )}
-                  </p>
+                  <button
+                    type="button"
+                    onClick={() => onContextModeChange('selected')}
+                    className="w-full text-left"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full border shrink-0 ${
+                          contextMode === 'selected' ? 'border-primary bg-primary' : 'border-muted'
+                        }`}
+                      />
+                      <span className="sans text-[11px] text-primary">{strings.agent.contextSelected}</span>
+                    </div>
+                    <p className="sans text-[9px] text-muted mt-0.5 ml-3 leading-snug">
+                      {strings.agent.contextSelectedHint(
+                        contextMode === 'selected' ? contextCards.length : selectedCount,
+                      )}
+                    </p>
+                  </button>
                   {contextMode === 'selected' && contextCards.length === 0 && (
                     <p className="sans text-[9px] text-muted/80 mt-0.5 ml-3 italic leading-snug">
                       {agentSelectionClick
@@ -905,10 +913,11 @@ export function AgentSidePanel({
                         statusByCardId={contextStatusByCardId}
                         deliveryByCardId={contextDeliveryByCardId}
                         onRemoveCard={onRemoveContextCard}
+                        showRemoveControls
                       />
                     </>
                   )}
-                </button>
+                </div>
               </>
             )}
           </div>

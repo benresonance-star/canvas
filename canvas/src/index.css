@@ -45,6 +45,8 @@
   --color-link-hover: #92400e;
   --color-inspector-highlight-bg: rgb(180 83 9 / 0.1);
   --color-inspector-highlight-ring: rgb(180 83 9 / 0.4);
+  --color-agent-selection-ring: #111827;
+  --color-agent-selection-glow: rgb(17 24 39 / 0.28);
 }
 
 [data-theme='dark'] {
@@ -89,6 +91,8 @@
   --color-link-hover: #fde68a;
   --color-inspector-highlight-bg: rgb(245 158 11 / 0.1);
   --color-inspector-highlight-ring: rgb(245 158 11 / 0.4);
+  --color-agent-selection-ring: #ffffff;
+  --color-agent-selection-glow: rgb(255 255 255 / 0.38);
 }
 
 [data-theme='green'] {
@@ -129,6 +133,8 @@
   --color-cluster-hull-stroke-active: rgb(180 83 9 / 0.6);
   --color-inspector-highlight-bg: rgb(255 255 255 / 0.14);
   --color-inspector-highlight-ring: rgb(255 255 255 / 0.42);
+  --color-agent-selection-ring: #ffffff;
+  --color-agent-selection-glow: rgb(255 255 255 / 0.34);
   --color-cluster-hull-fill-nested: rgb(245 158 11 / 0.18);
   --color-cluster-hull-fill-nested-active: rgb(245 158 11 / 0.28);
   --color-cluster-hull-stroke-nested: rgb(180 83 9 / 0.5);
@@ -184,6 +190,8 @@
   --color-cluster-hull-stroke-active: rgb(180 83 9 / 0.6);
   --color-inspector-highlight-bg: rgb(255 255 255 / 0.14);
   --color-inspector-highlight-ring: rgb(255 255 255 / 0.42);
+  --color-agent-selection-ring: #ffffff;
+  --color-agent-selection-glow: rgb(255 255 255 / 0.34);
   --color-cluster-hull-fill-nested: rgb(245 158 11 / 0.18);
   --color-cluster-hull-fill-nested-active: rgb(245 158 11 / 0.28);
   --color-cluster-hull-stroke-nested: rgb(180 83 9 / 0.5);
@@ -295,6 +303,13 @@ html[data-theme='blue'] {
 
 .card-shadow-active {
   box-shadow: var(--shadow-card-active);
+}
+
+.canvas-card-agent-selected {
+  box-shadow:
+    0 0 0 4px var(--color-agent-selection-ring),
+    0 0 0 8px var(--color-agent-selection-glow),
+    var(--shadow-card-active);
 }
 
 /* Card drag: shield non-dragged cards at session start (avoids mid-hover pointer-events trap) */

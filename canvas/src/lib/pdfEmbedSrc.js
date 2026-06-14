@@ -1,10 +1,11 @@
 /**
- * Append Chrome / Adobe PDF Open Parameters so embedded iframes show the native toolbar.
+ * Append Chrome / Adobe PDF Open Parameters so embedded iframes show the native toolbar
+ * without opening the PDF sidebar by default.
  * @param {string | null | undefined} url
  * @returns {string | null | undefined}
  */
 export function pdfEmbedSrc(url) {
   if (!url || typeof url !== 'string') return url;
   const base = url.split('#')[0];
-  return `${base}#toolbar=1&navpanes=1&view=FitH`;
+  return `${base}#toolbar=1&navpanes=0&view=FitH`;
 }

@@ -49,6 +49,18 @@ describe('deriveFolderLinkState', () => {
     expect(state.folderNeedsConnect).toBe(false);
   });
 
+  it('returns needsReconnect after a switch probe finds remembered folder access', () => {
+    const state = deriveFolderLinkState({
+      folderHandle: null,
+      folderStoredOnDevice: true,
+      connectedFolderName: 'Pocket Player',
+      folderLinkProbeComplete: true,
+      folderLinkInProgress: false,
+    });
+    expect(state.phase).toBe('needsReconnect');
+    expect(resolveFolderSyncAction(state)).toBe('reconnect');
+  });
+
   it('returns needsConnect when server has name but no local handle', () => {
     const state = deriveFolderLinkState({
       folderHandle: null,

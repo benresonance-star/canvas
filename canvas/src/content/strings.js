@@ -27,12 +27,15 @@ export const strings = {
     nothingNew: 'Nothing new to sync',
     previewsRestored: 'Previews restored from folder',
     folderUnsupported: 'Folder access not supported in this browser. Use Chrome, Edge, or Arc.',
-    reconnectFolder: 'Click Sync to allow folder access again',
-    reconnectFolderAction: 'Reconnect folder',
+    reconnectFolder: 'Repair folder access and refresh the canvas',
+    reconnectFolderAction: 'Repair folder',
     reconnectFolderHint:
-      'Your project folder is remembered. Click Reconnect to allow access again (choose “Allow on every visit” in Chrome for fewer prompts).',
+      'Your project folder is remembered. Repair folder to allow access again and refresh artefacts from disk.',
     reconnectFolderNamed: (name) =>
-      `Allow access to “${name}” to sync files from disk. Choose “Allow on every visit” in Chrome to avoid prompts when switching projects.`,
+      `Repair access to “${name}” and refresh artefacts from disk. Choose “Allow on every visit” in Chrome to avoid prompts when switching projects.`,
+    repairFolderInProgress: 'Repairing folder access and refreshing artefacts…',
+    repairFolderPickAgain:
+      'Stored folder access could not be reused. Pick the folder again to repair and keep artefacts.',
     connectFolderNamed: (name) =>
       `This project uses folder “${name}” on another device. Pick that same folder once on this browser. The folder handle is saved here when the browser allows it.`,
     folderPickerBusy:

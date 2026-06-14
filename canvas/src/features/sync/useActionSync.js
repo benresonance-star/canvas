@@ -26,6 +26,7 @@ import {
   isPlacementCommitBlocked,
   placementCommitBlockedResult,
   shouldGatePlacementCommit,
+  shouldDeferPlacementSyncForPendingCommit,
 } from '../../lib/placementCommitGate.js';
 import { strings } from '../../content/strings.js';
 
@@ -80,6 +81,19 @@ export function useActionSync({
       syncTraceLog(traceId, 'placement-sync:skipped', { reason: 'no_project_id' });
       return Promise.resolve();
     }
+    const pendingCommit = pendingPlacementCommitRef?.current;
+    if (shouldDeferPlacementSyncForPendingCommit(projectId, pendingCommit)) {
+      syncTraceLog(traceId ?? pendingCommit.traceId, 'placement-sync:deferred', {
+        projectId,
+        reason: 'pending_placement_commit',
+      });
+      pendingPlacementTransferSyncRef.current = {
+        projectId,
+        traceId: traceId ?? pendingCommit.traceId,
+        options,
+      };
+      return Promise.resolve();
+    }
     if (switchingProjectRef.current) {
       syncTraceLog(traceId, 'placement-sync:skipped', {
         projectId,
@@ -112,6 +126,7 @@ export function useActionSync({
     creatingProjectRef,
     initialHydratedRef,
     pendingPlacementTransferSyncRef,
+    pendingPlacementCommitRef,
   ]);
 
   const flushPendingPlacementTransferSync = useCallback(() => {
@@ -392,6 +407,7 @@ export function useActionSync({
       flushActiveProject: async (projectId) => {
         if (projectId !== activeProjectIdRef.current) return;
         await flushArtifactRetriesForActiveProject(projectId);
+        await flushPendingPlacementCommit();
         if (projectNameDirtyRef.current) {
           await setProjectDisplayName(projectId, stateRef.current.projectName);
           projectNameDirtyRef.current = false;
@@ -407,6 +423,7 @@ export function useActionSync({
         const projectId = activeProjectIdRef.current;
         if (projectId) {
           await flushArtifactRetriesForActiveProject(projectId);
+          await flushPendingPlacementCommitForSwitch(projectId);
           if (projectNameDirtyRef.current) {
             await setProjectDisplayName(projectId, stateRef.current.projectName);
             projectNameDirtyRef.current = false;
@@ -426,6 +443,8 @@ export function useActionSync({
     applyReconcileFromServer,
     commitProjectDocumentForSync,
     flushArtifactRetriesForActiveProject,
+    flushPendingPlacementCommit,
+    flushPendingPlacementCommitForSwitch,
     folderHandle,
     activeProjectIdRef,
     stateRef,

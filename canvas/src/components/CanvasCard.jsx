@@ -12,6 +12,7 @@ export function CanvasCard({
   card,
   isActive,
   isMultiSelected = false,
+  agentSelectionMode = false,
   zoom,
   missingFromFolder,
   linkCount = 0,
@@ -87,7 +88,10 @@ export function CanvasCard({
 
   const missingRing = missingFromFolder ? 'ring-2 ring-danger-ring ring-offset-1 ring-offset-canvas' : '';
   const linkHighlight = isLinkDropHighlight ? 'ring-2 ring-accent ring-offset-1 ring-offset-canvas' : '';
-  const multiSelectRing = isMultiSelected && !isActive
+  const agentSelectedRing = agentSelectionMode && isMultiSelected
+    ? 'canvas-card-agent-selected'
+    : '';
+  const multiSelectRing = isMultiSelected && !isActive && !agentSelectedRing
     ? 'ring-2 ring-accent/50 ring-offset-1 ring-offset-canvas'
     : '';
   const missingHeaderTint = missingFromFolder ? 'bg-danger-muted border-danger-border' : 'border-border';
@@ -108,7 +112,7 @@ export function CanvasCard({
       onDoubleClick={(e) => { e.stopPropagation(); onOpen(); }}
     >
       <div
-        className={`canvas-card bg-surface rounded-lg overflow-hidden h-full flex flex-col transition-[box-shadow,opacity] ${missingRing} ${linkHighlight} ${multiSelectRing} ${isActive ? 'card-shadow-active' : 'card-shadow'}`}
+        className={`canvas-card bg-surface rounded-lg overflow-hidden h-full flex flex-col transition-[box-shadow,opacity] ${missingRing} ${linkHighlight} ${multiSelectRing} ${agentSelectedRing} ${isActive && !agentSelectedRing ? 'card-shadow-active' : 'card-shadow'}`}
       >
         <div
           className={`shrink-0 flex items-start justify-between gap-2 border-b ${missingHeaderTint} ${

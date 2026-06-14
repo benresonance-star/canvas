@@ -1,6 +1,6 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026-06-14-subfolder-artifacts  
+**Version:** 2026-06-14-folder-repair-agent-context
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -856,6 +856,14 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-06-14 — Folder repair, placement, and agent context polish (implemented)
+
+- Made remembered linked-folder repair reuse the change-folder keep-artifacts scan path, with picker fallback when stored browser permissions cannot be reused.
+- Improved project switching by showing pending/loading feedback before remote work and moving target reconciliation into guarded background sync.
+- Hardened placement commits so explicit empty dock/staged-card sets are authoritative and pending placement commits are flushed before broader project saves.
+- Defaulted embedded PDFs to hide the native PDF sidebar (`navpanes=0`) when new PDF artifacts are placed on the canvas.
+- Added Agent Mode selected-item removal from the sidebar context list, with visible selected-card highlighting on the canvas.
 
 ### 2026-06-14 — Linked-folder subfolder artifacts (implemented)
 

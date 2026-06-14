@@ -31,10 +31,13 @@ async function requestFolderPermission(handle) {
  * Resolve handle from session cache or IndexedDB.
  * @param {string} projectId
  */
-async function resolveStoredFolderHandle(projectId) {
+export async function getStoredFolderHandleForRepair(projectId) {
   const cached = getCachedFolderHandle(projectId);
   if (cached) return cached;
-  return loadFolderHandle(projectId);
+  const handle = await loadFolderHandle(projectId);
+  if (handle) setCachedFolderHandle(projectId, handle);
+  else clearCachedFolderHandle(projectId);
+  return handle;
 }
 
 /**
@@ -52,11 +55,12 @@ export async function linkFolderForProject(
   projectId,
   { requestIfNeeded = false, handle: handleOverride = null } = {},
 ) {
-  const handle = handleOverride ?? (await resolveStoredFolderHandle(projectId));
+  const handle = handleOverride ?? (await getStoredFolderHandleForRepair(projectId));
   if (!handle) {
     clearCachedFolderHandle(projectId);
     return { handle: null, granted: false, stored: false, needsPermission: false };
   }
+  setCachedFolderHandle(projectId, handle);
 
   let perm = await queryFolderPermission(handle);
   if (perm === 'prompt' && requestIfNeeded) {
@@ -64,9 +68,6 @@ export async function linkFolderForProject(
   }
 
   const granted = perm === 'granted';
-  if (granted) {
-    setCachedFolderHandle(projectId, handle);
-  }
 
   return {
     handle: granted ? handle : null,
@@ -91,7 +92,7 @@ export async function restoreFolderForProject(projectId, { requestIfNeeded = fal
  * @returns {Promise<{ ok: true, handle: FileSystemDirectoryHandle } | { ok: false, reason: 'not_stored' | 'denied' }>}
  */
 export async function reconnectFolderForProject(projectId) {
-  const handle = await resolveStoredFolderHandle(projectId);
+  const handle = await getStoredFolderHandleForRepair(projectId);
   if (!handle) {
     return { ok: false, reason: 'not_stored' };
   }

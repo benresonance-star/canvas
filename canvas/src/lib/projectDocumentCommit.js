@@ -119,10 +119,9 @@ export async function commitProjectDocument(projectId, options) {
 
   cancelPendingProjectSave(projectId);
 
-  const stagedForPatch =
-    (stagedSyncCards ?? []).length > 0
-      ? stagedSyncCards
-      : ((await readLocalPayload(projectId))?.stagedSyncCards ?? []);
+  const stagedForPatch = Array.isArray(stagedSyncCards)
+    ? stagedSyncCards
+    : ((await readLocalPayload(projectId))?.stagedSyncCards ?? []);
 
   let authoritativePlacements = artifactPlacements;
   if (
@@ -157,7 +156,7 @@ export async function commitProjectDocument(projectId, options) {
 
   const builtPayload = buildProjectSavePayload(
     { ...state, projectName: displayName },
-    stagedSyncCards,
+    stagedForPatch,
     suppressedSyncKeys,
     {
       stripNoteContent,

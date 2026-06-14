@@ -64,6 +64,21 @@ import { requestActionSync } from '../../lib/actionSync.js';
 import { runExclusive } from '../../lib/projectSyncCoordinator.js';
 import { isServerSyncEnabled, setConnectedFolder, projectsForMenuFromIndex } from '../../lib/projects.js';
 
+export const folderRepairScanOptions = (options = {}) => ({
+  ...options,
+  skipPlacementDefer: true,
+  autoApplyImport: true,
+  preferImportDialog: true,
+});
+
+export function shouldSyncCanvasFromServerAfterFolderFlow(flow) {
+  return flow === 'connect';
+}
+
+export function shouldRepairFolderWithPicker(reason) {
+  return reason === 'not_stored' || reason === 'denied';
+}
+
 /**
  * Folder link, restore, and scan workflow extracted from App.jsx.
  */
@@ -127,6 +142,7 @@ export function useFolderLinkScan({
 
   const settledProjectIdRef = committedProjectIdRef ?? activeProjectIdRef;
   const directoryPickPromiseRef = useRef(null);
+  const folderHandleProjectIdRef = useRef(null);
 
   const clearFolderPickerInProgress = useCallback(() => {
     folderPickerInFlightRef.current = false;
@@ -184,6 +200,7 @@ export function useFolderLinkScan({
       return false;
     }
     setFolderHandle(handle);
+    folderHandleProjectIdRef.current = projectId;
     setFolderStoredOnDevice(true);
     setCachedFolderHandle(projectId, handle);
     const index = await setConnectedFolder(projectId, handle.name);
@@ -215,8 +232,10 @@ export function useFolderLinkScan({
         setFolderStoredOnDevice(result.stored);
         if (result.granted && result.handle) {
           setFolderHandle(result.handle);
+          folderHandleProjectIdRef.current = projectId;
         } else {
           setFolderHandle(null);
+          folderHandleProjectIdRef.current = null;
         }
         return result;
       } catch {
@@ -227,6 +246,7 @@ export function useFolderLinkScan({
           setFolderStoredOnDevice(false);
         }
         setFolderHandle(null);
+        folderHandleProjectIdRef.current = null;
         return {
           handle: null,
           granted: false,
@@ -616,17 +636,24 @@ export function useFolderLinkScan({
   const probeFolderStoredOnDevice = useCallback(async (projectId) => {
     if (!projectId) {
       setFolderStoredOnDevice(false);
+      setFolderLinkProbeComplete(true);
       return false;
     }
     try {
       const handle = await loadFolderHandle(projectId);
-      setFolderStoredOnDevice(Boolean(handle));
+      if (projectId === activeProjectIdRef.current) {
+        setFolderStoredOnDevice(Boolean(handle));
+        setFolderLinkProbeComplete(true);
+      }
       return Boolean(handle);
     } catch {
-      setFolderStoredOnDevice(false);
+      if (projectId === activeProjectIdRef.current) {
+        setFolderStoredOnDevice(false);
+        setFolderLinkProbeComplete(true);
+      }
       return false;
     }
-  }, []);
+  }, [activeProjectIdRef]);
 
   const attemptRestoreFolderForProject = useCallback(
     async (projectId, cardsBaseline, options = {}) => {
@@ -706,9 +733,17 @@ export function useFolderLinkScan({
 
   useEffect(() => {
     if (!activeProjectId) {
+      setFolderHandle(null);
+      folderHandleProjectIdRef.current = null;
       setFolderStoredOnDevice(false);
+      setFolderLinkProbeComplete(true);
       return;
     }
+    if (folderHandleProjectIdRef.current !== activeProjectId) {
+      setFolderHandle(null);
+      folderHandleProjectIdRef.current = null;
+    }
+    setFolderLinkProbeComplete(false);
     void probeFolderStoredOnDevice(activeProjectId);
   }, [activeProjectId, probeFolderStoredOnDevice]);
 
@@ -733,24 +768,6 @@ export function useFolderLinkScan({
       requestIfNeeded: false,
     });
   }, [loaded, projectSwitchLoading, activeProjectId, folderLinkInProgress]);
-
-  useEffect(() => {
-    if (!loaded || !activeProjectId || folderHandle) return;
-    if (!folderStoredOnDevice) return;
-
-    const onGesture = () => {
-      void attemptRestoreRef.current(
-        activeProjectIdRef.current,
-        lastLoadedCardsRef.current,
-        { requestIfNeeded: true },
-      );
-    };
-
-    document.addEventListener('pointerdown', onGesture, { once: true, capture: true });
-    return () => {
-      document.removeEventListener('pointerdown', onGesture, { capture: true });
-    };
-  }, [loaded, activeProjectId, folderHandle, folderStoredOnDevice]);
 
   useEffect(() => {
     if (!loaded || !activeProjectId) return;
@@ -785,14 +802,13 @@ export function useFolderLinkScan({
       setFolderLinkProbeComplete(true);
       warnFolderNameMismatch(projectId, handle);
       stagingDragActiveRef.current = false;
-      await scanFolder(handle, {
+      await scanFolder(handle, folderRepairScanOptions({
         baseCards: stateRef.current.cards ?? [],
         projectId,
-        skipPlacementDefer: true,
-        autoApplyImport: true,
-        preferImportDialog: true,
-      });
-      void syncCanvasFromServerAfterFolderConnect(projectId);
+      }));
+      if (shouldSyncCanvasFromServerAfterFolderFlow('connect')) {
+        void syncCanvasFromServerAfterFolderConnect(projectId);
+      }
       await flushPendingPlacementCommit?.();
     },
     [
@@ -853,29 +869,28 @@ export function useFolderLinkScan({
           }
         },
       };
-      await scanFolder(handle, {
+      await scanFolder(handle, folderRepairScanOptions({
         baseCards: stateRef.current.cards ?? [],
         projectId,
-        skipPlacementDefer: true,
-        autoApplyImport: true,
-        preferImportDialog: true,
-      });
+      }));
       await flushPendingPlacementCommit?.();
     },
     [scanFolder, flushPendingPlacementCommit],
   );
 
   const applyFolderHandleAndScan = useCallback(
-    async (handle) => {
+    async (handle, options = {}) => {
       const projectId = activeProjectIdRef.current;
       if (projectId && handle) {
         setCachedFolderHandle(projectId, handle);
       }
       setFolderHandle(handle);
-      await scanFolder(handle, {
+      const scanOptions = {
         baseCards: lastLoadedCardsRef.current ?? stateRef.current.cards ?? [],
         projectId,
-      });
+        ...options,
+      };
+      await scanFolder(handle, scanOptions);
     },
     [scanFolder],
   );
@@ -886,39 +901,70 @@ export function useFolderLinkScan({
       setSyncStatus({ error: strings.sync.folderUnsupported });
       return;
     }
+    const repairWithPicker = async () => {
+      setSyncStatus((prev) => ({
+        ...(prev ?? {}),
+        toast: strings.sync.repairFolderPickAgain,
+      }));
+      const handle = await pickDirectoryExclusive(projectId);
+      const linked = await persistFolderConnection(handle);
+      if (!linked) {
+        setSyncStatus((prev) => (prev?.scanning ? null : prev));
+        return;
+      }
+      warnFolderNameMismatch(projectId, handle);
+      await scanFolder(
+        handle,
+        folderRepairScanOptions({
+          baseCards: stateRef.current.cards ?? [],
+          projectId,
+        }),
+      );
+      await flushPendingPlacementCommit?.();
+    };
     try {
+      setSyncStatus({
+        scanning: true,
+        toast: strings.sync.repairFolderInProgress,
+      });
       const result = await reconnectFolderForProject(projectId);
       if (result.ok && result.handle) {
-        setFolderStoredOnDevice(true);
+        const linked = await persistFolderConnection(result.handle);
+        if (!linked) {
+          setSyncStatus((prev) => (prev?.scanning ? null : prev));
+          return;
+        }
         warnFolderNameMismatch(projectId, result.handle);
-        await loadProjectIntoStateRef.current(projectId, {
-          localOnly: true,
-          hydratePreviews: false,
-        });
-        await applyFolderHandleAndScan(result.handle);
-        await syncCanvasFromServerAfterFolderConnect(projectId);
+        await scanFolder(
+          result.handle,
+          folderRepairScanOptions({
+            baseCards: stateRef.current.cards ?? [],
+            projectId,
+          }),
+        );
         await flushPendingPlacementCommit?.();
         return;
       }
-      if (result.reason === 'not_stored') {
-        await requestFolder();
+      if (shouldRepairFolderWithPicker(result.reason)) {
+        await repairWithPicker();
         return;
       }
-      if (result.reason === 'denied') {
-        setSyncStatus({ error: strings.sync.folderPermissionDenied });
-        setTimeout(() => setSyncStatus(null), 4000);
-      }
     } catch (e) {
-      if (e.name !== 'AbortError') {
-        setSyncStatus({ error: e.message || strings.sync.folderPermissionDenied });
+      if (e.name === 'AbortError') {
+        setSyncStatus((prev) => (prev?.scanning ? null : prev));
+      } else {
+        const message = isFolderPickerBusyError(e)
+          ? strings.sync.folderPickerBusy
+          : e.message || strings.sync.folderPermissionDenied;
+        setSyncStatus({ error: message });
         setTimeout(() => setSyncStatus(null), 4000);
       }
     }
   }, [
-    applyFolderHandleAndScan,
-    requestFolder,
+    persistFolderConnection,
+    scanFolder,
+    pickDirectoryExclusive,
     warnFolderNameMismatch,
-    syncCanvasFromServerAfterFolderConnect,
     flushPendingPlacementCommit,
   ]);
 
@@ -1049,21 +1095,15 @@ export function useFolderLinkScan({
       await scanFolder(
         handle,
         replaceCanvas
-          ? {
+          ? folderRepairScanOptions({
             baseCards: [],
             replaceCanvas: true,
             projectId,
-            skipPlacementDefer: true,
-            autoApplyImport: true,
-            preferImportDialog: true,
-          }
-          : {
+          })
+          : folderRepairScanOptions({
             baseCards: stateRef.current.cards,
             projectId,
-            skipPlacementDefer: true,
-            autoApplyImport: true,
-            preferImportDialog: true,
-          },
+          }),
       );
       await flushPendingPlacementCommit?.();
     } catch (e) {

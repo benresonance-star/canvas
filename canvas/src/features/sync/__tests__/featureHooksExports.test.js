@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { useProjectSyncLifecycle } from '../useProjectSyncLifecycle.js';
-import { useFolderLinkScan } from '../useFolderLinkScan.js';
+import {
+  folderRepairScanOptions,
+  shouldRepairFolderWithPicker,
+  shouldSyncCanvasFromServerAfterFolderFlow,
+  useFolderLinkScan,
+} from '../useFolderLinkScan.js';
 import { useAgentChatShell } from '../../agent/useAgentChatShell.js';
 import { useClusterContext } from '../../cluster/useClusterContext.js';
 import { useCanvasDocument } from '../../canvas/useCanvasDocument.js';
@@ -14,6 +19,29 @@ describe('Phase 1 feature hooks', () => {
     expect(typeof useProjectSyncLifecycle).toBe('function');
     expect(typeof useFolderLinkScan).toBe('function');
     expect(typeof useAgentChatShell).toBe('function');
+  });
+
+  it('uses auto-apply folder repair scan options', () => {
+    expect(folderRepairScanOptions({ projectId: 'p1', baseCards: [] })).toEqual({
+      projectId: 'p1',
+      baseCards: [],
+      skipPlacementDefer: true,
+      autoApplyImport: true,
+      preferImportDialog: true,
+    });
+  });
+
+  it('keeps post-folder server reconcile out of repair scans', () => {
+    expect(shouldSyncCanvasFromServerAfterFolderFlow('connect')).toBe(true);
+    expect(shouldSyncCanvasFromServerAfterFolderFlow('repair')).toBe(false);
+    expect(shouldSyncCanvasFromServerAfterFolderFlow('changeFolderKeep')).toBe(false);
+  });
+
+  it('falls back to picker when stored repair cannot reuse access', () => {
+    expect(shouldRepairFolderWithPicker('not_stored')).toBe(true);
+    expect(shouldRepairFolderWithPicker('denied')).toBe(true);
+    expect(shouldRepairFolderWithPicker('other')).toBe(false);
+    expect(shouldRepairFolderWithPicker(null)).toBe(false);
   });
 
   it('exports Phase 1b cluster, canvas, and workspace hooks', () => {
