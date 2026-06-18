@@ -299,18 +299,6 @@ export function PrimitiveInspectorPanel({
                           {p.body}
                         </pre>
                       </div>
-                      {p.target_id && artifactMap.has(p.target_id) && (
-                        <button
-                          type="button"
-                          className="sans text-xs text-link hover:text-link-hover hover:underline"
-                          onClick={() => {
-                            const hit = artifactMap.get(p.target_id);
-                            if (hit && onOpenCardKey) onOpenCardKey(hit.cardKey);
-                          }}
-                        >
-                          {strings.inspector.openOnCanvas}
-                        </button>
-                      )}
                     </>
                   )}
                   {selection.type === 'relationship' && (
@@ -425,15 +413,6 @@ export function PrimitiveInspectorPanel({
                     </section>
                   )}
 
-                  {meta?.cardKey && onOpenCardKey && (
-                    <button
-                      type="button"
-                      className="mt-4 sans text-xs text-link hover:text-link-hover hover:underline"
-                      onClick={() => onOpenCardKey(meta.cardKey)}
-                    >
-                      {strings.inspector.openOnCanvas}
-                    </button>
-                  )}
                 </>
               )}
             </>

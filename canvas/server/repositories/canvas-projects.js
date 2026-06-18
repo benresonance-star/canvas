@@ -1,6 +1,7 @@
 import { pool, query } from '../db.js';
 import { applyProjectOps, validateProjectPatchOps } from '../../src/lib/sync/projectPatchOps.js';
 import { summarizePatchOps, syncTraceLog } from '../../src/lib/sync/syncTrace.js';
+import { deleteProjectPrimitiveScope } from './project-primitives.js';
 
 const INDEX_ID = 'default';
 
@@ -890,5 +891,17 @@ export async function patchCanvasProject(
 }
 
 export async function deleteCanvasProject(projectId) {
-  await query('DELETE FROM canvas_project_document WHERE project_id = $1', [projectId]);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const primitiveCleanup = await deleteProjectPrimitiveScope(projectId, client);
+    await client.query('DELETE FROM canvas_project_document WHERE project_id = $1', [projectId]);
+    await client.query('COMMIT');
+    return { primitiveCleanup };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }

@@ -19,7 +19,7 @@ import {
 } from '../repositories/assertions.js';
 import { insertTask } from '../repositories/tasks.js';
 import { primitiveRef } from '../../src/primitives/shared/primitive-ref.js';
-import { fetchBookmarkPreview } from '../services/urlPreview.js';
+import { fetchBookmarkEmbedHtml, fetchBookmarkPreview } from '../services/urlPreview.js';
 
 /** @param {import('express').Express} app */
 export function registerArtifactRoutes(app) {
@@ -36,6 +36,25 @@ export function registerArtifactRoutes(app) {
       res.json(preview);
     } catch (e) {
       res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.get('/bookmarks/embed', async (req, res) => {
+    try {
+      const result = await fetchBookmarkEmbedHtml(req.query?.url);
+      if (!result.ok) {
+        return res
+          .status(result.status ?? 400)
+          .type('html')
+          .send(`<!doctype html><p>${result.error || 'Preview failed'}</p>`);
+      }
+      res
+        .status(200)
+        .setHeader('Content-Type', 'text/html; charset=utf-8')
+        .setHeader('Cache-Control', 'no-store')
+        .send(result.html);
+    } catch (e) {
+      res.status(400).type('html').send(`<!doctype html><p>${e.message}</p>`);
     }
   });
 

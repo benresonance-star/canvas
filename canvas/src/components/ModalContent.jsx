@@ -8,6 +8,7 @@ import { PdfPreviewFrame } from './PdfPreviewFrame.jsx';
 import { SpreadsheetPreviewFrame } from './SpreadsheetPreviewFrame.jsx';
 import { AudioPlayer } from './AudioPlayer.jsx';
 import { audioSkinUsesDarkText, resolveAudioSkinColor } from '../lib/audioSkin.js';
+import { NotePreviewFrame } from './NotePreviewFrame.jsx';
 
 export function ModalContent({ card, version }) {
   const cardType = normalizeCardType(card?.type);
@@ -150,6 +151,16 @@ export function ModalContent({ card, version }) {
             {strings.preview.transcriptUnavailable}
           </div>
         </div>
+      );
+    }
+    if (cardType === 'markdown' || cardType === 'user_note') {
+      return (
+        <NotePreviewFrame
+          content={body}
+          contentKey={`${card.id}-v${version.version}-${cardType}-modal`}
+          isActive
+          compact={false}
+        />
       );
     }
     return (

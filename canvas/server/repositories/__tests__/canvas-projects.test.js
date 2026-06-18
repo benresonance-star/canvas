@@ -2,9 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../../db.js', () => ({
   query: vi.fn(),
+  pool: { connect: vi.fn() },
 }));
 
-import { query } from '../../db.js';
+vi.mock('../project-primitives.js', () => ({
+  deleteProjectPrimitiveScope: vi.fn(),
+}));
+
+import { pool, query } from '../../db.js';
+import { deleteProjectPrimitiveScope } from '../project-primitives.js';
 import {
   getCanvasIndex,
   putCanvasIndex,
@@ -24,6 +30,8 @@ function updateReturning(revision = 1, updatedAt = '2026-06-14T00:00:00.000Z') {
 describe('canvas-projects repository', () => {
   beforeEach(() => {
     vi.mocked(query).mockReset();
+    vi.mocked(pool.connect).mockReset();
+    vi.mocked(deleteProjectPrimitiveScope).mockReset();
   });
 
   it('getCanvasIndex returns null when missing', async () => {
@@ -791,7 +799,19 @@ describe('canvas-projects repository', () => {
     expect(query.mock.calls[1][0]).toContain('revision = $5');
   });
 
-  it('putCanvasProject syncs index name and deletes project', async () => {
+  it('putCanvasProject syncs index name and deletes project primitives transactionally', async () => {
+    const client = {
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+      release: vi.fn(),
+    };
+    vi.mocked(pool.connect).mockResolvedValue(client);
+    vi.mocked(deleteProjectPrimitiveScope).mockResolvedValue({
+      clusterCount: 1,
+      primitiveMembershipCount: 2,
+      orphanPrimitiveCount: 1,
+      eventCount: 1,
+      deletedPrimitiveCounts: {},
+    });
     vi.mocked(query)
       .mockResolvedValueOnce({
         rows: [{ revision: '1', payload: {}, updated_at: '2020-01-01' }],
@@ -812,10 +832,16 @@ describe('canvas-projects repository', () => {
           updated_at: '2020-01-01',
         }],
       })
-      .mockResolvedValueOnce(updateReturning(2))
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce(updateReturning(2));
     await putCanvasProject('p1', { projectName: 'New Name', cards: [] }, 1);
     await deleteCanvasProject('p1');
-    expect(query.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(deleteProjectPrimitiveScope).toHaveBeenCalledWith('p1', client);
+    expect(client.query).toHaveBeenCalledWith('BEGIN');
+    expect(client.query).toHaveBeenCalledWith(
+      'DELETE FROM canvas_project_document WHERE project_id = $1',
+      ['p1'],
+    );
+    expect(client.query).toHaveBeenCalledWith('COMMIT');
+    expect(client.release).toHaveBeenCalled();
   });
 });

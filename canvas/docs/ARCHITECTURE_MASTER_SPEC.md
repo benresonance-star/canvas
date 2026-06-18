@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.06.18.1
-**Version label:** sync-repair-bookmark-sidecars-agent-markdown
+**Version:** 2026.06.18.2
+**Version label:** workspace-primitives-bookmark-open-agent-chat-cards
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -492,6 +492,35 @@ URL: https://example.com/page
 - Folder scan matching uses the path-aware folder key first, then normalized bookmark URL as a fallback to avoid duplicate bookmark staging after filename fallback or repair.
 - Folder scan ownership is explicit: a scan only uses live canvas cards as baseline when the scan project is the settled active project and no switch is in progress.
 
+### Workspace primitive scope and cleanup (shipped)
+
+The workspace side panel has two projections:
+
+- **Project** view is the default. It is derived from the active project's canvas cards and dock/staged cards, plus database primitives reachable from that project scope.
+- **All Projects** view groups primitives and events by project metadata from `canvas_workspace_index.payload.projects`; aggregate queries must not surface clusters or primitives outside active or archived projects.
+
+Selection and navigation rules:
+
+- `workspacePlacementIndex.js` maps primitive refs to canvas/dock placement so selecting a canvas artifact highlights the matching workspace row and selecting a workspace row can highlight the canvas card.
+- Double-clicking artifacts or clusters in the workspace tree zooms the canvas with right-dock-aware padding; the inspector is not the owner of zoom behavior.
+- Agent chat cards use the same canvas card shell as artifacts but carry a thin `#39ff14` outline matching the agent robot icon to make thread cards recognizable.
+
+Cleanup rules:
+
+- Project deletion runs `deleteProjectPrimitiveScope` in the project delete transaction.
+- Missing dock-only folder artifacts are pruned during successful folder scans and call `DELETE /projects/:projectId/artifacts/:artifactId` for targeted project-scope cleanup.
+- Deleting a missing/red canvas card uses the same targeted artifact cleanup helper.
+- `deleteProjectArtifactRef` removes project cluster membership and deletes the artifact row only when no project scope still references it.
+- `scripts/purge-orphan-workspace-items.mjs` is a one-off dev/admin purge for primitives not mapped to active or archived projects; dry run is default.
+
+### Bookmark previews and open behavior (shipped)
+
+- `GET /bookmarks/preview` fetches metadata and uses server-side screenshot fallback for Amazon links whose Open Graph image is a generic Amazon logo.
+- If screenshot fallback fails for a generic Amazon image, the preview image is `null`; the client must not resurrect a stale cached Amazon logo from `objectUrl` or `previewCacheKey`.
+- Bookmark editors expose refresh-preview actions that re-fetch metadata and clear stale cached preview sidecars when a new preview image is saved.
+- `GET /bookmarks/embed` can serve same-origin proxied HTML for editor preview surfaces that need embeddable page content.
+- Canvas bookmark/link open behavior is external: double-clicking a bookmark card opens the pinned `externalUrl` in a new browser tab/window and does not open `CardModal` full-screen preview.
+
 ### Phase 3 (partial): Postgres spec tables and dual-write
 
 Implemented by `server/migrations/0010_spec_data_plane.sql`:
@@ -615,9 +644,9 @@ Until layout is fully authoritative in `spec_canvas_state`, the client keeps `ca
 | `routes/canvasPreviews.js` | `/canvas/previews/*` |
 | `routes/canvasAgentChat.js` | `/canvas/agent-chat/*` |
 | `routes/spec.js` | `/canvas/projects/:id/spec-*`, `/spec/*` |
-| `routes/clusters.js` | `/clusters/*` |
-| `routes/artifacts.js` | `/artifacts/*`, `/bookmarks/preview` |
-| `routes/primitives.js` | `/primitives/*`, `/relationships/*`, `/notes/*`, `/assertions/*`, `/tasks/*` |
+| `routes/clusters.js` | `/clusters/*`, `DELETE /projects/:projectId/artifacts/:artifactId` |
+| `routes/artifacts.js` | `/artifacts/*`, `/bookmarks/preview`, `/bookmarks/embed` |
+| `routes/primitives.js` | `/primitives/*`, `/relationships/*`, `/notes/*`, `/assertions/*`, `/tasks/*`, `/workspace/primitives`, `/workspace/events` |
 | `routes/agent.js` | `/agent/*` |
 
 `server/index.js` — middleware, DB init, route registration, listen only.
@@ -750,6 +779,7 @@ flowchart LR
 | Spec vs document drift | `GET /canvas/projects/:id/spec-canvas` vs document revision |
 | Local-only mode | `isServerSyncEnabled()` false → footer banner |
 | Bookmark duplicate on reconnect | Folder key, `.bookmark.md` fallback filename, and normalized URL matching |
+| Amazon bookmark logo persists | Refresh preview; verify generic-logo suppression and screenshot fallback before checking cached sidecars |
 
 ### DB inspection
 
@@ -779,7 +809,7 @@ npm run test:features       # feature hook tests
 npm run lint
 node scripts/capture-architecture-baseline.mjs
 node scripts/verify-project-sync-exports.mjs
-npx vitest run src/lib/__tests__/markdownMessage.test.js src/lib/__tests__/canvasPointerGeometry.test.js src/lib/__tests__/bookmarkUrl.test.js src/lib/__tests__/folderScan.test.js
+npx vitest run src/lib/__tests__/markdownMessage.test.js src/lib/__tests__/canvasPointerGeometry.test.js src/lib/__tests__/bookmarkUrl.test.js src/lib/__tests__/bookmarkPreviewApi.test.js src/lib/__tests__/folderScan.test.js
 ```
 
 ### CI
@@ -897,6 +927,15 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-06-18 — Workspace primitives, bookmark open behavior, and chat cards (implemented)
+
+- Bumped the active spec to `2026.06.18.2`.
+- Added project/all-project workspace primitive projections, canvas/workspace selection sync, side-panel-aware double-click zoom for artifacts and clusters, and project-scoped primitive/event aggregate routes.
+- Added project primitive cleanup paths for project deletion, missing dock-only folder artifacts, missing/red canvas card deletion, and one-off orphan workspace purge tooling.
+- Hardened bookmark previews for Amazon generic-logo cases, added refresh paths for stale cached previews, and documented `/bookmarks/embed` for same-origin editor preview surfaces.
+- Changed canvas bookmark/link double-click behavior to open the pinned URL externally instead of opening a full-screen card modal.
+- Added thin `#39ff14` outlines on canvas agent chat cards to match the robot agent icon.
 
 ### 2026-06-18 — Sync repair, bookmark sidecars, and agent markdown (implemented)
 

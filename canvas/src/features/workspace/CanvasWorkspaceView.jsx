@@ -18,10 +18,16 @@ import {
 import { SelectProjectPrompt } from '../../components/SelectProjectPrompt.jsx';
 import {
   clampCanvasZoom,
+  canvasViewForCards,
   setViewZoomAtViewportCenter,
 } from '../../lib/canvasView.js';
 import { getContextLimits } from '../../lib/agentContextContent.js';
+import { externalUrlForCard } from '../../lib/bookmarkCardOpen.js';
 import { clusterSelectionStatsFromCards } from '../../lib/clusterMembers.js';
+import {
+  buildPrimitiveSelectionIndex,
+  primitivePlacementKey,
+} from '../../lib/workspacePlacementIndex.js';
 import { fetchCanvasProjectDocument } from '../../lib/canvasProjectsApi.js';
 import {
   artifactCountAuditStatus,
@@ -49,6 +55,8 @@ import { CreateClusterDialog } from '../../components/CreateClusterDialog.jsx';
 
 const ARTIFACT_AUDIT_RETRY_MS = 500;
 const ARTIFACT_AUDIT_MAX_RETRIES = 10;
+const RIGHT_DOCK_RESERVED_WIDTH_PX = 448;
+const ARTIFACT_ZOOM_PADDING_PX = 220;
 
 /**
  * Loaded-state workspace UI extracted from App.jsx (Phase 1c).
@@ -173,7 +181,6 @@ export function CanvasWorkspaceView({
     selectedCardIds,
     toggleCardSelect,
     clearCardSelection,
-    removeCardFromSelection,
     clusterHullSource,
     highlightedClusterId,
     setSelectedClusterId,
@@ -250,6 +257,105 @@ export function CanvasWorkspaceView({
     agentChatLiveCardId,
     agentChatTranscriptRevision,
   } = agent;
+
+  const primitiveSelectionIndex = useMemo(() =>
+    buildPrimitiveSelectionIndex({
+      cards: state.cards,
+      stagedSyncCards,
+      threads: agentChatThreadIndex.threads,
+      connectorId: singleConnectorId,
+    }),
+  [state.cards, stagedSyncCards, agentChatThreadIndex.threads, singleConnectorId]);
+  const activeCardPrimitiveKey = activeCardId
+    ? primitiveSelectionIndex.byCardId.get(activeCardId) ?? ''
+    : '';
+  const [workspaceSelectedPrimitiveKey, setWorkspaceSelectedPrimitiveKey] = useState('');
+  const selectedWorkspacePrimitiveKey = activeCardPrimitiveKey || workspaceSelectedPrimitiveKey;
+
+  const handleWorkspaceSelectPrimitive = useCallback((ref, options = {}) => {
+    if (!ref?.type || !ref?.id) return;
+    if (options.syncSelection !== false) {
+      const key = primitivePlacementKey(ref.type, ref.id);
+      const hit = primitiveSelectionIndex.byPrimitiveKey.get(key);
+      if (key && hit) {
+        setWorkspaceSelectedPrimitiveKey(key);
+        clearCardSelection?.();
+        if (hit.surface === 'canvas' && hit.cardId) {
+          setActiveCardId(hit.cardId);
+        } else if (hit.surface === 'dock') {
+          setActiveCardId(null);
+        }
+      }
+    }
+    openInspector(ref);
+  }, [
+    clearCardSelection,
+    openInspector,
+    primitiveSelectionIndex,
+    setActiveCardId,
+  ]);
+
+  const zoomCardsWithSidePanelPadding = useCallback((cardsToFit) => {
+    if (!cardsToFit.length) return;
+    clearCardSelection?.();
+    const sidePanelReservedWidth = Math.min(
+      RIGHT_DOCK_RESERVED_WIDTH_PX,
+      Math.max(0, canvasViewportSize.width - 320),
+    );
+    setCanvasView(() =>
+      canvasViewForCards(cardsToFit, canvasViewportSize, {
+        paddingTop: ARTIFACT_ZOOM_PADDING_PX,
+        paddingRight: ARTIFACT_ZOOM_PADDING_PX + sidePanelReservedWidth,
+        paddingBottom: ARTIFACT_ZOOM_PADDING_PX,
+        paddingLeft: ARTIFACT_ZOOM_PADDING_PX,
+      }),
+    );
+  }, [
+    canvasViewportSize,
+    clearCardSelection,
+    setCanvasView,
+  ]);
+
+  const handleWorkspaceZoomPrimitive = useCallback((ref) => {
+    if (!ref?.type || !ref?.id) return;
+    if (ref.type === 'artifact') {
+      const key = primitivePlacementKey(ref.type, ref.id);
+      const hit = primitiveSelectionIndex.byPrimitiveKey.get(key);
+      if (!key || hit?.surface !== 'canvas' || !hit.cardId) return;
+      const card = state.cards.find((candidate) => candidate.id === hit.cardId);
+      if (!card) return;
+
+      setWorkspaceSelectedPrimitiveKey(key);
+      setActiveCardId(card.id);
+      zoomCardsWithSidePanelPadding([card]);
+      return;
+    }
+
+    if (ref.type === 'cluster') {
+      const memberRefs = clusterHullSource.membersByClusterId?.get(ref.id) ?? [];
+      const cardsById = new Map(state.cards.map((card) => [card.id, card]));
+      const cardsToFit = memberRefs
+        .map((memberRef) => {
+          if (memberRef?.type !== 'artifact' || !memberRef?.id) return null;
+          const key = primitivePlacementKey('artifact', memberRef.id);
+          const hit = primitiveSelectionIndex.byPrimitiveKey.get(key);
+          if (hit?.surface !== 'canvas' || !hit.cardId) return null;
+          return cardsById.get(hit.cardId) ?? null;
+        })
+        .filter(Boolean);
+      if (!cardsToFit.length) return;
+
+      setWorkspaceSelectedPrimitiveKey(primitivePlacementKey(ref.type, ref.id));
+      setActiveCardId(null);
+      zoomCardsWithSidePanelPadding(cardsToFit);
+    }
+  }, [
+    clusterHullSource.membersByClusterId,
+    primitiveSelectionIndex,
+    setActiveCardId,
+    state.cards,
+    zoomCardsWithSidePanelPadding,
+  ]);
 
   const {
     showSearch,
@@ -332,6 +438,18 @@ export function CanvasWorkspaceView({
     }
     return strings.empty.desktopHint;
   }, [folderNeedsReconnect, folderNeedsConnectUi, connectedFolderName]);
+
+  const openCardOrExternalLink = useCallback((cardOrId) => {
+    const card = typeof cardOrId === 'string'
+      ? state.cards.find((candidate) => candidate.id === cardOrId)
+      : cardOrId;
+    const externalUrl = externalUrlForCard(card);
+    if (externalUrl) {
+      window.open(externalUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (card?.id) setOpenCardId(card.id);
+  }, [state.cards, setOpenCardId]);
 
   const openCard = openCardId ? state.cards.find(c => c.id === openCardId) : null;
   const openCardMissingFromFolder = Boolean(
@@ -476,7 +594,7 @@ export function CanvasWorkspaceView({
       {isMobile ? (
         <MobileView
           cards={filteredCards}
-          onOpen={setOpenCardId}
+          onOpen={openCardOrExternalLink}
           onPinVersion={pinVersion}
           onDeleteCard={removeCard}
           folderKeySet={folderKeySet}
@@ -491,7 +609,7 @@ export function CanvasWorkspaceView({
           allCards={state.cards}
           activeCardId={activeCardId}
           setActiveCardId={setActiveCardId}
-          onOpenCard={setOpenCardId}
+          onOpenCard={openCardOrExternalLink}
           onPinVersion={pinVersion}
           onUpdateCard={updateCard}
           onBatchUpdateCardPositions={batchUpdateCardPositions}
@@ -773,7 +891,7 @@ export function CanvasWorkspaceView({
           onSelect={(card) => {
             setShowSearch(false);
             setSearchQuery('');
-            setOpenCardId(card.id);
+            openCardOrExternalLink(card);
           }}
           onClose={() => { setShowSearch(false); setSearchQuery(''); }}
         />
@@ -850,12 +968,12 @@ export function CanvasWorkspaceView({
             subclusters: clusterHullSource.clusters,
             reloadKey: workspaceTreeReloadKey,
             cards: state.cards,
-            stagedSyncCards: state.stagedSyncCards,
+            stagedSyncCards,
             threads: agentChatThreadIndex.threads,
             connectorId: singleConnectorId,
-            onSelectPrimitive: (ref) => {
-              openInspector(ref);
-            },
+            selectedPrimitiveKey: selectedWorkspacePrimitiveKey,
+            onSelectPrimitive: handleWorkspaceSelectPrimitive,
+            onZoomPrimitive: handleWorkspaceZoomPrimitive,
           }}
           agentPanelOpen={agentPanelOpen}
           onCloseAgentPanel={closeAgentPanel}
@@ -936,7 +1054,7 @@ export function CanvasWorkspaceView({
             onSelectPrimitive: openInspector,
             onOpenCardKey: (cardKey) => {
               const card = state.cards.find((c) => c.key === cardKey);
-              if (card) setOpenCardId(card.id);
+              if (card) openCardOrExternalLink(card);
             },
             cards: state.cards,
             selectedCardIds,

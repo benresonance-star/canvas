@@ -66,13 +66,43 @@ export function mergeNewlyStaged(stagedCards, newlyStaged) {
 /**
  * @param {{ key?: string, prefix?: string, name?: string, versions?: Array<{ filename?: string }> }} entry
  */
-function canonicalKeyForSyncEntry(entry) {
+export function canonicalKeyForSyncEntry(entry) {
   if (!entry) return '';
   for (const v of entry.versions ?? []) {
     const relativePath = folderRelativePathFromVersion(v);
     if (relativePath) return cardKeyFromFilename(relativePath);
   }
   return toCanonicalSyncKey(entry.key);
+}
+
+export function artifactRefFromSyncEntry(entry) {
+  if (!entry) return null;
+  const pinned =
+    (entry.versions ?? []).find((version) => version.version === entry.pinnedVersion)
+    ?? entry.versions?.[0];
+  const ref = pinned?.artifactRef ?? entry.artifactRef;
+  return ref?.id && (ref.type ?? 'artifact') === 'artifact'
+    ? { id: ref.id, type: 'artifact' }
+    : null;
+}
+
+export function missingDockOnlyStagedRows(foundKeys, cards = [], stagedSyncCards = []) {
+  const foundCanonicalKeys = new Set(
+    (foundKeys ?? [])
+      .map((key) => toCanonicalSyncKey(key))
+      .filter(Boolean),
+  );
+  const canvasCanonicalKeys = new Set(
+    (cards ?? [])
+      .map((card) => canonicalKeyForSyncEntry(card))
+      .filter(Boolean),
+  );
+
+  return (stagedSyncCards ?? []).filter((staged) => {
+    const key = canonicalKeyForSyncEntry(staged);
+    if (!key || canvasCanonicalKeys.has(key)) return false;
+    return !foundCanonicalKeys.has(key);
+  });
 }
 
 export function bookmarkUrlForSyncEntry(entry) {

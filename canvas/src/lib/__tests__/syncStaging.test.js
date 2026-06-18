@@ -5,7 +5,9 @@ import {
   buildConfirmChangesForDialog,
   buildFolderConnectConfirmChanges,
   buildSyncChangesFromFolder,
+  artifactRefFromSyncEntry,
   filterSyncChangesForConfirm,
+  missingDockOnlyStagedRows,
   partitionSyncChanges,
   canvasCardToStaged,
   dockCardFromCanvas,
@@ -74,6 +76,77 @@ describe('mergeNewlyStaged', () => {
     const next = mergeNewlyStaged(existing, incoming);
     expect(next).toHaveLength(1);
     expect(next[0].stagingId).toBe('s1');
+  });
+});
+
+describe('missingDockOnlyStagedRows', () => {
+  it('returns dock-only rows absent from the latest folder scan', () => {
+    const staged = [
+      {
+        stagingId: 'missing-dock',
+        key: 'docs__missing',
+        type: 'html',
+        versions: [{ filename: 'docs__missing-v1.html' }],
+      },
+      {
+        stagingId: 'present-dock',
+        key: 'docs__present',
+        type: 'html',
+        versions: [{ filename: 'docs__present-v1.html' }],
+      },
+    ];
+
+    const missing = missingDockOnlyStagedRows(['docs__present'], [], staged);
+
+    expect(missing).toEqual([staged[0]]);
+  });
+
+  it('does not return a missing dock row when the same key is on canvas', () => {
+    const canvas = [{
+      id: 'card-1',
+      key: 'docs__missing',
+      type: 'html',
+      versions: [{ filename: 'docs__missing-v1.html' }],
+    }];
+    const staged = [{
+      stagingId: 'dock-1',
+      key: 'docs__missing',
+      type: 'html',
+      versions: [{ filename: 'docs__missing-v1.html' }],
+    }];
+
+    expect(missingDockOnlyStagedRows([], canvas, staged)).toHaveLength(0);
+  });
+
+  it('matches nested folder relative paths canonically', () => {
+    const staged = [{
+      stagingId: 'dock-1',
+      key: 'wrong-key',
+      type: 'image',
+      versions: [{
+        filename: 'img__photo-v1.png',
+        relativePath: 'refs/img__photo-v1.png',
+      }],
+    }];
+
+    expect(missingDockOnlyStagedRows(['refs/img__photo'], [], staged)).toHaveLength(0);
+    expect(missingDockOnlyStagedRows(['other/img__photo'], [], staged)).toEqual(staged);
+  });
+});
+
+describe('artifactRefFromSyncEntry', () => {
+  it('returns the pinned artifact ref from a sync entry', () => {
+    expect(artifactRefFromSyncEntry({
+      pinnedVersion: 2,
+      versions: [
+        { version: 1, artifactRef: { id: 'artifact-1', type: 'artifact' } },
+        { version: 2, artifactRef: { id: 'artifact-2', type: 'artifact' } },
+      ],
+    })).toEqual({ id: 'artifact-2', type: 'artifact' });
+  });
+
+  it('returns null when no artifact ref is present', () => {
+    expect(artifactRefFromSyncEntry({ versions: [{ version: 1 }] })).toBeNull();
   });
 });
 

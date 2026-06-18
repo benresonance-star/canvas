@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkspaceTree } from '../buildWorkspaceTree.js';
+import { buildAllProjectsWorkspaceTree, buildWorkspaceTree } from '../buildWorkspaceTree.js';
 
 describe('buildWorkspaceTree', () => {
   it('groups artifacts and relationships by subtype with leaf refs', () => {
@@ -75,6 +75,43 @@ describe('buildWorkspaceTree', () => {
     expect(tree.children[1].id).toBe('artifacts');
   });
 
+  it('renders project subclusters independently from primitive artifact rows', () => {
+    const tree = buildWorkspaceTree({
+      projectName: 'Project One',
+      items: [
+        {
+          type: 'artifact',
+          id: 'art-active',
+          status: 'doc',
+          summary: 'doc: Active artifact',
+          created_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+      events: [],
+      subclusters: [
+        {
+          id: 'cluster-a',
+          name: 'Setup',
+          status: 'active',
+          created_at: '2026-01-02T00:00:00Z',
+        },
+        {
+          id: 'cluster-b',
+          name: 'Shopping',
+          status: 'active',
+          created_at: '2026-01-03T00:00:00Z',
+        },
+      ],
+    });
+
+    const clusters = tree.children.find((section) => section.id === 'clusters');
+    const artifacts = tree.children.find((section) => section.id === 'artifacts');
+
+    expect(clusters.count).toBe(2);
+    expect(clusters.children.map((node) => node.label)).toEqual(['Shopping', 'Setup']);
+    expect(artifacts.count).toBe(1);
+  });
+
   it('groups audio artifacts by subtype', () => {
     const tree = buildWorkspaceTree({
       projectName: 'Media',
@@ -115,5 +152,55 @@ describe('buildWorkspaceTree', () => {
     const eventsSection = tree.children.find((c) => c.id === 'events');
     const created = eventsSection.children.find((c) => c.label === 'created');
     expect(created.children[0].primitiveRef).toEqual({ type: 'artifact', id: 'art-1' });
+  });
+
+  it('groups all-project rows into project subtrees with normal sections', () => {
+    const tree = buildAllProjectsWorkspaceTree({
+      items: [
+        {
+          project_id: 'project-b',
+          project_name: 'Project B',
+          project_order: 2,
+          type: 'artifact',
+          id: 'artifact-b',
+          status: 'doc',
+          summary: 'doc: B.md',
+          created_at: '2026-01-02T00:00:00Z',
+        },
+        {
+          project_id: 'project-a',
+          project_name: 'Project A',
+          project_order: 1,
+          type: 'cluster',
+          id: 'cluster-a',
+          summary: 'Setup',
+          created_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+      events: [
+        {
+          project_id: 'project-a',
+          project_name: 'Project A',
+          project_order: 1,
+          id: 'event-a',
+          action: 'created',
+          target_id: 'cluster-a',
+          target_type: 'cluster',
+          occurred_at: '2026-01-03T00:00:00Z',
+        },
+      ],
+    });
+
+    expect(tree.label).toBe('All Projects');
+    expect(tree.children.map((node) => node.label)).toEqual(['Project A', 'Project B']);
+    expect(tree.count).toBe(3);
+
+    const projectA = tree.children[0];
+    expect(projectA.id).toBe('project-project-a:workspace-root');
+    expect(projectA.children.map((node) => node.id)).toContain('project-project-a:clusters');
+    const clusters = projectA.children.find((node) => node.label === 'Clusters');
+    const events = projectA.children.find((node) => node.label === 'Events');
+    expect(clusters.count).toBe(1);
+    expect(events.count).toBe(1);
   });
 });

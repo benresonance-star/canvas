@@ -152,6 +152,7 @@ export function useAgentChatShell({
   const [agentExtendedContext, setAgentExtendedContext] = useState(readAgentExtendedContext);
   const [agentContextEstimates, setAgentContextEstimates] = useState([]);
   const [agentLastTokenEstimate, setAgentLastTokenEstimate] = useState(null);
+  const [agentContextRevision, setAgentContextRevision] = useState(0);
   const [agentChatMessages, setAgentChatMessages] = useState([]);
   const [agentChatLoading, setAgentChatLoading] = useState(false);
   const [agentChatError, setAgentChatError] = useState(null);
@@ -1216,6 +1217,7 @@ export function useAgentChatShell({
     agentChatThreadIndex,
     singleConnectorId,
     agentChatMessages.length,
+    agentContextRevision,
   ]);
 
   useEffect(() => {
@@ -1271,6 +1273,7 @@ export function useAgentChatShell({
   const handleRefreshContextSession = useCallback(() => {
     if (!window.confirm(strings.agent.contextRefreshConfirm)) return;
     agentContextRegistryRef.current = createContextRegistry();
+    setAgentContextRevision((r) => r + 1);
     const nextMessages = agentChatMessagesRef.current.filter(
       (m) => m.kind !== 'context_add' && m.kind !== 'context_remove',
     );
@@ -1289,6 +1292,7 @@ export function useAgentChatShell({
       if (!entry) return;
 
       unregisterContextCard(registry, cardId);
+      setAgentContextRevision((r) => r + 1);
       setAgentContextStatusByCardId((prev) => {
         if (!Object.prototype.hasOwnProperty.call(prev, cardId)) return prev;
         const next = { ...prev };
@@ -1438,6 +1442,9 @@ export function useAgentChatShell({
         }
         for (const entry of diff.removed) {
           unregisterContextCard(registry, entry.cardId);
+        }
+        if (diff.added.length || diff.removed.length) {
+          setAgentContextRevision((r) => r + 1);
         }
 
         const assistantMsg = {

@@ -1,6 +1,8 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import React, { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 import { strings } from '../content/strings.js';
 import { saveUserNote } from '../lib/ingest/saveUserNote.js';
+import { markdownViewToggleLabel } from '../lib/markdownMessage.js';
+import { MarkdownMessage } from './MarkdownMessage.jsx';
 
 export const UserNoteEditor = forwardRef(function UserNoteEditor({
   card,
@@ -23,20 +25,25 @@ export const UserNoteEditor = forwardRef(function UserNoteEditor({
 }, ref) {
   const initialBody = version?.content ?? '';
   const initialName = card?.name ?? '';
+  const draftKey = `${card.id}:${versionNum}:${initialBody}`;
+  const [lastDraftKey, setLastDraftKey] = useState(draftKey);
   const [body, setBody] = useState(initialBody);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [formattedView, setFormattedView] = useState(() => Boolean(initialBody));
 
-  useEffect(() => {
-    setBody(version?.content ?? '');
+  if (lastDraftKey !== draftKey) {
+    setLastDraftKey(draftKey);
+    setBody(initialBody);
+    setFormattedView(Boolean(initialBody));
     setError(null);
-  }, [version?.content, versionNum, card.id]);
+  }
 
   const bodyDirty = body !== initialBody;
   const nameDirty = (title ?? '') !== initialName;
   const dirty = bodyDirty || nameDirty;
   const projectOnly = !folderHandle || !version?.filename;
-  const editBlocked = false;
+  const editBlocked = userNoteDisabled;
   const canSave = dirty && !saving && (projectOnly || Boolean(folderHandle && version?.filename));
 
   const handleSave = async () => {
@@ -142,14 +149,34 @@ export const UserNoteEditor = forwardRef(function UserNoteEditor({
       <p className="sans text-[10px] text-muted px-12 pt-4 shrink-0">
         {strings.userNote.editHint}
       </p>
+      <div className="shrink-0 flex justify-end px-12 pt-2">
+        <button
+          type="button"
+          className="sans rounded-full border border-border-subtle bg-surface-muted/90 px-2.5 py-1 text-[10px] text-muted shadow-sm hover:text-primary"
+          onClick={() => setFormattedView((value) => !value)}
+          aria-pressed={!formattedView}
+        >
+          {markdownViewToggleLabel(formattedView)}
+        </button>
+      </div>
       <div className="flex-1 min-h-0 px-12 py-4">
-        <textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          disabled={editBlocked}
-          className="w-full h-full min-h-[20rem] sans text-sm bg-surface border border-border rounded px-4 py-3 text-primary font-serif leading-relaxed resize-none disabled:opacity-60"
-          placeholder={strings.userNote.bodyPlaceholder}
-        />
+        {formattedView ? (
+          <div className="h-full min-h-[20rem] overflow-y-auto rounded border border-border bg-surface px-4 py-3 text-primary leading-relaxed">
+            {body ? (
+              <MarkdownMessage content={body} />
+            ) : (
+              <p className="serif text-muted italic">{strings.userNote.bodyPlaceholder}</p>
+            )}
+          </div>
+        ) : (
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            disabled={editBlocked}
+            className="w-full h-full min-h-[20rem] sans text-sm bg-surface border border-border rounded px-4 py-3 text-primary font-serif leading-relaxed resize-none disabled:opacity-60"
+            placeholder={strings.userNote.bodyPlaceholder}
+          />
+        )}
       </div>
       {missingFromFolder && (
         <p className="sans text-xs text-danger px-12 pb-2">{strings.userNote.cannotSaveMissing}</p>

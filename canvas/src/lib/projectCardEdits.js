@@ -53,8 +53,16 @@ export async function saveBookmarkToProject(card, { url, title, preview, linkId 
     || card.name;
   const contentHash = await bookmarkContentHash(normalizedUrl);
   const cardKey = bookmarkCardKeyFromUrl(normalizedUrl, linkId);
+  const clearCachedPreview = Boolean(preview?.imageUrl);
   const versions = (card.versions ?? []).map((v) => ({
-    ...v,
+    ...(clearCachedPreview
+      ? (() => {
+        const next = { ...v };
+        delete next.previewCacheKey;
+        delete next.objectUrl;
+        return next;
+      })()
+      : v),
     externalUrl: normalizedUrl,
     content_hash: contentHash,
     bookmarkPreview: {

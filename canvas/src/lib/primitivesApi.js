@@ -95,6 +95,13 @@ export async function removeClusterMember(clusterId, ref) {
   });
 }
 
+export async function deleteProjectArtifactPrimitive(projectId, artifactId) {
+  return request(
+    `/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}`,
+    { method: 'DELETE' },
+  );
+}
+
 export async function deleteSubCluster(clusterId) {
   return request(`/clusters/${clusterId}`, { method: 'DELETE' });
 }
@@ -121,11 +128,26 @@ export async function listPrimitives(clusterId, { type, limit } = {}) {
   return request(`/clusters/${clusterId}/primitives${q ? `?${q}` : ''}`);
 }
 
+export async function listWorkspacePrimitives({ type, limit } = {}) {
+  const params = new URLSearchParams();
+  if (type) params.set('type', type);
+  if (limit) params.set('limit', String(limit));
+  const q = params.toString();
+  return request(`/workspace/primitives${q ? `?${q}` : ''}`);
+}
+
 export async function listClusterEvents(clusterId, { limit } = {}) {
   const params = new URLSearchParams();
   if (limit) params.set('limit', String(limit));
   const q = params.toString();
   return request(`/clusters/${clusterId}/events${q ? `?${q}` : ''}`);
+}
+
+export async function listWorkspaceEvents({ limit } = {}) {
+  const params = new URLSearchParams();
+  if (limit) params.set('limit', String(limit));
+  const q = params.toString();
+  return request(`/workspace/events${q ? `?${q}` : ''}`);
 }
 
 export async function getPrimitiveDetail(type, id) {

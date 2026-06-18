@@ -162,7 +162,7 @@ export function Canvas({
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
     return clientToWorldPoint(view, rect, clientX, clientY);
-  }, [view.x, view.y, view.zoom]);
+  }, [view]);
 
   const setCanvasRef = useCallback(
     (el) => {
@@ -311,7 +311,7 @@ export function Canvas({
         return map;
       });
     }
-  }, [draggingCluster, view.zoom]);
+  }, [draggingCluster, onBatchUpdateCardPositions, view.zoom]);
 
   const onMouseMove = (e) => {
     if (panning && panStart) {
@@ -961,7 +961,6 @@ export function Canvas({
               cardKey: card.key,
             })}
             bookmarkEditDisabled={readOnly}
-            folderLinked={folderConnected}
           />
         ))}
         <ClusterHullLayer

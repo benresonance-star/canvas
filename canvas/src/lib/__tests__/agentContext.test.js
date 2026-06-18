@@ -10,7 +10,11 @@ import {
   mergeContextCardsById,
   resolveEffectiveAgentContextCards,
 } from '../agentContext.js';
-import { createContextRegistry, registerContextCard } from '../agentContextSession.js';
+import {
+  createContextRegistry,
+  registerContextCard,
+  unregisterContextCard,
+} from '../agentContextSession.js';
 
 describe('cardsFromSelection', () => {
   const cards = [
@@ -244,5 +248,26 @@ describe('resolveEffectiveAgentContextCards', () => {
     const registry = createContextRegistry();
     registerContextCard(registry, cards[2]);
     expect(cardsFromContextRegistry(registry, cards).map((c) => c.id)).toEqual(['b']);
+  });
+
+  it('does not reintroduce an unregistered selected card from registry', () => {
+    const registry = createContextRegistry();
+    registerContextCard(registry, cards[1]);
+    unregisterContextCard(registry, cards[1].id);
+
+    const selected = new Set(['b']);
+    const effective = resolveEffectiveAgentContextCards({
+      mode: 'selected',
+      cards,
+      selectedCardIds: selected,
+      viewportSize: { width: 800, height: 600 },
+      canvasView: { x: 0, y: 0, zoom: 1 },
+      registry,
+      activeThreadId: 'thread-1',
+      threadIndex,
+      connectorId: 'openai',
+    });
+
+    expect(effective.map((c) => c.id)).toEqual(['b']);
   });
 });

@@ -16,6 +16,7 @@ import {
   subscribeClusterSync,
   unsubscribeClusterSync,
 } from '../lib/clusterSyncHub.js';
+import { deleteProjectArtifactRef } from '../repositories/project-primitives.js';
 
 async function publishClusterMutation(projectId, clusterId, action) {
   const resolvedProjectId = projectId || await resolveProjectIdForCluster(clusterId);
@@ -120,6 +121,23 @@ export function registerClusterRoutes(app, { requireDb, sendClusterError }) {
       await removeClusterMember(req.params.clusterId, { id, type });
       await publishClusterMutation(null, req.params.clusterId, 'member_removed');
       res.json({ ok: true });
+    } catch (e) {
+      sendClusterError(res, e);
+    }
+  });
+
+  app.delete('/projects/:projectId/artifacts/:artifactId', async (req, res) => {
+    if (!requireDb(res)) return;
+    try {
+      const { projectId, artifactId } = req.params;
+      const result = await deleteProjectArtifactRef(projectId, artifactId);
+      publishClusterSync(projectId, 'clusters_updated', {
+        projectId,
+        artifactId,
+        action: 'artifact_removed',
+        updatedAt: new Date().toISOString(),
+      });
+      res.json({ ok: true, cleanup: result });
     } catch (e) {
       sendClusterError(res, e);
     }

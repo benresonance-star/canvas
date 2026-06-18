@@ -1178,6 +1178,7 @@ export function useAppShell() {
     chatSyncRetrying,
     handleRetryChatSync,
     handleClearAgentChat,
+    handleRemoveContextCard,
     activeThreadId,
     agentChatThreadIndex,
     threadPickerOpen,

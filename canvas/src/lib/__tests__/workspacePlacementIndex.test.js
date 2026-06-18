@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { buildWorkspaceTree } from '../buildWorkspaceTree.js';
 import {
   buildPrimitivePlacementIndex,
+  buildPrimitiveSelectionIndex,
   decorateWorkspacePlacement,
+  filterWorkspaceEventsToPlacementIndex,
+  filterWorkspaceItemsToPlacementIndex,
   primitivePlacementKey,
 } from '../workspacePlacementIndex.js';
 
@@ -62,6 +65,99 @@ describe('buildPrimitivePlacementIndex', () => {
       connectorId: 'openai',
     });
     expect(index.get(primitivePlacementKey('artifact', 'art-chat'))).toBe('canvas');
+  });
+});
+
+describe('buildPrimitiveSelectionIndex', () => {
+  it('maps primitive keys to canvas cards and card IDs back to primitive keys', () => {
+    const index = buildPrimitiveSelectionIndex({
+      cards: [artifactCard('c1', 'art-canvas')],
+      stagedSyncCards: [artifactCard('s1', 'art-dock')],
+    });
+
+    expect(index.byPrimitiveKey.get(primitivePlacementKey('artifact', 'art-canvas'))).toEqual({
+      cardId: 'c1',
+      surface: 'canvas',
+    });
+    expect(index.byPrimitiveKey.get(primitivePlacementKey('artifact', 'art-dock'))).toEqual({
+      cardId: 's1',
+      surface: 'dock',
+    });
+    expect(index.byCardId.get('c1')).toBe(primitivePlacementKey('artifact', 'art-canvas'));
+    expect(index.byCardId.get('s1')).toBe(primitivePlacementKey('artifact', 'art-dock'));
+  });
+
+  it('prefers canvas metadata when a primitive is also present in the dock', () => {
+    const index = buildPrimitiveSelectionIndex({
+      cards: [artifactCard('c1', 'art-both')],
+      stagedSyncCards: [artifactCard('s1', 'art-both')],
+    });
+
+    expect(index.byPrimitiveKey.get(primitivePlacementKey('artifact', 'art-both'))).toEqual({
+      cardId: 'c1',
+      surface: 'canvas',
+    });
+  });
+
+  it('resolves agent chat refs through the thread index', () => {
+    const index = buildPrimitiveSelectionIndex({
+      cards: [
+        {
+          id: 'chat-1',
+          key: 'notes__agent',
+          type: 'agent_chat',
+          versions: [],
+        },
+      ],
+      threads: [
+        {
+          threadId: 't1',
+          cardId: 'chat-1',
+          artifactRef: { id: 'art-chat', type: 'artifact' },
+        },
+      ],
+      connectorId: 'openai',
+    });
+
+    expect(index.byPrimitiveKey.get(primitivePlacementKey('artifact', 'art-chat'))).toEqual({
+      cardId: 'chat-1',
+      surface: 'canvas',
+    });
+    expect(index.byCardId.get('chat-1')).toBe(primitivePlacementKey('artifact', 'art-chat'));
+  });
+});
+
+describe('workspace placement filters', () => {
+  it('keeps only canvas and dock primitive rows from a broader project cluster result', () => {
+    const index = buildPrimitivePlacementIndex({
+      cards: [artifactCard('c1', 'art-canvas')],
+      stagedSyncCards: [artifactCard('s1', 'art-dock')],
+    });
+
+    const items = filterWorkspaceItemsToPlacementIndex([
+      { type: 'artifact', id: 'art-canvas', summary: 'canvas' },
+      { type: 'artifact', id: 'art-dock', summary: 'dock' },
+      { type: 'artifact', id: 'art-stale', summary: 'stale' },
+      { type: 'note', id: 'note-stale', summary: 'stale note' },
+    ], index);
+
+    expect(items.map((item) => item.id)).toEqual(['art-canvas', 'art-dock']);
+  });
+
+  it('keeps only events targeting active canvas or dock primitive refs', () => {
+    const index = buildPrimitivePlacementIndex({
+      cards: [artifactCard('c1', 'art-canvas')],
+      stagedSyncCards: [artifactCard('s1', 'art-dock')],
+    });
+
+    const events = filterWorkspaceEventsToPlacementIndex([
+      { id: 'evt-canvas', target_type: 'artifact', target_id: 'art-canvas' },
+      { id: 'evt-dock', target_type: 'artifact', target_id: 'art-dock' },
+      { id: 'evt-stale', target_type: 'artifact', target_id: 'art-stale' },
+      { id: 'evt-cluster', target_type: 'cluster', target_id: 'cluster-1' },
+    ], index);
+
+    expect(events.map((event) => event.id)).toEqual(['evt-canvas', 'evt-dock']);
   });
 });
 

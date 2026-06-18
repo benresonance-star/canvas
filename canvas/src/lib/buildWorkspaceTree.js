@@ -311,6 +311,28 @@ function eventsSection(events) {
   });
 }
 
+function projectKeyForRow(row) {
+  return row?.project_id || 'unknown-project';
+}
+
+function projectNameForRows(projectId, rows) {
+  const named = rows.find((row) => row?.project_name);
+  return named?.project_name || projectId || 'Unknown project';
+}
+
+function projectOrderForRows(rows) {
+  const ordered = rows.find((row) => Number.isFinite(Number(row?.project_order)));
+  return Number(ordered?.project_order ?? Number.MAX_SAFE_INTEGER);
+}
+
+function prefixTreeIds(node, prefix) {
+  return {
+    ...node,
+    id: `${prefix}:${node.id}`,
+    children: (node.children || []).map((child) => prefixTreeIds(child, prefix)),
+  };
+}
+
 /**
  * @param {{ projectName: string, items: object[], events: object[], subclusters: object[] }} input
  */
@@ -334,5 +356,58 @@ export function buildWorkspaceTree({ projectName, items = [], events = [], subcl
     color: getPrimitiveKindColor('artifact'),
     count: totalCount,
     children: sections,
+  };
+}
+
+/**
+ * @param {{ projectName?: string, items?: object[], events?: object[] }} input
+ */
+export function buildAllProjectsWorkspaceTree({
+  projectName = 'All Projects',
+  items = [],
+  events = [],
+} = {}) {
+  const groups = new Map();
+  for (const item of items) {
+    const projectId = projectKeyForRow(item);
+    if (!groups.has(projectId)) groups.set(projectId, { items: [], events: [] });
+    groups.get(projectId).items.push(item);
+  }
+  for (const event of events) {
+    const projectId = projectKeyForRow(event);
+    if (!groups.has(projectId)) groups.set(projectId, { items: [], events: [] });
+    groups.get(projectId).events.push(event);
+  }
+
+  const projectNodes = [...groups.entries()]
+    .map(([projectId, group]) => {
+      const rows = [...group.items, ...group.events];
+      const projectTree = buildWorkspaceTree({
+        projectName: projectNameForRows(projectId, rows),
+        items: group.items,
+        events: group.events,
+        subclusters: [],
+      });
+      const prefixed = prefixTreeIds(projectTree, `project-${projectId}`);
+      return {
+        ...prefixed,
+        projectId,
+        projectArchived: Boolean(rows.find((row) => row?.project_archived)?.project_archived),
+        projectOrder: projectOrderForRows(rows),
+      };
+    })
+    .sort((a, b) => {
+      if (a.projectOrder !== b.projectOrder) return a.projectOrder - b.projectOrder;
+      return a.label.localeCompare(b.label);
+    });
+
+  const totalCount = projectNodes.reduce((sum, node) => sum + (node.count || 0), 0);
+  return {
+    id: 'workspace-root',
+    label: projectName,
+    kind: 'root',
+    color: getPrimitiveKindColor('artifact'),
+    count: totalCount,
+    children: projectNodes,
   };
 }

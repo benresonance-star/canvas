@@ -62,3 +62,9 @@ export async function fetchBookmarkPreview(url) {
     };
   }
 }
+
+export function bookmarkEmbedPreviewUrl(url) {
+  const normalized = normalizeBookmarkUrl(url);
+  if (!normalized) return '';
+  return `${API_BASE}/bookmarks/embed?url=${encodeURIComponent(normalized)}`;
+}

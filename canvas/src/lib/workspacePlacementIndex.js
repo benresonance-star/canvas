@@ -41,6 +41,30 @@ function registerCardPlacements(index, cards, surface, options) {
 }
 
 /**
+ * @param {Map<string, { cardId?: string, surface: 'canvas' | 'dock' }>} byPrimitiveKey
+ * @param {Map<string, string>} byCardId
+ * @param {object[]} cards
+ * @param {'canvas' | 'dock'} surface
+ * @param {{ threads?: object[], connectorId?: string }} options
+ */
+function registerCardSelectionRefs(byPrimitiveKey, byCardId, cards, surface, options) {
+  for (const card of cards ?? []) {
+    const artifactId = artifactRefIdForClusterCard(card, options);
+    const key = primitivePlacementKey('artifact', artifactId);
+    if (!key) continue;
+
+    const cardId = card?.id ?? card?.stagingId;
+    const existing = byPrimitiveKey.get(key);
+    if (!existing || surface === 'canvas') {
+      byPrimitiveKey.set(key, { cardId, surface });
+    }
+    if (cardId) {
+      byCardId.set(cardId, key);
+    }
+  }
+}
+
+/**
  * Map primitive ref keys to canvas/dock placement from active project cards.
  * @param {{ cards?: object[], stagedSyncCards?: object[], threads?: object[], connectorId?: string }} input
  * @returns {Map<string, 'canvas' | 'dock'>}
@@ -56,6 +80,47 @@ export function buildPrimitivePlacementIndex({
   registerCardPlacements(index, stagedSyncCards, 'dock', options);
   registerCardPlacements(index, cards, 'canvas', options);
   return index;
+}
+
+/**
+ * Map active project primitive refs to the card/dock records they came from.
+ * @param {{ cards?: object[], stagedSyncCards?: object[], threads?: object[], connectorId?: string }} input
+ * @returns {{ byPrimitiveKey: Map<string, { cardId?: string, surface: 'canvas' | 'dock' }>, byCardId: Map<string, string> }}
+ */
+export function buildPrimitiveSelectionIndex({
+  cards = [],
+  stagedSyncCards = [],
+  threads = [],
+  connectorId = '',
+} = {}) {
+  const byPrimitiveKey = new Map();
+  const byCardId = new Map();
+  const options = { threads, connectorId };
+  registerCardSelectionRefs(byPrimitiveKey, byCardId, stagedSyncCards, 'dock', options);
+  registerCardSelectionRefs(byPrimitiveKey, byCardId, cards, 'canvas', options);
+  return { byPrimitiveKey, byCardId };
+}
+
+/**
+ * @param {object[]} items
+ * @param {Map<string, 'canvas' | 'dock'>} index
+ */
+export function filterWorkspaceItemsToPlacementIndex(items = [], index = new Map()) {
+  if (!index?.size) return [];
+  return (items ?? []).filter((item) =>
+    index.has(primitivePlacementKey(item?.type, item?.id)),
+  );
+}
+
+/**
+ * @param {object[]} events
+ * @param {Map<string, 'canvas' | 'dock'>} index
+ */
+export function filterWorkspaceEventsToPlacementIndex(events = [], index = new Map()) {
+  if (!index?.size) return [];
+  return (events ?? []).filter((event) =>
+    index.has(primitivePlacementKey(event?.target_type, event?.target_id)),
+  );
 }
 
 /**

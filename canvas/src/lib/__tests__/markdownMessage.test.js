@@ -45,6 +45,34 @@ describe('parseMarkdownMessage', () => {
     ]);
   });
 
+  it('parses headings and indented list continuation lines', () => {
+    const blocks = parseMarkdownMessage([
+      '### Espresso Setup for Quality Extraction',
+      '',
+      '1. **Espresso Machine**',
+      '   - *Description:* Stable pressure and temperature.',
+      '2. **Coffee Grinder**',
+      '   - *Description:* Uniform grind size.',
+    ].join('\n'));
+
+    expect(blocks).toEqual([
+      {
+        type: 'heading',
+        level: 3,
+        text: 'Espresso Setup for Quality Extraction',
+      },
+      {
+        type: 'list',
+        ordered: true,
+        start: 1,
+        items: [
+          '**Espresso Machine**\n*Description:* Stable pressure and temperature.',
+          '**Coffee Grinder**\n*Description:* Uniform grind size.',
+        ],
+      },
+    ]);
+  });
+
   it('preserves ordered list start numbers for separated list blocks', () => {
     const blocks = parseMarkdownMessage([
       '1. First item',
@@ -79,10 +107,12 @@ describe('parseMarkdownMessage', () => {
 
 describe('parseInlineMarkdown', () => {
   it('parses bold and inline code spans', () => {
-    expect(parseInlineMarkdown('Use **fresh beans** and `filtered water`.')).toEqual([
+    expect(parseInlineMarkdown('Use **fresh beans**, *RDT*, and `filtered water`.')).toEqual([
       { type: 'text', text: 'Use ' },
       { type: 'strong', text: 'fresh beans' },
-      { type: 'text', text: ' and ' },
+      { type: 'text', text: ', ' },
+      { type: 'emphasis', text: 'RDT' },
+      { type: 'text', text: ', and ' },
       { type: 'code', text: 'filtered water' },
       { type: 'text', text: '.' },
     ]);

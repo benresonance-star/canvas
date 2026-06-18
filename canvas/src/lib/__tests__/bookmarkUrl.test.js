@@ -6,6 +6,8 @@ import {
   syntheticBookmarkFilename,
   bookmarkCardKeyFromUrl,
   bookmarkLinkIdFromCardId,
+  isAmazonBookmarkUrl,
+  isGenericAmazonBookmarkImage,
 } from '../bookmarkUrl.js';
 
 describe('normalizeBookmarkUrl', () => {
@@ -65,5 +67,21 @@ describe('bookmarkCardKeyFromUrl', () => {
 describe('bookmarkLinkIdFromCardId', () => {
   it('builds a short filesystem-safe id', () => {
     expect(bookmarkLinkIdFromCardId('ABC12345-card-id')).toBe('abc12345');
+  });
+});
+
+describe('Amazon bookmark preview helpers', () => {
+  it('detects Amazon bookmark URLs', () => {
+    expect(isAmazonBookmarkUrl('https://www.amazon.com.au/dp/B000000')).toBe(true);
+    expect(isAmazonBookmarkUrl('https://example.com/product')).toBe(false);
+  });
+
+  it('detects generic Amazon logo images', () => {
+    expect(
+      isGenericAmazonBookmarkImage(
+        'https://images-na.ssl-images-amazon.com/images/G/01/social/api-share/amazon_logo.png',
+      ),
+    ).toBe(true);
+    expect(isGenericAmazonBookmarkImage('data:image/jpeg;base64,page')).toBe(false);
   });
 });

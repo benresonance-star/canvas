@@ -73,4 +73,44 @@ describe('saveBookmarkToProject', () => {
     expect(result.ok).toBe(true);
     expect(result.cardUpdates.key).toBe('links__cursor-com-abc12345');
   });
+
+  it('clears stale cached thumbnails when refreshed preview image is saved', async () => {
+    const card = {
+      id: 'amazon-card',
+      key: 'links__amazon-com-au',
+      name: 'Amazon',
+      type: 'bookmark',
+      prefix: 'links',
+      pinnedVersion: 1,
+      versions: [{
+        version: 1,
+        externalUrl: 'https://www.amazon.com.au/dp/B000000',
+        previewCacheKey: 'old-amazon-logo-cache',
+        objectUrl: 'blob:old-logo',
+        bookmarkPreview: {
+          title: 'Amazon',
+          domain: 'amazon.com.au',
+          imageUrl: 'https://images-na.ssl-images-amazon.com/images/G/01/social/api-share/amazon_logo.png',
+        },
+      }],
+    };
+
+    const result = await saveBookmarkToProject(card, {
+      url: 'https://www.amazon.com.au/dp/B000000',
+      title: 'Coffee Bean Dosing Cup',
+      preview: {
+        title: 'Coffee Bean Dosing Cup',
+        domain: 'amazon.com.au',
+        imageUrl: 'data:image/jpeg;base64,page',
+      },
+      linkId: card.id,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.cardUpdates.versions[0].previewCacheKey).toBeUndefined();
+    expect(result.cardUpdates.versions[0].objectUrl).toBeUndefined();
+    expect(result.cardUpdates.versions[0].bookmarkPreview.imageUrl).toBe(
+      'data:image/jpeg;base64,page',
+    );
+  });
 });

@@ -28,13 +28,23 @@ function parseParagraph(lines, start) {
     const line = lines[index];
     if (!line.trim()) break;
     if (isTableStart(lines, index)) break;
-    if (/^\s*(?:[-*]\s+|\d+\.\s+)/.test(line)) break;
+    if (/^\s*(?:#{1,6}\s+|[-*]\s+|\d+\.\s+)/.test(line)) break;
     text.push(line.trim());
     index += 1;
   }
   return {
     block: { type: 'paragraph', text: text.join('\n') },
     nextIndex: index,
+  };
+}
+
+function parseHeading(line) {
+  const match = String(line ?? '').match(/^\s*(#{1,6})\s+(.*)$/);
+  if (!match) return null;
+  return {
+    type: 'heading',
+    level: match[1].length,
+    text: match[2].trim(),
   };
 }
 
@@ -47,8 +57,18 @@ function parseList(lines, start) {
     ? Number(lines[start].match(/^\s*(\d+)\.\s+/)?.[1] ?? 1)
     : undefined;
   while (index < lines.length) {
-    const match = lines[index].match(matcher);
-    if (!match) break;
+    const line = lines[index];
+    const match = line.match(matcher);
+    if (!match) {
+      const nestedBullet = line.match(/^\s{2,}[-*]\s+(.*)$/);
+      const continuation = line.match(/^\s{2,}(\S.*)$/);
+      if (items.length && (nestedBullet || continuation)) {
+        items[items.length - 1] += `\n${(nestedBullet?.[1] ?? continuation?.[1] ?? '').trim()}`;
+        index += 1;
+        continue;
+      }
+      break;
+    }
     items.push(match[1].trim());
     index += 1;
   }
@@ -88,6 +108,12 @@ export function parseMarkdownMessage(source) {
       index = parsed.nextIndex;
       continue;
     }
+    const heading = parseHeading(lines[index]);
+    if (heading) {
+      blocks.push(heading);
+      index += 1;
+      continue;
+    }
     if (/^\s*(?:[-*]\s+|\d+\.\s+)/.test(lines[index])) {
       const parsed = parseList(lines, index);
       blocks.push(parsed.block);
@@ -104,7 +130,7 @@ export function parseMarkdownMessage(source) {
 export function parseInlineMarkdown(source) {
   const text = String(source ?? '');
   const segments = [];
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*\n]+\*)/g;
   let cursor = 0;
   let match;
   while ((match = pattern.exec(text)) !== null) {
@@ -114,8 +140,10 @@ export function parseInlineMarkdown(source) {
     const token = match[0];
     if (token.startsWith('`')) {
       segments.push({ type: 'code', text: token.slice(1, -1) });
-    } else {
+    } else if (token.startsWith('**')) {
       segments.push({ type: 'strong', text: token.slice(2, -2) });
+    } else {
+      segments.push({ type: 'emphasis', text: token.slice(1, -1) });
     }
     cursor = match.index + token.length;
   }

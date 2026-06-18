@@ -1,9 +1,40 @@
-import { listClusterPrimitives, getPrimitiveDetail } from '../repositories/primitives-list.js';
-import { listClusterEvents } from '../repositories/events-list.js';
+import {
+  listClusterPrimitives,
+  listWorkspacePrimitives,
+  getPrimitiveDetail,
+} from '../repositories/primitives-list.js';
+import { listClusterEvents, listWorkspaceEvents } from '../repositories/events-list.js';
 import { buildClusterGraph } from '../repositories/graph.js';
 
 /** @param {import('express').Express} app @param {{ requireDb: (res: import('express').Response) => boolean, sendClusterError: Function }} deps */
 export function registerPrimitiveRoutes(app, { requireDb, sendClusterError }) {
+  app.get('/workspace/primitives', async (req, res) => {
+    if (!requireDb(res)) return;
+    try {
+      const { type, limit } = req.query;
+      const data = await listWorkspacePrimitives({
+        type: type || undefined,
+        limit: limit ? Number(limit) : 500,
+      });
+      res.json(data);
+    } catch (e) {
+      sendClusterError(res, e);
+    }
+  });
+
+  app.get('/workspace/events', async (req, res) => {
+    if (!requireDb(res)) return;
+    try {
+      const { limit } = req.query;
+      const data = await listWorkspaceEvents({
+        limit: limit ? Number(limit) : 500,
+      });
+      res.json(data);
+    } catch (e) {
+      sendClusterError(res, e);
+    }
+  });
+
   app.get('/clusters/:clusterId/primitives', async (req, res) => {
     if (!requireDb(res)) return;
     try {

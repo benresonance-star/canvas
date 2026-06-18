@@ -47,12 +47,11 @@ describe('Phase 1 feature hooks', () => {
     expect(shouldRepairFolderWithPicker(null)).toBe(false);
   });
 
-  it('does not preserve stale presence keys for empty replacement scans', () => {
+  it('preserves canvas presence but excludes dock rows from successful scan presence', () => {
     expect(
       folderPresentKeysForSuccessfulScan(
         [],
         [{ key: 'notes__old', type: 'markdown', versions: [] }],
-        [{ key: 'img__stale', type: 'image', versions: [] }],
         { replaceCanvas: true, foundCount: 0 },
       ),
     ).toEqual([]);
@@ -60,10 +59,9 @@ describe('Phase 1 feature hooks', () => {
       folderPresentKeysForSuccessfulScan(
         [],
         [{ key: 'notes__old', type: 'markdown', versions: [] }],
-        [{ key: 'img__stale', type: 'image', versions: [] }],
         { replaceCanvas: false, foundCount: 0 },
       ),
-    ).toEqual(['notes__old', 'img__stale']);
+    ).toEqual(['notes__old']);
   });
 
   it('only lets folder scans mutate their active project', () => {

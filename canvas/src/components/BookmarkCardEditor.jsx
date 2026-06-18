@@ -2,8 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import { strings } from '../content/strings.js';
 import { normalizeBookmarkUrl } from '../lib/bookmarkUrl.js';
-import { fetchBookmarkPreview } from '../lib/bookmarkPreviewApi.js';
-import { BookmarkPreview } from './BookmarkPreview.jsx';
+import { bookmarkEmbedPreviewUrl, fetchBookmarkPreview } from '../lib/bookmarkPreviewApi.js';
 
 export function BookmarkCardEditor({
   card,
@@ -59,6 +58,8 @@ export function BookmarkCardEditor({
   const titleDirty = title.trim() !== (card?.name?.trim() || '');
   const dirty = urlDirty || titleDirty;
   const canSave = dirty && !saving && !disabled && Boolean(normalized);
+  const canRefreshPreview = !saving && !disabled && Boolean(normalized);
+  const embedUrl = useMemo(() => bookmarkEmbedPreviewUrl(normalized), [normalized]);
 
   const mockPinned = {
     externalUrl: normalized || pinned?.externalUrl,
@@ -77,6 +78,25 @@ export function BookmarkCardEditor({
   const open = () => {
     const target = normalized || pinned?.externalUrl;
     if (target) window.open(target, '_blank', 'noopener,noreferrer');
+  };
+
+  const refreshPreview = async () => {
+    if (!canRefreshPreview) return;
+    setPreviewLoading(true);
+    setPreviewError(null);
+    const result = await fetchBookmarkPreview(normalized);
+    setPreviewLoading(false);
+    if (!result.url) {
+      setPreviewError(result.error || strings.bookmark.previewFailed);
+      return;
+    }
+    setPreview(result);
+    if (result.error) setPreviewError(result.error);
+    await onSave?.({
+      url: normalized,
+      title: title.trim(),
+      preview: result,
+    });
   };
 
   return (
@@ -105,16 +125,23 @@ export function BookmarkCardEditor({
           className="mt-1 w-full sans text-sm bg-surface border border-border rounded px-3 py-2 text-primary disabled:opacity-60"
         />
       </label>
-      <div className="flex-1 min-h-[12rem] rounded border border-border bg-surface-muted/30 p-3">
+      <div className="flex-1 min-h-[12rem] rounded border border-border bg-surface-muted/30 overflow-hidden">
         {previewLoading && (
           <p className="sans text-xs text-muted text-center py-8">{strings.bookmark.previewLoading}</p>
         )}
-        {!previewLoading && mockPinned?.bookmarkPreview && (
-          <div className="h-full max-h-64">
-            <BookmarkPreview
-              card={{ name: title || card.name, type: 'bookmark' }}
-              pinned={mockPinned}
-            />
+        {!previewLoading && embedUrl && (
+          <iframe
+            key={embedUrl}
+            src={embedUrl}
+            title={title || card.name || strings.bookmark.untitled}
+            sandbox="allow-forms allow-popups allow-popups-to-escape-sandbox allow-scripts"
+            referrerPolicy="no-referrer"
+            className="w-full h-full border-0 bg-white"
+          />
+        )}
+        {!previewLoading && !normalized && mockPinned?.bookmarkPreview && (
+          <div className="h-full flex items-center justify-center px-4 text-center">
+            <p className="sans text-xs text-muted">{strings.bookmark.enterUrl}</p>
           </div>
         )}
         {previewError && (
@@ -130,6 +157,16 @@ export function BookmarkCardEditor({
         >
           <ExternalLink size={14} strokeWidth={1.5} />
           {strings.bookmark.open}
+        </button>
+        <button
+          type="button"
+          disabled={!canRefreshPreview || previewLoading}
+          onClick={() => {
+            void refreshPreview();
+          }}
+          className="sans text-xs text-accent px-3 py-1.5 rounded border border-border-subtle disabled:opacity-50"
+        >
+          {previewLoading ? strings.bookmark.refreshingPreview : strings.bookmark.refreshPreview}
         </button>
         <button
           type="button"

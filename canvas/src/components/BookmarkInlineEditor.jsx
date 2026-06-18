@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import { strings } from '../content/strings.js';
 import { normalizeBookmarkUrl } from '../lib/bookmarkUrl.js';
+import { fetchBookmarkPreview } from '../lib/bookmarkPreviewApi.js';
 
 export function BookmarkInlineEditor({
   card,
@@ -13,10 +14,13 @@ export function BookmarkInlineEditor({
   const preview = pinned?.bookmarkPreview ?? {};
   const [url, setUrl] = useState(pinned?.externalUrl || '');
   const [title, setTitle] = useState(card?.name || preview.title || '');
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState(null);
 
   useEffect(() => {
     setUrl(pinned?.externalUrl || '');
     setTitle(card?.name || preview.title || '');
+    setPreviewError(null);
   }, [card?.id, card?.name, pinned?.externalUrl, pinned?.version, preview.title]);
 
   const normalized = normalizeBookmarkUrl(url);
@@ -24,6 +28,7 @@ export function BookmarkInlineEditor({
   const titleDirty = title.trim() !== (card?.name?.trim() || '');
   const dirty = urlDirty || titleDirty;
   const canSave = dirty && !saving && !disabled && Boolean(normalized);
+  const canRefreshPreview = !saving && !disabled && Boolean(normalized);
 
   const stopBubble = (e) => {
     e.stopPropagation();
@@ -32,6 +37,24 @@ export function BookmarkInlineEditor({
   const open = () => {
     const target = normalized || pinned?.externalUrl;
     if (target) window.open(target, '_blank', 'noopener,noreferrer');
+  };
+
+  const refreshPreview = async () => {
+    if (!canRefreshPreview) return;
+    setPreviewLoading(true);
+    setPreviewError(null);
+    const result = await fetchBookmarkPreview(normalized);
+    setPreviewLoading(false);
+    if (!result.url) {
+      setPreviewError(result.error || strings.bookmark.previewFailed);
+      return;
+    }
+    if (result.error) setPreviewError(result.error);
+    await onSave?.({
+      url: normalized,
+      title: title.trim(),
+      preview: result,
+    });
   };
 
   return (
@@ -73,6 +96,9 @@ export function BookmarkInlineEditor({
         {preview.domain && (
           <div className="sans text-[9px] text-muted truncate mt-0.5">{preview.domain}</div>
         )}
+        {previewError && (
+          <div className="sans text-[9px] text-warning truncate mt-1">{previewError}</div>
+        )}
       </div>
       <div className="shrink-0 flex justify-end gap-1 pt-1 border-t border-border-subtle">
         <button
@@ -86,6 +112,17 @@ export function BookmarkInlineEditor({
         >
           <ExternalLink size={11} strokeWidth={1.5} />
           {strings.bookmark.open}
+        </button>
+        <button
+          type="button"
+          disabled={!canRefreshPreview || previewLoading}
+          onClick={(e) => {
+            stopBubble(e);
+            void refreshPreview();
+          }}
+          className="sans text-[10px] text-accent px-2 py-0.5 rounded border border-border-subtle disabled:opacity-40"
+        >
+          {previewLoading ? strings.bookmark.refreshingPreview : strings.bookmark.refreshPreview}
         </button>
         <button
           type="button"

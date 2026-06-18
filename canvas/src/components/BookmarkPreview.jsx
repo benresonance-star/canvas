@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import { strings } from '../content/strings.js';
 import { getPreview } from '../lib/previewStore.js';
+import { isAmazonBookmarkUrl, isGenericAmazonBookmarkImage } from '../lib/bookmarkUrl.js';
 
 /**
  * Notion-style static bookmark card (snapshot at add time).
@@ -14,12 +15,20 @@ export function BookmarkPreview({
 }) {
   const preview = pinned?.bookmarkPreview ?? {};
   const url = pinned?.externalUrl || '';
+  const isAmazonBookmark = isAmazonBookmarkUrl(url);
+  const suppressGenericAmazonImage =
+    isAmazonBookmark
+    && (!preview.imageUrl || isGenericAmazonBookmarkImage(preview.imageUrl));
   const [thumbSrc, setThumbSrc] = useState(null);
 
   useEffect(() => {
     let objectUrl = null;
     let cancelled = false;
     (async () => {
+      if (suppressGenericAmazonImage) {
+        if (!cancelled) setThumbSrc(null);
+        return;
+      }
       if (pinned?.objectUrl) {
         if (!cancelled) setThumbSrc(pinned.objectUrl);
         return;
@@ -38,7 +47,7 @@ export function BookmarkPreview({
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [pinned?.objectUrl, pinned?.previewCacheKey, preview.imageUrl]);
+  }, [pinned?.objectUrl, pinned?.previewCacheKey, preview.imageUrl, suppressGenericAmazonImage]);
 
   const title = preview.title || card.name || preview.domain || strings.bookmark.untitled;
   const domain = preview.domain || '';

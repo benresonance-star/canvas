@@ -43,6 +43,30 @@ export function domainFromUrl(url) {
   }
 }
 
+export function isAmazonBookmarkUrl(url) {
+  const domain = domainFromUrl(url).toLowerCase();
+  return domain === 'amzn.to' || domain.startsWith('amazon.') || domain.endsWith('.amazon.com');
+}
+
+export function isGenericAmazonBookmarkImage(imageUrl) {
+  if (!imageUrl) return false;
+  try {
+    const parsed = new URL(imageUrl);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    return (
+      host.includes('amazon')
+      && (
+        path.includes('logo')
+        || path.includes('/social')
+        || path.includes('/api-share/')
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function bookmarkSlugFromDomain(domain) {
   return (domain || 'link')
     .toLowerCase()

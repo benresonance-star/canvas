@@ -3,6 +3,9 @@ import { isIP } from 'node:net';
 
 const FETCH_TIMEOUT_MS = 8000;
 const MAX_BODY_BYTES = 512 * 1024;
+const MAX_EMBED_BODY_BYTES = 2 * 1024 * 1024;
+const SCREENSHOT_TIMEOUT_MS = 7000;
+const SCREENSHOT_VIEWPORT = { width: 960, height: 640 };
 
 /**
  * @param {string} raw
@@ -158,9 +161,81 @@ export function youtubeThumbnailUrlFromPreviewUrl(parsed) {
 }
 
 /**
+ * @param {string} hostname
+ */
+export function isAmazonPreviewHost(hostname) {
+  const host = String(hostname ?? '').toLowerCase().replace(/\.$/, '').replace(/^www\./, '');
+  return host === 'amzn.to' || host.startsWith('amazon.') || host.endsWith('.amazon.com');
+}
+
+/**
+ * @param {string | null | undefined} imageUrl
+ */
+export function isGenericAmazonPreviewImage(imageUrl) {
+  if (!imageUrl) return false;
+  try {
+    const parsed = new URL(imageUrl);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    return (
+      host.includes('amazon')
+      && (
+        path.includes('logo')
+        || path.includes('/social')
+        || path.includes('/api-share/')
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {URL} parsed
+ * @param {string | null} imageUrl
+ */
+export function shouldUsePageScreenshotPreview(parsed, imageUrl) {
+  if (!isAmazonPreviewHost(parsed.hostname)) return false;
+  return !imageUrl || isGenericAmazonPreviewImage(imageUrl);
+}
+
+/**
  * @param {string} url
  */
-export async function fetchBookmarkPreview(url) {
+export async function capturePageScreenshotPreview(url) {
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({
+      viewport: SCREENSHOT_VIEWPORT,
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+        + '(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    });
+    page.setDefaultTimeout(SCREENSHOT_TIMEOUT_MS);
+    page.setDefaultNavigationTimeout(SCREENSHOT_TIMEOUT_MS);
+    await page.goto(url, {
+      waitUntil: 'domcontentloaded',
+      timeout: SCREENSHOT_TIMEOUT_MS,
+    });
+    await page.waitForTimeout(1000);
+    const buffer = await page.screenshot({
+      type: 'jpeg',
+      quality: 72,
+      fullPage: false,
+    });
+    return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
+ * @param {string} url
+ */
+export async function fetchBookmarkPreview(url, {
+  captureScreenshot = capturePageScreenshotPreview,
+} = {}) {
   const parsed = normalizePreviewUrl(url);
   if (!parsed) {
     return { ok: false, error: 'Invalid URL' };
@@ -199,9 +274,16 @@ export async function fetchBookmarkPreview(url) {
     const html = clipped.toString('utf8');
     const og = parseOpenGraphFromHtml(html);
     const title = og.title || domain;
-    const imageUrl =
+    let imageUrl =
       resolvePreviewImageUrl(parsed.toString(), og.imageUrl)
       || youtubeImageUrl;
+    if (shouldUsePageScreenshotPreview(parsed, imageUrl)) {
+      try {
+        imageUrl = await captureScreenshot(parsed.toString());
+      } catch {
+        imageUrl = null;
+      }
+    }
     let faviconUrl = null;
     try {
       faviconUrl = new URL('/favicon.ico', parsed.origin).toString();
@@ -230,6 +312,83 @@ export async function fetchBookmarkPreview(url) {
       imageUrl: youtubeImageUrl,
       siteName: domain,
       faviconUrl: null,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * @param {string} html
+ * @param {string} url
+ */
+export function buildEmbeddablePreviewHtml(html, url) {
+  const escapedUrl = String(url)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const baseTag = `<base href="${escapedUrl}">`;
+  const relaxedHead = `
+    ${baseTag}
+    <meta name="referrer" content="no-referrer">
+    <style>
+      html, body { min-height: 100%; background: white; }
+      img, video, iframe { max-width: 100%; }
+    </style>
+  `;
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head([^>]*)>/i, `<head$1>${relaxedHead}`);
+  }
+  return `<!doctype html><html><head>${relaxedHead}</head><body>${html}</body></html>`;
+}
+
+/**
+ * @param {string} url
+ */
+export async function fetchBookmarkEmbedHtml(url) {
+  const parsed = normalizePreviewUrl(url);
+  if (!parsed) {
+    return { ok: false, status: 400, html: '', error: 'Invalid URL' };
+  }
+  assertPreviewUrlAllowed(parsed);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(parsed.toString(), {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: {
+        Accept: 'text/html,application/xhtml+xml',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+          + '(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      },
+    });
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('text/html') && !contentType.includes('application/xhtml')) {
+      return {
+        ok: false,
+        status: 415,
+        html: '',
+        error: 'Preview content is not HTML',
+      };
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    const clipped = buf.subarray(0, MAX_EMBED_BODY_BYTES);
+    return {
+      ok: true,
+      status: 200,
+      html: buildEmbeddablePreviewHtml(clipped.toString('utf8'), parsed.toString()),
+      url: parsed.toString(),
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      status: e?.name === 'AbortError' ? 504 : 502,
+      html: '',
+      error: e?.name === 'AbortError' ? 'Request timed out' : (e.message || 'Fetch failed'),
     };
   } finally {
     clearTimeout(timer);

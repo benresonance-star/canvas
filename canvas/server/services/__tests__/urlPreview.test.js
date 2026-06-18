@@ -1,10 +1,15 @@
+import { Buffer } from 'node:buffer';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   fetchBookmarkPreview,
+  buildEmbeddablePreviewHtml,
   normalizePreviewUrl,
   isBlockedPreviewHost,
+  isAmazonPreviewHost,
+  isGenericAmazonPreviewImage,
   parseOpenGraphFromHtml,
   resolvePreviewImageUrl,
+  shouldUsePageScreenshotPreview,
   youtubeThumbnailUrlFromPreviewUrl,
   youtubeVideoIdFromUrl,
 } from '../urlPreview.js';
@@ -88,5 +93,107 @@ describe('YouTube preview fallback', () => {
       domain: 'youtu.be',
       imageUrl: 'https://i.ytimg.com/vi/dRPCxunlcjY/hqdefault.jpg',
     });
+  });
+});
+
+describe('Amazon webpage preview fallback', () => {
+  it('detects Amazon hosts and generic Amazon logo images', () => {
+    expect(isAmazonPreviewHost('www.amazon.com.au')).toBe(true);
+    expect(isAmazonPreviewHost('example.com')).toBe(false);
+    expect(
+      isGenericAmazonPreviewImage(
+        'https://images-na.ssl-images-amazon.com/images/G/01/social/api-share/amazon_logo.png',
+      ),
+    ).toBe(true);
+    expect(
+      shouldUsePageScreenshotPreview(
+        new URL('https://www.amazon.com.au/dp/B000000'),
+        'https://images-na.ssl-images-amazon.com/images/G/01/social/api-share/amazon_logo.png',
+      ),
+    ).toBe(true);
+  });
+
+  it('uses a page screenshot when Amazon metadata only provides a generic logo', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      headers: {
+        get: () => 'text/html',
+      },
+      arrayBuffer: async () => Buffer.from(`
+        <html><head>
+          <meta property="og:title" content="Coffee Bean Dosing Cup" />
+          <meta property="og:image" content="https://images-na.ssl-images-amazon.com/images/G/01/social/api-share/amazon_logo.png" />
+        </head></html>
+      `),
+    })));
+    const captureScreenshot = vi.fn(async () => 'data:image/jpeg;base64,page');
+
+    const preview = await fetchBookmarkPreview('https://www.amazon.com.au/dp/B000000', {
+      captureScreenshot,
+    });
+
+    expect(preview).toMatchObject({
+      ok: true,
+      title: 'Coffee Bean Dosing Cup',
+      imageUrl: 'data:image/jpeg;base64,page',
+    });
+    expect(captureScreenshot).toHaveBeenCalledWith('https://www.amazon.com.au/dp/B000000');
+  });
+
+  it('keeps normal Open Graph images for non-Amazon pages', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      headers: {
+        get: () => 'text/html',
+      },
+      arrayBuffer: async () => Buffer.from(`
+        <html><head>
+          <meta property="og:title" content="Example Product" />
+          <meta property="og:image" content="https://cdn.example.com/product.jpg" />
+        </head></html>
+      `),
+    })));
+    const captureScreenshot = vi.fn(async () => 'data:image/jpeg;base64,page');
+
+    const preview = await fetchBookmarkPreview('https://example.com/product', {
+      captureScreenshot,
+    });
+
+    expect(preview.imageUrl).toBe('https://cdn.example.com/product.jpg');
+    expect(captureScreenshot).not.toHaveBeenCalled();
+  });
+
+  it('drops the generic Amazon logo when screenshot capture fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      headers: {
+        get: () => 'text/html',
+      },
+      arrayBuffer: async () => Buffer.from(`
+        <html><head>
+          <meta property="og:title" content="Coffee Bean Dosing Cup" />
+          <meta property="og:image" content="https://images-na.ssl-images-amazon.com/images/G/01/social/api-share/amazon_logo.png" />
+        </head></html>
+      `),
+    })));
+    const captureScreenshot = vi.fn(async () => {
+      throw new Error('playwright unavailable');
+    });
+
+    const preview = await fetchBookmarkPreview('https://www.amazon.com.au/dp/B000000', {
+      captureScreenshot,
+    });
+
+    expect(preview.imageUrl).toBeNull();
+  });
+});
+
+describe('bookmark embed html', () => {
+  it('injects a base tag so relative page assets resolve against the source URL', () => {
+    const html = buildEmbeddablePreviewHtml(
+      '<html><head><title>Product</title></head><body><img src="/hero.png"></body></html>',
+      'https://shop.example/products/a',
+    );
+
+    expect(html).toContain('<base href="https://shop.example/products/a">');
+    expect(html).toContain('<meta name="referrer" content="no-referrer">');
+    expect(html).toContain('<img src="/hero.png">');
   });
 });

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Bot, Box, Layers, Trash2, Link2 } from 'lucide-react';
 import { getCardPixelSize } from '../lib/cards.js';
 import { cardHeaderLabel } from '../lib/filename.js';
@@ -36,7 +36,6 @@ export function CanvasCard({
   bookmarkSaving,
   userNoteDisabled,
   bookmarkEditDisabled,
-  folderLinked,
   isBeingDragged = false,
   agentChatLiveMessages = null,
   agentChatLiveCardId = null,
@@ -59,11 +58,18 @@ export function CanvasCard({
 
   const canEditUserNoteTitle =
     card.type === 'user_note' && isActive && !showSimplified && !userNoteDisabled;
-  const [editName, setEditName] = useState(card.name);
-
-  useEffect(() => {
-    setEditName(card.name);
-  }, [card.id, card.name]);
+  const [titleDraft, setTitleDraft] = useState({
+    cardId: card.id,
+    cardName: card.name,
+    value: card.name,
+  });
+  const editName =
+    titleDraft.cardId === card.id && titleDraft.cardName === card.name
+      ? titleDraft.value
+      : card.name;
+  const setEditName = (value) => {
+    setTitleDraft({ cardId: card.id, cardName: card.name, value });
+  };
 
   const stopBubble = (e) => {
     e.stopPropagation();
@@ -94,6 +100,9 @@ export function CanvasCard({
   const multiSelectRing = isMultiSelected && !isActive && !agentSelectedRing
     ? 'ring-2 ring-accent/50 ring-offset-1 ring-offset-canvas'
     : '';
+  const agentChatHighlight = card.type === 'agent_chat'
+    ? 'outline outline-1 outline-[#39ff14]'
+    : '';
   const missingHeaderTint = missingFromFolder ? 'bg-danger-muted border-danger-border' : 'border-border';
 
   return (
@@ -112,7 +121,7 @@ export function CanvasCard({
       onDoubleClick={(e) => { e.stopPropagation(); onOpen(); }}
     >
       <div
-        className={`canvas-card bg-surface rounded-lg overflow-hidden h-full flex flex-col transition-[box-shadow,opacity] ${missingRing} ${linkHighlight} ${multiSelectRing} ${agentSelectedRing} ${isActive && !agentSelectedRing ? 'card-shadow-active' : 'card-shadow'}`}
+        className={`canvas-card bg-surface rounded-lg overflow-hidden h-full flex flex-col transition-[box-shadow,opacity] ${missingRing} ${linkHighlight} ${multiSelectRing} ${agentSelectedRing} ${agentChatHighlight} ${isActive && !agentSelectedRing ? 'card-shadow-active' : 'card-shadow'}`}
       >
         <div
           className={`shrink-0 flex items-start justify-between gap-2 border-b ${missingHeaderTint} ${

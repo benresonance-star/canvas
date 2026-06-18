@@ -34,10 +34,12 @@ import { strings } from '../../content/strings.js';
 import { flowTrace } from '../../lib/sync/syncTrace.js';
 import {
   buildStagedSyncCardFromChange,
+  artifactRefFromSyncEntry,
   buildConfirmChangesForDialog,
   buildFolderConnectConfirmChanges,
   buildSyncChangesFromFolder,
   findSyncEntryByFolderKey,
+  missingDockOnlyStagedRows,
   partitionSyncChanges,
 } from '../../lib/syncStaging.js';
 import {
@@ -61,6 +63,7 @@ import {
 } from '../../lib/artifactPlacementsMap.js';
 import { getCommittedPayload } from '../../lib/persistence.js';
 import { requestActionSync } from '../../lib/actionSync.js';
+import { deleteProjectArtifactPrimitive } from '../../lib/primitivesApi.js';
 import { runExclusive } from '../../lib/projectSyncCoordinator.js';
 import { isServerSyncEnabled, setConnectedFolder, projectsForMenuFromIndex } from '../../lib/projects.js';
 
@@ -104,11 +107,10 @@ export function folderScanBaselineForProject({
 export function folderPresentKeysForSuccessfulScan(
   foundKeys,
   cards = [],
-  stagedSyncCards = [],
   { replaceCanvas = false, foundCount = foundKeys?.length ?? 0 } = {},
 ) {
   if (replaceCanvas && foundCount === 0) return [];
-  return unionFolderPresentKeys(foundKeys ?? [], cards, stagedSyncCards);
+  return unionFolderPresentKeys(foundKeys ?? [], cards, []);
 }
 
 /**
@@ -507,12 +509,69 @@ export function useFolderLinkScan({
       }
     }
 
-    // On read errors we keep the previous key set; on success refresh presence for missing-file UI
+    const foundKeys = Object.keys(groupedFinal);
+    const missingDockRows = missingDockOnlyStagedRows(
+      foundKeys,
+      stateRef.current.cards ?? [],
+      stagedSyncCardsRef.current ?? [],
+    );
+    if (missingDockRows.length > 0 && !isScanStale()) {
+      const scanProjectId = projectIdOption ?? activeProjectIdRef.current;
+      const missingRows = new Set(missingDockRows);
+      const stagedBeforePrune = stagedSyncCardsRef.current ?? [];
+      const nextStaged = stagedBeforePrune.filter((row) => !missingRows.has(row));
+      const artifactRefs = [
+        ...new Map(
+          missingDockRows
+            .map((row) => artifactRefFromSyncEntry(row))
+            .filter((ref) => ref?.id)
+            .map((ref) => [ref.id, ref]),
+        ).values(),
+      ];
+
+      stagedSyncCardsRef.current = nextStaged;
+      setStagedSyncCards(nextStaged);
+
+      if (scanProjectId) {
+        const patchedMap = patchPlacementsMapFromArrays(
+          getCommittedPayload(scanProjectId)?.artifactPlacements
+          ?? buildPlacementsFromArrays(stateRef.current.cards ?? [], stagedBeforePrune),
+          stateRef.current.cards ?? [],
+          nextStaged,
+        );
+        try {
+          await commitPlacementState(scanProjectId, {
+            artifactPlacements: patchedMap,
+            reason: 'folderScan:missingDockPrune',
+          });
+        } catch (e) {
+          console.warn('Missing dock placement commit failed:', e);
+        }
+
+        for (const ref of artifactRefs) {
+          try {
+            await deleteProjectArtifactPrimitive(scanProjectId, ref.id);
+          } catch (e) {
+            flowTrace('folder:missing-dock-cleanup-skipped', {
+              projectId: scanProjectId,
+              artifactId: ref.id,
+              reason: e?.message ?? String(e),
+            });
+            console.warn('Missing dock primitive cleanup failed:', e);
+          }
+        }
+        if (artifactRefs.length > 0) {
+          void refreshGraph({ projectId: scanProjectId, force: true });
+        }
+      }
+    }
+
+    // On read errors we keep the previous key set; on success refresh presence for missing-file UI.
+    // Dock rows are deliberately excluded so missing dock-only files can be pruned.
     setFolderPresentKeys(
       folderPresentKeysForSuccessfulScan(
-        Object.keys(groupedFinal),
+        foundKeys,
         stateRef.current.cards ?? [],
-        stagedSyncCardsRef.current ?? [],
         { replaceCanvas, foundCount: found.length },
       ),
     );

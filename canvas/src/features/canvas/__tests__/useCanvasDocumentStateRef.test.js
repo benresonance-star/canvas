@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   applyLayoutCommitPayloadToStateRef,
+  cleanupProjectArtifactForSyncEntry,
   commitCanvasViewToStateRef,
   updateCardVersionInStateRef,
 } from '../useCanvasDocument.js';
@@ -82,5 +83,28 @@ describe('useCanvasDocument stateRef commit helpers', () => {
       { id: 'card-1', key: 'links__a', x: 100, y: 200, width: 360, height: 220 },
       { id: 'card-2', key: 'links__b', x: -30, y: 70 },
     ]);
+  });
+
+  it('cleans project-scoped artifact primitives for deleted artifact cards', async () => {
+    const deleteProjectArtifact = vi.fn().mockResolvedValue({ ok: true });
+    const refreshGraph = vi.fn();
+
+    const result = await cleanupProjectArtifactForSyncEntry({
+      projectId: 'project-1',
+      entry: {
+        id: 'card-1',
+        pinnedVersion: 1,
+        versions: [{
+          version: 1,
+          artifactRef: { id: 'artifact-1', type: 'artifact' },
+        }],
+      },
+      deleteProjectArtifact,
+      refreshGraph,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(deleteProjectArtifact).toHaveBeenCalledWith('project-1', 'artifact-1');
+    expect(refreshGraph).toHaveBeenCalledWith({ projectId: 'project-1', force: true });
   });
 });

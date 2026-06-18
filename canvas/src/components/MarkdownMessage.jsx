@@ -4,11 +4,28 @@ import {
   parseMarkdownMessage,
 } from '../lib/markdownMessage.js';
 
+function selectionTouchesNode(selection, node) {
+  if (!selection || selection.rangeCount === 0 || !node) return false;
+  for (let i = 0; i < selection.rangeCount; i += 1) {
+    const range = selection.getRangeAt(i);
+    if (
+      node.contains(range.commonAncestorContainer)
+      || range.intersectsNode?.(node)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function InlineText({ text, compact }) {
   return parseInlineMarkdown(text).map((segment, index) => {
     const key = `${segment.type}-${index}`;
     if (segment.type === 'strong') {
       return <strong key={key} className="font-semibold text-primary">{segment.text}</strong>;
+    }
+    if (segment.type === 'emphasis') {
+      return <em key={key}>{segment.text}</em>;
     }
     if (segment.type === 'code') {
       return (
@@ -29,8 +46,16 @@ function InlineText({ text, compact }) {
 export function MarkdownMessage({ content, compact = false }) {
   const blocks = parseMarkdownMessage(content);
   const textClass = compact ? 'text-[10px]' : 'text-xs';
+  const handleCopy = (event) => {
+    const selection = window.getSelection?.();
+    if (!selection?.toString().trim()) return;
+    if (!selectionTouchesNode(selection, event.currentTarget)) return;
+    event.clipboardData.setData('text/plain', String(content ?? '').trim());
+    event.preventDefault();
+  };
+
   return (
-    <div className={`agent-markdown-message ${textClass} space-y-2`}>
+    <div className={`agent-markdown-message ${textClass} space-y-2`} onCopy={handleCopy}>
       {blocks.map((block, index) => {
         if (block.type === 'table') {
           return (
@@ -72,11 +97,22 @@ export function MarkdownMessage({ content, compact = false }) {
               className={`${block.ordered ? 'list-decimal' : 'list-disc'} space-y-0.5 pl-5`}
             >
               {block.items.map((item, itemIndex) => (
-                <li key={`${item}-${itemIndex}`}>
+                <li key={`${item}-${itemIndex}`} className="whitespace-pre-wrap">
                   <InlineText text={item} compact={compact} />
                 </li>
               ))}
             </ListTag>
+          );
+        }
+        if (block.type === 'heading') {
+          const HeadingTag = `h${Math.min(Math.max(block.level, 1), 6)}`;
+          return (
+            <HeadingTag
+              key={`heading-${index}`}
+              className={`font-semibold text-primary ${compact ? 'text-[11px]' : 'text-sm'}`}
+            >
+              <InlineText text={block.text} compact={compact} />
+            </HeadingTag>
           );
         }
         return (

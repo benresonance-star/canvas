@@ -34,6 +34,7 @@ import {
   canvasViewForCards,
 } from '../../lib/canvasView.js';
 import {
+  artifactRefFromSyncEntry,
   buildStagedSyncCardFromChange,
   mergeNewlyStaged,
   mergeVersionsForSyncUpdate,
@@ -55,6 +56,7 @@ import { syncKeysMatch, noteRequiresProjectOnlySave } from '../../lib/filename.j
 import { addSuppressedSyncKey } from '../../lib/syncSuppressedKeys.js';
 import { removeStagedCardsByKey } from '../../lib/canvasCardMerge.js';
 import { requestActionSync } from '../../lib/actionSync.js';
+import { deleteProjectArtifactPrimitive } from '../../lib/primitivesApi.js';
 import {
   loadAgentChatSession,
   saveAgentChatSession,
@@ -76,6 +78,30 @@ function bookmarkFilenameForInlineSave(card, version, url) {
     return version.filename;
   }
   return syntheticBookmarkFilename(domainFromUrl(url), version?.version ?? 1, card.id);
+}
+
+export async function cleanupProjectArtifactForSyncEntry({
+  projectId,
+  entry,
+  deleteProjectArtifact = deleteProjectArtifactPrimitive,
+  refreshGraph = null,
+  traceLabel = 'canvas:card-delete-primitive-cleanup-skipped',
+} = {}) {
+  const artifactRef = artifactRefFromSyncEntry(entry);
+  if (!projectId || !artifactRef?.id) return { attempted: false };
+  try {
+    const result = await deleteProjectArtifact(projectId, artifactRef.id);
+    refreshGraph?.({ projectId, force: true });
+    return { attempted: true, ok: true, result };
+  } catch (e) {
+    syncTraceLog(traceLabel, {
+      projectId,
+      artifactId: artifactRef.id,
+      reason: e?.message ?? String(e),
+    });
+    console.warn('Canvas card primitive cleanup failed:', e);
+    return { attempted: true, ok: false, error: e };
+  }
 }
 
 export function commitCanvasViewToStateRef(stateRef, view) {
@@ -1148,6 +1174,11 @@ export function useCanvasDocument({ refs, deps }) {
     if (projectId && !switchingProjectRef.current && initialHydratedRef.current) {
       requestStructuralSync();
     }
+    await cleanupProjectArtifactForSyncEntry({
+      projectId,
+      entry: card,
+      refreshGraph,
+    });
   }, [
     activeProjectIdRef,
     stateRef,
@@ -1161,6 +1192,7 @@ export function useCanvasDocument({ refs, deps }) {
     agentChatThreadIndexRef,
     activeThreadIdRef,
     agentChatArtifactMetaRef,
+    refreshGraph,
   ]);
 
   const rehydratePreview = useCallback(async (cardId, versionNum, { force = false } = {}) => {

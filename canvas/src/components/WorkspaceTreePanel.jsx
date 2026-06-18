@@ -1,19 +1,29 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import { strings } from '../content/strings.js';
-import { buildWorkspaceTree } from '../lib/buildWorkspaceTree.js';
+import {
+  buildAllProjectsWorkspaceTree,
+  buildWorkspaceTree,
+} from '../lib/buildWorkspaceTree.js';
 import { getLegendEntries } from '../lib/primitiveTreeColors.js';
 import {
   buildPrimitivePlacementIndex,
   decorateWorkspacePlacement,
+  filterWorkspaceEventsToPlacementIndex,
+  filterWorkspaceItemsToPlacementIndex,
+  primitivePlacementKey,
 } from '../lib/workspacePlacementIndex.js';
 import {
   isApiAvailable,
   listClusterEvents,
+  listWorkspaceEvents,
+  listWorkspacePrimitives,
   listPrimitives,
 } from '../lib/primitivesApi.js';
 
 const EXPANDED_STORAGE_KEY = 'canvas.workspaceTree.expanded.v1';
+const VIEW_PROJECT = 'project';
+const VIEW_ALL_PROJECTS = 'all';
 
 const DEFAULT_EXPANDED = new Set([
   'workspace-root',
@@ -115,25 +125,38 @@ function PlacementSummaryBadges({ summary }) {
   );
 }
 
-function TreeNodeRow({
+export function TreeNodeRow({
   node,
   depth,
   expanded,
   onToggle,
   onSelectLeaf,
+  onDoubleClickLeaf,
+  selectedPrimitiveKey,
 }) {
-  const isBranch = node.kind !== 'leaf';
   const isExpanded = expanded.has(node.id);
   const pad = 8 + depth * 12;
 
   if (node.kind === 'leaf') {
+    const nodePrimitiveKey = primitivePlacementKey(node.primitiveRef?.type, node.primitiveRef?.id);
+    const selected = Boolean(nodePrimitiveKey && nodePrimitiveKey === selectedPrimitiveKey);
     return (
       <button
         type="button"
         style={{ paddingLeft: pad }}
-        className="w-full flex items-center gap-2 py-1 pr-2 text-left hover:bg-surface-muted/80 rounded transition group"
+        className={`w-full flex items-center gap-2 py-1 pr-2 text-left rounded transition group ${
+          selected
+            ? 'bg-surface-muted text-primary ring-1 ring-primary/40'
+            : 'hover:bg-surface-muted/80'
+        }`}
         onClick={() => onSelectLeaf(node.primitiveRef)}
+        onDoubleClick={() => {
+          if (node.primitiveRef?.type && node.primitiveRef?.id) {
+            onDoubleClickLeaf?.(node.primitiveRef);
+          }
+        }}
         disabled={!node.primitiveRef}
+        aria-current={selected ? 'true' : undefined}
       >
         <span className="w-3 shrink-0" />
         {node.color && (
@@ -143,7 +166,10 @@ function TreeNodeRow({
             aria-hidden
           />
         )}
-        <span className="sans text-[11px] text-secondary group-hover:text-primary truncate flex-1">
+        <span className={`sans text-[11px] group-hover:text-primary truncate flex-1 ${
+          selected ? 'text-primary' : 'text-secondary'
+        }`}
+        >
           {node.label}
         </span>
         <PlacementLeafBadge placement={node.placement} />
@@ -186,6 +212,8 @@ function TreeNodeRow({
             expanded={expanded}
             onToggle={onToggle}
             onSelectLeaf={onSelectLeaf}
+            onDoubleClickLeaf={onDoubleClickLeaf}
+            selectedPrimitiveKey={selectedPrimitiveKey}
           />
         ))}
     </>
@@ -263,8 +291,10 @@ export function WorkspaceTreePanel({
   stagedSyncCards = [],
   threads = [],
   connectorId = '',
+  selectedPrimitiveKey = '',
   onClose,
   onSelectPrimitive,
+  onZoomPrimitive,
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -273,6 +303,9 @@ export function WorkspaceTreePanel({
   const [events, setEvents] = useState([]);
   const [expanded, setExpanded] = useState(loadExpanded);
   const [legendOpen, setLegendOpen] = useState(true);
+  const [workspaceTreeViewMode, setWorkspaceTreeViewMode] = useState(VIEW_PROJECT);
+  const allProjectsView = workspaceTreeViewMode === VIEW_ALL_PROJECTS;
+  const canLoadTree = allProjectsView || Boolean(clusterId);
 
   const toggleExpanded = useCallback((id) => {
     setExpanded((prev) => {
@@ -285,19 +318,17 @@ export function WorkspaceTreePanel({
   }, []);
 
   useEffect(() => {
-    if (!clusterId) {
-      setItems([]);
-      setEvents([]);
-      setApiOffline(false);
-      setError(null);
+    if (!canLoadTree) {
       return undefined;
     }
 
     let cancelled = false;
-    setLoading(true);
-    setError(null);
 
     (async () => {
+      await Promise.resolve();
+      if (cancelled) return;
+      setLoading(true);
+      setError(null);
       try {
         const available = await isApiAvailable();
         if (!available) {
@@ -310,10 +341,15 @@ export function WorkspaceTreePanel({
         }
         if (!cancelled) setApiOffline(false);
 
-        const [primData, eventData] = await Promise.all([
-          listPrimitives(clusterId, { limit: 500 }),
-          listClusterEvents(clusterId, { limit: 200 }).catch(() => ({ items: [] })),
-        ]);
+        const [primData, eventData] = allProjectsView
+          ? await Promise.all([
+            listWorkspacePrimitives({ limit: 500 }),
+            listWorkspaceEvents({ limit: 500 }).catch(() => ({ items: [] })),
+          ])
+          : await Promise.all([
+            listPrimitives(clusterId, { limit: 500 }),
+            listClusterEvents(clusterId, { limit: 200 }).catch(() => ({ items: [] })),
+          ]);
 
         if (!cancelled) {
           setItems(primData.items || []);
@@ -329,38 +365,68 @@ export function WorkspaceTreePanel({
     return () => {
       cancelled = true;
     };
-  }, [clusterId, reloadKey]);
+  }, [allProjectsView, canLoadTree, clusterId, reloadKey]);
 
-  const tree = useMemo(() => {
-    const base = buildWorkspaceTree({
-      projectName: projectName || strings.defaultProjectName,
-      items,
-      events,
-      subclusters,
-    });
-    const index = buildPrimitivePlacementIndex({
+  const placementIndex = useMemo(() =>
+    buildPrimitivePlacementIndex({
       cards,
       stagedSyncCards,
       threads,
       connectorId,
-    });
-    return decorateWorkspacePlacement(base, index);
-  }, [
-    projectName,
-    items,
-    events,
-    subclusters,
+    }),
+  [
     cards,
     stagedSyncCards,
     threads,
     connectorId,
   ]);
 
+  const tree = useMemo(() => {
+    if (allProjectsView) {
+      return buildAllProjectsWorkspaceTree({
+        projectName: strings.workspaceTree.allProjectsTitle,
+        items,
+        events,
+      });
+    }
+    const projectScopedItems = allProjectsView
+      ? items
+      : filterWorkspaceItemsToPlacementIndex(items, placementIndex);
+    const projectScopedEvents = allProjectsView
+      ? events
+      : filterWorkspaceEventsToPlacementIndex(events, placementIndex);
+    const base = buildWorkspaceTree({
+      projectName: projectName || strings.defaultProjectName,
+      items: projectScopedItems,
+      events: projectScopedEvents,
+      subclusters,
+    });
+    return decorateWorkspacePlacement(base, placementIndex);
+  }, [
+    allProjectsView,
+    projectName,
+    items,
+    events,
+    subclusters,
+    placementIndex,
+  ]);
+
   const handleSelectLeaf = useCallback(
     (ref) => {
-      if (ref?.type && ref?.id) onSelectPrimitive?.(ref);
+      if (ref?.type && ref?.id) {
+        onSelectPrimitive?.(ref, { syncSelection: !allProjectsView });
+      }
     },
-    [onSelectPrimitive],
+    [allProjectsView, onSelectPrimitive],
+  );
+
+  const handleDoubleClickLeaf = useCallback(
+    (ref) => {
+      if (ref?.type && ref?.id) {
+        onZoomPrimitive?.(ref);
+      }
+    },
+    [onZoomPrimitive],
   );
 
   return (
@@ -381,31 +447,70 @@ export function WorkspaceTreePanel({
         </button>
       </div>
 
+      <div className="px-3 py-2 border-b border-border/70 shrink-0">
+        <div
+          className="inline-flex w-full rounded-full border border-border-subtle bg-surface-muted/40 p-0.5"
+          role="group"
+          aria-label={strings.workspaceTree.viewModeLabel}
+        >
+          <button
+            type="button"
+            className={`flex-1 rounded-full px-2 py-1 sans text-[10px] uppercase tracking-wide transition ${
+              workspaceTreeViewMode === VIEW_PROJECT
+                ? 'bg-surface text-primary shadow-sm'
+                : 'text-muted hover:text-secondary'
+            }`}
+            aria-pressed={workspaceTreeViewMode === VIEW_PROJECT}
+            onClick={() => setWorkspaceTreeViewMode(VIEW_PROJECT)}
+          >
+            {strings.workspaceTree.projectView}
+          </button>
+          <button
+            type="button"
+            className={`flex-1 rounded-full px-2 py-1 sans text-[10px] uppercase tracking-wide transition ${
+              workspaceTreeViewMode === VIEW_ALL_PROJECTS
+                ? 'bg-surface text-primary shadow-sm'
+                : 'text-muted hover:text-secondary'
+            }`}
+            aria-pressed={workspaceTreeViewMode === VIEW_ALL_PROJECTS}
+            onClick={() => setWorkspaceTreeViewMode(VIEW_ALL_PROJECTS)}
+          >
+            {strings.workspaceTree.allProjectsView}
+          </button>
+        </div>
+      </div>
+
       <WorkspaceLegend legendOpen={legendOpen} onToggleLegend={() => setLegendOpen((o) => !o)} />
 
       <div className="flex-1 min-h-0 overflow-y-auto py-2">
-        {!clusterId && (
+        {!canLoadTree && (
           <p className="sans text-xs text-muted px-3">{strings.workspaceTree.emptyNoCluster}</p>
         )}
-        {clusterId && apiOffline && (
+        {canLoadTree && apiOffline && (
           <p className="sans text-xs text-muted px-3">{strings.workspaceTree.apiRequired}</p>
         )}
-        {clusterId && !apiOffline && loading && (
+        {canLoadTree && !apiOffline && loading && (
           <p className="sans text-xs text-muted px-3">{strings.workspaceTree.loading}</p>
         )}
-        {clusterId && !apiOffline && error && (
+        {canLoadTree && !apiOffline && error && (
           <p className="sans text-xs text-danger px-3">{error}</p>
         )}
-        {clusterId && !apiOffline && !loading && !error && tree.count === 0 && (
-          <p className="sans text-xs text-muted px-3">{strings.workspaceTree.empty}</p>
+        {canLoadTree && !apiOffline && !loading && !error && tree.count === 0 && (
+          <p className="sans text-xs text-muted px-3">
+            {allProjectsView
+              ? strings.workspaceTree.emptyAllProjects
+              : strings.workspaceTree.empty}
+          </p>
         )}
-        {clusterId && !apiOffline && !loading && !error && tree.count > 0 && (
+        {canLoadTree && !apiOffline && !loading && !error && tree.count > 0 && (
           <TreeNodeRow
             node={tree}
             depth={0}
             expanded={expanded}
             onToggle={toggleExpanded}
             onSelectLeaf={handleSelectLeaf}
+            onDoubleClickLeaf={handleDoubleClickLeaf}
+            selectedPrimitiveKey={allProjectsView ? '' : selectedPrimitiveKey}
           />
         )}
       </div>

@@ -1,5 +1,11 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { fetchHealth, clusterApiStatusFromHealth } from '../primitivesApi.js';
+import {
+  fetchHealth,
+  clusterApiStatusFromHealth,
+  deleteProjectArtifactPrimitive,
+  listWorkspaceEvents,
+  listWorkspacePrimitives,
+} from '../primitivesApi.js';
 import { resolveApiBase } from '../apiBase.js';
 
 afterEach(() => {
@@ -71,6 +77,43 @@ describe('fetchHealth', () => {
       dbReady: false,
       error: null,
     });
+  });
+});
+
+describe('workspace primitive API wrappers', () => {
+  it('requests all-project primitive scope', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ items: [] }),
+    });
+
+    await expect(listWorkspacePrimitives({ type: 'artifact', limit: 25 })).resolves.toEqual({
+      items: [],
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/workspace/primitives?type=artifact&limit=25');
+  });
+
+  it('requests all-project event scope', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ items: [] }),
+    });
+
+    await expect(listWorkspaceEvents({ limit: 25 })).resolves.toEqual({ items: [] });
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/workspace/events?limit=25');
+  });
+
+  it('requests project-scoped artifact primitive cleanup', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ ok: true }),
+    });
+
+    await expect(deleteProjectArtifactPrimitive('project 1', 'artifact/1')).resolves.toEqual({
+      ok: true,
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/projects/project%201/artifacts/artifact%2F1');
+    expect(fetchMock.mock.calls[0][1].method).toBe('DELETE');
   });
 });
 
