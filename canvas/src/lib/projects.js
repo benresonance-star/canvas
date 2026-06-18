@@ -17,6 +17,7 @@ import {
   normalizeWorkspaceIndex,
   collapseDuplicateProjectNamesInIndex,
 } from './projectIndexNormalize.js';
+import { migrateFolderHandlesOnIndexRepair } from './folderMigrate.js';
 import {
   listOrphanProjectIds,
   auditWorkspaceIndex,
@@ -201,6 +202,11 @@ export async function healDuplicateProjectNames(index, activeProjectId = null) {
   });
   if (removedIds.length === 0) {
     return { index: collapsed, removedIds: [] };
+  }
+  try {
+    await migrateFolderHandlesOnIndexRepair(index, collapsed, removedIds);
+  } catch {
+    /* Folder handles are best-effort; index repair must still complete. */
   }
   for (const removedId of removedIds) {
     await deleteSyncedProjectDocument(removedId);

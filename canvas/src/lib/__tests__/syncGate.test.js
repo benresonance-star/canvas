@@ -59,6 +59,34 @@ describe('syncGate', () => {
     await boot;
   });
 
+  it('layoutCommit runs while exclusive:background is in flight', async () => {
+    let releaseBackground;
+    const backgroundBlock = new Promise((resolve) => {
+      releaseBackground = resolve;
+    });
+
+    const background = runSyncGate('exclusive:background', async () => {
+      await backgroundBlock;
+      return 'background';
+    });
+
+    await Promise.resolve();
+    expect(canBypassSyncGateForPlacement('action:layoutCommit', 'project:p1')).toBe(true);
+
+    let layoutRan = false;
+    const layout = runSyncGate('action:layoutCommit', async () => {
+      layoutRan = true;
+      return 'layout';
+    }, { scope: 'project:p1' });
+
+    await Promise.resolve();
+    expect(layoutRan).toBe(true);
+    await expect(layout).resolves.toBe('layout');
+
+    releaseBackground();
+    await expect(background).resolves.toBe('background');
+  });
+
   it('placementTransfer runs while action:structuralChange is in flight', async () => {
     let releaseStructural;
     const structuralBlock = new Promise((resolve) => {

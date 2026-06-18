@@ -395,6 +395,7 @@ export function useAgentChatShell({
               updatedAt: Date.now(),
             });
 
+            stateRef.current = { ...stateRef.current, cards: nextCards };
             setState((prev) => ({ ...prev, cards: nextCards }));
             setStagedSyncCards(nextStaged);
             stagedSyncCardsRef.current = nextStaged;

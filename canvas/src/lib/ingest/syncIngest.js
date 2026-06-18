@@ -17,33 +17,50 @@ export async function ingestFoundFiles(projectId, projectName, flatVersions, pre
 
   await ensureClusterForProject(projectId, projectName);
 
-  const files = flatVersions.map((v) => ({
-    type: artifactTypeFromFile(v.filename, { cardType: v.cardType }),
-    uri: `folder-relative:${projectId}/${artifactFileKey(v)}`,
-    content_hash: v.content_hash,
-    version: String(v.version ?? 1),
-    retrieved_at: new Date(v.lastModified || Date.now()).toISOString(),
-    payload_text: v.content ?? null,
-    metadata: {
-      filename: v.filename,
-      relativePath: v.relativePath ?? null,
-      cardKey: v.cardKey ?? null,
-      prefix: v.prefix,
-      name: v.name,
-      ...(v.cardType === 'spreadsheet' ? { file_kind: 'spreadsheet' } : {}),
-      ...(v.cardType === 'user_note' ? { canvas_kind: 'user_note' } : {}),
-      ...(v.cardType === 'agent_chat'
-        ? {
-            canvas_kind: 'agent_chat',
-            connectorId: v.connectorId ?? null,
-            connectorLabel: v.connectorLabel ?? null,
-          }
-        : {}),
-      ...(v.cardType === 'audio' && v.audioMeta
-        ? { canvas_kind: 'audio', audio: v.audioMeta }
-        : {}),
-    },
-  }));
+  const files = flatVersions.map((v) => {
+    const bookmarkPreview = v.bookmarkPreview ?? {};
+    return {
+      type: artifactTypeFromFile(v.filename, { cardType: v.cardType }),
+      uri: v.cardType === 'bookmark' && v.externalUrl
+        ? v.externalUrl
+        : `folder-relative:${projectId}/${artifactFileKey(v)}`,
+      content_hash: v.content_hash,
+      version: String(v.version ?? 1),
+      retrieved_at: new Date(v.lastModified || Date.now()).toISOString(),
+      payload_text: v.cardType === 'bookmark' ? null : (v.content ?? null),
+      metadata: {
+        filename: v.filename,
+        relativePath: v.relativePath ?? null,
+        cardKey: v.cardKey ?? null,
+        prefix: v.prefix,
+        name: v.name,
+        ...(v.cardType === 'bookmark'
+          ? {
+              canvas_kind: 'bookmark',
+              external_url: v.externalUrl ?? null,
+              title: bookmarkPreview.title ?? v.name ?? null,
+              description: bookmarkPreview.description ?? null,
+              site_name: bookmarkPreview.siteName ?? null,
+              image_url: bookmarkPreview.imageUrl ?? null,
+              favicon_url: bookmarkPreview.faviconUrl ?? null,
+              fetched_at: bookmarkPreview.fetchedAt ?? null,
+            }
+          : {}),
+        ...(v.cardType === 'spreadsheet' ? { file_kind: 'spreadsheet' } : {}),
+        ...(v.cardType === 'user_note' ? { canvas_kind: 'user_note' } : {}),
+        ...(v.cardType === 'agent_chat'
+          ? {
+              canvas_kind: 'agent_chat',
+              connectorId: v.connectorId ?? null,
+              connectorLabel: v.connectorLabel ?? null,
+            }
+          : {}),
+        ...(v.cardType === 'audio' && v.audioMeta
+          ? { canvas_kind: 'audio', audio: v.audioMeta }
+          : {}),
+      },
+    };
+  });
 
   const ingestRes = await ingestArtifacts(projectId, { files, relationships: [] });
 
@@ -152,6 +169,7 @@ export function mergeArtifactRefsIntoCards(cards, grouped) {
         return {
           ...v,
           artifactRef: disk.artifactRef,
+          artifactSyncState: 'synced',
           content_hash: disk.content_hash ?? v.content_hash,
         };
       }),
@@ -171,6 +189,7 @@ export function applyArtifactRefsToGrouped(grouped, byFilename) {
           ...v,
           content_hash: ing.content_hash,
           artifactRef: ing.artifactRef,
+          artifactSyncState: 'synced',
         };
       }),
     };

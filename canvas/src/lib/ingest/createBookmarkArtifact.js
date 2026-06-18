@@ -71,13 +71,19 @@ export async function createBookmarkArtifact({
   const displayName = titleOverride?.trim() || bookmarkPreview.title || bookmarkPreview.domain;
   const contentHash = await bookmarkContentHash(normalizedUrl);
   const domain = bookmarkPreview.domain;
-  const filename = syntheticBookmarkFilename(domain, 1);
+  const cardId = crypto.randomUUID();
+  const filename = syntheticBookmarkFilename(domain, 1, cardId);
   const parsed = parseFilename(filename);
-  const cardKey = bookmarkCardKeyFromUrl(normalizedUrl);
+  const cardKey = bookmarkCardKeyFromUrl(normalizedUrl, cardId);
   const fetchedAt = bookmarkPreview.fetchedAt;
+  let folderFilename = filename;
 
   if (folderHandle) {
-    await writeBookmarkFile(folderHandle, { filename, url: normalizedUrl });
+    folderFilename = await writeBookmarkFile(folderHandle, {
+      filename,
+      url: normalizedUrl,
+      title: displayName,
+    });
   }
 
   const available = await isApiAvailable();
@@ -107,7 +113,7 @@ export async function createBookmarkArtifact({
             image_url: bookmarkPreview.imageUrl,
             favicon_url: bookmarkPreview.faviconUrl,
             fetched_at: fetchedAt,
-            filename,
+            filename: folderFilename,
             cardKey,
           },
         }],
@@ -134,7 +140,7 @@ export async function createBookmarkArtifact({
       projectId,
       projectName,
       cardKey,
-      filename,
+      filename: folderFilename,
       url: normalizedUrl,
       title: displayName,
       description: bookmarkPreview.description,
@@ -158,7 +164,7 @@ export async function createBookmarkArtifact({
 
   const version = {
     ...parsed,
-    filename,
+    filename: folderFilename,
     cardKey,
     cardType: 'bookmark',
     externalUrl: normalizedUrl,
@@ -176,11 +182,11 @@ export async function createBookmarkArtifact({
       reason: ingestReason,
       clusterId: effectiveClusterId,
     },
-    filename,
+    filename: folderFilename,
     parsed,
     artifactRef,
     card: {
-      id: crypto.randomUUID(),
+      id: cardId,
       key: cardKey,
       prefix: 'links',
       name: displayName,

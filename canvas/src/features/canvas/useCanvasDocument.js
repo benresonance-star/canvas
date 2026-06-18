@@ -16,12 +16,17 @@ import {
   endCanvasInteraction,
 } from '../../lib/canvasInteraction.js';
 import { registerOptimisticCard } from '../../lib/optimisticCards.js';
-import { ensureWritePermission } from '../../lib/folderWrite.js';
+import { ensureWritePermission, writeBookmarkFile } from '../../lib/folderWrite.js';
 import { createUserNoteArtifact } from '../../lib/ingest/createUserNote.js';
 import { createBookmarkArtifact } from '../../lib/ingest/createBookmarkArtifact.js';
 import { saveUserNote } from '../../lib/ingest/saveUserNote.js';
 import { saveUserNoteToProject, saveBookmarkToProject } from '../../lib/projectCardEdits.js';
 import { fetchBookmarkPreview } from '../../lib/bookmarkPreviewApi.js';
+import {
+  bookmarkLinkIdFromCardId,
+  domainFromUrl,
+  syntheticBookmarkFilename,
+} from '../../lib/bookmarkUrl.js';
 import { hydrateVersion } from '../../lib/previewHydrate.js';
 import { strings } from '../../content/strings.js';
 import {
@@ -60,6 +65,73 @@ import {
   linkCardToThreadInIndex,
   resolveThreadForCard,
 } from '../../lib/agentChatThreads.js';
+
+function bookmarkVersionHasLinkId(filename, cardId) {
+  const safeId = bookmarkLinkIdFromCardId(cardId);
+  return Boolean(safeId && String(filename ?? '').toLowerCase().includes(`-${safeId}-v`));
+}
+
+function bookmarkFilenameForInlineSave(card, version, url) {
+  if (version?.filename && bookmarkVersionHasLinkId(version.filename, card.id)) {
+    return version.filename;
+  }
+  return syntheticBookmarkFilename(domainFromUrl(url), version?.version ?? 1, card.id);
+}
+
+export function commitCanvasViewToStateRef(stateRef, view) {
+  const nextState = {
+    ...stateRef.current,
+    canvasView: view,
+  };
+  stateRef.current = nextState;
+  return nextState;
+}
+
+export function applyLayoutCommitPayloadToStateRef(stateRef, payload = {}) {
+  const { cardUpdates = null, canvasView = null } = payload;
+  let nextState = stateRef.current;
+
+  if (Array.isArray(cardUpdates) && cardUpdates.length > 0) {
+    const updatesById = new Map(cardUpdates.map((update) => [update.id, update]));
+    nextState = {
+      ...nextState,
+      cards: (nextState.cards ?? []).map((card) => {
+        const update = updatesById.get(card.id);
+        if (!update) return card;
+        const { id: _id, ...geometry } = update;
+        return { ...card, ...geometry };
+      }),
+    };
+  }
+
+  if (canvasView) {
+    nextState = {
+      ...nextState,
+      canvasView,
+    };
+  }
+
+  stateRef.current = nextState;
+  return nextState;
+}
+
+export function updateCardVersionInStateRef(stateRef, cardId, versionNum, updatedVersion) {
+  const nextCards = (stateRef.current.cards ?? []).map((card) => {
+    if (card.id !== cardId) return card;
+    return {
+      ...card,
+      versions: (card.versions ?? []).map((version) =>
+        version.version === versionNum ? { ...version, ...updatedVersion } : version,
+      ),
+    };
+  });
+  const nextState = {
+    ...stateRef.current,
+    cards: nextCards,
+  };
+  stateRef.current = nextState;
+  return nextState;
+}
 
 /**
  * Card CRUD, canvas view, dock/staging, and sync-confirm workflow extracted from App.jsx.
@@ -225,22 +297,27 @@ export function useCanvasDocument({ refs, deps }) {
     fitCanvasViewToCardsRef.current = fitCanvasViewToCards;
   }, [fitCanvasViewToCards]);
 
-  const handleInteractionCommit = useCallback(({ kind }) => {
+  const handleInteractionCommit = useCallback(({ kind, cardUpdates, canvasView } = {}) => {
     if (kind === 'layoutCommit' || kind === 'viewCommit') {
       userAdjustedViewRef.current = true;
       const projectId = activeProjectIdRef.current;
       if (projectId) {
+        applyLayoutCommitPayloadToStateRef(stateRef, { cardUpdates, canvasView });
+        if (canvasView) {
+          setState((prev) => ({ ...prev, canvasView }));
+        }
         void requestActionSync(kind === 'viewCommit' ? 'viewCommit' : 'layoutCommit', {
           projectId,
         });
       }
     }
-  }, [activeProjectIdRef, userAdjustedViewRef]);
+  }, [activeProjectIdRef, stateRef, userAdjustedViewRef, setState]);
 
   const handleCommitCanvasView = useCallback((view) => {
     userAdjustedViewRef.current = true;
+    commitCanvasViewToStateRef(stateRef, view);
     setCanvasView(view);
-  }, [setCanvasView, userAdjustedViewRef]);
+  }, [setCanvasView, stateRef, userAdjustedViewRef]);
 
   useEffect(() => {
     canvasViewportSizeRef.current = canvasViewportSize;
@@ -621,22 +698,21 @@ export function useCanvasDocument({ refs, deps }) {
 
   const pinVersion = useCallback((cardId, version) => {
     updateCard(cardId, { pinnedVersion: version });
-  }, [updateCard]);
+    const projectId = activeProjectIdRef.current;
+    if (projectId) {
+      void requestActionSync('structuralChange', { projectId });
+    }
+  }, [activeProjectIdRef, updateCard]);
 
   const handleUpdateVersion = useCallback((cardId, versionNum, updatedVersion) => {
-    setState((prev) => ({
-      ...prev,
-      cards: (prev.cards ?? []).map((c) => {
-        if (c.id !== cardId) return c;
-        return {
-          ...c,
-          versions: (c.versions ?? []).map((v) =>
-            v.version === versionNum ? { ...v, ...updatedVersion } : v,
-          ),
-        };
-      }),
-    }));
-  }, [setState]);
+    const nextState = updateCardVersionInStateRef(
+      stateRef,
+      cardId,
+      versionNum,
+      updatedVersion,
+    );
+    setState(nextState);
+  }, [setState, stateRef]);
 
   const handleNoteSaveStatus = useCallback(({ toast, error }) => {
     if (toast) {
@@ -742,6 +818,7 @@ export function useCanvasDocument({ refs, deps }) {
         persistCardEdits(card.id, result.cardUpdates);
       } else {
         handleUpdateVersion(card.id, result.versionNum, result.version);
+        void requestActionSync('structuralChange', { projectId });
       }
       if (result.apiUnavailable) {
         handleNoteSaveStatus({ toast: strings.sync.primitivesNotUpdated });
@@ -777,6 +854,7 @@ export function useCanvasDocument({ refs, deps }) {
         url,
         title,
         preview: previewPayload ?? card.versions?.[0]?.bookmarkPreview,
+        linkId: card.id,
       });
       if (result.reason === 'invalid_url') {
         handleNoteSaveStatus({ error: strings.bookmark.invalidUrl });
@@ -786,14 +864,48 @@ export function useCanvasDocument({ refs, deps }) {
         handleNoteSaveStatus({ error: strings.userNote.saveFailed });
         return;
       }
-      persistCardEdits(card.id, result.cardUpdates);
+      let cardUpdates = result.cardUpdates;
+      const currentVersion = card.versions?.[0];
+      if (folderHandle && currentVersion?.filename) {
+        const canWrite = await ensureWritePermission(folderHandle);
+        if (!canWrite) {
+          handleNoteSaveStatus({ error: strings.userNote.writeDenied });
+          return;
+        }
+        const targetFilename = bookmarkFilenameForInlineSave(
+          card,
+          currentVersion,
+          cardUpdates.versions?.[0]?.externalUrl ?? url,
+        );
+        const writtenFilename = await writeBookmarkFile(folderHandle, {
+          filename: targetFilename,
+          url: cardUpdates.versions?.[0]?.externalUrl ?? url,
+          title: cardUpdates.name,
+        });
+        cardUpdates = {
+          ...cardUpdates,
+          versions: (cardUpdates.versions ?? []).map((version) => ({
+            ...version,
+            filename: version.filename === currentVersion.filename
+              ? writtenFilename
+              : version.filename,
+          })),
+        };
+      }
+      persistCardEdits(card.id, cardUpdates);
       await refreshGraph();
     } catch (e) {
       handleNoteSaveStatus({ error: e.message });
     } finally {
       setSavingCardId(null);
     }
-  }, [activeProjectIdRef, persistCardEdits, handleNoteSaveStatus, refreshGraph]);
+  }, [
+    activeProjectIdRef,
+    folderHandle,
+    persistCardEdits,
+    handleNoteSaveStatus,
+    refreshGraph,
+  ]);
 
   const handleSaveNoteToProject = useCallback(async (card, { body, name, versionNum }) => {
     const result = saveUserNoteToProject(card, { body, name, versionNum });
@@ -858,7 +970,10 @@ export function useCanvasDocument({ refs, deps }) {
       if (projectId && newCard.id) {
         registerOptimisticCard(projectId, newCard.id);
       }
-      requestStructuralSync();
+      await saveProjectById(projectId, stateRef.current, stagedSyncCardsRef.current, {
+        pushRemote: false,
+      });
+      await requestStructuralSync({ awaitLocal: true });
       setFolderPresentKeys((keys) => {
         const next = new Set(keys || []);
         next.add(result.card.key);
@@ -875,6 +990,7 @@ export function useCanvasDocument({ refs, deps }) {
   }, [
     activeProjectIdRef,
     stateRef,
+    stagedSyncCardsRef,
     folderHandle,
     clusterId,
     refreshGraph,
@@ -941,6 +1057,11 @@ export function useCanvasDocument({ refs, deps }) {
       setState(nextState);
       if (projectId && newCard.id) {
         registerOptimisticCard(projectId, newCard.id);
+      }
+      if (projectId) {
+        await saveProjectById(projectId, stateRef.current, stagedSyncCardsRef.current, {
+          pushRemote: false,
+        });
       }
       requestStructuralSync();
       setAddLinkOpen(false);

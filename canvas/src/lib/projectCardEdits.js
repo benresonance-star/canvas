@@ -35,9 +35,9 @@ export function saveUserNoteToProject(card, { body, name, versionNum }) {
 
 /**
  * @param {object} card
- * @param {{ url: string, title?: string, preview?: object }} input
+ * @param {{ url: string, title?: string, preview?: object, linkId?: string | null }} input
  */
-export async function saveBookmarkToProject(card, { url, title, preview }) {
+export async function saveBookmarkToProject(card, { url, title, preview, linkId = null }) {
   const normalizedUrl = normalizeBookmarkUrl(url);
   if (!normalizedUrl) {
     return { ok: false, reason: 'invalid_url' };
@@ -52,7 +52,7 @@ export async function saveBookmarkToProject(card, { url, title, preview }) {
     || bookmarkPreview.domain
     || card.name;
   const contentHash = await bookmarkContentHash(normalizedUrl);
-  const cardKey = bookmarkCardKeyFromUrl(normalizedUrl);
+  const cardKey = bookmarkCardKeyFromUrl(normalizedUrl, linkId);
   const versions = (card.versions ?? []).map((v) => ({
     ...v,
     externalUrl: normalizedUrl,

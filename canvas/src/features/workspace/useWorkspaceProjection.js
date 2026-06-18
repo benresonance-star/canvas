@@ -67,6 +67,7 @@ export function useWorkspaceProjection({
     indexActiveProjectId,
     stateProjectName,
     setActiveProjectId,
+    setIndexActiveProjectId,
     setPendingSwitchProjectId,
     setProjectSwitchLoading,
     setProjectList,
@@ -209,6 +210,7 @@ export function useWorkspaceProjection({
       setActiveProjectId(projectId);
       projectNameDirtyRef.current = false;
       const index = await loadProjectIndex();
+      setIndexActiveProjectId?.(index?.activeProjectId ?? null);
       syncActiveProjectNameFromIndex(index);
       alignProjectTitleFromIndex(projectId, index);
       await loadProjectIntoStateStableRef.current(projectId, {
@@ -220,6 +222,7 @@ export function useWorkspaceProjection({
       projectList.length,
       activeProjectIdRef,
       setActiveProjectId,
+      setIndexActiveProjectId,
       projectNameDirtyRef,
       syncActiveProjectNameFromIndex,
       alignProjectTitleFromIndex,
@@ -266,10 +269,6 @@ export function useWorkspaceProjection({
         outgoingProjectId,
       });
       switchingProjectRef.current = true;
-      if (showSwitchLoading) {
-        setProjectSwitchLoading(true);
-      }
-      setPendingSwitchProjectId(targetId);
 
       const previousActiveId = activeProjectIdRef.current;
       const restoreProjectId =
@@ -277,6 +276,31 @@ export function useWorkspaceProjection({
       let outgoingState = null;
       let outgoingStaged = [];
       let outgoingPlacements = null;
+
+      if (outgoingProjectId) {
+        outgoingState = { ...stateRef.current };
+        outgoingStaged = [...stagedSyncCardsRef.current];
+        outgoingPlacements = patchPlacementsMapFromArrays(
+          getCommittedPayload(outgoingProjectId)?.artifactPlacements ?? {},
+          outgoingState.cards ?? [],
+          outgoingStaged,
+        );
+      }
+
+      if (showSwitchLoading) {
+        setProjectSwitchLoading(true);
+      }
+      setPendingSwitchProjectId(targetId);
+      resetProjectUi();
+      projectHydratedRef.current.delete(targetId);
+      projectNameDirtyRef.current = false;
+      setState((prev) => ({
+        ...prev,
+        ...buildSwitchPlaceholderState(
+          projectList.find((p) => p.id === targetId),
+          strings.defaultProjectName,
+        ),
+      }));
 
       if (outgoingProjectId) {
         try {
@@ -289,13 +313,6 @@ export function useWorkspaceProjection({
         } catch (e) {
           console.warn('Flush pending placement (switch) failed:', e);
         }
-        outgoingState = { ...stateRef.current };
-        outgoingStaged = [...stagedSyncCardsRef.current];
-        outgoingPlacements = patchPlacementsMapFromArrays(
-          getCommittedPayload(outgoingProjectId)?.artifactPlacements ?? {},
-          outgoingState.cards ?? [],
-          outgoingStaged,
-        );
         flowTrace('project:switch-outgoing-commit', {
           projectId: outgoingProjectId,
           switchSeq,
@@ -331,9 +348,6 @@ export function useWorkspaceProjection({
       try {
         let cards = null;
         await withSwitchPaintTimeout(async () => {
-          resetProjectUi();
-          projectHydratedRef.current.delete(targetId);
-
           activeProjectIdRef.current = targetId;
           const index = await loadProjectIndex();
           const row = index?.projects?.find((p) => p.id === targetId);
@@ -369,8 +383,7 @@ export function useWorkspaceProjection({
             });
           }
           if (
-            loadedCards == null
-            && isServerSyncEnabled()
+            isServerSyncEnabled()
             && shouldRetrySwitchLoad(
               loadedCards,
               targetId,
@@ -383,6 +396,7 @@ export function useWorkspaceProjection({
               flowTrace('project:switch-server-pull-start', { projectId: targetId });
               const pullResult = await pullProjectDocumentIfServerNewer(targetId, {
                 force: true,
+                acceptServerPayload: true,
               });
               flowTrace('project:switch-server-pull-done', {
                 projectId: targetId,
@@ -439,6 +453,7 @@ export function useWorkspaceProjection({
           });
           setActiveProjectId(targetId);
           await persistActiveProjectId(targetId);
+          setIndexActiveProjectId?.(targetId);
           const view = stateRef.current.canvasView;
           userAdjustedViewRef.current = Boolean(
             view
@@ -447,6 +462,7 @@ export function useWorkspaceProjection({
             && Number.isFinite(view.zoom),
           );
           const refreshedIndex = await loadProjectIndex();
+          setIndexActiveProjectId?.(refreshedIndex?.activeProjectId ?? targetId);
           alignProjectTitleFromIndex(targetId, refreshedIndex);
           syncActiveProjectNameFromIndex(refreshedIndex);
           void continueProjectSwitchBackground(targetId, switchSeq, {
@@ -544,6 +560,7 @@ export function useWorkspaceProjection({
       setPendingSwitchProjectId,
       setFolderLinkInProgress,
       setActiveProjectId,
+      setIndexActiveProjectId,
       setSyncLock,
       setSyncStatus,
       setState,
@@ -599,16 +616,28 @@ export function useWorkspaceProjection({
       try {
         flowTrace('project:boot-placeholder', { projectId: targetId });
         setProjectList(projectsForMenuFromIndex(index));
+        setIndexActiveProjectId?.(index?.activeProjectId ?? null);
         projectNameDirtyRef.current = false;
         const row = index.projects?.find((p) => p.id === targetId);
         setState((prev) => ({
           ...prev,
           ...buildSwitchPlaceholderState(row, strings.defaultProjectName),
         }));
+        let serverBootDocument = null;
         if (isServerSyncEnabled()) {
-          flowTrace('project:boot-reconcile-start', { projectId: targetId });
-          await reconcileProjectDocumentOnSwitch(targetId);
-          flowTrace('project:boot-reconcile-done', { projectId: targetId });
+          flowTrace('project:boot-server-pull-start', { projectId: targetId });
+          const pullResult = await pullProjectDocumentIfServerNewer(targetId, {
+            force: true,
+            acceptServerPayload: true,
+          });
+          serverBootDocument =
+            pullResult?.pulled && pullResult?.payload
+              ? pullResult.payload
+              : null;
+          flowTrace('project:boot-server-pull-done', {
+            projectId: targetId,
+            pulled: Boolean(pullResult?.pulled),
+          });
         }
         flowTrace('project:boot-chat-index-start', { projectId: targetId });
         await loadAgentChatThreadIndexEarly(targetId, singleConnectorId);
@@ -617,6 +646,7 @@ export function useWorkspaceProjection({
         let cards = await loadProjectIntoStateStableRef.current(targetId, {
           localOnly: true,
           hydratePreviews: false,
+          ...(serverBootDocument ? { document: serverBootDocument } : {}),
         });
         flowTrace('project:boot-local-load-done', {
           projectId: targetId,
@@ -672,6 +702,7 @@ export function useWorkspaceProjection({
           });
           setActiveProjectId(targetId);
           await persistActiveProjectId(targetId);
+          setIndexActiveProjectId?.(targetId);
           const displayName = resolveProjectDisplayName(
             index,
             targetId,
@@ -712,6 +743,7 @@ export function useWorkspaceProjection({
       setActiveProjectId,
       setPendingSwitchProjectId,
       setProjectList,
+      setIndexActiveProjectId,
       syncActiveProjectNameFromIndex,
       setState,
       loadAgentChatThreadIndexEarly,

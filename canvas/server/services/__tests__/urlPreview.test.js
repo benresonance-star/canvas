@@ -1,10 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
+  fetchBookmarkPreview,
   normalizePreviewUrl,
   isBlockedPreviewHost,
   parseOpenGraphFromHtml,
   resolvePreviewImageUrl,
+  youtubeThumbnailUrlFromPreviewUrl,
+  youtubeVideoIdFromUrl,
 } from '../urlPreview.js';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('normalizePreviewUrl', () => {
   it('accepts https urls', () => {
@@ -44,5 +51,42 @@ describe('resolvePreviewImageUrl', () => {
     expect(
       resolvePreviewImageUrl('https://example.com/page', '/img.png'),
     ).toBe('https://example.com/img.png');
+  });
+});
+
+describe('YouTube preview fallback', () => {
+  it('extracts ids from short and watch URLs', () => {
+    expect(youtubeVideoIdFromUrl(new URL('https://youtu.be/dRPCxunlcjY?si=abc'))).toBe(
+      'dRPCxunlcjY',
+    );
+    expect(youtubeVideoIdFromUrl(new URL('https://www.youtube.com/watch?v=dRPCxunlcjY'))).toBe(
+      'dRPCxunlcjY',
+    );
+    expect(youtubeVideoIdFromUrl(new URL('https://youtube.com/shorts/dRPCxunlcjY'))).toBe(
+      'dRPCxunlcjY',
+    );
+  });
+
+  it('builds a stable thumbnail URL for YouTube links', () => {
+    expect(
+      youtubeThumbnailUrlFromPreviewUrl(new URL('https://youtu.be/dRPCxunlcjY?si=abc')),
+    ).toBe('https://i.ytimg.com/vi/dRPCxunlcjY/hqdefault.jpg');
+  });
+
+  it('uses a thumbnail fallback when YouTube does not return HTML metadata', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      headers: {
+        get: () => 'text/plain',
+      },
+      arrayBuffer: vi.fn(),
+    })));
+
+    const preview = await fetchBookmarkPreview('https://youtu.be/dRPCxunlcjY?si=abc');
+
+    expect(preview).toMatchObject({
+      ok: true,
+      domain: 'youtu.be',
+      imageUrl: 'https://i.ytimg.com/vi/dRPCxunlcjY/hqdefault.jpg',
+    });
   });
 });

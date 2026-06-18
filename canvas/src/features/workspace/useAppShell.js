@@ -40,6 +40,7 @@ export function useAppShell() {
   const [loaded, setLoaded] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [projectList, setProjectList] = useState([]);
+  const [indexActiveProjectId, setIndexActiveProjectId] = useState(null);
   const [projectDeleteTarget, setProjectDeleteTarget] = useState(null);
   const [archiveLastTarget, setArchiveLastTarget] = useState(null);
   const [createProjectPromptOpen, setCreateProjectPromptOpen] = useState(false);
@@ -183,6 +184,7 @@ export function useAppShell() {
     attemptRestoreRef,
     lastLoadedCardsRef,
     setProjectList,
+    setIndexActiveProjectId,
     setSyncStatus,
     setState,
     loaded,
@@ -741,12 +743,13 @@ export function useAppShell() {
       projectSwitchLoading,
       projectList,
       loaded,
-      indexActiveProjectId: activeProjectId,
+      indexActiveProjectId,
       stateProjectName: state.projectName,
       setActiveProjectId,
       setPendingSwitchProjectId,
       setProjectSwitchLoading,
       setProjectList,
+      setIndexActiveProjectId,
       setSyncStatus,
       setSyncLock,
       setState,
@@ -940,6 +943,7 @@ export function useAppShell() {
     ui: {
       setActiveProjectId,
       setProjectList,
+      setIndexActiveProjectId,
       setSyncStatus,
       setSyncLock,
       setState,
@@ -990,6 +994,7 @@ export function useAppShell() {
       if (index?.projects) {
         await saveProjectIndex(index, { immediate: false });
         setProjectList(projectsForMenuFromIndex(index));
+        setIndexActiveProjectId(index.activeProjectId ?? null);
       } else {
         await refreshProjectListFromServer({ reconcileScope: 'none' });
       }

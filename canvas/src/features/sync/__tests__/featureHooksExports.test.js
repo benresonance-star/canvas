@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { useProjectSyncLifecycle } from '../useProjectSyncLifecycle.js';
 import {
   folderRepairScanOptions,
+  folderScanBaselineForProject,
+  folderScanOwnsProject,
+  folderPresentKeysForSuccessfulScan,
   shouldRepairFolderWithPicker,
   shouldSyncCanvasFromServerAfterFolderFlow,
   useFolderLinkScan,
@@ -42,6 +45,51 @@ describe('Phase 1 feature hooks', () => {
     expect(shouldRepairFolderWithPicker('denied')).toBe(true);
     expect(shouldRepairFolderWithPicker('other')).toBe(false);
     expect(shouldRepairFolderWithPicker(null)).toBe(false);
+  });
+
+  it('does not preserve stale presence keys for empty replacement scans', () => {
+    expect(
+      folderPresentKeysForSuccessfulScan(
+        [],
+        [{ key: 'notes__old', type: 'markdown', versions: [] }],
+        [{ key: 'img__stale', type: 'image', versions: [] }],
+        { replaceCanvas: true, foundCount: 0 },
+      ),
+    ).toEqual([]);
+    expect(
+      folderPresentKeysForSuccessfulScan(
+        [],
+        [{ key: 'notes__old', type: 'markdown', versions: [] }],
+        [{ key: 'img__stale', type: 'image', versions: [] }],
+        { replaceCanvas: false, foundCount: 0 },
+      ),
+    ).toEqual(['notes__old', 'img__stale']);
+  });
+
+  it('only lets folder scans mutate their active project', () => {
+    expect(folderScanOwnsProject('p1', 'p1', false)).toBe(true);
+    expect(folderScanOwnsProject('p1', 'p2', false)).toBe(false);
+    expect(folderScanOwnsProject('p1', 'p1', true)).toBe(false);
+  });
+
+  it('does not borrow current cards for a scan targeting another project', () => {
+    const currentCards = [{ id: 'old-card', key: 'old' }];
+    expect(folderScanBaselineForProject({
+      projectId: 'p2',
+      activeProjectId: 'p1',
+      currentCards,
+    })).toEqual([]);
+    expect(folderScanBaselineForProject({
+      projectId: 'p1',
+      activeProjectId: 'p1',
+      currentCards,
+    })).toEqual(currentCards);
+    expect(folderScanBaselineForProject({
+      baseCards: [{ id: 'explicit', key: 'explicit' }],
+      projectId: 'p2',
+      activeProjectId: 'p1',
+      currentCards,
+    })).toEqual([{ id: 'explicit', key: 'explicit' }]);
   });
 
   it('exports Phase 1b cluster, canvas, and workspace hooks', () => {

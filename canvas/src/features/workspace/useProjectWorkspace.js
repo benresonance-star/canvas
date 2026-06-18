@@ -29,6 +29,7 @@ export function useProjectWorkspace({
   ui: {
     setActiveProjectId,
     setProjectList,
+    setIndexActiveProjectId,
     setSyncStatus,
     setState,
     setProjectSwitchLoading,
@@ -151,6 +152,7 @@ export function useProjectWorkspace({
         setTimeout(() => setSyncStatus(null), 6000);
       }
       setProjectList(projectsForMenuFromIndex(index));
+      setIndexActiveProjectId?.(index?.activeProjectId ?? null);
       const switchResult = await selectProject(projectId, {
         reason: 'create',
         showSwitchLoading: true,
@@ -177,6 +179,7 @@ export function useProjectWorkspace({
     setProjectSwitchLoading,
     setPendingSwitchProjectId,
     setProjectList,
+    setIndexActiveProjectId,
     setSyncStatus,
     selectProject,
     loaded,
@@ -192,13 +195,15 @@ export function useProjectWorkspace({
   const handleUnarchiveProject = useCallback(async (projectId) => {
     const index = await unarchiveProject(projectId);
     setProjectList(projectsForMenuFromIndex(index));
-  }, [setProjectList]);
+    setIndexActiveProjectId?.(index?.activeProjectId ?? null);
+  }, [setProjectList, setIndexActiveProjectId]);
 
   const handleArchiveProject = useCallback(async (projectId) => {
     const row = projectList.find((p) => p.id === projectId);
     const { index, needsSwitch, switchToId, needsCreate } =
       await archiveProject(projectId);
     setProjectList(projectsForMenuFromIndex(index));
+    setIndexActiveProjectId?.(index?.activeProjectId ?? null);
     if (needsCreate) {
       setArchiveLastTarget({
         id: projectId,
@@ -209,7 +214,13 @@ export function useProjectWorkspace({
     if (needsSwitch && switchToId) {
       await switchProject(switchToId);
     }
-  }, [switchProject, projectList, setProjectList, setArchiveLastTarget]);
+  }, [
+    switchProject,
+    projectList,
+    setProjectList,
+    setIndexActiveProjectId,
+    setArchiveLastTarget,
+  ]);
 
   const handleConfirmDeleteProject = useCallback(async () => {
     if (!projectDeleteTarget) return;
@@ -224,6 +235,7 @@ export function useProjectWorkspace({
         return;
       }
       setProjectList(projectsForMenuFromIndex(result.index));
+      setIndexActiveProjectId?.(result.index?.activeProjectId ?? null);
       if (result.switchToId) {
         const deletingActive = id === activeProjectIdRef.current;
         await switchProject(result.switchToId, {
@@ -235,6 +247,7 @@ export function useProjectWorkspace({
         activeProjectIdRef.current = null;
         projectNameDirtyRef.current = false;
         await persistActiveProjectId(null);
+        setIndexActiveProjectId?.(null);
         setActiveProjectId(null);
         resetProjectUi();
         const empty = createEmptyProjectState();
@@ -259,6 +272,7 @@ export function useProjectWorkspace({
     switchProject,
     setProjectDeleteTarget,
     setProjectList,
+    setIndexActiveProjectId,
     setSyncStatus,
     activeProjectIdRef,
     projectNameDirtyRef,

@@ -52,9 +52,58 @@ export function buildBookmarkShortcutFile(url) {
   return `[InternetShortcut]\r\nURL=${url}\r\n`;
 }
 
-export async function writeBookmarkFile(handle, { filename, url }) {
-  await writeTextFileToFolder(handle, filename, buildBookmarkShortcutFile(url));
-  return filename;
+export function buildBookmarkMarkdownFile({ title, url }) {
+  const heading = String(title || 'Bookmark').trim() || 'Bookmark';
+  return [
+    `# ${heading}`,
+    '',
+    `URL: ${url}`,
+    '',
+  ].join('\n');
+}
+
+export function bookmarkMarkdownFilenameFromShortcut(filename) {
+  return String(filename ?? '').replace(/\.url$/i, '.bookmark.md');
+}
+
+export function isBookmarkMarkdownFilename(filename) {
+  return /\.bookmark\.md$/i.test(String(filename ?? ''));
+}
+
+export function isBookmarkShortcutWriteError(error) {
+  return (
+    error?.name === 'NotAllowedError'
+    || error?.name === 'SecurityError'
+    || error?.name === 'InvalidModificationError'
+    || /name is not allowed/i.test(error?.message ?? '')
+  );
+}
+
+export async function writeBookmarkFile(handle, { filename, url, title }) {
+  if (isBookmarkMarkdownFilename(filename)) {
+    await writeTextFileToFolder(
+      handle,
+      filename,
+      buildBookmarkMarkdownFile({ title, url }),
+    );
+    return filename;
+  }
+
+  try {
+    await writeTextFileToFolder(handle, filename, buildBookmarkShortcutFile(url));
+    return filename;
+  } catch (error) {
+    if (!isBookmarkShortcutWriteError(error)) {
+      throw error;
+    }
+  }
+  const markdownFilename = bookmarkMarkdownFilenameFromShortcut(filename);
+  await writeTextFileToFolder(
+    handle,
+    markdownFilename,
+    buildBookmarkMarkdownFile({ title, url }),
+  );
+  return markdownFilename;
 }
 
 export async function overwriteUserNoteFile(handle, filename, body) {

@@ -13,8 +13,6 @@ import {
 import { slimProjectPayloadForCache } from './projectSlim.js';
 import { clearOptimisticCard } from './optimisticCards.js';
 import { getSyncGateLabel, runSyncGate } from './syncGate.js';
-import { placementMapDiffers } from './placementTransfer.js';
-import { localPlacementShouldWin } from './artifactPlacementsMap.js';
 import { getLastKnownProjectPayloadById } from './sync/projectSyncLocal.js';
 import {
   getCommittedPayload,
@@ -38,14 +36,14 @@ import { syncTraceLog } from './sync/syncTrace.js';
  *   onLocalCacheFailed: (projectId: string) => void,
  *   onStructuralPushFailed?: (projectId: string, pushResult: object) => void,
  *   reconcileInbound: (projectId: string, options: { showPullToast?: boolean }) => Promise<object>,
- *   flushActiveProject?: (projectId: string) => Promise<void>,
+ *   flushActiveProject?: (projectId: string, options?: object) => Promise<void>,
  *   flushAll: () => Promise<void>,
  *   commitProjectDocument?: (projectId: string, options: object) => Promise<object>,
  * } | null} */
 let handlers = null;
 
-/** @type {string | null} */
-let pendingFolderScanProjectId = null;
+/** @type {{ projectId: string, allowEmptyRemoteOverwrite?: boolean, skipInboundReconcile?: boolean } | null} */
+let pendingFolderScanRequest = null;
 
 /** @type {Map<string, number>} */
 const structuralPushRetryCountByProject = new Map();
@@ -67,11 +65,11 @@ export function notifyStructuralPushFailed(projectId, pushResult) {
  * Flush a folder scan that was deferred while the user was dragging on canvas.
  */
 export function flushPendingFolderScanIfAny() {
-  if (!handlers || !pendingFolderScanProjectId) return Promise.resolve();
+  if (!handlers || !pendingFolderScanRequest) return Promise.resolve();
   if (isCanvasInteractionActive()) return Promise.resolve();
-  const projectId = pendingFolderScanProjectId;
-  pendingFolderScanProjectId = null;
-  return requestActionSync('folderScan', { projectId });
+  const request = pendingFolderScanRequest;
+  pendingFolderScanRequest = null;
+  return requestActionSync('folderScan', request);
 }
 
 function buildPayloadForProject(projectId, { useAuthoritativePlacements = false } = {}) {
@@ -131,6 +129,7 @@ async function pushPayloadForProject(
   reason,
   traceId = null,
   beforePayload = null,
+  { allowEmptyRemoteOverwrite = false, allowDockOnlyRemoteOverwrite = false } = {},
 ) {
   syncTraceLog(traceId, 'actionSync:push-start', {
     projectId,
@@ -144,6 +143,8 @@ async function pushPayloadForProject(
     reason,
     traceId,
     beforePayload,
+    allowEmptyRemoteOverwrite,
+    allowDockOnlyRemoteOverwrite,
   });
   syncTraceLog(traceId, 'actionSync:push-done', {
     projectId,
@@ -193,10 +194,15 @@ function schedulePlacementPushRetry(projectId, reason = 'structuralChange') {
 /**
  * Action-based sync — not timer-driven.
  * @param {ActionSyncReason} reason
- * @param {{ projectId?: string, awaitLocal?: boolean, traceId?: string | null }} [options]
+ * @param {{ projectId?: string, awaitLocal?: boolean, traceId?: string | null, allowEmptyRemoteOverwrite?: boolean, skipInboundReconcile?: boolean }} [options]
  */
 export function requestActionSync(reason, options = {}) {
-  const { awaitLocal = false, traceId = null } = options;
+  const {
+    awaitLocal = false,
+    traceId = null,
+    allowEmptyRemoteOverwrite = false,
+    skipInboundReconcile = false,
+  } = options;
   if (!handlers) {
     if (reason === 'placementTransfer') {
       syncTraceLog(traceId, 'actionSync:skipped', { reason: 'handlers_not_registered' });
@@ -232,7 +238,11 @@ export function requestActionSync(reason, options = {}) {
       && isCanvasInteractionActive()
     ) {
       if (reason === 'folderScan') {
-        pendingFolderScanProjectId = projectId;
+        pendingFolderScanRequest = {
+          projectId,
+          allowEmptyRemoteOverwrite,
+          skipInboundReconcile,
+        };
       }
       return;
     }
@@ -292,9 +302,6 @@ export function requestActionSync(reason, options = {}) {
     }
 
     if (reason === 'boot') {
-      if (handlers.flushActiveProject && handlers.getProjectId() === projectId) {
-        await handlers.flushActiveProject(projectId);
-      }
       return;
     }
 
@@ -307,9 +314,9 @@ export function requestActionSync(reason, options = {}) {
     }
 
     if (reason === 'folderScan') {
-      pendingFolderScanProjectId = null;
+      pendingFolderScanRequest = null;
       if (handlers.flushActiveProject && handlers.getProjectId() === projectId) {
-        await handlers.flushActiveProject(projectId);
+        await handlers.flushActiveProject(projectId, { allowEmptyRemoteOverwrite });
       }
       const builtBefore = getCommittedPayload(projectId)
         ?? buildPayloadForProject(projectId)?.payload;
@@ -324,15 +331,15 @@ export function requestActionSync(reason, options = {}) {
         builtBefore,
         serverSnapshot,
       );
-      await flushLocalAndPush(projectId, reason);
-      if (!skipReconcile) {
+      await flushLocalAndPush(projectId, reason, { allowEmptyRemoteOverwrite });
+      if (!skipInboundReconcile && !skipReconcile) {
         await handlers.reconcileInbound(projectId, { showPullToast: false });
       }
     }
   }, { scope: scopedProjectId ? `project:${scopedProjectId}` : 'global' });
 }
 
-async function flushLocalAndPush(projectId, reason) {
+async function flushLocalAndPush(projectId, reason, pushOptions = {}) {
   if (!handlers) return null;
   if (handlers.getProjectId() !== projectId) {
     return null;
@@ -345,7 +352,7 @@ async function flushLocalAndPush(projectId, reason) {
   }
 
   const beforePayload = getPriorPayloadForPatch(projectId);
-  return pushPayloadForProject(projectId, payload, reason, null, beforePayload);
+  return pushPayloadForProject(projectId, payload, reason, null, beforePayload, pushOptions);
 }
 
 /**
@@ -362,6 +369,6 @@ export function requestPlacementSync(options = {}) {
 /** @internal */
 export function resetActionSyncForTests() {
   handlers = null;
-  pendingFolderScanProjectId = null;
+  pendingFolderScanRequest = null;
   structuralPushRetryCountByProject.clear();
 }

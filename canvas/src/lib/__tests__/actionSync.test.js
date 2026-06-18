@@ -47,7 +47,7 @@ describe('actionSync', () => {
     expect(reconcile).not.toHaveBeenCalled();
   });
 
-  it('boot flushes without reconcile pull', async () => {
+  it('boot does not push local state during refresh', async () => {
     const reconcile = vi.fn();
     const flushActive = vi.fn(async () => {});
     registerActionSyncHandlers({
@@ -63,7 +63,7 @@ describe('actionSync', () => {
     });
 
     await requestActionSync('boot', { projectId: 'p1' });
-    expect(flushActive).toHaveBeenCalledWith('p1');
+    expect(flushActive).not.toHaveBeenCalled();
     expect(reconcile).not.toHaveBeenCalled();
   });
 
@@ -103,6 +103,55 @@ describe('actionSync', () => {
     beginCanvasInteraction('card');
     await requestActionSync('visibilityResume', { projectId: 'p1' });
     expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it('pagehide waits for an in-flight layout commit before flushing all state', async () => {
+    let resolveCommit;
+    let markCommitStarted;
+    const commitStarted = new Promise((resolve) => {
+      markCommitStarted = resolve;
+    });
+    const commitProjectDocument = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveCommit = () => resolve({
+            ok: true,
+            localCacheWritten: true,
+            payload: {
+              cards: [{ id: 'c1', x: 300, y: 200 }],
+              canvasView: { x: 10, y: 20, zoom: 1.2 },
+            },
+          });
+          markCommitStarted();
+        }),
+    );
+    const flushAll = vi.fn(async () => {});
+
+    registerActionSyncHandlers({
+      getProjectId: () => 'p1',
+      getState: () => ({
+        cards: [{ id: 'c1', x: 300, y: 200 }],
+        canvasView: { x: 10, y: 20, zoom: 1.2 },
+      }),
+      getStagedSyncCards: () => [],
+      buildPayload: (s) => s,
+      commitProjectDocument,
+      touchIndex: vi.fn(),
+      onLocalCacheFailed: vi.fn(),
+      reconcileInbound: vi.fn(),
+      flushAll,
+    });
+
+    const layout = requestActionSync('layoutCommit', { projectId: 'p1' });
+    await commitStarted;
+    const unload = requestActionSync('pagehide', { projectId: 'p1' });
+    await Promise.resolve();
+
+    expect(flushAll).not.toHaveBeenCalled();
+    resolveCommit();
+    await layout;
+    await unload;
+    expect(flushAll).toHaveBeenCalledTimes(1);
   });
 
   it('structuralChange with awaitLocal persists before push', async () => {
@@ -201,6 +250,8 @@ describe('actionSync', () => {
       reason: 'placementTransfer',
       traceId: null,
       beforePayload: null,
+      allowEmptyRemoteOverwrite: false,
+      allowDockOnlyRemoteOverwrite: false,
     });
   });
 
@@ -300,6 +351,54 @@ describe('actionSync', () => {
     const result = await commitProjectDocument.mock.results[0].value;
     expect(result.deferred).not.toBe(true);
     expect(flushOutgoingProjectDocument).toHaveBeenCalled();
+  });
+
+  it('folderScan can explicitly purge an empty document without inbound reconcile', async () => {
+    const emptyPayload = {
+      projectName: 'P',
+      cards: [],
+      stagedSyncCards: [],
+      artifactPlacements: {},
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    const commitProjectDocument = vi.fn(async () => ({
+      ok: true,
+      localCacheWritten: true,
+      payload: emptyPayload,
+    }));
+    const reconcile = vi.fn(async () => ({}));
+    const flushActive = vi.fn(async () => {});
+    registerActionSyncHandlers({
+      getProjectId: () => 'p1',
+      getState: () => emptyPayload,
+      getStagedSyncCards: () => [],
+      buildPayload: (s, staged) => ({ ...s, stagedSyncCards: staged ?? [] }),
+      commitProjectDocument,
+      touchIndex: vi.fn(),
+      onLocalCacheFailed: vi.fn(),
+      reconcileInbound: reconcile,
+      flushActiveProject: flushActive,
+      flushAll: vi.fn(),
+    });
+
+    await requestActionSync('folderScan', {
+      projectId: 'p1',
+      allowEmptyRemoteOverwrite: true,
+      skipInboundReconcile: true,
+    });
+
+    expect(flushActive).toHaveBeenCalledWith('p1', {
+      allowEmptyRemoteOverwrite: true,
+    });
+    expect(flushOutgoingProjectDocument).toHaveBeenCalledWith(
+      'p1',
+      emptyPayload,
+      expect.objectContaining({
+        reason: 'folderScan',
+        allowEmptyRemoteOverwrite: true,
+      }),
+    );
+    expect(reconcile).not.toHaveBeenCalled();
   });
 
   it('structuralChange does not push when target id is not the active project', async () => {

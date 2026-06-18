@@ -5,6 +5,7 @@ import {
   domainFromUrl,
   syntheticBookmarkFilename,
   bookmarkCardKeyFromUrl,
+  bookmarkLinkIdFromCardId,
 } from '../bookmarkUrl.js';
 
 describe('normalizeBookmarkUrl', () => {
@@ -41,10 +42,28 @@ describe('syntheticBookmarkFilename', () => {
   it('builds links prefix filename', () => {
     expect(syntheticBookmarkFilename('example.com')).toBe('links__example-com-v1.url');
   });
+
+  it('adds a stable link id when provided', () => {
+    expect(syntheticBookmarkFilename('example.com', 1, 'abc12345-extra')).toBe(
+      'links__example-com-abc12345-v1.url',
+    );
+  });
 });
 
 describe('bookmarkCardKeyFromUrl', () => {
   it('uses links prefix and domain slug', () => {
     expect(bookmarkCardKeyFromUrl('https://docs.google.com/x')).toBe('links__docs-google-com');
+  });
+
+  it('adds a stable link id when provided', () => {
+    expect(bookmarkCardKeyFromUrl('https://docs.google.com/x', 'abc12345-extra')).toBe(
+      'links__docs-google-com-abc12345',
+    );
+  });
+});
+
+describe('bookmarkLinkIdFromCardId', () => {
+  it('builds a short filesystem-safe id', () => {
+    expect(bookmarkLinkIdFromCardId('ABC12345-card-id')).toBe('abc12345');
   });
 });

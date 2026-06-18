@@ -1,20 +1,43 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { applyProjectOps } from '../sync/projectPatchOps.js';
 
+vi.mock('../canvasProjectsApi.js', () => ({
+  patchCanvasProject: vi.fn(async () => ({
+    ok: true,
+    revision: 2,
+    updatedAt: '2026-06-18T00:00:00.000Z',
+  })),
+}));
+
 vi.mock('../sync/projectSyncLocal.js', () => ({
   readLocalProjectSerialised: vi.fn(async () => null),
   writeLocalProjectSerialised: vi.fn(async () => true),
   getLastKnownProjectPayloadById: () => new Map(),
 }));
 
+vi.mock('../sync/projectSyncState.js', async (importOriginal) => {
+  const orig = await importOriginal();
+  return {
+    ...orig,
+    getServerSyncEnabled: vi.fn(() => true),
+  };
+});
+
 vi.mock('../sync/projectSyncRevision.js', async (importOriginal) => {
   const orig = await importOriginal();
   return {
     ...orig,
+    ensureClientRevision: vi.fn(async () => 0),
     getClientRevision: vi.fn(() => 0),
     applyServerProjectRevision: vi.fn(),
+    notifySyncLock: vi.fn(),
+    alignClientRevisionWithServerMeta: vi.fn(async () => 0),
   };
 });
+
+vi.mock('../sync/projectSyncIndex.js', () => ({
+  patchIndexDocumentRevision: vi.fn(async () => true),
+}));
 
 describe('projectSyncPatch integration', () => {
   beforeEach(() => {
@@ -108,5 +131,86 @@ describe('projectSyncPatch integration', () => {
 
     expect(result.applied).toBe(true);
     expect(result.payload?.cards?.some((c) => c.key === 'notes__dock')).toBe(true);
+  });
+
+  it('placementTransfer PATCH runs inside the existing placement gate', async () => {
+    const { patchCanvasProject } = await import('../canvasProjectsApi.js');
+    const { runSyncGate, resetSyncGateForTests } = await import('../syncGate.js');
+    const { pushProjectPatchIfEnabled } = await import('../sync/projectSyncPatch.js');
+    resetSyncGateForTests();
+
+    const before = {
+      projectName: 'P',
+      cards: [],
+      stagedSyncCards: [
+        {
+          stagingId: 's1',
+          key: 'aps-playbook',
+          type: 'html',
+          versions: [{ version: 1, filename: 'aps-playbook.html' }],
+        },
+      ],
+      artifactPlacements: {
+        'aps-playbook': {
+          surface: 'dock',
+          placement: { stagingId: 's1', key: 'aps-playbook', type: 'html' },
+        },
+      },
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    const after = {
+      ...before,
+      cards: [
+        {
+          id: 'c-html',
+          key: 'aps-playbook',
+          name: 'aps-playbook',
+          type: 'html',
+          x: 10,
+          y: 20,
+          versions: [{ version: 1, filename: 'aps-playbook.html' }],
+        },
+      ],
+      stagedSyncCards: [],
+      artifactPlacements: {
+        'aps-playbook': {
+          surface: 'canvas',
+          placement: {
+            id: 'c-html',
+            key: 'aps-playbook',
+            type: 'html',
+            x: 10,
+            y: 20,
+          },
+        },
+      },
+    };
+
+    const result = await runSyncGate(
+      'action:placementTransfer',
+      () => pushProjectPatchIfEnabled(
+        'p-placement',
+        after,
+        'placementTransfer',
+        before,
+      ),
+      { scope: 'project:p-placement' },
+    );
+
+    expect(result?.ok).toBe(true);
+    expect(patchCanvasProject).toHaveBeenCalledWith(
+      'p-placement',
+      expect.objectContaining({
+        ops: expect.arrayContaining([
+          expect.objectContaining({ op: 'upsertCard' }),
+          expect.objectContaining({
+            op: 'setPlacement',
+            key: 'aps-playbook',
+            surface: 'canvas',
+          }),
+          expect.objectContaining({ op: 'removeStaged', stagingId: 's1' }),
+        ]),
+      }),
+    );
   });
 });

@@ -64,6 +64,12 @@ import { requestActionSync } from '../../lib/actionSync.js';
 import { runExclusive } from '../../lib/projectSyncCoordinator.js';
 import { isServerSyncEnabled, setConnectedFolder, projectsForMenuFromIndex } from '../../lib/projects.js';
 
+function folderLinkDebug(stage, meta = {}) {
+  if (typeof window === 'undefined') return;
+  if (window.location?.hostname !== 'localhost') return;
+  console.info('[folder-link]', { stage, ...meta });
+}
+
 export const folderRepairScanOptions = (options = {}) => ({
   ...options,
   skipPlacementDefer: true,
@@ -77,6 +83,32 @@ export function shouldSyncCanvasFromServerAfterFolderFlow(flow) {
 
 export function shouldRepairFolderWithPicker(reason) {
   return reason === 'not_stored' || reason === 'denied';
+}
+
+export function folderScanOwnsProject(projectId, activeProjectId, switchingProject = false) {
+  return Boolean(projectId && activeProjectId && projectId === activeProjectId && !switchingProject);
+}
+
+export function folderScanBaselineForProject({
+  baseCards,
+  projectId,
+  activeProjectId,
+  currentCards = [],
+}) {
+  if (baseCards !== undefined) return baseCards ?? [];
+  return folderScanOwnsProject(projectId, activeProjectId, false)
+    ? (currentCards ?? [])
+    : [];
+}
+
+export function folderPresentKeysForSuccessfulScan(
+  foundKeys,
+  cards = [],
+  stagedSyncCards = [],
+  { replaceCanvas = false, foundCount = foundKeys?.length ?? 0 } = {},
+) {
+  if (replaceCanvas && foundCount === 0) return [];
+  return unionFolderPresentKeys(foundKeys ?? [], cards, stagedSyncCards);
 }
 
 /**
@@ -157,17 +189,32 @@ export function useFolderLinkScan({
   const pickDirectoryExclusive = useCallback(
     async (projectId) => {
       if (directoryPickPromiseRef.current) {
+        folderLinkDebug('picker:reuse-in-flight', { projectId });
         return directoryPickPromiseRef.current;
       }
       clearFolderPickerInProgress();
       folderPickerInFlightRef.current = true;
       setSyncStatus((prev) => ({ ...(prev ?? {}), folderPickerInProgress: true }));
+      folderLinkDebug('picker:open', { projectId });
 
       const promise = (async () => {
         try {
-          return await pickProjectDirectoryHandle(projectId);
+          const handle = await pickProjectDirectoryHandle(projectId);
+          folderLinkDebug('picker:selected', {
+            projectId,
+            folderName: handle?.name ?? null,
+          });
+          return handle;
+        } catch (e) {
+          folderLinkDebug('picker:error', {
+            projectId,
+            name: e?.name ?? null,
+            message: e?.message ?? String(e),
+          });
+          throw e;
         } finally {
           clearFolderPickerInProgress();
+          folderLinkDebug('picker:closed', { projectId });
         }
       })();
 
@@ -186,28 +233,53 @@ export function useFolderLinkScan({
   const persistFolderConnection = useCallback(async (handle) => {
     const projectId = activeProjectIdRef.current;
     if (!projectId || !handle) return false;
+
+    folderLinkDebug('persist:start', {
+      projectId,
+      folderName: handle.name ?? null,
+    });
+    setFolderHandle(handle);
+    folderHandleProjectIdRef.current = projectId;
+    setCachedFolderHandle(projectId, handle);
+    folderLinkDebug('persist:session-linked', {
+      projectId,
+      folderName: handle.name ?? null,
+    });
+
     let stored = false;
     try {
       stored = await verifyFolderHandleStored(projectId, handle);
     } catch {
       stored = false;
     }
+
+    setFolderStoredOnDevice(stored);
     if (!stored) {
-      setFolderHandle(null);
-      setFolderStoredOnDevice(false);
       setSyncStatus({ toast: strings.sync.folderSaveFailed });
       setTimeout(() => setSyncStatus(null), 5000);
-      return false;
     }
-    setFolderHandle(handle);
-    folderHandleProjectIdRef.current = projectId;
-    setFolderStoredOnDevice(true);
-    setCachedFolderHandle(projectId, handle);
-    const index = await setConnectedFolder(projectId, handle.name);
-    if (index?.projects) setProjectList(projectsForMenuFromIndex(index));
+
+    try {
+      const index = await setConnectedFolder(projectId, handle.name);
+      if (index?.projects) setProjectList(projectsForMenuFromIndex(index));
+      folderLinkDebug('persist:index-updated', {
+        projectId,
+        folderName: handle.name ?? null,
+        stored,
+      });
+    } catch (e) {
+      folderLinkDebug('persist:index-update-failed', {
+        projectId,
+        folderName: handle.name ?? null,
+        message: e?.message ?? String(e),
+      });
+      setSyncStatus({ toast: strings.sync.folderSaveFailed });
+      setTimeout(() => setSyncStatus(null), 5000);
+    }
     flowTrace('folder:link-done', {
       projectId,
       folderName: handle.name,
+      stored,
     });
     return true;
   }, []);
@@ -215,6 +287,10 @@ export function useFolderLinkScan({
   const linkProjectFolder = useCallback(
     async (projectId, { requestIfNeeded = false, switchSeq = null } = {}) => {
       if (!projectId || !window.showDirectoryPicker) {
+        folderLinkDebug('restore:unsupported-or-no-project', {
+          projectId: projectId ?? null,
+          hasPicker: Boolean(window.showDirectoryPicker),
+        });
         setFolderStoredOnDevice(false);
         setFolderLinkProbeComplete(true);
         return {
@@ -227,13 +303,33 @@ export function useFolderLinkScan({
       const stale = () =>
         switchSeq != null && projectSwitchSeqRef.current !== switchSeq;
       try {
+        folderLinkDebug('restore:start', {
+          projectId,
+          requestIfNeeded,
+          switchSeq,
+        });
         const result = await linkFolderForProject(projectId, { requestIfNeeded });
         if (stale()) return result;
+        folderLinkDebug('restore:result', {
+          projectId,
+          granted: result.granted,
+          stored: result.stored,
+          needsPermission: result.needsPermission,
+          hasHandle: Boolean(result.handle),
+          folderName: result.handle?.name ?? null,
+        });
         setFolderStoredOnDevice(result.stored);
         if (result.granted && result.handle) {
           setFolderHandle(result.handle);
           folderHandleProjectIdRef.current = projectId;
-        } else {
+        } else if (
+          !folderPickerInFlightRef.current
+          && folderHandleProjectIdRef.current !== projectId
+        ) {
+          folderLinkDebug('restore:clear-handle', {
+            projectId,
+            currentHandleProjectId: folderHandleProjectIdRef.current,
+          });
           setFolderHandle(null);
           folderHandleProjectIdRef.current = null;
         }
@@ -245,8 +341,17 @@ export function useFolderLinkScan({
         } catch {
           setFolderStoredOnDevice(false);
         }
-        setFolderHandle(null);
-        folderHandleProjectIdRef.current = null;
+        if (
+          !folderPickerInFlightRef.current
+          && folderHandleProjectIdRef.current !== projectId
+        ) {
+          folderLinkDebug('restore:catch-clear-handle', {
+            projectId,
+            currentHandleProjectId: folderHandleProjectIdRef.current,
+          });
+          setFolderHandle(null);
+          folderHandleProjectIdRef.current = null;
+        }
         return {
           handle: null,
           granted: false,
@@ -310,12 +415,12 @@ export function useFolderLinkScan({
       }, 800);
       return;
     }
-    const cardsBaseline =
-      baseCards !== undefined
-        ? (baseCards ?? [])
-        : (projectIdEarly === settledProjectIdRef.current
-          ? (stateRef.current.cards ?? [])
-          : (stateRef.current.cards ?? []));
+    const cardsBaseline = folderScanBaselineForProject({
+      baseCards,
+      projectId: projectIdEarly,
+      activeProjectId: settledProjectIdRef.current,
+      currentCards: stateRef.current.cards ?? [],
+    });
     const projectId = projectIdOption ?? settledProjectIdRef.current;
     setSyncStatus({ scanning: true });
     const scanSpinnerTimeoutId = setTimeout(() => {
@@ -404,10 +509,11 @@ export function useFolderLinkScan({
 
     // On read errors we keep the previous key set; on success refresh presence for missing-file UI
     setFolderPresentKeys(
-      unionFolderPresentKeys(
+      folderPresentKeysForSuccessfulScan(
         Object.keys(groupedFinal),
         stateRef.current.cards ?? [],
         stagedSyncCardsRef.current ?? [],
+        { replaceCanvas, foundCount: found.length },
       ),
     );
 
@@ -679,6 +785,12 @@ export function useFolderLinkScan({
             ? (stateRef.current.cards ?? [])
             : [];
       try {
+        folderLinkDebug('restore-attempt:start', {
+          projectId,
+          requestIfNeeded,
+          scan,
+          switchSeq,
+        });
         const result = await linkProjectFolder(projectId, {
           requestIfNeeded,
           switchSeq,
@@ -702,7 +814,12 @@ export function useFolderLinkScan({
         } catch {
           setFolderStoredOnDevice(false);
         }
-        setFolderHandle(null);
+        if (
+          !folderPickerInFlightRef.current
+          && folderHandleProjectIdRef.current !== projectId
+        ) {
+          setFolderHandle(null);
+        }
       } finally {
         if (
           projectId === activeProjectIdRef.current
@@ -792,6 +909,10 @@ export function useFolderLinkScan({
 
   const finishFolderConnectFlow = useCallback(
     async (projectId, handle) => {
+      folderLinkDebug('connect:finish-start', {
+        projectId,
+        folderName: handle?.name ?? null,
+      });
       const linked = await persistFolderConnection(handle);
       if (!linked) return;
       // Block attemptRestore from starting a competing scan during connect.
@@ -810,6 +931,10 @@ export function useFolderLinkScan({
         void syncCanvasFromServerAfterFolderConnect(projectId);
       }
       await flushPendingPlacementCommit?.();
+      folderLinkDebug('connect:finish-done', {
+        projectId,
+        folderName: handle?.name ?? null,
+      });
     },
     [
       persistFolderConnection,
@@ -831,10 +956,22 @@ export function useFolderLinkScan({
       setTimeout(() => setSyncStatus(null), 4000);
       return;
     }
+    setFolderLinkInProgress(true);
+    setFolderLinkProbeComplete(false);
     try {
+      folderLinkDebug('connect:picker-start', { projectId });
       const handle = await pickDirectoryExclusive(projectId);
+      folderLinkDebug('connect:picker-returned', {
+        projectId,
+        folderName: handle?.name ?? null,
+      });
       await finishFolderConnectFlow(projectId, handle);
     } catch (e) {
+      folderLinkDebug('connect:error', {
+        projectId,
+        name: e?.name ?? null,
+        message: e?.message ?? String(e),
+      });
       if (e.name !== 'AbortError') {
         const message = isFolderPickerBusyError(e)
           ? strings.sync.folderPickerBusy
@@ -844,6 +981,9 @@ export function useFolderLinkScan({
         setSyncStatus({ error: message });
         setTimeout(() => setSyncStatus(null), 6000);
       }
+    } finally {
+      setFolderLinkProbeComplete(true);
+      setFolderLinkInProgress(false);
     }
   }, [pickDirectoryExclusive, finishFolderConnectFlow]);
 
@@ -1073,12 +1213,58 @@ export function useFolderLinkScan({
   }, [
     folderHandle,
     folderStoredOnDevice,
+    folderLinkInProgress,
     folderLinkProbeComplete,
     scanFolder,
     requestFolder,
     pullActiveProjectFromServer,
     projectList,
     handleReconnectFolder,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    window.__canvasFolderSnapshot = () => {
+      const projectId = activeProjectIdRef.current;
+      const row = projectId
+        ? projectList.find((project) => project.id === projectId)
+        : null;
+      const linkState = deriveFolderLinkState({
+        folderHandle,
+        folderStoredOnDevice,
+        folderLinkInProgress,
+        folderLinkProbeComplete,
+        connectedFolderName: row?.connectedFolderName ?? null,
+      });
+      return {
+        activeProjectId: activeProjectId ?? null,
+        activeProjectIdRef: projectId ?? null,
+        folderHandleName: folderHandle?.name ?? null,
+        folderHandleProjectId: folderHandleProjectIdRef.current ?? null,
+        folderStoredOnDevice,
+        folderLinkInProgress,
+        folderLinkProbeComplete,
+        folderPickerInFlight: Boolean(folderPickerInFlightRef.current),
+        connectedFolderName: row?.connectedFolderName ?? null,
+        linkState,
+        projectSwitchLoading,
+        folderPresentKeyCount: Array.isArray(folderPresentKeys)
+          ? folderPresentKeys.length
+          : folderPresentKeys?.size ?? null,
+      };
+    };
+    return () => {
+      delete window.__canvasFolderSnapshot;
+    };
+  }, [
+    activeProjectId,
+    projectList,
+    folderHandle,
+    folderStoredOnDevice,
+    folderLinkInProgress,
+    folderLinkProbeComplete,
+    projectSwitchLoading,
+    folderPresentKeys,
   ]);
 
   const beginChangeFolder = useCallback(async (replaceCanvas) => {

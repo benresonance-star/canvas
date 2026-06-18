@@ -27,6 +27,7 @@ export function useWorkspaceIndexSync({
   attemptRestoreRef,
   lastLoadedCardsRef,
   setProjectList,
+  setIndexActiveProjectId,
   setSyncStatus,
   setState,
   loaded,
@@ -93,6 +94,7 @@ export function useWorkspaceIndexSync({
     });
     setProjectList(projects);
     const index = await loadProjectIndex();
+    setIndexActiveProjectId?.(index?.activeProjectId ?? null);
     syncActiveProjectNameFromIndex(index);
     applyDuplicateNameBanner(index);
     const currentActiveId = activeProjectIdRef.current;
@@ -105,6 +107,7 @@ export function useWorkspaceIndexSync({
     committedProjectIdRef,
     projectNameDirtyRef,
     setProjectList,
+    setIndexActiveProjectId,
     syncActiveProjectNameFromIndex,
     loaded,
     applyDuplicateNameBanner,

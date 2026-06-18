@@ -23,6 +23,7 @@ import { projectCardCount } from './projectSyncMerge.js';
 import { slimProjectPayloadForCache } from '../projectSlim.js';
 import {
   needsProjectConflictResolution,
+  isRetryableProjectPayloadConflict,
   recordProjectConflict,
   clearProjectConflict,
   projectPayloadsStructurallyEqual,
@@ -91,104 +92,120 @@ export async function pushProjectPatchIfEnabled(
     ...summarizePatchOps(ops),
   });
 
-  return runSyncGate(
-    'patch-push',
-    async () => {
-      await alignClientRevisionWithServerMeta(projectId, traceId);
-      await ensureClientRevision(projectId);
-      const expectedRevision = getClientRevision(projectId);
-      syncTraceLog(traceId, 'patch:http', { projectId, expectedRevision });
-      const result = await patchCanvasProject(projectId, {
-        ops,
-        expectedRevision,
-        clientId: getProjectSyncClientId(),
-        reason,
-        traceId,
-        allowEmptyRemoteOverwrite,
-        allowDockOnlyRemoteOverwrite,
-      });
-      syncTraceLog(traceId, 'patch:response', {
+  const sendPatch = async () => {
+    await alignClientRevisionWithServerMeta(projectId, traceId);
+    await ensureClientRevision(projectId);
+    const expectedRevision = getClientRevision(projectId);
+    syncTraceLog(traceId, 'patch:http', { projectId, expectedRevision });
+    const result = await patchCanvasProject(projectId, {
+      ops,
+      expectedRevision,
+      clientId: getProjectSyncClientId(),
+      reason,
+      traceId,
+      allowEmptyRemoteOverwrite,
+      allowDockOnlyRemoteOverwrite,
+    });
+    syncTraceLog(traceId, 'patch:response', {
+      projectId,
+      ok: result.ok,
+      conflict: result.conflict,
+      badRequest: result.badRequest,
+      revision: result.revision,
+    });
+    if (result.ok) {
+      applyServerProjectRevision(projectId, result.updatedAt, result.revision);
+      await writeLocalProjectSerialised(projectId, syncSerialised);
+      await patchIndexDocumentRevision(
         projectId,
-        ok: result.ok,
-        conflict: result.conflict,
-        badRequest: result.badRequest,
-        revision: result.revision,
-      });
-      if (result.ok) {
-        applyServerProjectRevision(projectId, result.updatedAt, result.revision);
-        await writeLocalProjectSerialised(projectId, syncSerialised);
-        await patchIndexDocumentRevision(
+        result.revision,
+        result.updatedAt,
+      );
+      notifySyncLock(projectId, 'live');
+      return { ok: true, patched: true, revision: result.revision, ops };
+    }
+    if (result.conflict) {
+      if (result.badRequest) {
+        return null;
+      }
+      const serverPayload = result.payload;
+      const retryablePayloadConflict =
+        serverPayload && isRetryableProjectPayloadConflict(syncPayload, serverPayload);
+      if (
+        serverPayload
+        && !retryablePayloadConflict
+        && needsProjectConflictResolution(syncPayload, serverPayload)
+      ) {
+        recordProjectConflict(
           projectId,
+          syncPayload,
+          serverPayload,
           result.revision,
-          result.updatedAt,
+        );
+        notifySyncLock(projectId, 'stale');
+        return {
+          ok: false,
+          conflict: true,
+          needsResolution: true,
+          patched: true,
+        };
+      }
+      if (serverPayload && projectPayloadsStructurallyEqual(syncPayload, serverPayload)) {
+        applyServerProjectRevision(projectId, result.updatedAt, result.revision);
+        clearProjectConflict(projectId);
+        notifySyncLock(projectId, 'live');
+        return { ok: true, adopted: true, patched: true };
+      }
+      const localCards = projectCardCount(syncPayload);
+      const serverCards = projectCardCount(serverPayload);
+      if (serverPayload && serverCards > localCards) {
+        applyServerProjectRevision(projectId, result.updatedAt, result.revision);
+        await writeLocalProjectSerialised(
+          projectId,
+          JSON.stringify(serverPayload),
         );
         notifySyncLock(projectId, 'live');
-        return { ok: true, patched: true, revision: result.revision, ops };
+        return { ok: true, pulled: true, patched: true };
       }
-      if (result.conflict) {
-        if (result.badRequest) {
-          return null;
-        }
-        const serverPayload = result.payload;
-        if (
-          serverPayload
-          && needsProjectConflictResolution(syncPayload, serverPayload)
-        ) {
-          recordProjectConflict(
-            projectId,
-            syncPayload,
-            serverPayload,
-            result.revision,
-          );
-          notifySyncLock(projectId, 'stale');
-          return {
-            ok: false,
-            conflict: true,
-            needsResolution: true,
-            patched: true,
-          };
-        }
-        if (serverPayload && projectPayloadsStructurallyEqual(syncPayload, serverPayload)) {
-          applyServerProjectRevision(projectId, result.updatedAt, result.revision);
+      const clientBehind = getClientRevision(projectId) < (Number(result.revision) || 0);
+      if (serverPayload && localCards === 0 && serverCards === 0) {
+        applyServerProjectRevision(projectId, result.updatedAt, result.revision);
+        clearProjectConflict(projectId);
+        notifySyncLock(projectId, 'live');
+        return { ok: true, adopted: true, patched: true };
+      }
+      if (
+        serverPayload
+        && (retryablePayloadConflict || localCards >= serverCards || clientBehind)
+      ) {
+        const retry = await patchCanvasProject(projectId, {
+          ops,
+          expectedRevision: result.revision,
+          clientId: getProjectSyncClientId(),
+          reason,
+          traceId,
+          allowEmptyRemoteOverwrite,
+          allowDockOnlyRemoteOverwrite,
+        });
+        if (retry.ok) {
+          applyServerProjectRevision(projectId, retry.updatedAt, retry.revision);
+          await writeLocalProjectSerialised(projectId, syncSerialised);
           clearProjectConflict(projectId);
           notifySyncLock(projectId, 'live');
-          return { ok: true, adopted: true, patched: true };
+          return { ok: true, patched: true, revision: retry.revision };
         }
-        applyServerProjectRevision(projectId, result.updatedAt, result.revision);
-        const localCards = projectCardCount(syncPayload);
-        const serverCards = projectCardCount(serverPayload);
-        if (serverPayload && serverCards > localCards) {
-          await writeLocalProjectSerialised(
-            projectId,
-            JSON.stringify(serverPayload),
-          );
-          notifySyncLock(projectId, 'live');
-          return { ok: true, pulled: true, patched: true };
-        }
-        const clientBehind = getClientRevision(projectId) < (Number(result.revision) || 0);
-        if (serverPayload && (localCards > serverCards || clientBehind)) {
-          const retry = await patchCanvasProject(projectId, {
-            ops,
-            expectedRevision: result.revision,
-            clientId: getProjectSyncClientId(),
-            reason,
-            traceId,
-            allowEmptyRemoteOverwrite,
-            allowDockOnlyRemoteOverwrite,
-          });
-          if (retry.ok) {
-            applyServerProjectRevision(projectId, retry.updatedAt, retry.revision);
-            await writeLocalProjectSerialised(projectId, syncSerialised);
-            clearProjectConflict(projectId);
-            notifySyncLock(projectId, 'live');
-            return { ok: true, patched: true, revision: retry.revision };
-          }
-        }
-        notifySyncLock(projectId, 'stale');
-        return { ok: false, conflict: true, patched: true, keptLocal: true };
       }
-      return { ok: false, patched: true };
-    },
-    { scope: `project:${projectId}` },
-  );
+      notifySyncLock(projectId, 'stale');
+      return { ok: false, conflict: true, patched: true, keptLocal: true };
+    }
+    return { ok: false, patched: true };
+  };
+
+  if (reason === 'placementTransfer') {
+    return sendPatch();
+  }
+
+  return runSyncGate('patch-push', sendPatch, {
+    scope: `project:${projectId}`,
+  });
 }

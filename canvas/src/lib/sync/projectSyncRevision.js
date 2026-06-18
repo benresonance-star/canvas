@@ -4,11 +4,13 @@ import {
   clearCachedRevision,
   readCachedLocalEditAt,
   writeCachedLocalEditAt,
+  readCachedServerUpdatedAt,
+  writeCachedServerUpdatedAt,
 } from '../projectRevision.js';
 import { normalizeProjectNameKey } from '../projectIndexNormalize.js';
 import { fetchCanvasProjectMeta } from '../canvasProjectsApi.js';
 import { registerProjectSyncResetHook, getServerSyncEnabled } from './projectSyncState.js';
-import { parseServerUpdatedAt } from './projectSyncMerge.js';
+import { parseServerUpdatedAt, payloadsEquivalent } from './projectSyncMerge.js';
 import { syncTraceLog } from './syncTrace.js';
 import {
   flushProjectTimer,
@@ -44,6 +46,12 @@ export async function ensureClientRevision(projectId) {
     const storedEditAt = await readCachedLocalEditAt(projectId);
     if (storedEditAt > 0) {
       localEditAtByProject.set(projectId, storedEditAt);
+    }
+  }
+  if (!lastServerUpdatedAtByProject.has(projectId)) {
+    const storedServerAt = await readCachedServerUpdatedAt(projectId);
+    if (storedServerAt > 0) {
+      lastServerUpdatedAtByProject.set(projectId, storedServerAt);
     }
   }
   return clientRevisionByProject.get(projectId) ?? 0;
@@ -102,6 +110,7 @@ export function applyServerProjectRevision(projectId, updatedAt, revision) {
   if (!projectId) return;
   const ms = parseServerUpdatedAt(updatedAt);
   lastServerUpdatedAtByProject.set(projectId, ms);
+  void writeCachedServerUpdatedAt(projectId, ms);
   const prevLocal = localEditAtByProject.get(projectId) ?? 0;
   if (prevLocal <= ms) {
     localEditAtByProject.set(projectId, ms);
@@ -134,6 +143,16 @@ export async function alignClientRevisionWithServerMeta(projectId, traceId = nul
     const clientRev = getClientRevision(projectId);
     const serverRev = Number(meta.revision) || 0;
     if (serverRev > clientRev) {
+      const knownServerAt = getLastServerUpdatedAt(projectId) ?? 0;
+      const localEditAt = getLocalEditAt(projectId) ?? 0;
+      if (localEditAt > knownServerAt) {
+        syncTraceLog(traceId, 'revision:align-meta-skipped-local-newer', {
+          projectId,
+          clientRev,
+          serverRevision: serverRev,
+        });
+        return meta;
+      }
       syncTraceLog(traceId, 'revision:align-meta', {
         projectId,
         clientRev,
@@ -157,13 +176,24 @@ export async function seedClientRevisionFromMeta(projectId) {
     const { readLocalProjectSerialised } = await import('./projectSyncLocal.js');
     const { projectCardCount } = await import('./projectSyncMerge.js');
     const raw = await readLocalProjectSerialised(projectId);
+    await ensureClientRevision(projectId);
     if (raw) {
       try {
-        const localCards = projectCardCount(JSON.parse(raw));
+        const localPayload = JSON.parse(raw);
+        const localCards = projectCardCount(localPayload);
         if (localCards > 0) {
           const { fetchCanvasProjectDocument } = await import('../canvasProjectsApi.js');
           const remote = await fetchCanvasProjectDocument(projectId);
           if (!remote?.payload) return;
+          const knownServerAt = getLastServerUpdatedAt(projectId) ?? 0;
+          const localEditAt = getLocalEditAt(projectId) ?? 0;
+          if (
+            knownServerAt > 0
+            && localEditAt > knownServerAt
+            && !payloadsEquivalent(localPayload, remote.payload)
+          ) {
+            return;
+          }
         }
       } catch {
         /* ignore */
@@ -171,7 +201,6 @@ export async function seedClientRevisionFromMeta(projectId) {
     }
     const meta = await fetchCanvasProjectMeta(projectId);
     if (meta) {
-      await ensureClientRevision(projectId);
       applyServerProjectRevision(projectId, meta.updatedAt, meta.revision);
     }
   } catch (e) {

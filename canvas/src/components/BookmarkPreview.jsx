@@ -52,13 +52,17 @@ export function BookmarkPreview({
   const titleClass = compact ? 'text-xs' : 'text-sm';
   const domainClass = compact ? 'text-[9px]' : 'text-[10px]';
   const descClass = compact ? 'text-[9px]' : 'text-[10px]';
+  const mediaClass = thumbSrc
+    ? 'flex-1 min-h-0'
+    : `shrink-0 ${compact ? 'h-16' : 'h-28'}`;
+  const detailsClass = thumbSrc
+    ? 'shrink-0'
+    : 'flex-1 min-h-0';
 
   return (
     <div className="h-full w-full min-h-0 flex flex-col text-left overflow-hidden rounded-md border border-border-subtle bg-surface-muted/40 group">
       <div
-        className={`shrink-0 w-full bg-surface-muted overflow-hidden ${
-          compact ? 'h-16' : 'h-28'
-        }`}
+        className={`w-full bg-surface-muted overflow-hidden ${mediaClass}`}
       >
         {thumbSrc ? (
           <img
@@ -68,12 +72,17 @@ export function BookmarkPreview({
             draggable={false}
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center sans text-[10px] text-muted uppercase tracking-wider">
-            {domain || strings.bookmark.link}
+          <div className="w-full h-full flex flex-col items-center justify-center gap-1 px-4 text-center">
+            <div className="serif text-primary text-sm line-clamp-2 leading-snug">
+              {title}
+            </div>
+            <div className="sans text-[10px] text-muted uppercase tracking-wider truncate max-w-full">
+              {domain || strings.bookmark.link}
+            </div>
           </div>
         )}
       </div>
-      <div className={`flex-1 min-h-0 flex flex-col px-3 py-2 gap-0.5 ${compact ? 'py-1.5' : ''}`}>
+      <div className={`${detailsClass} flex flex-col px-3 py-2 gap-0.5 ${compact ? 'py-1.5' : ''}`}>
         <div className={`serif text-primary line-clamp-2 leading-snug ${titleClass}`}>
           {title}
         </div>

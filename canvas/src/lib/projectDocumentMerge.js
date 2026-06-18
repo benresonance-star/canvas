@@ -11,10 +11,28 @@ import {
   projectArtifactCount,
   summarizeProjectDocumentShape,
 } from './projectDocumentShape.js';
-import { projectCardCount } from './sync/projectSyncMerge.js';
+import { payloadsEquivalent, projectCardCount } from './sync/projectSyncMerge.js';
 
 /** Best-known non-zero artifact count per project (guards against stale empty server). */
 const lastGoodArtifactCountByProjectId = new Map();
+
+export function isAuthoritativeEmptyRepairDocument(doc) {
+  return Boolean(
+    doc
+    && doc.identityRepair?.authoritativeEmpty === true
+    && projectArtifactCount(doc) === 0,
+  );
+}
+
+export function isAuthoritativeRepairDocument(doc) {
+  return Boolean(
+    doc
+    && (
+      doc.identityRepair?.authoritative === true
+      || isAuthoritativeEmptyRepairDocument(doc)
+    ),
+  );
+}
 
 export function recordGoodLocalCardCount(projectId, count) {
   if (projectId && count > 0) {
@@ -102,6 +120,7 @@ export function preserveCanvasCardsInMergedPayload(mergedPayload, ctx = {}) {
  *   placementSource?: object | null,
  *   reason?: string,
  *   preferRemote?: boolean,
+ *   knownServerAt?: number,
  * }} [options]
  * @returns {{
  *   merged: object | null,
@@ -117,6 +136,7 @@ export function mergeProjectDocuments(localDoc, remoteDoc, options = {}) {
     placementSource = localDoc,
     reason = 'merge',
     preferRemote = false,
+    knownServerAt = serverAt,
   } = options;
 
   if (!remoteDoc) {
@@ -139,7 +159,19 @@ export function mergeProjectDocuments(localDoc, remoteDoc, options = {}) {
   const remotePatched = patchLocalDocFromArrays(remoteDoc);
   const localArtifactCount = projectArtifactCount(localPatched);
   const remoteArtifactCount = projectArtifactCount(remotePatched);
-  if (preferRemote && remoteArtifactCount > 0) {
+  const localChangedAfterKnownServer =
+    knownServerAt > 0
+    && localEditAt > knownServerAt
+    && !payloadsEquivalent(localPatched, remotePatched);
+  if (isAuthoritativeRepairDocument(remotePatched)) {
+    clearLastGoodLocalCardCount(projectId);
+    return {
+      merged: remotePatched,
+      decision: 'adoptedRemote',
+      skipWrite: false,
+    };
+  }
+  if (preferRemote && remoteArtifactCount > 0 && !localChangedAfterKnownServer) {
     return {
       merged: remotePatched,
       decision: 'adoptedRemote',
@@ -156,6 +188,7 @@ export function mergeProjectDocuments(localDoc, remoteDoc, options = {}) {
     !emptyLocalWouldHideRemote
     && (
       localEditAt > serverAt
+      || localChangedAfterKnownServer
       || localPlacementShouldWin(
         placementRef,
         remotePatched,

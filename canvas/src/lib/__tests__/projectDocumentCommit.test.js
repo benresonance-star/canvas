@@ -12,7 +12,7 @@ vi.mock('../projectSync.js', () => ({
 }));
 
 import { readLocalProjectSerialised } from '../sync/projectSyncLocal.js';
-import { persistProjectDocumentLocally } from '../projectSync.js';
+import { flushOutgoingProjectDocument, persistProjectDocumentLocally } from '../projectSync.js';
 import {
   commitProjectDocument,
   getCommittedPayload,
@@ -133,6 +133,44 @@ describe('projectDocumentCommit', () => {
     expect(cached?.stagedSyncCards).toEqual([]);
   });
 
+  it('persists card layout size in layout commits', async () => {
+    const state = {
+      projectName: 'P',
+      cards: [
+        {
+          id: 'c1',
+          key: 'notes__a',
+          type: 'markdown',
+          x: 120,
+          y: 140,
+          width: 360,
+          height: 260,
+          versions: [{ version: 1, filename: 'notes__a-v1.md' }],
+        },
+      ],
+      canvasView: { x: -240, y: 120, zoom: 0.8 },
+    };
+
+    await commitProjectDocument('p1', {
+      state,
+      stagedSyncCards: [],
+      reason: 'layoutCommit',
+    });
+
+    const cached = getCommittedPayload('p1');
+    expect(cached?.cards?.[0]).toMatchObject({
+      x: 120,
+      y: 140,
+      width: 360,
+      height: 260,
+    });
+    expect(cached?.canvasView).toEqual({ x: -240, y: 120, zoom: 0.8 });
+    expect(cached?.artifactPlacements?.notes__a?.placement).toMatchObject({
+      x: 120,
+      y: 140,
+    });
+  });
+
   it('falls back to local dock rows only when staged rows are omitted', async () => {
     const localDoc = {
       projectName: 'P',
@@ -209,5 +247,35 @@ describe('projectDocumentCommit', () => {
     const cached = getCommittedPayload('p1');
     expect(cached?.cards).toHaveLength(1);
     expect(cached?.artifactPlacements?.notes__a?.surface).toBe('canvas');
+  });
+
+  it('passes explicit empty overwrite authorization to remote flush', async () => {
+    const state = {
+      projectName: 'P',
+      cards: [],
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+
+    await commitProjectDocument('p-clear', {
+      state,
+      stagedSyncCards: [],
+      reason: 'folderScan',
+      pushRemote: true,
+      allowEmptyRemoteOverwrite: true,
+    });
+
+    expect(flushOutgoingProjectDocument).toHaveBeenCalledWith(
+      'p-clear',
+      expect.objectContaining({
+        cards: [],
+        stagedSyncCards: [],
+        artifactPlacements: {},
+      }),
+      expect.objectContaining({
+        reason: 'folderScan',
+        allowEmptyRemoteOverwrite: true,
+        skipSpecDualWrite: false,
+      }),
+    );
   });
 });

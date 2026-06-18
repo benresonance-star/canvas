@@ -38,6 +38,7 @@ export function CardPreview({
   folderHandle = null,
 }) {
   const [imgKey, setImgKey] = useState(0);
+  const [bookmarkEditingKey, setBookmarkEditingKey] = useState(null);
 
   const cardTypeEarly = normalizeCardType(card.type);
   const isAgentChat = cardTypeEarly === 'agent_chat';
@@ -67,15 +68,13 @@ export function CardPreview({
     if (ok) setImgKey((k) => k + 1);
   }, [card.id, pinned, onRehydratePreview]);
 
-  if (!pinned) return <div className="serif italic text-muted text-sm">{strings.preview.noData}</div>;
-
-  const localTranscript = pinned.content?.trim() || '';
-  const mediaSrc = pinned.objectUrl || pinned.dataUrl || null;
+  const localTranscript = pinned?.content?.trim() || '';
+  const mediaSrc = pinned?.objectUrl || pinned?.dataUrl || null;
   const msgClass = compact ? 'text-xs' : 'text-sm';
   const hintClass = compact ? 'text-[9px]' : 'text-[10px]';
 
   useEffect(() => {
-    if (mediaSrc || !pinned.previewCacheKey || !onRehydratePreview) return;
+    if (mediaSrc || !pinned?.previewCacheKey || !onRehydratePreview) return;
     if (
       card.type !== 'image'
       && card.type !== 'pdf'
@@ -84,11 +83,15 @@ export function CardPreview({
       && card.type !== 'bookmark'
     ) return;
     onRehydratePreview(card.id, pinned.version);
-  }, [card.id, card.type, pinned.version, pinned.previewCacheKey, mediaSrc, onRehydratePreview]);
+  }, [card.id, card.type, pinned?.version, pinned?.previewCacheKey, mediaSrc, onRehydratePreview]);
+
+  if (!pinned) return <div className="serif italic text-muted text-sm">{strings.preview.noData}</div>;
 
   const cardType = normalizeCardType(card.type);
   if (cardType === 'bookmark') {
-    if (isActive && onInlineSaveBookmark && !compact) {
+    const bookmarkEditKey = `${card.id}:${pinned.version}:${pinned.externalUrl ?? ''}`;
+    const bookmarkEditing = isActive && bookmarkEditingKey === bookmarkEditKey;
+    if (bookmarkEditing && onInlineSaveBookmark && !compact) {
       return (
         <BookmarkInlineEditor
           card={card}
@@ -106,10 +109,19 @@ export function CardPreview({
           pinned={pinned}
           compact={compact}
         />
-        {!isActive && !compact && !bookmarkEditDisabled && (
-          <p className="sans text-[9px] text-muted text-center py-1 shrink-0 pointer-events-none">
+        {isActive && !compact && !bookmarkEditDisabled && (
+          <button
+            type="button"
+            className="sans text-[9px] text-muted hover:text-accent text-center py-1 shrink-0 pointer-events-auto"
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={() => {
+              setBookmarkEditingKey(bookmarkEditKey);
+            }}
+          >
             {strings.userNote.tapToEdit}
-          </p>
+          </button>
         )}
       </div>
     );

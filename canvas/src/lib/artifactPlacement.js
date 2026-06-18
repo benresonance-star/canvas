@@ -7,6 +7,7 @@ import {
 import { getCardPixelSize } from './cards.js';
 import {
   dockCardFromCanvas,
+  bookmarkUrlForSyncEntry,
   findSyncEntryByFolderKey,
   placeStagedCardOnCanvas,
   upsertStagedFromCanvas,
@@ -24,6 +25,12 @@ export function canonicalKeyForEntry(entry) {
   const fromFile = folderRelativePathFromVersion(entry.versions?.[0]);
   if (fromFile) return cardKeyFromFilename(fromFile);
   return toCanonicalSyncKey(entry.key);
+}
+
+function placementIdentityForEntry(entry) {
+  const bookmarkUrl = bookmarkUrlForSyncEntry(entry);
+  if (bookmarkUrl) return `bookmark:${bookmarkUrl}`;
+  return canonicalKeyForEntry(entry);
 }
 
 /**
@@ -113,7 +120,7 @@ export function dedupeSurfaceByCanonicalKey(entries) {
   let changed = false;
   const next = [];
   for (const entry of entries ?? []) {
-    const k = canonicalKeyForEntry(entry);
+    const k = placementIdentityForEntry(entry);
     if (k && seen.has(k)) {
       changed = true;
       continue;
@@ -138,14 +145,14 @@ export function enforceExclusivePlacement(cards, stagedSyncCards, opts = {}) {
 
   const canvasByKey = new Map();
   for (const c of nextCards) {
-    const k = canonicalKeyForEntry(c);
+    const k = placementIdentityForEntry(c);
     if (!k) continue;
     if (!canvasByKey.has(k)) canvasByKey.set(k, c);
   }
 
   const stagedByKey = new Map();
   for (const s of nextStaged) {
-    const k = canonicalKeyForEntry(s);
+    const k = placementIdentityForEntry(s);
     if (!k) continue;
     if (!stagedByKey.has(k)) stagedByKey.set(k, s);
   }
@@ -158,11 +165,11 @@ export function enforceExclusivePlacement(cards, stagedSyncCards, opts = {}) {
     const winner = resolveDuplicateWinner(canvasEntry, stagedEntry, opts);
     if (winner === 'canvas') {
       nextStaged = nextStaged.filter(
-        (s) => !syncKeysMatch(canonicalKeyForEntry(s), key),
+        (s) => placementIdentityForEntry(s) !== key,
       );
     } else {
       nextCards = nextCards.filter(
-        (c) => !syncKeysMatch(canonicalKeyForEntry(c), key),
+        (c) => placementIdentityForEntry(c) !== key,
       );
     }
     changed = true;

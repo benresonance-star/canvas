@@ -43,28 +43,41 @@ export function domainFromUrl(url) {
   }
 }
 
-/**
- * @param {string} domain
- * @param {number} [version]
- */
-export function syntheticBookmarkFilename(domain, version = 1) {
-  const slug = (domain || 'link')
+export function bookmarkSlugFromDomain(domain) {
+  return (domain || 'link')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 48) || 'link';
+}
+
+export function bookmarkLinkIdFromCardId(cardId) {
+  return String(cardId ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .slice(0, 8);
+}
+
+export function bookmarkKeySlug(domain, linkId = null) {
+  const slug = bookmarkSlugFromDomain(domain);
+  const safeLinkId = bookmarkLinkIdFromCardId(linkId);
+  return safeLinkId ? `${slug}-${safeLinkId}` : slug;
+}
+
+/**
+ * @param {string} domain
+ * @param {number} [version]
+ */
+export function syntheticBookmarkFilename(domain, version = 1, linkId = null) {
+  const slug = bookmarkKeySlug(domain, linkId);
   return `links__${slug}-v${version}.url`;
 }
 
 /**
  * @param {string} normalizedUrl
  */
-export function bookmarkCardKeyFromUrl(normalizedUrl) {
+export function bookmarkCardKeyFromUrl(normalizedUrl, linkId = null) {
   const domain = domainFromUrl(normalizedUrl);
-  const slug = domain
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48) || 'link';
+  const slug = bookmarkKeySlug(domain, linkId);
   return `links__${slug}`;
 }

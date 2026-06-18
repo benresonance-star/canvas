@@ -163,9 +163,9 @@ export async function saveProjectById(
   state,
   stagedSyncCards = [],
   {
-    persistLocal = false,
     pushRemote = false,
     stripNoteContent = false,
+    allowEmptyRemoteOverwrite = null,
   } = {},
 ) {
   if (!projectId) return { error: new Error('No project id') };
@@ -177,6 +177,7 @@ export async function saveProjectById(
       stripNoteContent,
       reason: 'saveProjectById',
       pushRemote,
+      allowEmptyRemoteOverwrite,
     });
     const payload = commitResult.payload;
     const { trimmed } = slimProjectPayloadForCache(payload ?? {}, {

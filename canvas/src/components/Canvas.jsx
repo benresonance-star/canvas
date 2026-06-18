@@ -1,7 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { getCardPixelSize, filterCardsForViewport } from '../lib/cards.js';
 import { clientToWorldPoint, clampCanvasZoom } from '../lib/canvasView.js';
-import { clampCardSize } from '../lib/cardResize.js';
 import { beginCardDragSession, endCardDragSession } from '../lib/cardDragSession.js';
 import { beginCanvasInteraction, endCanvasInteraction } from '../lib/canvasInteraction.js';
 import { clearStuckPointerHover } from '../lib/clearStuckHover.js';
@@ -22,6 +21,10 @@ import { ensureCardArtifactRef } from '../lib/ensureCardArtifactRef.js';
 import { resolveThreadForCard } from '../lib/agentChatThreads.js';
 import { buildClusterHulls } from '../lib/graph/clusterHull.js';
 import { EMPTY_CLUSTER_HULL_SOURCE } from '../lib/clusterProjectContext.js';
+import {
+  computeDragPosition,
+  computeResizeRect,
+} from '../lib/canvasPointerGeometry.js';
 
 export function Canvas({
   state,
@@ -91,10 +94,17 @@ export function Canvas({
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [draggingCluster, setDraggingCluster] = useState(null);
   const cardDragEndedRef = useRef(false);
+  const resizeEndedRef = useRef(false);
+  const draggingCardRef = useRef(null);
+  const resizingCardRef = useRef(null);
   const linkDragRef = useRef(null);
   const wheelCommitTimerRef = useRef(null);
 
   const baseView = state.canvasView;
+  const latestCanvasViewRef = useRef(baseView);
+  useEffect(() => {
+    latestCanvasViewRef.current = baseView;
+  }, [baseView]);
   /** @type {[object | null, Function]} */
   const [panPreview, setPanPreview] = useState(null);
   const view = panPreview ?? baseView;
@@ -140,7 +150,11 @@ export function Canvas({
   const setView = useCallback((updater) => {
     setState(prev => ({
       ...prev,
-      canvasView: typeof updater === 'function' ? updater(prev.canvasView) : updater,
+      canvasView: (() => {
+        const nextView = typeof updater === 'function' ? updater(prev.canvasView) : updater;
+        latestCanvasViewRef.current = nextView;
+        return nextView;
+      })(),
     }));
   }, [setState]);
 
@@ -182,7 +196,7 @@ export function Canvas({
     }
     wheelCommitTimerRef.current = setTimeout(() => {
       wheelCommitTimerRef.current = null;
-      endInteraction('viewCommit', {});
+      endInteraction('viewCommit', { canvasView: latestCanvasViewRef.current });
     }, 400);
   }, [endInteraction]);
 
@@ -256,60 +270,26 @@ export function Canvas({
 
   const applyCardResizePointerMove = useCallback((clientX, clientY) => {
     if (resizingCard) {
-      const { id, corner, startMouseX, startMouseY, startX, startY, startW, startH } = resizingCard;
-      const dx = (clientX - startMouseX) / view.zoom;
-      const dy = (clientY - startMouseY) / view.zoom;
-      let w;
-      let h;
-      if (corner === 'se') {
-        w = startW + dx;
-        h = startH + dy;
-      } else if (corner === 'ne') {
-        w = startW + dx;
-        h = startH - dy;
-      } else if (corner === 'sw') {
-        w = startW - dx;
-        h = startH + dy;
-      } else {
-        w = startW - dx;
-        h = startH - dy;
-      }
-      ({ width: w, height: h } = clampCardSize(w, h));
-      let x;
-      let y;
-      if (corner === 'se') {
-        x = startX;
-        y = startY;
-      } else if (corner === 'ne') {
-        x = startX;
-        y = startY + startH - h;
-      } else if (corner === 'sw') {
-        x = startX + startW - w;
-        y = startY;
-      } else {
-        x = startX + startW - w;
-        y = startY + startH - h;
-      }
+      const { id } = resizingCard;
+      const rect = computeResizeRect(resizingCard, clientX, clientY, view.zoom);
+      if (!rect) return;
       setPositionOverrides((prev) => {
         const map = new Map(prev ?? []);
         const cur = (cards ?? []).find((c) => c.id === id) ?? {};
-        map.set(id, { ...cur, x, y, width: w, height: h });
+        map.set(id, { ...cur, ...rect });
         return map;
       });
     } else if (draggingCard) {
       onCardDragMove?.(clientX, clientY);
-      const dx = (clientX - draggingCard.startMouseX) / view.zoom;
-      const dy = (clientY - draggingCard.startMouseY) / view.zoom;
+      const position = computeDragPosition(draggingCard, clientX, clientY, view.zoom);
+      if (!position) return;
       setPositionOverrides((prev) => {
         const map = new Map(prev ?? []);
-        map.set(draggingCard.id, {
-          x: draggingCard.startX + dx,
-          y: draggingCard.startY + dy,
-        });
+        map.set(draggingCard.id, position);
         return map;
       });
     }
-  }, [resizingCard, draggingCard, view.zoom, onCardDragMove]);
+  }, [resizingCard, draggingCard, view.zoom, onCardDragMove, cards]);
 
   const applyClusterPointerMove = useCallback((clientX, clientY) => {
     if (!draggingCluster || !onBatchUpdateCardPositions) return;
@@ -428,13 +408,25 @@ export function Canvas({
   const finishCardDrag = useCallback((clientX, clientY, cardId) => {
     if (cardDragEndedRef.current) return;
     cardDragEndedRef.current = true;
+    const dragSession =
+      draggingCard?.id === cardId
+        ? draggingCard
+        : draggingCardRef.current?.id === cardId
+          ? draggingCardRef.current
+          : null;
 
+    const finalPosition =
+      dragSession
+        ? computeDragPosition(dragSession, clientX, clientY, view.zoom)
+        : null;
     const overrides = positionOverridesRef.current;
     const commitDrag = () => {
-      if (cardId && overrides?.has(cardId)) {
-        const o = overrides.get(cardId);
+      const o = finalPosition ?? (cardId && overrides?.get(cardId));
+      if (cardId && o) {
         onCommitCardPosition?.(cardId, o.x, o.y);
-        endInteraction('layoutCommit', {});
+        endInteraction('layoutCommit', {
+          cardUpdates: [{ id: cardId, x: o.x, y: o.y }],
+        });
       }
       setPositionOverrides(null);
     };
@@ -458,6 +450,7 @@ export function Canvas({
     clearStuckPointerHover(clientX, clientY);
     setPanning(false);
     setPanStart(null);
+    draggingCardRef.current = null;
     setDraggingCard(null);
     setResizingCard(null);
     setDraggingCluster(null);
@@ -466,7 +459,8 @@ export function Canvas({
   }, [
     onDockCardToTray,
     onCardDragEnd,
-    positionOverrides,
+    draggingCard,
+    view.zoom,
     onCommitCardPosition,
     endInteraction,
   ]);
@@ -480,16 +474,23 @@ export function Canvas({
         y: pos.y,
       }));
       onBatchUpdateCardPositions(updates);
-      endInteraction('layoutCommit', {});
+      endInteraction('layoutCommit', { cardUpdates: updates });
     }
     setPositionOverrides(null);
     setDraggingCluster(null);
     endCanvasInteraction('cluster');
   }, [onBatchUpdateCardPositions, endInteraction]);
 
-  const finishResize = useCallback(() => {
-    const id = resizingCard?.id;
-    const o = id && positionOverrides?.get(id);
+  const finishResize = useCallback((clientX = null, clientY = null) => {
+    if (resizeEndedRef.current) return;
+    resizeEndedRef.current = true;
+    const resizeSession = resizingCard ?? resizingCardRef.current;
+    const id = resizeSession?.id;
+    const finalRect =
+      resizeSession && clientX != null && clientY != null
+        ? computeResizeRect(resizeSession, clientX, clientY, view.zoom)
+        : null;
+    const o = finalRect ?? (id && positionOverridesRef.current?.get(id));
     if (id && o) {
       onUpdateCard(id, {
         x: o.x,
@@ -497,12 +498,31 @@ export function Canvas({
         width: o.width,
         height: o.height,
       });
-      endInteraction('layoutCommit', {});
+      endInteraction('layoutCommit', {
+        cardUpdates: [{
+          id,
+          x: o.x,
+          y: o.y,
+          width: o.width,
+          height: o.height,
+        }],
+      });
     }
     setPositionOverrides(null);
+    resizingCardRef.current = null;
     setResizingCard(null);
     endCanvasInteraction('resize');
-  }, [resizingCard, positionOverrides, onUpdateCard, endInteraction]);
+  }, [resizingCard, view.zoom, onUpdateCard, endInteraction]);
+
+  const registerImmediatePointerEnd = useCallback((handler) => {
+    const onEnd = (e) => {
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+      handler(e);
+    };
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+  }, []);
 
   const onMouseUp = (e) => {
     if (linkDragRef.current) {
@@ -518,12 +538,12 @@ export function Canvas({
       return;
     }
     if (resizingCard) {
-      finishResize();
+      finishResize(e.clientX, e.clientY);
       return;
     }
     if (panning && panPreview) {
       onCommitCanvasView?.(panPreview);
-      endInteraction('layoutCommit', {});
+      endInteraction('viewCommit', { canvasView: panPreview });
       setPanPreview(null);
       endCanvasInteraction('pan');
     }
@@ -589,8 +609,8 @@ export function Canvas({
   useEffect(() => {
     if (!resizingCard) return undefined;
 
-    const onPointerEnd = () => {
-      finishResize();
+    const onPointerEnd = (e) => {
+      finishResize(e.clientX, e.clientY);
     };
 
     window.addEventListener('pointerup', onPointerEnd);
@@ -625,6 +645,9 @@ export function Canvas({
   const cancelCardDragInteraction = useCallback(() => {
     endCardDragSession(canvasRef.current);
     cardDragEndedRef.current = true;
+    resizeEndedRef.current = true;
+    draggingCardRef.current = null;
+    resizingCardRef.current = null;
     setPositionOverrides(null);
     setPanPreview(null);
     setDraggingCard(null);
@@ -639,7 +662,15 @@ export function Canvas({
 
   useEffect(() => {
     if (!readOnly) return;
-    cancelCardDragInteraction();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        cancelCardDragInteraction();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [readOnly, cancelCardDragInteraction]);
 
   useEffect(() => () => {
@@ -681,12 +712,17 @@ export function Canvas({
     beginCanvasInteraction('card');
     beginCardDragSession(canvasRef.current, card.id);
     setPositionOverrides(new Map());
-    setDraggingCard({
+    const session = {
       id: card.id,
       startMouseX: e.clientX,
       startMouseY: e.clientY,
       startX: card.x,
       startY: card.y,
+    };
+    draggingCardRef.current = session;
+    setDraggingCard(session);
+    registerImmediatePointerEnd((endEvent) => {
+      finishCardDrag(endEvent.clientX, endEvent.clientY, card.id);
     });
   };
 
@@ -723,7 +759,8 @@ export function Canvas({
     onInteractionStart?.('resize');
     beginCanvasInteraction('resize');
     setPositionOverrides(new Map());
-    setResizingCard({
+    resizeEndedRef.current = false;
+    const session = {
       id: card.id,
       corner,
       startMouseX: e.clientX,
@@ -732,6 +769,11 @@ export function Canvas({
       startY: card.y,
       startW: w,
       startH: h,
+    };
+    resizingCardRef.current = session;
+    setResizingCard(session);
+    registerImmediatePointerEnd((endEvent) => {
+      finishResize(endEvent.clientX, endEvent.clientY);
     });
   };
 

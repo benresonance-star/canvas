@@ -54,6 +54,71 @@ describe('mergeProjectDocuments', () => {
     expect(merged.cards).toHaveLength(2);
   });
 
+  it('adopts an authoritative empty repair document over stale local artifacts', () => {
+    const localDoc = {
+      cards: [{ id: 'c1', key: 'stale' }],
+      stagedSyncCards: [{ key: 'stale-dock' }],
+    };
+    const remoteDoc = {
+      projectName: 'Repaired',
+      cards: [],
+      stagedSyncCards: [],
+      artifactPlacements: {},
+      identityRepair: {
+        authoritativeEmpty: true,
+        reason: 'project-folder-identity',
+      },
+    };
+
+    const { decision, merged, skipWrite } = mergeProjectDocuments(localDoc, remoteDoc, {
+      localEditAt: 1000,
+      serverAt: 2000,
+      projectId: 'p-repaired',
+    });
+
+    expect(decision).toBe('adoptedRemote');
+    expect(skipWrite).toBe(false);
+    expect(merged.cards).toEqual([]);
+    expect(merged.stagedSyncCards).toEqual([]);
+    expect(merged.identityRepair.authoritativeEmpty).toBe(true);
+  });
+
+  it('adopts an authoritative repair document with docked links over stale local artifacts', () => {
+    const localDoc = {
+      cards: [{ id: 'c1', key: 'stale' }],
+      stagedSyncCards: [{ key: 'stale-dock' }],
+    };
+    const remoteDoc = {
+      projectName: 'Repaired',
+      cards: [],
+      stagedSyncCards: [{
+        key: 'links__example-com',
+        name: 'example.com',
+        type: 'bookmark',
+        versions: [{ version: 1, externalUrl: 'https://example.com' }],
+      }],
+      artifactPlacements: {
+        'links__example-com': { surface: 'dock' },
+      },
+      identityRepair: {
+        authoritative: true,
+        reason: 'project-folder-identity',
+      },
+    };
+
+    const { decision, merged, skipWrite } = mergeProjectDocuments(localDoc, remoteDoc, {
+      localEditAt: 1000,
+      serverAt: 2000,
+      projectId: 'p-repaired-links',
+    });
+
+    expect(decision).toBe('adoptedRemote');
+    expect(skipWrite).toBe(false);
+    expect(merged.cards).toEqual([]);
+    expect(merged.stagedSyncCards).toHaveLength(1);
+    expect(merged.stagedSyncCards[0].key).toBe('links__example-com');
+  });
+
   it('skips write when merge would drop dock-only artifacts', () => {
     const localDoc = {
       cards: [],

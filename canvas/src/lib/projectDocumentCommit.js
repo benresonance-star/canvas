@@ -14,7 +14,6 @@ import {
 } from './projectSync.js';
 import { readLocalProjectSerialised } from './sync/projectSyncLocal.js';
 import { auditPlacementStep } from './placementAudit.js';
-import { writeThroughSpecCanvasFromPayload } from './structure/canvasWriteThrough.js';
 import { syncTraceLog } from './sync/syncTrace.js';
 
 /** @type {Map<string, { payload: object, serialised: string }>} */
@@ -104,6 +103,7 @@ export async function commitProjectDocument(projectId, options) {
     reason = 'commit',
     pushRemote = false,
     traceId = null,
+    allowEmptyRemoteOverwrite = null,
   } = options;
 
   if (!projectId || !state) {
@@ -192,8 +192,6 @@ export async function commitProjectDocument(projectId, options) {
     placementKeys: Object.keys(payload.artifactPlacements ?? {}).length,
   });
 
-  void writeThroughSpecCanvasFromPayload(projectId, payload, reason);
-
   let pushOk;
   if (pushRemote) {
     const previousCardCount = projectCardCount(priorPayload);
@@ -205,15 +203,19 @@ export async function commitProjectDocument(projectId, options) {
       traceId,
       beforePayload: priorPayload,
       allowEmptyRemoteOverwrite:
-        nextArtifactCount === 0
-        && previousArtifactCount > 0
-        && reason !== 'boot-push',
+        allowEmptyRemoteOverwrite === true
+        || (
+          allowEmptyRemoteOverwrite !== false
+          && nextArtifactCount === 0
+          && previousArtifactCount > 0
+          && reason !== 'boot-push'
+        ),
       allowDockOnlyRemoteOverwrite:
         nextCardCount === 0
         && nextArtifactCount > 0
         && previousCardCount > 0
         && reason === 'placementTransfer:dock',
-      skipSpecDualWrite: true,
+      skipSpecDualWrite: false,
     });
     pushOk = Boolean(pushResult?.ok);
   }

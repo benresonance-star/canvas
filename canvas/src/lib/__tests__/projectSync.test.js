@@ -836,6 +836,329 @@ describe('projectSync', () => {
     expect(forced.payload?.cards?.[0]?.id).toBe('local-only');
   });
 
+  it('pullProjectDocumentIfServerNewer keeps local layout when stale server write landed after local resize', async () => {
+    const projectId = 'p-force-resize-race';
+    const serverBaseUpdatedAt = '2025-06-15T00:00:00.000Z';
+    const localEditAt = Date.parse('2025-06-15T00:00:05.000Z');
+    const staleServerUpdatedAt = '2025-06-15T00:00:10.000Z';
+    const localPayload = {
+      projectName: 'Local newer',
+      cards: [{
+        id: 'c1',
+        key: 'notes__a',
+        x: 120,
+        y: 140,
+        width: 520,
+        height: 340,
+        versions: [{ version: 1 }],
+      }],
+      stagedSyncCards: [],
+      canvasView: { x: -40, y: 80, zoom: 1.25 },
+    };
+    const staleServerPayload = {
+      ...localPayload,
+      cards: [{
+        ...localPayload.cards[0],
+        x: 0,
+        y: 0,
+        width: 300,
+        height: 200,
+      }],
+    };
+    storage.set(`canvas:project:${projectId}`, JSON.stringify(localPayload));
+    storage.set(`canvas:project-rev:${projectId}`, JSON.stringify(3));
+    storage.set(`canvas:project-local-edit-at:${projectId}`, JSON.stringify(localEditAt));
+    storage.set(
+      `canvas:project-server-updated-at:${projectId}`,
+      JSON.stringify(Date.parse(serverBaseUpdatedAt)),
+    );
+
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      if (String(url).endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (String(url).endsWith('/canvas/index') && options?.method === 'PUT') {
+        return { ok: true, json: async () => ({ updatedAt: 'now' }) };
+      }
+      if (String(url).endsWith('/canvas/index')) {
+        return { ok: true, json: async () => ({ index: null }) };
+      }
+      if (String(url).endsWith('/meta')) {
+        return {
+          ok: true,
+          json: async () => ({ revision: 4, updatedAt: staleServerUpdatedAt }),
+        };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            payload: staleServerPayload,
+            updatedAt: staleServerUpdatedAt,
+            revision: 4,
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      pullProjectDocumentIfServerNewer,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+    resetProjectSyncState();
+    await initializeProjectSync();
+
+    const forced = await pullProjectDocumentIfServerNewer(projectId, { force: true });
+    const cached = JSON.parse(storage.get(`canvas:project:${projectId}`));
+    expect(forced.pulled).toBe(true);
+    expect(cached.cards[0]).toMatchObject({
+      x: 120,
+      y: 140,
+      width: 520,
+      height: 340,
+    });
+    expect(cached.canvasView).toEqual({ x: -40, y: 80, zoom: 1.25 });
+  });
+
+  it('pullProjectDocumentIfServerNewer can force-accept server layout on boot refresh', async () => {
+    const projectId = 'p-boot-accept-server-layout';
+    const serverBaseUpdatedAt = '2025-06-15T00:00:00.000Z';
+    const localEditAt = Date.parse('2025-06-15T00:00:05.000Z');
+    const serverUpdatedAt = '2025-06-15T00:00:10.000Z';
+    const localPayload = {
+      projectName: 'Local stale',
+      cards: [{
+        id: 'c1',
+        key: 'notes__a',
+        x: 0,
+        y: 0,
+        width: 300,
+        height: 200,
+        versions: [{ version: 1 }],
+      }],
+      stagedSyncCards: [],
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    const serverPayload = {
+      ...localPayload,
+      cards: [{
+        ...localPayload.cards[0],
+        x: 120,
+        y: 140,
+        width: 520,
+        height: 340,
+      }],
+      canvasView: { x: -40, y: 80, zoom: 1.25 },
+    };
+    storage.set(`canvas:project:${projectId}`, JSON.stringify(localPayload));
+    storage.set(`canvas:project-rev:${projectId}`, JSON.stringify(3));
+    storage.set(`canvas:project-local-edit-at:${projectId}`, JSON.stringify(localEditAt));
+    storage.set(
+      `canvas:project-server-updated-at:${projectId}`,
+      JSON.stringify(Date.parse(serverBaseUpdatedAt)),
+    );
+
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      if (String(url).endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (String(url).endsWith('/canvas/index') && options?.method === 'PUT') {
+        return { ok: true, json: async () => ({ updatedAt: 'now' }) };
+      }
+      if (String(url).endsWith('/canvas/index')) {
+        return { ok: true, json: async () => ({ index: null }) };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            payload: serverPayload,
+            updatedAt: serverUpdatedAt,
+            revision: 4,
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      pullProjectDocumentIfServerNewer,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+    resetProjectSyncState();
+    await initializeProjectSync();
+
+    const forced = await pullProjectDocumentIfServerNewer(projectId, {
+      force: true,
+      acceptServerPayload: true,
+    });
+    const cached = JSON.parse(storage.get(`canvas:project:${projectId}`));
+    expect(forced.pulled).toBe(true);
+    expect(cached.cards[0]).toMatchObject({
+      x: 120,
+      y: 140,
+      width: 520,
+      height: 340,
+    });
+    expect(cached.canvasView).toEqual({ x: -40, y: 80, zoom: 1.25 });
+  });
+
+  it('payloadsEquivalent treats card size as canvas state', async () => {
+    const { payloadsEquivalent } = await import('../projectSync.js');
+    const before = {
+      projectName: 'P',
+      cards: [{
+        id: 'c1',
+        key: 'notes__a',
+        x: 0,
+        y: 0,
+        width: 300,
+        height: 200,
+        versions: [{ version: 1 }],
+      }],
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    const after = {
+      ...before,
+      cards: [{ ...before.cards[0], width: 420, height: 260 }],
+    };
+    expect(payloadsEquivalent(before, after)).toBe(false);
+  });
+
+  it('loadSyncedProjectDocument keeps local layout after unresolved layout-only PUT conflicts', async () => {
+    const projectId = 'p-layout-put-conflict-refresh';
+    const baseServerUpdatedAt = '2025-06-15T00:00:00.000Z';
+    const localEditAt = Date.parse('2025-06-15T00:00:05.000Z');
+    const conflictUpdatedAt = '2025-06-15T00:00:10.000Z';
+    const localPayload = {
+      projectName: 'P',
+      cards: [{
+        id: 'c1',
+        key: 'notes__a',
+        type: 'markdown',
+        x: 120,
+        y: 160,
+        width: 420,
+        height: 260,
+        versions: [{ version: 1 }],
+      }],
+      stagedSyncCards: [],
+      artifactPlacements: {
+        notes__a: { surface: 'canvas', ref: { id: 'c1', key: 'notes__a' } },
+      },
+      canvasView: { x: -20, y: 40, zoom: 1.1 },
+    };
+    const staleServerPayload = {
+      ...localPayload,
+      cards: [{
+        ...localPayload.cards[0],
+        x: 0,
+        y: 0,
+        width: 300,
+        height: 200,
+      }],
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    storage.set(`canvas:project:${projectId}`, JSON.stringify(localPayload));
+    storage.set(`canvas:project-rev:${projectId}`, JSON.stringify(3));
+    storage.set(`canvas:project-local-edit-at:${projectId}`, JSON.stringify(localEditAt));
+    storage.set(
+      `canvas:project-server-updated-at:${projectId}`,
+      JSON.stringify(Date.parse(baseServerUpdatedAt)),
+    );
+    const putBodies = [];
+
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      if (String(url).endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (String(url).endsWith('/canvas/index') && options?.method === 'PUT') {
+        return { ok: true, json: async () => ({ updatedAt: 'now' }) };
+      }
+      if (String(url).endsWith('/canvas/index')) {
+        return { ok: true, json: async () => ({ index: null }) };
+      }
+      if (String(url).endsWith('/meta')) {
+        return {
+          ok: true,
+          json: async () => ({ revision: 4, updatedAt: baseServerUpdatedAt }),
+        };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`) && options?.method === 'PUT') {
+        putBodies.push(JSON.parse(options.body));
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({
+            error: 'conflict',
+            revision: 5,
+            payload: staleServerPayload,
+            updatedAt: conflictUpdatedAt,
+          }),
+        };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            payload: staleServerPayload,
+            updatedAt: conflictUpdatedAt,
+            revision: 5,
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      loadSyncedProjectDocument,
+      pushProjectDocumentIfLocalNewer,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+    resetProjectSyncState();
+    await initializeProjectSync();
+
+    const pushResult = await pushProjectDocumentIfLocalNewer(projectId, localPayload);
+    expect(pushResult?.ok).not.toBe(true);
+    expect(putBodies.length).toBeGreaterThanOrEqual(2);
+
+    const loaded = await loadSyncedProjectDocument(projectId);
+    const cached = JSON.parse(storage.get(`canvas:project:${projectId}`));
+    expect(loaded.cards[0]).toMatchObject({
+      x: 120,
+      y: 160,
+      width: 420,
+      height: 260,
+    });
+    expect(cached.cards[0]).toMatchObject({
+      x: 120,
+      y: 160,
+      width: 420,
+      height: 260,
+    });
+    expect(cached.canvasView).toEqual({ x: -20, y: 40, zoom: 1.1 });
+
+    const loadedAgain = await loadSyncedProjectDocument(projectId);
+    const cachedAgain = JSON.parse(storage.get(`canvas:project:${projectId}`));
+    expect(loadedAgain.cards[0]).toMatchObject({
+      x: 120,
+      y: 160,
+      width: 420,
+      height: 260,
+    });
+    expect(cachedAgain.cards[0]).toMatchObject({
+      x: 120,
+      y: 160,
+      width: 420,
+      height: 260,
+    });
+    expect(cachedAgain.canvasView).toEqual({ x: -20, y: 40, zoom: 1.1 });
+  });
+
   it('pullProjectDocumentIfServerNewer with force adopts server canvas over stale local dock', async () => {
     const projectId = 'p-force-dock';
     const serverUpdatedAt = '2026-06-15T00:00:00.000Z';
@@ -990,6 +1313,99 @@ describe('projectSync', () => {
     expect(putBodies[0].expectedRevision).toBe(1);
     expect(putBodies[0].payload.cards).toHaveLength(1);
     expect(getClientRevision(projectId)).toBe(2);
+  });
+
+  it('pushProjectDocumentIfLocalNewer pulls authoritative empty repair instead of force-pushing local cards', async () => {
+    const projectId = 'p-new-local-repair';
+    const serverUpdatedAt = '2025-06-01T00:00:00.000Z';
+    const repairPayload = {
+      projectName: 'New',
+      cards: [],
+      stagedSyncCards: [{
+        key: 'links__example-com',
+        name: 'example.com',
+        type: 'bookmark',
+        versions: [{ version: 1, externalUrl: 'https://example.com' }],
+      }],
+      artifactPlacements: {
+        'links__example-com': { surface: 'dock' },
+      },
+      canvasView: { x: 0, y: 0, zoom: 1 },
+      identityRepair: {
+        authoritative: true,
+        reason: 'project-folder-identity',
+      },
+    };
+    storage.set(
+      `canvas:project:${projectId}`,
+      JSON.stringify({
+        projectName: 'New',
+        cards: [{ id: 'local-card', key: 'k1', versions: [{ version: 1 }] }],
+        stagedSyncCards: [{ key: 'dock-1' }],
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      }),
+    );
+    storage.set(`canvas:project-rev:${projectId}`, JSON.stringify(1));
+
+    const putBodies = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      if (String(url).endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (String(url).endsWith('/canvas/index') && options?.method === 'PUT') {
+        return { ok: true, json: async () => ({ updatedAt: 'now' }) };
+      }
+      if (String(url).endsWith('/canvas/index')) {
+        return { ok: true, json: async () => ({ index: null }) };
+      }
+      if (String(url).endsWith('/meta')) {
+        return {
+          ok: true,
+          json: async () => ({ revision: 5, updatedAt: serverUpdatedAt }),
+        };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`) && options?.method === 'PUT') {
+        putBodies.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({ revision: 6, updatedAt: 'now' }) };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            payload: repairPayload,
+            updatedAt: serverUpdatedAt,
+            revision: 5,
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      pushProjectDocumentIfLocalNewer,
+      resetProjectSyncState,
+      getClientRevision,
+    } = await import('../projectSync.js');
+    resetProjectSyncState();
+    await initializeProjectSync();
+
+    const result = await pushProjectDocumentIfLocalNewer(projectId, {
+      projectName: 'New',
+      cards: [{ id: 'local-card', key: 'k1', versions: [{ version: 1 }] }],
+      stagedSyncCards: [{ key: 'dock-1' }],
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.pulled).toBe(true);
+    expect(putBodies).toEqual([]);
+    expect(getClientRevision(projectId)).toBe(5);
+    const cached = JSON.parse(storage.get(`canvas:project:${projectId}`));
+    expect(cached.cards).toEqual([]);
+    expect(cached.stagedSyncCards).toHaveLength(1);
+    expect(cached.stagedSyncCards[0].key).toBe('links__example-com');
+    expect(cached.identityRepair.authoritative).toBe(true);
   });
 
   it('pushProjectDocumentIfLocalNewer skips full document GET when revision is in sync', async () => {
@@ -1526,6 +1942,16 @@ describe('projectSync', () => {
           json: async () => ({ revision: 5, updatedAt: '2025-06-02T00:00:00.000Z' }),
         };
       }
+      if (String(url).includes(`/canvas/projects/${projectId}`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            payload: repairPayload,
+            updatedAt: '2025-06-02T00:00:00.000Z',
+            revision: 5,
+          }),
+        };
+      }
       return { ok: false, status: 404, json: async () => ({}) };
     }));
 
@@ -1544,6 +1970,95 @@ describe('projectSync', () => {
     const cached = JSON.parse(storage.get(`canvas:project:${projectId}`));
     expect(cached.cards).toHaveLength(1);
     expect(cached.cards[0].id).toBe('c1');
+  });
+
+  it('conflict response adopts authoritative empty repair payload', async () => {
+    const projectId = 'p-conflict-repair';
+    const localPayload = {
+      projectName: 'Work',
+      cards: [{ id: 'c1', key: 'k1', versions: [{ version: 1 }] }],
+      stagedSyncCards: [{ key: 'dock-1' }],
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    const repairPayload = {
+      projectName: 'Work',
+      cards: [],
+      stagedSyncCards: [{
+        key: 'links__example-com',
+        name: 'example.com',
+        type: 'bookmark',
+        versions: [{ version: 1, externalUrl: 'https://example.com' }],
+      }],
+      artifactPlacements: {
+        'links__example-com': { surface: 'dock' },
+      },
+      canvasView: { x: 0, y: 0, zoom: 1 },
+      identityRepair: {
+        authoritative: true,
+        reason: 'project-folder-identity',
+      },
+    };
+    storage.set(`canvas:project:${projectId}`, JSON.stringify(localPayload));
+    storage.set(`canvas:project-rev:${projectId}`, JSON.stringify(1));
+
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      if (String(url).endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (String(url).endsWith('/canvas/index') && options?.method === 'PUT') {
+        return { ok: true, json: async () => ({ updatedAt: 'now' }) };
+      }
+      if (String(url).endsWith('/canvas/index')) {
+        return { ok: true, json: async () => ({ index: null }) };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`) && options?.method === 'PUT') {
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({
+            conflict: true,
+            revision: 5,
+            updatedAt: '2025-06-02T00:00:00.000Z',
+            payload: repairPayload,
+          }),
+        };
+      }
+      if (String(url).endsWith('/meta')) {
+        return {
+          ok: true,
+          json: async () => ({ revision: 5, updatedAt: '2025-06-02T00:00:00.000Z' }),
+        };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            payload: repairPayload,
+            updatedAt: '2025-06-02T00:00:00.000Z',
+            revision: 5,
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      pushProjectDocumentIfLocalNewer,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+    resetProjectSyncState();
+    await initializeProjectSync();
+
+    const result = await pushProjectDocumentIfLocalNewer(projectId, localPayload);
+    expect(result.ok).toBe(true);
+    expect(result.pulled).toBe(true);
+
+    const cached = JSON.parse(storage.get(`canvas:project:${projectId}`));
+    expect(cached.cards).toEqual([]);
+    expect(cached.stagedSyncCards).toHaveLength(1);
+    expect(cached.stagedSyncCards[0].key).toBe('links__example-com');
+    expect(cached.identityRepair.authoritative).toBe(true);
   });
 
   it('flushProjectSync pushes project bodies before workspace index', async () => {
@@ -1721,6 +2236,205 @@ describe('projectSync', () => {
     const afterFlush = JSON.parse(storage.get(projectStorageKey(projectId)));
     expect(afterFlush.cards[0].x).toBe(480);
     expect(afterFlush.cards[0].y).toBe(220);
+  });
+
+  it('flushOutgoingProjectDocument writes spec canvas only after document PATCH succeeds', async () => {
+    const projectId = 'p-spec-after-patch';
+    const serverUpdatedAt = '2025-06-01T00:00:00.000Z';
+    const order = [];
+    let specPutBody = null;
+
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      const href = String(url);
+      const method = options?.method ?? 'GET';
+      if (href.endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (href.endsWith('/canvas/index')) {
+        return { ok: true, json: async () => ({ index: null, revision: 0 }) };
+      }
+      if (href.endsWith(`/canvas/projects/${projectId}/meta`)) {
+        return {
+          ok: true,
+          json: async () => ({ revision: 1, updatedAt: serverUpdatedAt }),
+        };
+      }
+      if (href.endsWith(`/canvas/projects/${projectId}/spec-canvas`) && method === 'PUT') {
+        order.push('spec:put');
+        specPutBody = JSON.parse(options.body);
+        return {
+          ok: true,
+          json: async () => ({ ok: true, version: 1, updatedAt: '2025-06-02T00:00:01.000Z' }),
+        };
+      }
+      if (href.endsWith(`/canvas/projects/${projectId}/spec-canvas`)) {
+        order.push('spec:get');
+        return {
+          ok: true,
+          json: async () => ({
+            version: 0,
+            layout: { placed: [], staging: [] },
+            viewport: { x: 0, y: 0, zoom: 1 },
+          }),
+        };
+      }
+      if (href.endsWith(`/canvas/projects/${projectId}`) && method === 'PATCH') {
+        order.push('project:patch');
+        return {
+          ok: true,
+          json: async () => ({
+            revision: 2,
+            updatedAt: '2025-06-02T00:00:00.000Z',
+          }),
+        };
+      }
+      if (href.endsWith(`/canvas/projects/${projectId}`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            payload: {
+              projectName: 'P',
+              cards: [{ id: 'c1', key: 'k1', x: 0, y: 0, versions: [{ version: 1 }] }],
+              stagedSyncCards: [],
+              canvasView: { x: 0, y: 0, zoom: 1 },
+            },
+            updatedAt: serverUpdatedAt,
+            revision: 1,
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      flushOutgoingProjectDocument,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+
+    resetProjectSyncState();
+    await initializeProjectSync();
+    order.length = 0;
+
+    const beforePayload = {
+      projectName: 'P',
+      cards: [{ id: 'c1', key: 'k1', x: 0, y: 0, versions: [{ version: 1 }] }],
+      stagedSyncCards: [],
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    const payload = {
+      ...beforePayload,
+      cards: [{ ...beforePayload.cards[0], x: 100, y: 120 }],
+    };
+
+    const result = await flushOutgoingProjectDocument(projectId, payload, {
+      reason: 'layoutCommit',
+      beforePayload,
+    });
+
+    expect(result.ok).toBe(true);
+    for (let i = 0; i < 5 && !specPutBody; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(order).toEqual(['project:patch', 'spec:get', 'spec:put']);
+    expect(specPutBody.layout.placed[0]).toMatchObject({
+      cardId: 'c1',
+      syncKey: 'k1',
+      x: 100,
+      y: 120,
+    });
+  });
+
+  it('flushOutgoingProjectDocument does not write spec canvas when document PUT is rejected', async () => {
+    const projectId = 'p-spec-no-conflict-write';
+    const order = [];
+
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      const href = String(url);
+      const method = options?.method ?? 'GET';
+      if (href.endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (href.endsWith('/canvas/index')) {
+        return { ok: true, json: async () => ({ index: null, revision: 0 }) };
+      }
+      if (href.endsWith(`/canvas/projects/${projectId}/meta`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            revision: 1,
+            updatedAt: '2025-06-01T00:00:00.000Z',
+          }),
+        };
+      }
+      if (href.endsWith(`/canvas/projects/${projectId}/spec-canvas`)) {
+        order.push(`spec:${method.toLowerCase()}`);
+        return {
+          ok: true,
+          json: async () => ({
+            version: 0,
+            layout: { placed: [], staging: [] },
+            viewport: { x: 0, y: 0, zoom: 1 },
+          }),
+        };
+      }
+      if (href.endsWith(`/canvas/projects/${projectId}`) && method === 'PUT') {
+        order.push('project:put');
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({
+            error: 'conflict',
+            revision: 2,
+            updatedAt: '2025-06-02T00:00:00.000Z',
+            payload: {
+              projectName: 'Server',
+              cards: [{ id: 'c1', key: 'k1', x: 0, y: 0, versions: [{ version: 1 }] }],
+              stagedSyncCards: [],
+              canvasView: { x: 0, y: 0, zoom: 1 },
+            },
+          }),
+        };
+      }
+      if (href.endsWith(`/canvas/projects/${projectId}`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            payload: {
+              projectName: 'Server',
+              cards: [{ id: 'c1', key: 'k1', x: 0, y: 0, versions: [{ version: 1 }] }],
+              stagedSyncCards: [],
+              canvasView: { x: 0, y: 0, zoom: 1 },
+            },
+            updatedAt: '2025-06-01T00:00:00.000Z',
+            revision: 1,
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      flushOutgoingProjectDocument,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+
+    resetProjectSyncState();
+    await initializeProjectSync();
+    order.length = 0;
+
+    const result = await flushOutgoingProjectDocument(projectId, {
+      projectName: 'P',
+      cards: [{ id: 'c1', key: 'k1', x: 100, y: 120, versions: [{ version: 1 }] }],
+      stagedSyncCards: [],
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    });
+
+    expect(result.ok).not.toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(order.length).toBeGreaterThanOrEqual(1);
+    expect(order.every((step) => step === 'project:put')).toBe(true);
   });
 
   it('flushOutgoingProjectDocument pulls a non-empty server instead of boot-pushing empty cache', async () => {
@@ -1959,6 +2673,99 @@ describe('projectSync', () => {
     const cached = JSON.parse(storage.get(projectStorageKey(projectId)));
     expect(cached.cards[0].x).toBe(500);
     expect(cached.cards[0].y).toBe(300);
+  });
+
+  it('reconcileProjectDocumentOnSwitch pulls server layout when local cache is stale with same cards', async () => {
+    const projectId = 'p-layout-server';
+    const acceptedServerAt = '2026-06-14T12:07:02.144Z';
+    const staleLocalPayload = {
+      projectName: 'P',
+      cards: [
+        { id: 'c1', key: 'k1', x: 0, y: 0, versions: [{ version: 1 }] },
+        { id: 'c2', key: 'k2', x: 200, y: 0, versions: [{ version: 1 }] },
+      ],
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    const serverPayload = {
+      ...staleLocalPayload,
+      cards: [
+        {
+          ...staleLocalPayload.cards[0],
+          x: -280,
+          y: 166,
+          width: 520,
+          height: 340,
+        },
+        {
+          ...staleLocalPayload.cards[1],
+          x: 60,
+          y: -2,
+          width: 456,
+          height: 611,
+        },
+      ],
+      canvasView: { x: 348, y: 442, zoom: 0.67 },
+    };
+    storage.set(`canvas:project:${projectId}`, JSON.stringify(staleLocalPayload));
+    storage.set(`canvas:project-rev:${projectId}`, JSON.stringify(408));
+    storage.set(
+      `canvas:project-local-edit-at:${projectId}`,
+      JSON.stringify(Date.parse('2026-06-14T12:08:00.000Z')),
+    );
+    storage.set(
+      `canvas:project-server-updated-at:${projectId}`,
+      JSON.stringify(Date.parse(acceptedServerAt)),
+    );
+
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      if (String(url).endsWith('/health')) {
+        return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
+      }
+      if (String(url).endsWith('/canvas/index') && options?.method === 'PUT') {
+        return { ok: true, json: async () => ({ updatedAt: 'now' }) };
+      }
+      if (String(url).endsWith('/canvas/index')) {
+        return { ok: true, json: async () => ({ index: null }) };
+      }
+      if (String(url).endsWith('/meta')) {
+        return {
+          ok: true,
+          json: async () => ({ revision: 408, updatedAt: acceptedServerAt }),
+        };
+      }
+      if (String(url).includes(`/canvas/projects/${projectId}`)) {
+        return {
+          ok: true,
+          json: async () => ({
+            payload: serverPayload,
+            updatedAt: acceptedServerAt,
+            revision: 408,
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    const {
+      initializeProjectSync,
+      reconcileProjectDocumentOnSwitch,
+      resetProjectSyncState,
+    } = await import('../projectSync.js');
+    const { projectStorageKey } = await import('../constants.js');
+
+    resetProjectSyncState();
+    await initializeProjectSync();
+
+    const result = await reconcileProjectDocumentOnSwitch(projectId);
+    expect(result.pulled).toBe(true);
+    const cached = JSON.parse(storage.get(projectStorageKey(projectId)));
+    expect(cached.cards[0]).toMatchObject({
+      x: -280,
+      y: 166,
+      width: 520,
+      height: 340,
+    });
+    expect(cached.canvasView).toEqual({ x: 348, y: 442, zoom: 0.67 });
   });
 
   it('round-trip switch preserves card positions in local cache', async () => {

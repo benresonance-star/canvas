@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const revisionMockState = vi.hoisted(() => ({ clientRev: 1 }));
+
 vi.mock('../canvasProjectsApi.js', () => ({
   patchCanvasProject: vi.fn(async () => ({
     ok: true,
@@ -34,8 +36,10 @@ vi.mock('../sync/projectSyncRevision.js', async (importOriginal) => {
     ...orig,
     alignClientRevisionWithServerMeta: vi.fn(async () => {}),
     ensureClientRevision: vi.fn(async () => {}),
-    getClientRevision: vi.fn(() => 1),
-    applyServerProjectRevision: vi.fn(),
+    getClientRevision: vi.fn(() => revisionMockState.clientRev),
+    applyServerProjectRevision: vi.fn((_projectId, _updatedAt, revision) => {
+      revisionMockState.clientRev = Number(revision) || 0;
+    }),
     notifySyncLock: vi.fn(),
   };
 });
@@ -43,6 +47,7 @@ vi.mock('../sync/projectSyncRevision.js', async (importOriginal) => {
 describe('pushProjectPatchIfEnabled', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    revisionMockState.clientRev = 1;
     const { resetProjectDocumentCommitForTests } = await import(
       '../projectDocumentCommit.js'
     );
@@ -107,5 +112,78 @@ describe('pushProjectPatchIfEnabled', () => {
     expect(patchCanvasProject).toHaveBeenCalled();
     const call = patchCanvasProject.mock.calls[0][1];
     expect(call.ops.some((o) => o.op === 'upsertCard')).toBe(true);
+  });
+
+  it('retries layout-only patch conflicts with the server revision from 409', async () => {
+    const { patchCanvasProject } = await import('../canvasProjectsApi.js');
+    const {
+      setCommittedPayloadForTests,
+    } = await import('../projectDocumentCommit.js');
+    const { pushProjectPatchIfEnabled } = await import(
+      '../sync/projectSyncPatch.js'
+    );
+
+    const before = {
+      projectName: 'P',
+      cards: [{
+        id: 'c1',
+        key: 'notes__a',
+        type: 'markdown',
+        x: 0,
+        y: 0,
+        width: 300,
+        height: 200,
+        versions: [],
+      }],
+      stagedSyncCards: [],
+      artifactPlacements: {
+        notes__a: { surface: 'canvas', ref: { id: 'c1', key: 'notes__a' } },
+      },
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    const after = {
+      ...before,
+      cards: [{
+        ...before.cards[0],
+        x: 120,
+        y: 160,
+        width: 420,
+        height: 260,
+      }],
+    };
+    setCommittedPayloadForTests('p-layout-conflict', before);
+    patchCanvasProject
+      .mockResolvedValueOnce({
+        ok: false,
+        conflict: true,
+        revision: 2,
+        updatedAt: '2025-06-15T00:00:10.000Z',
+        payload: before,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        revision: 3,
+        updatedAt: '2025-06-15T00:00:11.000Z',
+      });
+
+    const result = await pushProjectPatchIfEnabled(
+      'p-layout-conflict',
+      after,
+      'layoutCommit',
+    );
+
+    expect(result?.ok).toBe(true);
+    expect(patchCanvasProject).toHaveBeenCalledTimes(2);
+    expect(patchCanvasProject.mock.calls[1][1]).toMatchObject({
+      expectedRevision: 2,
+    });
+    expect(
+      patchCanvasProject.mock.calls[1][1].ops.some((op) =>
+        op.op === 'setCardLayout'
+        && op.id === 'c1'
+        && op.width === 420
+        && op.height === 260,
+      ),
+    ).toBe(true);
   });
 });

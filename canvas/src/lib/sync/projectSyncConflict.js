@@ -61,6 +61,34 @@ export function needsProjectConflictResolution(local, server) {
 }
 
 /**
+ * Canvas-state CAS conflicts can be replayed automatically: the same cards remain
+ * on the same surfaces, only their geometry or viewport differs.
+ *
+ * @param {object | null | undefined} local
+ * @param {object | null | undefined} server
+ * @returns {boolean}
+ */
+export function isRetryableProjectPayloadConflict(local, server) {
+  if (!local || !server) return false;
+  if (projectPayloadsStructurallyEqual(local, server)) return false;
+  const a = summarizeProjectPayload(local);
+  const b = summarizeProjectPayload(server);
+  if (
+    a.canvasKeys.length === 0
+    && a.dockKeys.length === 0
+    && b.canvasKeys.length === 0
+    && b.dockKeys.length === 0
+  ) {
+    return false;
+  }
+  return (
+    a.canvasKeys.join() === b.canvasKeys.join()
+    && a.dockKeys.join() === b.dockKeys.join()
+    && a.cardIds.join() === b.cardIds.join()
+  );
+}
+
+/**
  * @param {string} projectId
  * @param {object} local
  * @param {object} server

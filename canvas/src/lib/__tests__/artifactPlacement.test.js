@@ -113,6 +113,42 @@ describe('artifactPlacement', () => {
     expect(outS).toHaveLength(0);
   });
 
+  it('enforceExclusivePlacement removes docked bookmark duplicates by URL', () => {
+    const cards = [
+      {
+        id: 'd626e7f3-38a2-4f9c-8f8c-19aa1451bb92',
+        key: 'links__youtu-be-7b81c096',
+        type: 'bookmark',
+        versions: [{
+          version: 1,
+          filename: 'links__youtu-be-7b81c096-v1.bookmark.md',
+          externalUrl: 'https://youtu.be/NdkEGdMOobo?si=qDqePqXbXbv6LqEb',
+        }],
+      },
+    ];
+    const staged = [
+      {
+        stagingId: 's1',
+        key: 'links__youtu-be-d626e7f3',
+        type: 'bookmark',
+        versions: [{
+          version: 1,
+          filename: 'links__youtu-be-d626e7f3-v1.bookmark.md',
+          externalUrl: 'https://youtu.be/NdkEGdMOobo?si=qDqePqXbXbv6LqEb',
+        }],
+      },
+    ];
+
+    const { cards: outC, stagedSyncCards: outS, changed } = enforceExclusivePlacement(
+      cards,
+      staged,
+    );
+
+    expect(changed).toBe(true);
+    expect(outC).toHaveLength(1);
+    expect(outS).toHaveLength(0);
+  });
+
   it('moveToCanvas removes staged row', () => {
     const staged = [
       {

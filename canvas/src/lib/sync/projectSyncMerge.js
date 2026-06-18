@@ -58,7 +58,9 @@ export function projectPayloadFingerprint(doc) {
     .map((c) => {
       const x = Math.round((c.x ?? 0) * 10) / 10;
       const y = Math.round((c.y ?? 0) * 10) / 10;
-      return `${c.id}:${x},${y},${c.pinnedVersion ?? 1}`;
+      const width = Math.round((c.width ?? 0) * 10) / 10;
+      const height = Math.round((c.height ?? 0) * 10) / 10;
+      return `${c.id}:${x},${y},${width},${height},${c.pinnedVersion ?? 1}`;
     })
     .sort();
   const view = doc.canvasView ?? {};

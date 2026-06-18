@@ -13,6 +13,7 @@ import {
   mergeDiskPreviewIntoCardVersions,
   shouldRefreshVersionFromDisk,
 } from './sync.js';
+import { normalizeBookmarkUrl } from './bookmarkUrl.js';
 
 /**
  * @param {{ key: string, group: { parsed: { ext: string, prefix: string, name: string }, versions: unknown[] } }} change
@@ -74,6 +75,22 @@ function canonicalKeyForSyncEntry(entry) {
   return toCanonicalSyncKey(entry.key);
 }
 
+export function bookmarkUrlForSyncEntry(entry) {
+  for (const version of entry?.versions ?? []) {
+    const normalized = normalizeBookmarkUrl(version?.externalUrl);
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
+function bookmarkUrlForFolderGroup(group) {
+  for (const version of group?.versions ?? []) {
+    const normalized = normalizeBookmarkUrl(version?.externalUrl);
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
 /**
  * @param {{ key?: string, prefix?: string, name?: string, versions?: Array<{ filename?: string }> }} entry
  * @param {string} folderKey
@@ -101,6 +118,14 @@ export function findSyncEntryByFolderKey(list, folderKey) {
   return (list ?? []).find((entry) => entryMatchesFolderKey(entry, folderKey));
 }
 
+export function findSyncEntryForFolderGroup(list, folderKey, group) {
+  const byKey = findSyncEntryByFolderKey(list, folderKey);
+  if (byKey) return byKey;
+  const folderBookmarkUrl = bookmarkUrlForFolderGroup(group);
+  if (!folderBookmarkUrl) return undefined;
+  return (list ?? []).find((entry) => bookmarkUrlForSyncEntry(entry) === folderBookmarkUrl);
+}
+
 /**
  * @param {Record<string, { parsed: unknown, versions: Array<{ version: number }> }>} grouped
  * @param {Array<{ key: string, versions?: Array<{ version: number }> }>} canvasCards
@@ -112,8 +137,8 @@ export function buildSyncChangesFromFolder(grouped, canvasCards, stagedCards) {
   const stagedRefreshPatches = [];
 
   Object.entries(grouped).forEach(([key, group]) => {
-    const canvasCard = findSyncEntryByFolderKey(canvasCards, key);
-    const stagedCard = findSyncEntryByFolderKey(stagedCards, key);
+    const canvasCard = findSyncEntryForFolderGroup(canvasCards, key, group);
+    const stagedCard = findSyncEntryForFolderGroup(stagedCards, key, group);
     const existing = canvasCard ?? stagedCard;
 
     if (!existing) {
@@ -188,8 +213,8 @@ export function filterSyncChangesForConfirm(
 ) {
   return (changes ?? []).filter((change) => {
     if (change.type !== 'new') return true;
-    if (findSyncEntryByFolderKey(canvasCards, change.key)) return false;
-    if (findSyncEntryByFolderKey(stagedCards, change.key)) return false;
+    if (findSyncEntryForFolderGroup(canvasCards, change.key, change.group)) return false;
+    if (findSyncEntryForFolderGroup(stagedCards, change.key, change.group)) return false;
     const cardType = cardTypeFromSync({
       ext: change.group.parsed.ext,
       prefix: change.group.parsed.prefix,
@@ -270,8 +295,8 @@ export function buildFolderConnectConfirmChanges(
     )
     .map(({ key, group }) => {
       const existing =
-        findSyncEntryByFolderKey(canvasCards, key)
-        ?? findSyncEntryByFolderKey(stagedCards, key);
+        findSyncEntryForFolderGroup(canvasCards, key, group)
+        ?? findSyncEntryForFolderGroup(stagedCards, key, group);
       const diskVersions = group.versions ?? [];
       const newVersions = existing
         ? diskVersions.filter(
@@ -305,8 +330,8 @@ export function buildFolderConnectConfirmChanges(
     .map((key) => {
       const group = grouped[key];
       const existing =
-        findSyncEntryByFolderKey(canvasCards, key)
-        ?? findSyncEntryByFolderKey(stagedCards, key);
+        findSyncEntryForFolderGroup(canvasCards, key, group)
+        ?? findSyncEntryForFolderGroup(stagedCards, key, group);
       if (!existing) {
         return { type: 'new', key, group };
       }

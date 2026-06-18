@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FileText, FileX, ChevronDown, ChevronUp } from 'lucide-react';
 import { strings } from '../content/strings.js';
+import { markdownViewToggleLabel } from '../lib/markdownMessage.js';
+import { MarkdownMessage } from './MarkdownMessage.jsx';
 
 function ContextEventRow({ message, compact }) {
   const [expanded, setExpanded] = useState(false);
@@ -54,7 +56,7 @@ function ContextEventRow({ message, compact }) {
   );
 }
 
-export function hasConversationMessages(messages) {
+function hasConversationMessages(messages) {
   return (messages ?? []).some(
     (m) => !m.kind && (m.role === 'user' || m.role === 'assistant'),
   );
@@ -72,6 +74,7 @@ export function AgentChatThreadView({
   scrollOnUpdate = true,
 }) {
   const bottomRef = useRef(null);
+  const [formattedView, setFormattedView] = useState(true);
   const textSize = compact ? 'text-[10px]' : 'text-xs';
   const padX = compact ? 'px-2 py-1' : 'px-3 py-2';
   const sidePad = compact ? 'pl-3 pr-3' : 'pl-6 pr-6';
@@ -83,11 +86,32 @@ export function AgentChatThreadView({
 
   const showEmpty =
     !hasConversationMessages(messages) && !loading && !error;
+  const showViewToggle = hasConversationMessages(messages);
 
   return (
     <div
       className={`flex flex-col min-h-0 overflow-y-auto gap-2 ${compact ? 'px-1 py-1' : 'px-3 py-2'} ${className}`}
     >
+      {showViewToggle && (
+        <div className={`sticky top-0 z-10 flex justify-end ${compact ? 'px-1 pt-0.5' : 'px-1 pt-1'}`}>
+          <button
+            type="button"
+            className={`sans rounded-full border border-border-subtle bg-surface-muted/90 text-muted shadow-sm hover:text-primary ${
+              compact ? 'px-2 py-0.5 text-[9px]' : 'px-2.5 py-1 text-[10px]'
+            }`}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+              setFormattedView((value) => !value);
+            }}
+            aria-pressed={!formattedView}
+          >
+            {markdownViewToggleLabel(formattedView)}
+          </button>
+        </div>
+      )}
       {showEmpty && (
         <p className={`sans text-muted text-center ${compact ? 'py-3 text-[10px]' : 'py-6 text-xs'} px-2`}>
           {strings.agent.chatEmptyHint}
@@ -110,7 +134,11 @@ export function AgentChatThreadView({
                   : 'bg-surface border border-border-subtle text-secondary rounded-bl-md'
               }`}
             >
-              {m.content}
+              {formattedView ? (
+                <MarkdownMessage content={m.content} compact={compact} />
+              ) : (
+                m.content
+              )}
             </div>
           </div>
         );

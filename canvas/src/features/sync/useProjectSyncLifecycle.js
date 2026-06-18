@@ -15,7 +15,11 @@ import { flowTrace } from '../../lib/sync/syncTrace.js';
 import { patchPlacementsMapFromArrays } from '../../lib/artifactPlacementsMap.js';
 import { parseServerUpdatedAt } from '../../lib/sync/projectSyncMerge.js';
 import { projectArtifactCount } from '../../lib/projectDocumentShape.js';
-import { getLocalEditAt } from '../../lib/sync/projectSyncRevision.js';
+import {
+  ensureClientRevision,
+  getLastServerUpdatedAt,
+  getLocalEditAt,
+} from '../../lib/sync/projectSyncRevision.js';
 import {
   ensureProjectIndex,
   loadProjectIndex,
@@ -56,7 +60,6 @@ import {
   markBootPulledProject,
   wasBootPulledThisSession,
 } from '../../lib/projectSyncCoordinator.js';
-import { requestActionSync } from '../../lib/actionSync.js';
 import { isCanvasInteractionActive } from '../../lib/canvasInteraction.js';
 import {
   BOOT_LOADING_TIMEOUT_MS,
@@ -66,10 +69,12 @@ import {
 } from '../../lib/bootSync.js';
 import { placementMapDiffers } from '../../lib/placementTransfer.js';
 import { sanitizeAgentChatProjectState } from '../../lib/canvasCardMerge.js';
+import { enforceExclusivePlacement } from '../../lib/artifactPlacement.js';
 import {
   shouldOfferDockRestore,
   countRestorableDockCards,
 } from '../../lib/projectDocumentShape.js';
+import { isAuthoritativeRepairDocument } from '../../lib/projectDocumentMerge.js';
 import {
   shouldApplyProjectLoad,
   buildSwitchPlaceholderState,
@@ -190,18 +195,23 @@ export function useProjectSyncLifecycle({
         threads: agentChatThreadIndexRef.current?.threads ?? [],
       },
     );
-    let rawCards = sanitized.cards;
+    const placementCleanup = enforceExclusivePlacement(
+      sanitized.cards,
+      sanitized.stagedSyncCards,
+      { threads: agentChatThreadIndexRef.current?.threads ?? [] },
+    );
+    let rawCards = placementCleanup.cards;
     if (folderHandle && folderPresentKeysRef.current?.length) {
       rawCards = await hydrateStrippedCardContent(rawCards, {
         folderHandle,
         folderPresentKeys: folderPresentKeysRef.current,
       });
     }
-    const stagedRaw = sanitized.stagedSyncCards;
+    const stagedRaw = placementCleanup.stagedSyncCards;
     const patchedPlacements = patchPlacementsMapFromArrays(
       normalized.artifactPlacements ?? {},
-      sanitized.cards,
-      sanitized.stagedSyncCards,
+      placementCleanup.cards,
+      placementCleanup.stagedSyncCards,
     );
     const placementChangedBySanitize = placementMapDiffers(
       normalized.artifactPlacements,
@@ -210,7 +220,8 @@ export function useProjectSyncLifecycle({
     const cleanedPersist =
       rawCards.length !== (normalized.cards ?? []).length
       || stagedRaw.length !== (normalized.stagedSyncCards ?? []).length
-      || sanitized.keysMigrated;
+      || sanitized.keysMigrated
+      || placementCleanup.changed;
     const hydrateOpts = {
       localOnly,
       chunkSize: hydratePreviews && localOnly ? PREVIEW_HYDRATE_CHUNK_SIZE : 0,
@@ -291,10 +302,12 @@ export function useProjectSyncLifecycle({
       });
     }
     if (
-      cleanedPersist
-      && !placementChangedBySanitize
+      (
+        (cleanedPersist && !placementChangedBySanitize)
+        || placementCleanup.changed
+      )
       && !switchingProjectRef.current
-      && initialHydratedRef.current
+      && (initialHydratedRef.current || placementCleanup.changed)
     ) {
       void saveProjectById(
         projectId,
@@ -520,6 +533,7 @@ export function useProjectSyncLifecycle({
     if (projectId) {
       const pullResult = await pullProjectDocumentIfServerNewer(projectId, {
         force: true,
+        acceptServerPayload: true,
       });
       if (pullResult.pulled) {
         await applyServerPullResult(projectId, pullResult, { allowFit: false });
@@ -538,7 +552,25 @@ export function useProjectSyncLifecycle({
       void runExclusive('cache-tab', async () => {
         await applyReconcileFromServer(projectId, { showPullToast: true });
         if (!isCanvasInteractionActive()) {
-          await invokeLoadProjectIntoState(projectId, { localOnly: true });
+          let loadedCards = await invokeLoadProjectIntoState(projectId, {
+            localOnly: true,
+          });
+          if (
+            !isCanvasInteractionActive()
+            && (loadedCards == null || loadedCards.length === 0)
+            && isServerSyncEnabled()
+          ) {
+            const pullResult = await pullProjectDocumentIfServerNewer(projectId, {
+              force: true,
+              acceptServerPayload: true,
+            });
+            if (pullResult.pulled && pullResult.payload) {
+              loadedCards = await invokeLoadProjectIntoState(projectId, {
+                localOnly: true,
+                document: pullResult.payload,
+              });
+            }
+          }
         }
       }, { mode: 'skip' });
     });
@@ -624,6 +656,7 @@ export function useProjectSyncLifecycle({
         try {
           const pullResult = await pullProjectDocumentIfServerNewer(activeId, {
             force: true,
+            acceptServerPayload: true,
           });
           if (pullResult.pulled && pullResult.payload) {
             const pulledCards = await invokeLoadProjectIntoState(activeId, {
@@ -847,16 +880,19 @@ export function useProjectSyncLifecycle({
                 );
                 remote = await fetchCanvasProjectDocument(activeId);
                 remoteArtifactCount = projectArtifactCount(remote?.payload);
+                await ensureClientRevision(activeId);
                 const localEditAt = getLocalEditAt(activeId) ?? 0;
                 const serverAt = remote?.updatedAt
                   ? parseServerUpdatedAt(remote.updatedAt)
                   : 0;
+                const knownServerAt = getLastServerUpdatedAt(activeId) ?? serverAt;
                 const { decision } = mergeProjectDocuments(
                   localDoc,
                   remote?.payload ?? null,
                   {
                     localEditAt,
                     serverAt,
+                    knownServerAt,
                     projectId: activeId,
                     placementSource: localDoc,
                     reason: 'boot',
@@ -871,40 +907,31 @@ export function useProjectSyncLifecycle({
                 const emptyLocalWouldEraseRemote =
                   localArtifactCount === 0 && remoteArtifactCount > 0;
 
-                if (localDoc && !emptyLocalWouldEraseRemote) {
+                if (localDoc && !remote?.payload && !emptyLocalWouldEraseRemote) {
                   const authoritativePlacements = patchPlacementsMapFromArrays(
                     localDoc.artifactPlacements ?? {},
                     localDoc.cards ?? [],
                     localDoc.stagedSyncCards ?? [],
                   );
-                  const shouldPush =
-                    !remote?.payload
-                    || keepLocalLayout
-                    || placementMapDiffers(
-                      authoritativePlacements,
-                      remote.payload.artifactPlacements,
-                    );
-                  if (shouldPush) {
-                    await commitProjectDocument(activeId, {
-                      state: {
-                        ...stateRef.current,
-                        cards: localDoc.cards ?? [],
-                        canvasView: localDoc.canvasView ?? stateRef.current.canvasView,
-                        artifactPlacements: authoritativePlacements,
-                      },
-                      stagedSyncCards: localDoc.stagedSyncCards ?? [],
-                      suppressedSyncKeys: suppressedKeysForSave(activeId, stateRef.current),
-                      stripNoteContent:
-                        Boolean(folderHandle)
-                        && Boolean(folderPresentKeysRef.current?.length),
+                  await commitProjectDocument(activeId, {
+                    state: {
+                      ...stateRef.current,
+                      cards: localDoc.cards ?? [],
+                      canvasView: localDoc.canvasView ?? stateRef.current.canvasView,
                       artifactPlacements: authoritativePlacements,
-                      reason: 'boot-push',
-                      pushRemote: true,
-                    });
-                  }
+                    },
+                    stagedSyncCards: localDoc.stagedSyncCards ?? [],
+                    suppressedSyncKeys: suppressedKeysForSave(activeId, stateRef.current),
+                    stripNoteContent:
+                      Boolean(folderHandle)
+                      && Boolean(folderPresentKeysRef.current?.length),
+                    artifactPlacements: authoritativePlacements,
+                    reason: 'boot-push',
+                    pushRemote: true,
+                  });
                 }
 
-                if (!keepLocalLayout || emptyLocalWouldEraseRemote) {
+                if (remote?.payload || !keepLocalLayout || emptyLocalWouldEraseRemote) {
                   pullResult = await pullProjectDocumentIfServerNewer(activeId, {
                     force: true,
                   });
@@ -927,9 +954,6 @@ export function useProjectSyncLifecycle({
                 'boot/server-pull',
                 'boot/server-pull-done',
               );
-              if (activeProjectIdRef.current === activeId) {
-                void requestActionSync('boot', { projectId: activeId });
-              }
             }
             if (cancelled || activeProjectIdRef.current !== activeId) return;
             await refreshProjectListFromServerRef.current({
@@ -1039,7 +1063,12 @@ export function useProjectSyncLifecycle({
               threads: agentChatThreadIndexRef.current?.threads ?? [],
             },
           );
-          const remoteCards = await hydrateCardsPreviews(sanitized.cards, {
+          const placementCleanup = enforceExclusivePlacement(
+            sanitized.cards,
+            sanitized.stagedSyncCards,
+            { threads: agentChatThreadIndexRef.current?.threads ?? [] },
+          );
+          const remoteCards = await hydrateCardsPreviews(placementCleanup.cards, {
             localOnly: true,
             chunkSize: PREVIEW_HYDRATE_CHUNK_SIZE,
           });
@@ -1051,23 +1080,27 @@ export function useProjectSyncLifecycle({
           );
           const patchedPlacements = patchPlacementsMapFromArrays(
             normalized.artifactPlacements ?? {},
-            sanitized.cards,
-            sanitized.stagedSyncCards,
+            placementCleanup.cards,
+            placementCleanup.stagedSyncCards,
           );
           const placementChangedBySanitize = placementMapDiffers(
             normalized.artifactPlacements,
             patchedPlacements,
           );
           const stagedChanged =
-            sanitized.cards.length !== (normalized.cards ?? []).length
-            || sanitized.stagedSyncCards.length !== (normalized.stagedSyncCards ?? []).length
-            || sanitized.keysMigrated;
-          if (stagedChanged && !placementChangedBySanitize) {
+            placementCleanup.cards.length !== (normalized.cards ?? []).length
+            || placementCleanup.stagedSyncCards.length !== (normalized.stagedSyncCards ?? []).length
+            || sanitized.keysMigrated
+            || placementCleanup.changed;
+          if (
+            (stagedChanged && !placementChangedBySanitize)
+            || placementCleanup.changed
+          ) {
             const { stagedSyncCards: _s, cards: _c, ...rest } = normalized;
             void saveProjectById(
               projectId,
-              { ...rest, artifactPlacements: patchedPlacements, cards: sanitized.cards },
-              sanitized.stagedSyncCards,
+              { ...rest, artifactPlacements: patchedPlacements, cards: placementCleanup.cards },
+              placementCleanup.stagedSyncCards,
               { pushRemote: true },
             );
           }
@@ -1079,7 +1112,7 @@ export function useProjectSyncLifecycle({
             setStagedSyncCards((prev) => {
               if (activeProjectIdRef.current !== projectId) return prev;
               const stagedPreviewByKey = new Map(
-                (sanitized.stagedSyncCards ?? []).map((s) => [
+                (placementCleanup.stagedSyncCards ?? []).map((s) => [
                   s.stagingId ?? s.key,
                   s,
                 ]),
@@ -1093,12 +1126,12 @@ export function useProjectSyncLifecycle({
           setState((prev) => {
             if (activeProjectIdRef.current !== projectId) return prev;
             const prevCards = prev.cards ?? [];
-            const loadedCount = sanitized.cards?.length ?? 0;
+            const loadedCount = placementCleanup.cards?.length ?? 0;
             const prevCount = prevCards.length;
             const adoptLoadedCanvas =
               loadedCount > prevCount
               || (loadedCount > 0 && prevCount === 0);
-            const cardsSource = adoptLoadedCanvas ? sanitized.cards : prevCards;
+            const cardsSource = adoptLoadedCanvas ? placementCleanup.cards : prevCards;
             return {
               ...prev,
               canvasView: stateFields.canvasView ?? prev.canvasView,
@@ -1111,7 +1144,10 @@ export function useProjectSyncLifecycle({
           if (!cancelled) {
             setStagedSyncCards((prev) => {
               if (activeProjectIdRef.current !== projectId) return prev;
-              const loadedCount = sanitized.cards?.length ?? 0;
+              if (isAuthoritativeRepairDocument(normalized)) {
+                return placementCleanup.stagedSyncCards ?? [];
+              }
+              const loadedCount = placementCleanup.cards?.length ?? 0;
               const prevCanvasCount = stateRef.current.cards?.length ?? 0;
               if (
                 loadedCount <= prevCanvasCount
@@ -1120,7 +1156,7 @@ export function useProjectSyncLifecycle({
                 return prev;
               }
               if (loadedCount > prevCanvasCount || prevCanvasCount === 0) {
-                return sanitized.stagedSyncCards ?? prev;
+                return placementCleanup.stagedSyncCards ?? prev;
               }
               return prev;
             });

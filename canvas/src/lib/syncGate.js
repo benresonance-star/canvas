@@ -26,15 +26,17 @@ function firstActiveLaneForScope(scope = GLOBAL_SCOPE) {
   if (key === GLOBAL_SCOPE) {
     return active[0];
   }
-  const globalLane = lanes.get(GLOBAL_SCOPE);
-  if (globalLane?.inFlight) return [GLOBAL_SCOPE, globalLane];
   const scopedLane = lanes.get(key);
   if (scopedLane?.inFlight) return [key, scopedLane];
+  const globalLane = lanes.get(GLOBAL_SCOPE);
+  if (globalLane?.inFlight) return [GLOBAL_SCOPE, globalLane];
   return null;
 }
 
 /** Placement push must not queue behind long-running sync jobs. */
 const PLACEMENT_PRIORITY_LABELS = new Set([
+  'action:layoutCommit',
+  'action:viewCommit',
   'action:placementTransfer',
   'patch-push',
   'flush-outgoing',
@@ -57,6 +59,9 @@ export function canBypassSyncGateForPlacement(label, scope = GLOBAL_SCOPE) {
   const busyLabel = busy?.[1]?.label ?? null;
   if (!PLACEMENT_PRIORITY_LABELS.has(label) || !busyLabel) {
     return false;
+  }
+  if (label === 'action:layoutCommit' || label === 'action:viewCommit') {
+    return busyLabel === 'exclusive:background';
   }
   return busyLabel !== 'action:placementTransfer';
 }
@@ -81,7 +86,7 @@ export async function runSyncGate(label, fn, { mode = 'wait', scope = GLOBAL_SCO
     if (!busy) break;
     if (canBypassSyncGateForPlacement(label, key)) {
       logSyncGate('bypass-wait', { label, scope: key, busy: busyLabel });
-      return fn();
+      break;
     }
     if (mode === 'skip') {
       logSyncGate('skip', { label, scope: key, busy: busyLabel });

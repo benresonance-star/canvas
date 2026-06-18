@@ -1,9 +1,16 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026-06-14-folder-repair-agent-context
+**Version:** 2026.06.18.1
+**Version label:** sync-repair-bookmark-sidecars-agent-markdown
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
+
+### Spec versioning
+
+Spec versions use `YYYY.MM.DD.N`, where `N` increments for each accepted spec update on the same date. The label is human-readable only and may change without resetting the numeric version.
+
+Version bumps are required when code changes alter persisted data shape, sync authority, public app architecture, browser debugging workflow, or acceptance gates. Each bump must add a changelog entry that states what shipped and which invariants changed. The spec version is separate from `package.json` and from database migration versions.
 
 ### Authority model
 
@@ -161,13 +168,20 @@ import { commitProjectDocument } from '../lib/persistence.js';
 await commitProjectDocument(projectId, { state, stagedSyncCards, reason, pushRemote });
 ```
 
-Side effects: local IndexedDB cache → optional remote PATCH/PUT → `writeThroughSpecCanvasFromPayload`.
+Side effects: local IndexedDB cache / committed-payload cache → optional remote PATCH/PUT via `flushOutgoingProjectDocument`.
 
 Push-only paths (conflict keep-local, boot push) route through `commitProjectDocument` with `pushRemote: true` instead of calling `flushOutgoingProjectDocument` / `pushProjectDocumentIfLocalNewer` directly.
 
-When `commitProjectDocument` pushes, `flushOutgoingProjectDocument` receives `skipSpecDualWrite: true` (commit already write-through). Direct flush callers still dual-write spec when needed.
+When the remote document write succeeds, `flushOutgoingProjectDocument` dual-writes `spec_canvas_state` unless `skipSpecDualWrite` is explicitly true. `commitProjectDocument` no longer calls `writeThroughSpecCanvasFromPayload` directly; spec state follows successful document CAS instead of moving ahead of the authoritative document write.
 
 `saveProjectById` no longer calls `syncSpecCanvasStateFromPayload` — commit write-through is authoritative.
+
+Push guards:
+
+- Empty local documents are blocked from overwriting a non-empty server document unless `allowEmptyRemoteOverwrite` is explicit or inferred from an intentional artifact-empty commit.
+- Dock-only local documents are blocked from overwriting a server document with canvas cards unless the commit reason is the explicit dock placement transfer path.
+- `identityRepair.authoritative` and `identityRepair.authoritativeEmpty` remote payloads are authoritative repair documents. They clear the local last-good-card guard and may intentionally replace local non-empty state.
+- Folder scan commits may pass `skipInboundReconcile` after a locally richer scan result so a stale server pull does not immediately undo the scan.
 
 ### Legacy (deprecated)
 
@@ -344,6 +358,7 @@ Placement is per-project even when content is shared. Placeable node kinds are `
 - Connectors from notes to resources are rendered from `note_links`, not stored in layout.
 - Selection, hover, and in-flight drag position are React-only view state.
 - Persistent canvas changes are debounced and flushed on blur / unload; drag frames are not individually persisted.
+- Drag and resize commits use final pointer-up geometry from `canvasPointerGeometry.js` and dispatch one `layoutCommit` payload with card updates.
 
 ### Shared resources and Detach
 
@@ -463,6 +478,19 @@ Rules:
 - Preview cache keys, staging, `folderPresentKeys`, artifact ingest URIs, outbox entries, agent context reads, external open, and stripped-content hydration use the path-aware canonical key.
 - App-created notes, bookmarks, and agent chat transcripts still write to the linked-folder root. Nested files are read and staged from subfolders, but app writes into subfolders require a separate explicit create-in-folder flow.
 - Dock hover UI may show nested `relativePath` for disambiguation; root files keep the existing label behavior.
+- Bookmark writes prefer `.url` shortcuts, then fall back to `.bookmark.md` when the browser or filesystem rejects shortcut filenames.
+- Bookmark sidecars use Markdown:
+
+```md
+# Display title
+
+URL: https://example.com/page
+```
+
+- Folder scans parse `.bookmark.md` sidecars as bookmark artifacts, normalize the URL, hydrate preview metadata when available, and use `bookmark.md` as the parsed extension.
+- Bookmark keys and filenames include a short card-id-derived suffix for app-created bookmarks, so multiple links from the same domain can coexist.
+- Folder scan matching uses the path-aware folder key first, then normalized bookmark URL as a fallback to avoid duplicate bookmark staging after filename fallback or repair.
+- Folder scan ownership is explicit: a scan only uses live canvas cards as baseline when the scan project is the settled active project and no switch is in progress.
 
 ### Phase 3 (partial): Postgres spec tables and dual-write
 
@@ -488,8 +516,13 @@ Workspace index realtime: `GET /canvas/index/stream` broadcasts `index_updated` 
 
 Client dual-write:
 
-- **Save:** `writeThroughSpecCanvasFromPayload` runs on every layout/placement commit through `structure/canvasWriteThrough.js`; project document PUT paths can also sync spec state.
+- **Save:** successful project document PATCH/PUT paths call `syncSpecCanvasStateFromPayload`; `structure/canvasWriteThrough.js` remains the reason-filtered helper for explicit write-through callers.
 - **Load:** `reconcileSpecCanvasOnLoad` applies `spec_canvas_state` when the version matches document revision, when spec-only data exists, or when spec version is at least the document revision. Otherwise project JSON remains authoritative and drift is logged.
+
+Repair tooling:
+
+- `scripts/repair-canvas-state-drift.mjs` compares `canvas_project_document` payloads to `spec_canvas_state` layout/viewport/placement maps.
+- Dry run is default. `--apply` rewrites document payload layout from spec state; `--delete-orphans` may remove orphan spec rows; `--project=<id>` scopes the repair.
 
 Current gaps before the target data architecture is complete:
 
@@ -620,6 +653,12 @@ localStorage.setItem('canvas-sync-trace', '1');
 
 Implementation: `lib/sync/syncTrace.js` — logs patch summaries, reconcile decisions, flow stages (`project:create`, `project:switch`, etc.). See [DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md).
 
+Dev snapshots:
+
+- `window.__canvasProjectionSnapshot()` — selection phase, hydration, mutation gate, revision.
+- `window.__canvasDocumentSnapshot(projectId?)` — committed card and placement keys.
+- `window.__canvasFolderSnapshot()` — folder handle ownership, stored permission state, picker/probe state, and present-key count.
+
 ### Placement audit
 
 ```js
@@ -710,6 +749,7 @@ flowchart LR
 | Index out of sync | `GET /canvas/index/stream`; poll interval |
 | Spec vs document drift | `GET /canvas/projects/:id/spec-canvas` vs document revision |
 | Local-only mode | `isServerSyncEnabled()` false → footer banner |
+| Bookmark duplicate on reconnect | Folder key, `.bookmark.md` fallback filename, and normalized URL matching |
 
 ### DB inspection
 
@@ -739,6 +779,7 @@ npm run test:features       # feature hook tests
 npm run lint
 node scripts/capture-architecture-baseline.mjs
 node scripts/verify-project-sync-exports.mjs
+npx vitest run src/lib/__tests__/markdownMessage.test.js src/lib/__tests__/canvasPointerGeometry.test.js src/lib/__tests__/bookmarkUrl.test.js src/lib/__tests__/folderScan.test.js
 ```
 
 ### CI
@@ -856,6 +897,17 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-06-18 — Sync repair, bookmark sidecars, and agent markdown (implemented)
+
+- Added date-based spec versioning and bumped the active spec to `2026.06.18.1`.
+- Moved spec canvas dual-write behind successful project document PATCH/PUT so `spec_canvas_state` follows document CAS.
+- Added explicit remote overwrite guards for empty and dock-only payloads, plus authoritative repair payloads via `identityRepair.authoritative` / `authoritativeEmpty`.
+- Added folder scan ownership guards, `skipInboundReconcile` for richer local folder scans, URL fallback matching for bookmarks, and `window.__canvasFolderSnapshot()`.
+- Added bookmark `.bookmark.md` sidecars, card-id-suffixed bookmark keys, and YouTube thumbnail fallback in URL previews.
+- Added lightweight formatted agent messages (`MarkdownMessage`) with table, list, bold, and inline-code support plus a plain/formatted toggle.
+- Extracted final drag/resize pointer geometry into `canvasPointerGeometry.js` and covered it with focused tests.
+- Added `scripts/repair-canvas-state-drift.mjs` to inspect and optionally repair document/spec canvas drift.
 
 ### 2026-06-14 — Folder repair, placement, and agent context polish (implemented)
 

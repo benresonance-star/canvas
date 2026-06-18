@@ -188,6 +188,42 @@ describe('buildSyncChangesFromFolder', () => {
     expect(changes.filter((c) => c.type === 'new')).toHaveLength(0);
   });
 
+  it('does not stage a bookmark sidecar whose URL is already on canvas', () => {
+    const grouped = {
+      'links__youtu-be-d626e7f3': {
+        parsed: { name: 'youtu-be-d626e7f3', prefix: 'links', ext: 'bookmark.md' },
+        versions: [{
+          version: 1,
+          filename: 'links__youtu-be-d626e7f3-v1.bookmark.md',
+          externalUrl: 'https://youtu.be/NdkEGdMOobo?si=qDqePqXbXbv6LqEb',
+        }],
+      },
+      'links__ebay-com-au-62c18cac': {
+        parsed: { name: 'ebay-com-au-62c18cac', prefix: 'links', ext: 'bookmark.md' },
+        versions: [{
+          version: 1,
+          filename: 'links__ebay-com-au-62c18cac-v1.bookmark.md',
+          externalUrl: 'https://www.ebay.com.au/itm/123',
+        }],
+      },
+    };
+    const canvas = [{
+      id: 'd626e7f3-38a2-4f9c-8f8c-19aa1451bb92',
+      key: 'links__youtu-be-7b81c096',
+      type: 'bookmark',
+      versions: [{
+        version: 1,
+        filename: 'links__youtu-be-7b81c096-v1.bookmark.md',
+        externalUrl: 'https://youtu.be/NdkEGdMOobo?si=qDqePqXbXbv6LqEb',
+      }],
+    }];
+
+    const confirm = buildConfirmChangesForDialog(grouped, canvas, []);
+
+    expect(confirm).toHaveLength(1);
+    expect(confirm[0].key).toBe('links__ebay-com-au-62c18cac');
+  });
+
   it('buildConfirmChangesForDialog uses live canvas after dock placement', () => {
     const grouped = {
       'general__Test Excel': {

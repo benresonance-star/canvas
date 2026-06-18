@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { isIP } from 'node:net';
 
 const FETCH_TIMEOUT_MS = 8000;
@@ -130,6 +131,33 @@ export function resolvePreviewImageUrl(baseUrl, imageUrl) {
 }
 
 /**
+ * @param {URL} parsed
+ * @returns {string | null}
+ */
+export function youtubeVideoIdFromUrl(parsed) {
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  if (host === 'youtu.be') {
+    return parsed.pathname.split('/').filter(Boolean)[0] || null;
+  }
+  if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
+    if (parsed.pathname === '/watch') return parsed.searchParams.get('v');
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    if (parts[0] === 'shorts' || parts[0] === 'embed' || parts[0] === 'live') {
+      return parts[1] || null;
+    }
+  }
+  return null;
+}
+
+/**
+ * @param {URL} parsed
+ */
+export function youtubeThumbnailUrlFromPreviewUrl(parsed) {
+  const id = youtubeVideoIdFromUrl(parsed);
+  return id ? `https://i.ytimg.com/vi/${encodeURIComponent(id)}/hqdefault.jpg` : null;
+}
+
+/**
  * @param {string} url
  */
 export async function fetchBookmarkPreview(url) {
@@ -140,6 +168,7 @@ export async function fetchBookmarkPreview(url) {
   assertPreviewUrlAllowed(parsed);
 
   const domain = parsed.hostname.replace(/^www\./i, '');
+  const youtubeImageUrl = youtubeThumbnailUrlFromPreviewUrl(parsed);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
@@ -160,7 +189,7 @@ export async function fetchBookmarkPreview(url) {
         domain,
         title: domain,
         description: null,
-        imageUrl: null,
+        imageUrl: youtubeImageUrl,
         siteName: domain,
         faviconUrl: null,
       };
@@ -170,7 +199,9 @@ export async function fetchBookmarkPreview(url) {
     const html = clipped.toString('utf8');
     const og = parseOpenGraphFromHtml(html);
     const title = og.title || domain;
-    const imageUrl = resolvePreviewImageUrl(parsed.toString(), og.imageUrl);
+    const imageUrl =
+      resolvePreviewImageUrl(parsed.toString(), og.imageUrl)
+      || youtubeImageUrl;
     let faviconUrl = null;
     try {
       faviconUrl = new URL('/favicon.ico', parsed.origin).toString();
@@ -196,7 +227,7 @@ export async function fetchBookmarkPreview(url) {
       domain,
       title: domain,
       description: null,
-      imageUrl: null,
+      imageUrl: youtubeImageUrl,
       siteName: domain,
       faviconUrl: null,
     };

@@ -652,6 +652,7 @@ export function CanvasWorkspaceView({
           connectedFolderName={connectedFolderName}
           folderNeedsReconnect={folderNeedsReconnect}
           folderNeedsConnect={folderNeedsConnectUi}
+          folderLinkInProgress={folderLinkInProgress}
           folderFooterSyncHidden={folderNeedsConnectUi || folderNeedsReconnect}
           folderLinked={folderConnected}
           showChangeFolder={showChangeFolder}

@@ -457,52 +457,72 @@ describe('createProject', () => {
 
   it('does not push a new project index before the backing document exists', async () => {
     vi.useFakeTimers();
-    const events = [];
-    let resolveProjectPut;
-    const projectPutStarted = new Promise((resolve) => {
-      vi.stubGlobal('fetch', vi.fn(async (url, options) => {
-        const u = String(url);
-        if (u.endsWith('/health')) {
-          return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
-        }
-        if (u.endsWith('/canvas/index')) {
-          if (options?.method === 'PUT') {
-            events.push('index-put');
-            return { ok: true, json: async () => ({ updatedAt: 'index-now', revision: 1 }) };
+    try {
+      const events = [];
+      let resolveProjectPut;
+      const projectPutStarted = new Promise((resolve) => {
+        vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+          const u = String(url);
+          if (u.endsWith('/health')) {
+            return { ok: true, json: async () => ({ ok: true, dbReady: true }) };
           }
-          return { ok: true, json: async () => ({ index: null, revision: 0 }) };
-        }
-        if (u.includes('/canvas/projects/') && options?.method === 'PUT') {
-          events.push('project-put-start');
-          resolve();
-          await new Promise((resolvePut) => {
-            resolveProjectPut = resolvePut;
-          });
-          events.push('project-put-done');
-          return { ok: true, json: async () => ({ updatedAt: 'project-now', revision: 1 }) };
-        }
-        if (u.includes('/meta')) {
-          return { ok: true, json: async () => ({ revision: 1, updatedAt: 'project-now' }) };
-        }
-        return { ok: true, json: async () => ({}) };
-      }));
-    });
+          if (u.endsWith('/canvas/index')) {
+            if (options?.method === 'PUT') {
+              events.push('index-put');
+              return { ok: true, json: async () => ({ updatedAt: 'index-now', revision: 1 }) };
+            }
+            return { ok: true, json: async () => ({ index: null, revision: 0 }) };
+          }
+          if (u.includes('/spec-canvas')) {
+            if (options?.method === 'PUT') {
+              events.push('spec-put');
+              return { ok: true, json: async () => ({ ok: true, version: 1 }) };
+            }
+            return {
+              ok: true,
+              json: async () => ({
+                version: 0,
+                layout: { placed: [], staging: [] },
+                viewport: { x: 0, y: 0, zoom: 1 },
+              }),
+            };
+          }
+          if (u.includes('/canvas/projects/') && options?.method === 'PUT') {
+            events.push('project-put-start');
+            resolve();
+            await new Promise((resolvePut) => {
+              resolveProjectPut = resolvePut;
+            });
+            events.push('project-put-done');
+            return { ok: true, json: async () => ({ updatedAt: 'project-now', revision: 1 }) };
+          }
+          if (u.includes('/meta')) {
+            return { ok: true, json: async () => ({ revision: 1, updatedAt: 'project-now' }) };
+          }
+          return { ok: true, json: async () => ({}) };
+        }));
+      });
 
-    const { createProject } = await import('../projects.js');
-    const { resetProjectSyncState } = await import('../projectSync.js');
-    resetProjectSyncState();
+      const { createProject } = await import('../projects.js');
+      const { resetProjectSyncState } = await import('../projectSync.js');
+      resetProjectSyncState();
 
-    const createPromise = createProject('Slow Create');
-    await projectPutStarted;
-    await vi.advanceTimersByTimeAsync(700);
+      const createPromise = createProject('Slow Create');
+      await projectPutStarted;
+      await vi.advanceTimersByTimeAsync(700);
 
-    expect(events).toEqual(['project-put-start']);
+      expect(events).toEqual(['project-put-start']);
 
-    resolveProjectPut();
-    await createPromise;
+      resolveProjectPut();
+      await createPromise;
 
-    expect(events).toEqual(['project-put-start', 'project-put-done', 'index-put']);
-    vi.useRealTimers();
+      expect(events.filter((event) => event === 'project-put-start')).toHaveLength(1);
+      expect(events).toContain('project-put-done');
+      expect(events).toContain('index-put');
+      expect(events.indexOf('project-put-done')).toBeLessThan(events.indexOf('index-put'));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('updates the local active project override when creating a project', async () => {
@@ -1007,6 +1027,57 @@ describe('deleteProject', () => {
     const stored = await loadProjectIndex();
     expect(stored.projects).toEqual([]);
     expect(stored.activeProjectId).toBe(null);
+  });
+
+  it('migrates duplicate project folder handles before purging dropped rows', async () => {
+    vi.resetModules();
+    const migrateFolderHandlesOnIndexRepair = vi.fn();
+    const removeFolderHandle = vi.fn();
+    vi.doMock('../folderMigrate.js', () => ({
+      migrateFolderHandlesOnIndexRepair,
+    }));
+    vi.doMock('../folderStore.js', () => ({
+      removeFolderHandle,
+    }));
+
+    try {
+      const { healDuplicateProjectNames, loadProjectIndex } = await import('../projects.js');
+      const index = {
+        version: 1,
+        activeProjectId: 'keep-coffee',
+        projects: [
+          {
+            id: 'keep-coffee',
+            name: 'Coffee Setup',
+            createdAt: 1,
+            updatedAt: 2,
+            archived: false,
+          },
+          {
+            id: 'drop-coffee',
+            name: 'Coffee Setup',
+            createdAt: 1,
+            updatedAt: 1,
+            archived: false,
+          },
+        ],
+      };
+
+      const result = await healDuplicateProjectNames(index, 'keep-coffee');
+
+      expect(result.removedIds).toEqual(['drop-coffee']);
+      expect(migrateFolderHandlesOnIndexRepair).toHaveBeenCalledWith(
+        index,
+        result.index,
+        ['drop-coffee'],
+      );
+      expect(removeFolderHandle).toHaveBeenCalledWith('drop-coffee');
+      const stored = await loadProjectIndex();
+      expect(stored.projects.map((p) => p.id)).toEqual(['keep-coffee']);
+    } finally {
+      vi.doUnmock('../folderMigrate.js');
+      vi.doUnmock('../folderStore.js');
+    }
   });
 });
 

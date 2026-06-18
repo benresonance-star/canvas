@@ -14,6 +14,18 @@ describe('deriveFolderLinkState', () => {
     expect(state.folderNeedsConnect).toBe(false);
   });
 
+  it('returns linked for a live picked handle even when durable storage failed', () => {
+    const state = deriveFolderLinkState({
+      folderHandle: { name: 'docs' },
+      folderStoredOnDevice: false,
+      connectedFolderName: 'docs',
+    });
+    expect(state.phase).toBe('linked');
+    expect(state.folderLinked).toBe(true);
+    expect(state.folderNeedsReconnect).toBe(false);
+    expect(state.folderNeedsConnect).toBe(false);
+  });
+
   it('returns linking when restore is in progress', () => {
     const state = deriveFolderLinkState({
       folderHandle: null,

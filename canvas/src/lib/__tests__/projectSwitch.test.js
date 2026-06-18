@@ -77,6 +77,10 @@ describe('shouldRetrySwitchLoad', () => {
     expect(shouldRetrySwitchLoad([{ id: '1' }], 'frog', 'frog', 1, 1)).toBe(false);
   });
 
+  it('retries when local load returns an empty canvas', () => {
+    expect(shouldRetrySwitchLoad([], 'frog', 'frog', 2, 2)).toBe(true);
+  });
+
   it('retries when load null, ref still target, seq unchanged', () => {
     expect(shouldRetrySwitchLoad(null, 'frog', 'frog', 2, 2)).toBe(true);
   });

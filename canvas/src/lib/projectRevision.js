@@ -2,9 +2,14 @@ import { projectStorageKey } from './constants.js';
 
 const REVISION_KEY_PREFIX = 'canvas:project-rev:';
 const LOCAL_EDIT_AT_KEY_PREFIX = 'canvas:project-local-edit-at:';
+const SERVER_UPDATED_AT_KEY_PREFIX = 'canvas:project-server-updated-at:';
 
 export function projectLocalEditAtStorageKey(projectId) {
   return `${LOCAL_EDIT_AT_KEY_PREFIX}${projectId}`;
+}
+
+export function projectServerUpdatedAtStorageKey(projectId) {
+  return `${SERVER_UPDATED_AT_KEY_PREFIX}${projectId}`;
 }
 
 export function projectRevisionStorageKey(projectId) {
@@ -42,6 +47,7 @@ export async function clearCachedRevision(projectId) {
   try {
     localStorage.removeItem(projectRevisionStorageKey(projectId));
     localStorage.removeItem(projectLocalEditAtStorageKey(projectId));
+    localStorage.removeItem(projectServerUpdatedAtStorageKey(projectId));
   } catch {
     /* ignore */
   }
@@ -66,6 +72,32 @@ export async function writeCachedLocalEditAt(projectId, editAtMs) {
   try {
     await window.storage.set(
       projectLocalEditAtStorageKey(projectId),
+      JSON.stringify(n),
+    );
+  } catch {
+    /* quota */
+  }
+}
+
+export async function readCachedServerUpdatedAt(projectId) {
+  if (!projectId) return 0;
+  try {
+    const result = await window.storage.get(projectServerUpdatedAtStorageKey(projectId));
+    if (!result?.value) return 0;
+    const n = Number(JSON.parse(result.value));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function writeCachedServerUpdatedAt(projectId, updatedAtMs) {
+  if (!projectId) return;
+  const n = Number(updatedAtMs);
+  if (!Number.isFinite(n) || n <= 0) return;
+  try {
+    await window.storage.set(
+      projectServerUpdatedAtStorageKey(projectId),
       JSON.stringify(n),
     );
   } catch {

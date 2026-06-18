@@ -49,6 +49,7 @@ import {
   getLastGoodLocalCardCount,
   clearLastGoodLocalCardCount,
   preserveCanvasCardsInMergedPayload,
+  isAuthoritativeRepairDocument,
 } from '../projectDocumentMerge.js';
 
 export {
@@ -76,6 +77,7 @@ import {
   recordProjectConflict,
   clearProjectConflict,
   projectPayloadsStructurallyEqual,
+  isRetryableProjectPayloadConflict,
 } from './projectSyncConflict.js';
 import { syncSpecCanvasStateFromPayload } from '../specDataPlaneSync.js';
 import { auditPlacementStep } from '../placementAudit.js';
@@ -146,8 +148,11 @@ async function pushProjectPayloadToServer(
     }
     if (result.conflict) {
       const serverPayload = result.payload;
+      const retryablePayloadConflict =
+        serverPayload && isRetryableProjectPayloadConflict(payloadToSave, serverPayload);
       if (
         serverPayload
+        && !retryablePayloadConflict
         && needsProjectConflictResolution(payloadToSave, serverPayload)
       ) {
         recordProjectConflict(
@@ -170,11 +175,28 @@ async function pushProjectPayloadToServer(
         notifySyncLock(projectId, 'live');
         return { ok: true, adopted: true, revision: result.revision };
       }
-      applyServerProjectRevision(projectId, result.updatedAt, result.revision);
       if (serverPayload) {
+        if (isAuthoritativeRepairDocument(serverPayload)) {
+          applyServerProjectRevision(projectId, result.updatedAt, result.revision);
+          await writeLocalProjectSerialised(
+            projectId,
+            JSON.stringify(serverPayload),
+          );
+          clearLastGoodLocalCardCount(projectId);
+          clearProjectConflict(projectId);
+          notifySyncLock(projectId, 'live');
+          return { ok: true, pulled: true, revision: result.revision };
+        }
         const localArtifacts = projectArtifactCount(payloadToSave);
         const serverArtifacts = projectArtifactCount(serverPayload);
+        if (localArtifacts === 0 && serverArtifacts === 0) {
+          applyServerProjectRevision(projectId, result.updatedAt, result.revision);
+          clearProjectConflict(projectId);
+          notifySyncLock(projectId, 'live');
+          return { ok: true, adopted: true, revision: result.revision };
+        }
         if (serverArtifacts > localArtifacts) {
+          applyServerProjectRevision(projectId, result.updatedAt, result.revision);
           await writeLocalProjectSerialised(
             projectId,
             JSON.stringify(serverPayload),
@@ -184,7 +206,10 @@ async function pushProjectPayloadToServer(
           return { ok: true, pulled: true, revision: result.revision };
         }
         const clientBehind = getClientRevision(projectId) < (Number(result.revision) || 0);
-        if ((localArtifacts > serverArtifacts || clientBehind) && !_retrying) {
+        if (
+          (retryablePayloadConflict || localArtifacts >= serverArtifacts || clientBehind)
+          && !_retrying
+        ) {
           const retry = await pushProjectPayloadToServer(projectId, payloadToSave, {
             expectedRevision: result.revision,
             _retrying: true,
@@ -271,6 +296,15 @@ async function pushProjectDocumentIfLocalNewerInner(
     serverArtifacts = projectArtifactCount(serverDoc);
   } catch {
     /* best effort */
+  }
+
+  if (isAuthoritativeRepairDocument(serverDoc)) {
+    await writeLocalProjectSerialised(projectId, JSON.stringify(serverDoc));
+    applyServerProjectRevision(projectId, meta.updatedAt, meta.revision);
+    clearLastGoodLocalCardCount(projectId);
+    clearProjectConflict(projectId);
+    notifySyncLock(projectId, 'live');
+    return { ok: true, pulled: true, revision: meta.revision };
   }
 
   const localRicherThanServer = localArtifacts > serverArtifacts;
@@ -452,6 +486,10 @@ async function reconcileActiveProjectInner(projectId, options = {}) {
 
   const layoutDiffers =
     localDoc && serverDoc && !payloadsEquivalent(localDoc, serverDoc);
+  const localChangedAfterKnownServer =
+    layoutDiffers
+    && knownServerAt > 0
+    && localEditAt > knownServerAt;
   const placementShouldWin =
     localDoc
     && serverDoc
@@ -459,6 +497,7 @@ async function reconcileActiveProjectInner(projectId, options = {}) {
   const lastGoodCards = getLastGoodLocalCardCount(projectId);
   const localFresherWithLayout =
     (localEditAt > serverAt && localArtifacts > 0 && localArtifacts >= serverArtifacts)
+    || (localChangedAfterKnownServer && localArtifacts > 0 && localArtifacts >= serverArtifacts)
     || placementShouldWin;
   const serverWins =
     serverRev > clientRev
@@ -476,6 +515,7 @@ async function reconcileActiveProjectInner(projectId, options = {}) {
     && localArtifacts > 0
     && (
       (localEditAt > serverAt && localArtifacts >= serverArtifacts)
+      || (localChangedAfterKnownServer && localArtifacts >= serverArtifacts)
       || placementShouldWin
     );
 
@@ -779,7 +819,7 @@ async function fencePullPayload(projectId, payload) {
   }
 }
 export async function pullProjectDocumentIfServerNewer(projectId, options = {}) {
-  const { force = false } = options;
+  const { force = false, acceptServerPayload = false } = options;
   if (!projectId || !getServerSyncEnabled()) {
     return { pulled: false, payload: null, localCacheWritten: true };
   }
@@ -831,14 +871,21 @@ export async function pullProjectDocumentIfServerNewer(projectId, options = {}) 
     flowTrace('project:pull-local-read-failed', { projectId });
   }
 
-  const serverAt = parseServerUpdatedAt(remote.updatedAt);
-  const localEditAt = getLocalEditAt(projectId) ?? 0;
   const serverRevision = Number(remote.revision) || 0;
   await ensureClientRevision(projectId);
+  const serverAt = parseServerUpdatedAt(remote.updatedAt);
+  const localEditAt = getLocalEditAt(projectId) ?? 0;
   const clientRevision = getClientRevision(projectId);
+  const knownServerAt = getLastServerUpdatedAt(projectId) ?? serverAt;
+  const localChangedAfterKnownServer =
+    localDoc
+    && knownServerAt > 0
+    && localEditAt > knownServerAt
+    && !payloadsEquivalent(localDoc, remote.payload);
   const preferRemote =
     serverRevision >= clientRevision
     && serverAt >= localEditAt
+    && !localChangedAfterKnownServer
     && !hasPendingProjectSave(projectId);
 
   flowTrace('project:pull-pending-read-start', { projectId });
@@ -850,20 +897,27 @@ export async function pullProjectDocumentIfServerNewer(projectId, options = {}) 
   });
 
   const placementSource = pendingOrLocal ?? localDoc;
-  flowTrace('project:pull-merge-start', { projectId });
-  const { mergeProjectDocuments } = await import('../projectDocumentMerge.js');
-  const { merged: mergedPayload, skipWrite } = mergeProjectDocuments(
-    localDoc,
-    remote.payload,
-    {
-      localEditAt,
-      serverAt,
-      projectId,
-      placementSource,
-      reason: 'pull',
-      preferRemote,
-    },
-  );
+  let mergedPayload = remote.payload;
+  let skipWrite = false;
+  if (!acceptServerPayload) {
+    flowTrace('project:pull-merge-start', { projectId });
+    const { mergeProjectDocuments } = await import('../projectDocumentMerge.js');
+    ({ merged: mergedPayload, skipWrite } = mergeProjectDocuments(
+      localDoc,
+      remote.payload,
+      {
+        localEditAt,
+        serverAt,
+        knownServerAt,
+        projectId,
+        placementSource,
+        reason: 'pull',
+        preferRemote,
+      },
+    ));
+  } else {
+    flowTrace('project:pull-accept-server', { projectId });
+  }
 
   if (skipWrite || !mergedPayload) {
     flowTrace('project:pull-merge-skip', { projectId });
@@ -957,6 +1011,8 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
   const clientRev = getClientRevision(projectId);
   const serverAt = parseServerUpdatedAt(meta?.updatedAt);
   const localEditAt = getLocalEditAt(projectId) ?? 0;
+  const acknowledgedServerAt = getLastServerUpdatedAt(projectId) ?? 0;
+  const knownServerAt = acknowledgedServerAt || serverAt;
 
   let serverDoc = null;
   try {
@@ -982,24 +1038,46 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
     localDoc
     && serverDoc
     && !payloadsEquivalent(localDoc, serverDoc);
+  const localChangedAfterKnownServer =
+    layoutDiffers
+    && knownServerAt > 0
+    && localEditAt > knownServerAt;
   const placementShouldWin =
     localDoc
     && serverDoc
     && localPlacementShouldWin(localDoc, serverDoc, localEditAt, serverAt);
+  const lastGoodCards = getLastGoodLocalCardCount(projectId);
+  const hasPending = hasPendingProjectSave(projectId);
+  const sameRevisionServerLayoutShouldWin =
+    layoutDiffers
+    && serverDoc
+    && localDoc
+    && serverRev > 0
+    && clientRev <= serverRev
+    && acknowledgedServerAt > 0
+    && serverAt <= acknowledgedServerAt
+    && serverArtifacts > 0
+    && serverArtifacts >= localArtifacts
+    && !(lastGoodCards > 0 && serverArtifacts < lastGoodCards);
+  if (sameRevisionServerLayoutShouldWin) {
+    return pullProjectDocumentIfServerNewer(projectId, {
+      force: true,
+      acceptServerPayload: true,
+    });
+  }
+
   const localLayoutNewer =
     layoutDiffers
     && localArtifacts > 0
     && (
       (localEditAt > serverAt && localArtifacts >= serverArtifacts)
+      || (localChangedAfterKnownServer && localArtifacts >= serverArtifacts)
       || placementShouldWin
     );
 
   if (localLayoutNewer) {
     const retryPush = await pushProjectDocumentIfLocalNewer(projectId, localDoc);
-    if (meta) {
-      applyServerProjectRevision(projectId, meta.updatedAt, meta.revision);
-    }
-    notifySyncLock(projectId, 'live');
+    notifySyncLock(projectId, retryPush.ok ? 'live' : 'stale');
     return {
       pulled: false,
       payload: localDoc,
@@ -1009,9 +1087,9 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
     };
   }
 
-  const lastGoodCards = getLastGoodLocalCardCount(projectId);
   const localFresherWithLayout =
     (localEditAt > serverAt && localArtifacts > 0 && localArtifacts >= serverArtifacts)
+    || (localChangedAfterKnownServer && localArtifacts > 0 && localArtifacts >= serverArtifacts)
     || placementShouldWin;
   const serverWins =
     serverRev > clientRev
@@ -1031,10 +1109,7 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
 
   if (localFresherWithLayout && layoutDiffers) {
     const retryPush = await pushProjectDocumentIfLocalNewer(projectId, localDoc);
-    if (meta) {
-      applyServerProjectRevision(projectId, meta.updatedAt, meta.revision);
-    }
-    notifySyncLock(projectId, 'live');
+    notifySyncLock(projectId, retryPush.ok ? 'live' : 'stale');
     return {
       pulled: false,
       payload: localDoc,
@@ -1053,6 +1128,28 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
     return pullProjectDocumentIfServerNewer(projectId, { force: true });
   }
 
+  const serverLayoutShouldRefreshLocalCache =
+    layoutDiffers
+    && serverDoc
+    && localDoc
+    && serverArtifacts > 0
+    && serverArtifacts >= localArtifacts
+    && (
+      (serverAt >= localEditAt && !localFresherWithLayout)
+      || (
+        serverRev > 0
+        && clientRev <= serverRev
+        && acknowledgedServerAt > 0
+        && serverAt <= acknowledgedServerAt
+        && !hasPending
+      )
+    )
+    && !serverUndercutsLastGood
+    && !placementShouldWin;
+  if (serverLayoutShouldRefreshLocalCache) {
+    return pullProjectDocumentIfServerNewer(projectId, { force: true });
+  }
+
   if (
     placementShouldWin
     && layoutDiffers
@@ -1064,10 +1161,7 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
     )
   ) {
     const retryPush = await pushProjectDocumentIfLocalNewer(projectId, localDoc);
-    if (meta) {
-      applyServerProjectRevision(projectId, meta.updatedAt, meta.revision);
-    }
-    notifySyncLock(projectId, 'live');
+    notifySyncLock(projectId, retryPush.ok ? 'live' : 'stale');
     return {
       pulled: false,
       payload: localDoc,
@@ -1079,10 +1173,7 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
   }
 
   if (serverUndercutsLastGood) {
-    if (meta) {
-      applyServerProjectRevision(projectId, meta.updatedAt, meta.revision);
-    }
-    notifySyncLock(projectId, 'live');
+    notifySyncLock(projectId, 'stale');
     return {
       pulled: false,
       payload: localDoc,
@@ -1096,10 +1187,12 @@ export async function reconcileProjectDocumentOnSwitch(projectId) {
     return pullProjectDocumentIfServerNewer(projectId, { force: true });
   }
 
-  if (meta) {
+  if (meta && !localChangedAfterKnownServer && !placementShouldWin) {
     applyServerProjectRevision(projectId, meta.updatedAt, meta.revision);
+    notifySyncLock(projectId, 'live');
+  } else {
+    notifySyncLock(projectId, 'stale');
   }
-  notifySyncLock(projectId, 'live');
   return {
     pulled: false,
     payload: localDoc,
@@ -1132,14 +1225,21 @@ export async function loadSyncedProjectDocument(projectId, { localOnly = false }
     const remote = await fetchCanvasProjectDocument(projectId);
     if (remote?.payload) {
       const { mergeProjectDocuments } = await import('../projectDocumentMerge.js');
-      const serverAt = parseServerUpdatedAt(remote.updatedAt);
-      const localEditAt = getLocalEditAt(projectId) ?? 0;
       const serverRevision = Number(remote.revision) || 0;
       await ensureClientRevision(projectId);
+      const serverAt = parseServerUpdatedAt(remote.updatedAt);
+      const localEditAt = getLocalEditAt(projectId) ?? 0;
       const clientRevision = getClientRevision(projectId);
+      const knownServerAt = getLastServerUpdatedAt(projectId) ?? serverAt;
+      const localChangedAfterKnownServer =
+        localDoc
+        && knownServerAt > 0
+        && localEditAt > knownServerAt
+        && !payloadsEquivalent(localDoc, remote.payload);
       const preferRemote =
         serverRevision >= clientRevision
         && serverAt >= localEditAt
+        && !localChangedAfterKnownServer
         && !hasPendingProjectSave(projectId);
       const { merged, skipWrite, decision } = mergeProjectDocuments(
         localDoc,
@@ -1149,18 +1249,12 @@ export async function loadSyncedProjectDocument(projectId, { localOnly = false }
           reason: 'load',
           localEditAt,
           serverAt,
+          knownServerAt,
           preferRemote,
         },
       );
       if (skipWrite || decision === 'keptLocal') {
-        if (remote.revision != null) {
-          applyServerProjectRevision(
-            projectId,
-            remote.updatedAt,
-            remote.revision,
-          );
-        }
-        notifySyncLock(projectId, 'live');
+        notifySyncLock(projectId, 'stale');
         return localDoc ?? merged;
       }
       if (merged) {

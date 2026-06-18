@@ -73,10 +73,10 @@ All symbols below **must** remain exported from [`src/lib/projectSync.js`](../sr
 
 ### HTTP (server)
 
-- `PATCH /canvas/projects/:projectId` — body `{ ops, expectedRevision, clientId?, reason? }`
+- `PATCH /canvas/projects/:projectId` — body `{ ops, expectedRevision, clientId?, reason?, traceId?, allowEmptyRemoteOverwrite?, allowDockOnlyRemoteOverwrite? }`
 - `GET /canvas/projects/:projectId/stream` — SSE `project_updated` + `revision` heartbeat
 - `GET /canvas/index/stream` — SSE `index_updated` + `revision` heartbeat (project list / renames)
-- `PUT /canvas/projects/:projectId` — full document fallback (conflicts, large diffs)
+- `PUT /canvas/projects/:projectId` — full document fallback (conflicts, large diffs); accepts the same overwrite guard flags as PATCH
 - `pullProjectDocumentIfServerNewer`
 - `reconcileProjectDocumentOnSwitch`
 - `persistProjectDocumentLocally`
@@ -86,6 +86,13 @@ All symbols below **must** remain exported from [`src/lib/projectSync.js`](../sr
 - `flushProjectSync`
 - `hasLocalProjectDocument`
 - `prefetchProjectDocumentFromServer`
+
+## Document push invariants
+
+- Empty local payloads must not overwrite non-empty server documents unless `allowEmptyRemoteOverwrite` is explicitly true or the commit is an intentional authoritative empty repair.
+- Dock-only payloads must not overwrite server documents that still have canvas cards unless `allowDockOnlyRemoteOverwrite` is true for the explicit dock transfer path.
+- Server payloads carrying `identityRepair.authoritative` or `identityRepair.authoritativeEmpty` are authoritative repair documents and may replace richer local cache state.
+- Successful PATCH/PUT writes update the client revision, workspace index document revision, local serialised cache, and best-effort `spec_canvas_state` projection.
 
 ## Module boundaries (incremental)
 

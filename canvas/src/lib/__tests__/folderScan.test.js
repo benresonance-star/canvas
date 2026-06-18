@@ -69,4 +69,44 @@ describe('scanFolderFiles', () => {
 
     expect(found.map((f) => f.filename)).toEqual(['notes__first-v1.md']);
   });
+
+  it('parses bookmark Markdown sidecars as bookmark artifacts', async () => {
+    const root = directoryHandle('project', [
+      fileHandle('links__youtu-be-cccccccc-v1.bookmark.md', '# DF64V Review\n\nURL: https://youtu.be/x\n'),
+      fileHandle('notes__real-v1.md', 'real note'),
+    ]);
+
+    const { found } = await scanFolderFiles(root, {
+      projectId: 'p1',
+      fetchBookmarkPreview: async () => ({
+        domain: 'youtu.be',
+        title: 'Fetched title',
+        imageUrl: 'https://i.ytimg.com/vi/x/hqdefault.jpg',
+        siteName: 'YouTube',
+        faviconUrl: 'https://youtu.be/favicon.ico',
+        description: 'Video preview',
+      }),
+    });
+
+    expect(found.map((f) => f.filename)).toEqual([
+      'links__youtu-be-cccccccc-v1.bookmark.md',
+      'notes__real-v1.md',
+    ]);
+    expect(found[0]).toMatchObject({
+      cardKey: 'links__youtu-be-cccccccc',
+      cardType: 'bookmark',
+      externalUrl: 'https://youtu.be/x',
+      prefix: 'links',
+      name: 'youtu-be-cccccccc',
+      version: 1,
+      ext: 'bookmark.md',
+      artifactSyncState: 'pending',
+      bookmarkPreview: {
+        title: 'DF64V Review',
+        domain: 'youtu.be',
+        imageUrl: 'https://i.ytimg.com/vi/x/hqdefault.jpg',
+      },
+    });
+    expect(found[1].cardKey).toBe('notes__real');
+  });
 });

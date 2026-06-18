@@ -118,6 +118,7 @@ export function CanvasChrome({
   connectedFolderName,
   folderNeedsReconnect,
   folderNeedsConnect = false,
+  folderLinkInProgress = false,
   folderFooterSyncHidden = false,
   folderLinked,
   showChangeFolder = false,
@@ -139,7 +140,7 @@ export function CanvasChrome({
   const bannerMessage = resolveSyncBanner(syncLock, syncStatus?.banner);
   const folderPickerBusy = Boolean(syncStatus?.folderPickerInProgress);
   const folderScanBusy = Boolean(syncStatus?.scanning);
-  const folderActionBusy = folderPickerBusy || folderScanBusy;
+  const folderActionBusy = folderPickerBusy || folderScanBusy || folderLinkInProgress;
   const importInputRef = useRef(null);
   const importDisabled =
     syncLock !== 'live' || folderActionBusy || Boolean(syncStatus?.manualSyncing);
@@ -388,6 +389,11 @@ export function CanvasChrome({
         {syncStatus?.toast && (
           <div className="sans text-xs bg-warning-muted text-warning border border-warning-border px-3 py-2 rounded max-w-xs pointer-events-auto">
             {syncStatus.toast}
+          </div>
+        )}
+        {folderLinkInProgress && !folderLinked && (
+          <div className="sans text-xs bg-surface-muted text-secondary border border-border px-3 py-2 rounded pointer-events-auto">
+            {strings.sync.folderConnecting}
           </div>
         )}
         {folderNeedsConnect && (

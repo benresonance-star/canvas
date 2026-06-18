@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   Paperclip,
@@ -349,11 +349,8 @@ export function AgentSidePanel({
   onContextModeChange,
   enabledAgentIds,
   onToggleAgent,
-  cards = [],
   contextCards = [],
   selectedCardIds,
-  canvasView,
-  viewportSize,
   onFocusContextCard,
   agentSelectionClick = false,
   onRemoveContextCard,
@@ -361,7 +358,6 @@ export function AgentSidePanel({
   onComingSoon,
   messages = [],
   onSendMessage,
-  folderLinked = false,
   folderNeedsReconnect = false,
   folderNeedsConnect = false,
   connectedFolderName = null,
@@ -1032,7 +1028,7 @@ export function AgentSidePanel({
                 ? strings.agent.apiKeyMissing
                 : strings.agent.inputPlaceholder
             }
-            rows={1}
+            rows={5}
             disabled={isSingle && !canChat}
             className="w-full sans text-xs bg-surface-muted border border-border rounded-lg pl-9 pr-10 py-2 text-primary resize-none focus:outline-none focus:border-accent/50 disabled:opacity-50"
           />
@@ -1065,7 +1061,7 @@ export function AgentSidePanel({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder={strings.agent.inputPlaceholder}
-            rows={2}
+            rows={5}
             className="w-full sans text-xs bg-surface-muted border border-border rounded-lg pl-9 pr-10 py-2 text-primary resize-none focus:outline-none focus:border-accent/50"
           />
           <button

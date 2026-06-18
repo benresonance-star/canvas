@@ -404,7 +404,7 @@ export function useActionSync({
       },
       reconcileInbound: (projectId, opts) =>
         applyReconcileFromServer(projectId, opts),
-      flushActiveProject: async (projectId) => {
+      flushActiveProject: async (projectId, options = {}) => {
         if (projectId !== activeProjectIdRef.current) return;
         await flushArtifactRetriesForActiveProject(projectId);
         await flushPendingPlacementCommit();
@@ -416,7 +416,10 @@ export function useActionSync({
           projectId,
           stateRef.current,
           stagedSyncCardsRef.current,
-          { pushRemote: true },
+          {
+            pushRemote: true,
+            allowEmptyRemoteOverwrite: options.allowEmptyRemoteOverwrite === true,
+          },
         );
       },
       flushAll: async () => {

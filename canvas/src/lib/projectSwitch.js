@@ -57,7 +57,7 @@ export function shouldRetrySwitchLoad(
   switchSeq,
   seqNow,
 ) {
-  if (loadedCards != null) return false;
+  if (loadedCards != null && loadedCards.length > 0) return false;
   if (targetId !== currentActiveProjectId) return false;
   if (switchSeq != null && seqNow != null && switchSeq !== seqNow) return false;
   return true;

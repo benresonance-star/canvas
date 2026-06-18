@@ -48,4 +48,29 @@ describe('saveBookmarkToProject', () => {
     expect(result.cardUpdates.key).toBe('links__cursor-com');
     expect(result.cardUpdates.versions[0].externalUrl).toMatch(/^https:\/\/cursor\.com\/?$/);
   });
+
+  it('preserves the link id in bookmark keys when provided', async () => {
+    const card = {
+      id: 'abc12345-card-id',
+      key: 'links__example-com-abc12345',
+      name: 'Example',
+      type: 'bookmark',
+      prefix: 'links',
+      pinnedVersion: 1,
+      versions: [{
+        version: 1,
+        externalUrl: 'https://example.com',
+        bookmarkPreview: { title: 'Example', domain: 'example.com' },
+      }],
+    };
+    const result = await saveBookmarkToProject(card, {
+      url: 'https://cursor.com',
+      title: 'Cursor',
+      preview: { title: 'Cursor', domain: 'cursor.com' },
+      linkId: card.id,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.cardUpdates.key).toBe('links__cursor-com-abc12345');
+  });
 });

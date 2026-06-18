@@ -38,6 +38,7 @@ export const strings = {
       'Stored folder access could not be reused. Pick the folder again to repair and keep artefacts.',
     connectFolderNamed: (name) =>
       `This project uses folder “${name}” on another device. Pick that same folder once on this browser. The folder handle is saved here when the browser allows it.`,
+    folderConnecting: 'Connecting folder…',
     folderPickerBusy:
       'Chrome still has a folder dialog open (check other windows) or refresh the page, then try Connect folder once.',
     folderPickerIdInvalid:
@@ -50,7 +51,7 @@ export const strings = {
     importFiles: 'Import files',
     folderPermissionDenied: 'Could not access the folder. Try Reconnect or pick the folder again.',
     folderSaveFailed:
-      'Could not save the folder link for this project. Reconnect the folder before refreshing the page.',
+      'Folder connected for this session, but this browser could not save the folder link. Reconnect before refreshing the page.',
     primitivesNotUpdated: 'Saved to folder; primitives not updated (start API with npm run server).',
     serverSyncedConnectFolder:
       'Canvas synced from server. Connect a folder on this browser to sync files from disk.',
