@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.06.18.2
-**Version label:** workspace-primitives-bookmark-open-agent-chat-cards
+**Version:** 2026.06.18.3
+**Version label:** folder-missing-artifact-alerts
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -491,6 +491,8 @@ URL: https://example.com/page
 - Bookmark keys and filenames include a short card-id-derived suffix for app-created bookmarks, so multiple links from the same domain can coexist.
 - Folder scan matching uses the path-aware folder key first, then normalized bookmark URL as a fallback to avoid duplicate bookmark staging after filename fallback or repair.
 - Folder scan ownership is explicit: a scan only uses live canvas cards as baseline when the scan project is the settled active project and no switch is in progress.
+- `folderPresentKeys` is scan-output authority only. It must contain canonical keys found on disk during the latest successful linked-folder scan; project load must not union canvas or dock rows into this set because that masks files removed from the project folder.
+- Canvas cards whose folder-backed key is absent from `folderPresentKeys` remain on the canvas, are highlighted as missing, and show a missing-file alert. The user chooses whether to restore the file and sync again or remove the card from the canvas.
 
 ### Workspace primitive scope and cleanup (shipped)
 
@@ -509,7 +511,7 @@ Cleanup rules:
 
 - Project deletion runs `deleteProjectPrimitiveScope` in the project delete transaction.
 - Missing dock-only folder artifacts are pruned during successful folder scans and call `DELETE /projects/:projectId/artifacts/:artifactId` for targeted project-scope cleanup.
-- Deleting a missing/red canvas card uses the same targeted artifact cleanup helper.
+- Deleting a missing/red canvas card first persists the project document cleanup via structural sync, then uses the same targeted artifact cleanup helper.
 - `deleteProjectArtifactRef` removes project cluster membership and deletes the artifact row only when no project scope still references it.
 - `scripts/purge-orphan-workspace-items.mjs` is a one-off dev/admin purge for primitives not mapped to active or archived projects; dry run is default.
 
@@ -927,6 +929,13 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-06-18 — Folder missing artifact alerts (implemented)
+
+- Bumped the active spec to `2026.06.18.3`.
+- Made `folderPresentKeys` scan-output-only so linked-folder refreshes can detect canvas cards whose backing files were removed from disk.
+- Added missing canvas artifact alerts: absent folder-backed cards remain on canvas, render in the existing red missing state, and can be removed by the user.
+- Tightened missing/red canvas card deletion ordering so the project document cleanup is committed before targeted project artifact primitive cleanup.
 
 ### 2026-06-18 — Workspace primitives, bookmark open behavior, and chat cards (implemented)
 

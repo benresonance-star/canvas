@@ -20,9 +20,9 @@ import {
 } from '../../lib/folderPicker.js';
 import { scanFolderFiles } from '../../lib/folderScan.js';
 import {
+  isCardMissingFromFolder,
   parseFilename,
   toCanonicalSyncKey,
-  unionFolderPresentKeys,
 } from '../../lib/filename.js';
 import { cardTypeFromSync } from '../../lib/ingest/artifactType.js';
 import {
@@ -110,7 +110,28 @@ export function folderPresentKeysForSuccessfulScan(
   { replaceCanvas = false, foundCount = foundKeys?.length ?? 0 } = {},
 ) {
   if (replaceCanvas && foundCount === 0) return [];
-  return unionFolderPresentKeys(foundKeys ?? [], cards, []);
+  return [
+    ...new Set(
+      (foundKeys ?? [])
+        .map((key) => toCanonicalSyncKey(key))
+        .filter(Boolean),
+    ),
+  ];
+}
+
+export function missingCanvasCardsForFolderScan(foundKeys, cards = []) {
+  const folderKeySet = new Set(
+    (foundKeys ?? [])
+      .map((key) => toCanonicalSyncKey(key))
+      .filter(Boolean),
+  );
+  return (cards ?? []).filter((card) =>
+    isCardMissingFromFolder({
+      folderConnected: true,
+      folderKeySet,
+      card,
+    }),
+  );
 }
 
 /**
@@ -429,6 +450,7 @@ export function useFolderLinkScan({
       setSyncStatus((prev) => (prev?.scanning ? null : prev));
     }, 120_000);
     let exitStatus = null;
+    let missingCanvasToast = null;
     let folderScanProjectId = null;
     try {
     let found = [];
@@ -568,13 +590,17 @@ export function useFolderLinkScan({
 
     // On read errors we keep the previous key set; on success refresh presence for missing-file UI.
     // Dock rows are deliberately excluded so missing dock-only files can be pruned.
-    setFolderPresentKeys(
-      folderPresentKeysForSuccessfulScan(
-        foundKeys,
-        stateRef.current.cards ?? [],
-        { replaceCanvas, foundCount: found.length },
-      ),
+    const presentKeys = folderPresentKeysForSuccessfulScan(
+      foundKeys,
+      cardsForScan,
+      { replaceCanvas, foundCount: found.length },
     );
+    setFolderPresentKeys(presentKeys);
+    const missingCanvasCards = missingCanvasCardsForFolderScan(presentKeys, cardsForScan);
+    if (missingCanvasCards.length > 0) {
+      const count = missingCanvasCards.length;
+      missingCanvasToast = strings.sync.folderMissingCanvasArtifacts(count);
+    }
 
     const stagedBaseline = stagedSyncCardsRef.current ?? [];
     const suppressedKeys = readSuppressedSyncKeys(projectId, stateRef.current);
@@ -766,7 +792,11 @@ export function useFolderLinkScan({
       exitStatus = { error: e.message };
     } finally {
       clearTimeout(scanSpinnerTimeoutId);
-      setSyncStatus((prev) => resolveScanExitStatus(prev, exitStatus));
+      const finalExitStatus =
+        missingCanvasToast && !exitStatus?.error
+          ? { ...(exitStatus ?? {}), toast: missingCanvasToast }
+          : exitStatus;
+      setSyncStatus((prev) => resolveScanExitStatus(prev, finalExitStatus));
       folderScanProjectId =
         !exitStatus?.error
           ? (projectIdOption ?? activeProjectIdRef.current)
@@ -775,7 +805,7 @@ export function useFolderLinkScan({
         projectId: folderScanProjectId,
         scanSeq,
         stale: isScanStale(),
-        exitStatus: exitStatus ? Object.keys(exitStatus) : ['ok'],
+        exitStatus: finalExitStatus ? Object.keys(finalExitStatus) : ['ok'],
       });
     }
     if (folderScanProjectId) {

@@ -1172,7 +1172,10 @@ export function useCanvasDocument({ refs, deps }) {
     }
 
     if (projectId && !switchingProjectRef.current && initialHydratedRef.current) {
-      requestStructuralSync();
+      await requestStructuralSync({
+        awaitLocal: true,
+        allowCleanupOverwrite: true,
+      });
     }
     await cleanupProjectArtifactForSyncEntry({
       projectId,

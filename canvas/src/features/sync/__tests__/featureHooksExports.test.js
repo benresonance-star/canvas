@@ -4,6 +4,7 @@ import {
   folderRepairScanOptions,
   folderScanBaselineForProject,
   folderScanOwnsProject,
+  missingCanvasCardsForFolderScan,
   folderPresentKeysForSuccessfulScan,
   shouldRepairFolderWithPicker,
   shouldSyncCanvasFromServerAfterFolderFlow,
@@ -47,7 +48,7 @@ describe('Phase 1 feature hooks', () => {
     expect(shouldRepairFolderWithPicker(null)).toBe(false);
   });
 
-  it('preserves canvas presence but excludes dock rows from successful scan presence', () => {
+  it('uses only scanned folder keys for successful scan presence', () => {
     expect(
       folderPresentKeysForSuccessfulScan(
         [],
@@ -57,11 +58,24 @@ describe('Phase 1 feature hooks', () => {
     ).toEqual([]);
     expect(
       folderPresentKeysForSuccessfulScan(
-        [],
+        ['notes__found-v1.md', 'notes__found'],
         [{ key: 'notes__old', type: 'markdown', versions: [] }],
-        { replaceCanvas: false, foundCount: 0 },
+        { replaceCanvas: false, foundCount: 2 },
       ),
-    ).toEqual(['notes__old']);
+    ).toEqual(['notes__found']);
+  });
+
+  it('reports canvas cards missing from the latest folder scan', () => {
+    expect(
+      missingCanvasCardsForFolderScan(
+        ['notes__present'],
+        [
+          { id: 'card-1', key: 'notes__present', type: 'markdown', prefix: 'notes' },
+          { id: 'card-2', key: 'notes__missing', type: 'markdown', prefix: 'notes' },
+          { id: 'card-3', key: 'links__site', type: 'bookmark', prefix: 'links' },
+        ],
+      ).map((card) => card.id),
+    ).toEqual(['card-2']);
   });
 
   it('only lets folder scans mutate their active project', () => {

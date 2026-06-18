@@ -84,7 +84,6 @@ import {
   hydrateCardsPreviews,
   PREVIEW_HYDRATE_CHUNK_SIZE,
 } from '../../lib/previewHydrate.js';
-import { unionFolderPresentKeys } from '../../lib/filename.js';
 import { shouldAutoFitCanvasOnLoad } from '../../lib/canvasView.js';
 import { fetchCanvasProjectMeta } from '../../lib/canvasProjectsApi.js';
 import { perfMark, perfMeasure } from '../../lib/loadPerfMarks.js';
@@ -105,7 +104,6 @@ export function useProjectSyncLifecycle({
     setProjectList,
     setActiveProjectId,
     setProjectSwitchLoading,
-    setFolderPresentKeys,
   },
   deps: {
     loaded,
@@ -279,11 +277,6 @@ export function useProjectSyncLifecycle({
       projectName: projectNameDirtyRef.current ? prev.projectName : displayName,
     }));
     setStagedSyncCards(stagedHydrated);
-    if (folderHandle) {
-      setFolderPresentKeys((prev) =>
-        unionFolderPresentKeys(prev ?? [], cards, stagedHydrated),
-      );
-    }
     if (!projectNameDirtyRef.current) {
       syncActiveProjectNameFromIndex(indexForName);
     }

@@ -45,6 +45,8 @@ export const strings = {
       'Could not open the folder picker. Refresh the page and try Connect folder again.',
     folderImportReady: (n) =>
       `${n} ${n === 1 ? 'artefact' : 'artefacts'} from folder — review and apply below.`,
+    folderMissingCanvasArtifacts: (n) =>
+      `${n} ${n === 1 ? 'artefact on the canvas is' : 'artefacts on the canvas are'} no longer in the connected folder. Remove ${n === 1 ? 'it' : 'them'} from the canvas or restore ${n === 1 ? 'the file' : 'the files'} and sync again.`,
     folderScanNoFiles:
       'Folder linked. No matching artefact files found (use prefix__name-v1.ext naming).',
     importedFilesFolderName: 'Imported files',

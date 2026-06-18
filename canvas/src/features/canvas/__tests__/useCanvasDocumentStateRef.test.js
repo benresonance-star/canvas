@@ -107,4 +107,21 @@ describe('useCanvasDocument stateRef commit helpers', () => {
     expect(deleteProjectArtifact).toHaveBeenCalledWith('project-1', 'artifact-1');
     expect(refreshGraph).toHaveBeenCalledWith({ projectId: 'project-1', force: true });
   });
+
+  it('skips primitive cleanup when a deleted card has no artifact ref', async () => {
+    const deleteProjectArtifact = vi.fn();
+
+    const result = await cleanupProjectArtifactForSyncEntry({
+      projectId: 'project-1',
+      entry: {
+        id: 'card-1',
+        pinnedVersion: 1,
+        versions: [{ version: 1 }],
+      },
+      deleteProjectArtifact,
+    });
+
+    expect(result).toEqual({ attempted: false });
+    expect(deleteProjectArtifact).not.toHaveBeenCalled();
+  });
 });

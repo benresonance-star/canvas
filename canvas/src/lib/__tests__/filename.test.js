@@ -173,16 +173,14 @@ describe('isCardMissingFromFolder', () => {
     ).toBe(false);
   });
 
-  it('unionFolderPresentKeys includes project artifact keys', async () => {
-    const { unionFolderPresentKeys, collectFolderBackedKeys } = await import(
+  it('collectFolderBackedKeys includes project artifact keys', async () => {
+    const { collectFolderBackedKeys } = await import(
       '../filename.js'
     );
-    const keys = unionFolderPresentKeys(
-      ['scan__only'],
+    const keys = collectFolderBackedKeys(
       [{ key: 'notes__on_canvas', type: 'markdown', versions: [] }],
       [{ key: 'img__staged', type: 'image', versions: [] }],
     );
-    expect(keys).toContain('scan__only');
     expect(keys).toContain('notes__on_canvas');
     expect(keys).toContain('img__staged');
     expect(collectFolderBackedKeys([], [])).toEqual([]);
