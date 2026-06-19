@@ -21,6 +21,7 @@ import {
 import { scanFolderFiles } from '../../lib/folderScan.js';
 import {
   isCardMissingFromFolder,
+  normalizeCardType,
   parseFilename,
   toCanonicalSyncKey,
 } from '../../lib/filename.js';
@@ -34,6 +35,7 @@ import { strings } from '../../content/strings.js';
 import { flowTrace } from '../../lib/sync/syncTrace.js';
 import {
   buildStagedSyncCardFromChange,
+  canonicalKeyForSyncEntry,
   artifactRefFromSyncEntry,
   buildConfirmChangesForDialog,
   buildFolderConnectConfirmChanges,
@@ -41,6 +43,7 @@ import {
   findSyncEntryByFolderKey,
   missingDockOnlyStagedRows,
   partitionSyncChanges,
+  reconcileFolderRenamesByIdentity,
 } from '../../lib/syncStaging.js';
 import {
   enforceExclusivePlacement,
@@ -48,6 +51,7 @@ import {
   upsertOnSurface,
 } from '../../lib/artifactPlacement.js';
 import { collectKnownAgentChatKeys } from '../../lib/agentChatThreads.js';
+import { backfillMissingAgentChatTranscripts } from '../../lib/agentChatFolderBackfill.js';
 import { readSuppressedSyncKeys } from '../../lib/syncSuppressedKeys.js';
 import { resolveScanExitStatus } from '../../lib/syncScanning.js';
 import {
@@ -171,7 +175,6 @@ export function useFolderLinkScan({
     applySyncChangesFromList,
     refreshGraph,
     syncCanvasFromServerAfterFolderConnect,
-    loadProjectIntoStateRef,
     pullActiveProjectFromServer,
     invalidateFolderScan,
     agentChatThreadIndexRef,
@@ -531,11 +534,36 @@ export function useFolderLinkScan({
       }
     }
 
+    let cardsForScan = cardsBaseline;
+    let stagedForScan = stagedSyncCardsRef.current ?? [];
+    const renameResult = reconcileFolderRenamesByIdentity(
+      groupedFinal,
+      cardsForScan,
+      stagedForScan,
+    );
+    if (renameResult.changed && !isScanStale()) {
+      cardsForScan = renameResult.cards;
+      stagedForScan = renameResult.stagedSyncCards;
+      stateRef.current = { ...stateRef.current, cards: cardsForScan };
+      stagedSyncCardsRef.current = stagedForScan;
+      setState((prev) => ({ ...prev, cards: cardsForScan }));
+      setStagedSyncCards(stagedForScan);
+      flowTrace('folder:rename-reconciled', {
+        projectId,
+        count: renameResult.renames.length,
+        renames: renameResult.renames.map((rename) => ({
+          surface: rename.surface,
+          key: rename.key,
+          source: rename.source,
+        })),
+      });
+    }
+
     const foundKeys = Object.keys(groupedFinal);
     const missingDockRows = missingDockOnlyStagedRows(
       foundKeys,
-      stateRef.current.cards ?? [],
-      stagedSyncCardsRef.current ?? [],
+      cardsForScan,
+      stagedForScan,
     );
     if (missingDockRows.length > 0 && !isScanStale()) {
       const scanProjectId = projectIdOption ?? activeProjectIdRef.current;
@@ -552,19 +580,21 @@ export function useFolderLinkScan({
       ];
 
       stagedSyncCardsRef.current = nextStaged;
+      stagedForScan = nextStaged;
       setStagedSyncCards(nextStaged);
 
       if (scanProjectId) {
         const patchedMap = patchPlacementsMapFromArrays(
           getCommittedPayload(scanProjectId)?.artifactPlacements
-          ?? buildPlacementsFromArrays(stateRef.current.cards ?? [], stagedBeforePrune),
-          stateRef.current.cards ?? [],
+          ?? buildPlacementsFromArrays(cardsForScan, stagedBeforePrune),
+          cardsForScan,
           nextStaged,
         );
         try {
           await commitPlacementState(scanProjectId, {
             artifactPlacements: patchedMap,
             reason: 'folderScan:missingDockPrune',
+            pushRemote: true,
           });
         } catch (e) {
           console.warn('Missing dock placement commit failed:', e);
@@ -595,18 +625,45 @@ export function useFolderLinkScan({
       cardsForScan,
       { replaceCanvas, foundCount: found.length },
     );
-    setFolderPresentKeys(presentKeys);
+    let nextPresentKeys = presentKeys;
     const missingCanvasCards = missingCanvasCardsForFolderScan(presentKeys, cardsForScan);
     if (missingCanvasCards.length > 0) {
       const count = missingCanvasCards.length;
       missingCanvasToast = strings.sync.folderMissingCanvasArtifacts(count);
     }
 
-    const stagedBaseline = stagedSyncCardsRef.current ?? [];
+    const missingAgentChatCards = missingCanvasCards.filter(
+      (card) => normalizeCardType(card?.type) === 'agent_chat',
+    );
+    const scanProjectId = projectIdOption ?? activeProjectIdRef.current;
+    if (missingAgentChatCards.length > 0 && handle && scanProjectId) {
+      const backfill = await backfillMissingAgentChatTranscripts({
+        projectId: scanProjectId,
+        projectName: stateRef.current?.projectName,
+        folderHandle: handle,
+        folderPresentKeys: presentKeys,
+        cards: cardsForScan,
+      });
+      if (backfill.written > 0) {
+        nextPresentKeys = [
+          ...new Set([
+            ...presentKeys,
+            ...backfill.writtenKeys.map((key) => toCanonicalSyncKey(key)).filter(Boolean),
+          ]),
+        ];
+        flowTrace('folder:agent-chat-backfill', {
+          attempted: backfill.attempted,
+          written: backfill.written,
+        });
+      }
+    }
+    setFolderPresentKeys(nextPresentKeys);
+
+    let stagedBaseline = stagedForScan;
     const suppressedKeys = readSuppressedSyncKeys(projectId, stateRef.current);
     const { changes, refreshPatches, stagedRefreshPatches } = buildSyncChangesFromFolder(
       groupedFinal,
-      cardsBaseline,
+      cardsForScan,
       stagedBaseline,
     );
     const filteredChanges = changes
@@ -614,17 +671,60 @@ export function useFolderLinkScan({
       .filter((c) => !suppressedKeys.has(toCanonicalSyncKey(c.key)));
     const knownAgentChatKeys = collectKnownAgentChatKeys(
       agentChatThreadIndexRef.current,
+      { cards: cardsForScan, stagedSyncCards: stagedBaseline },
     );
-    const { autoStageAgentChat } = partitionSyncChanges(filteredChanges);
+    const { autoStageAgentChat, ignoredAgentChat } = partitionSyncChanges(
+      filteredChanges,
+      { knownAgentChatKeys },
+    );
 
     if (isScanStale()) {
       exitStatus = { noChanges: true };
       return;
     }
 
+    const staleAgentChatRows = stagedBaseline.filter((row) => {
+      if (row?.type !== 'agent_chat') return false;
+      const key = canonicalKeyForSyncEntry(row);
+      return key && !knownAgentChatKeys.has(key);
+    });
+    if (staleAgentChatRows.length > 0) {
+      const staleRows = new Set(staleAgentChatRows);
+      const nextStaged = stagedBaseline.filter((row) => !staleRows.has(row));
+      setStagedSyncCards(nextStaged);
+      stagedSyncCardsRef.current = nextStaged;
+      stagedBaseline = nextStaged;
+      const scanProjectId = projectIdOption ?? activeProjectIdRef.current;
+      if (scanProjectId) {
+        const patchedMap = patchPlacementsMapFromArrays(
+          getCommittedPayload(scanProjectId)?.artifactPlacements
+          ?? buildPlacementsFromArrays(cardsForScan, nextStaged),
+          cardsForScan,
+          nextStaged,
+        );
+        try {
+          await commitPlacementState(scanProjectId, {
+            artifactPlacements: patchedMap,
+            reason: 'folderScan:unknownAgentChatPrune',
+            pushRemote: true,
+          });
+        } catch (e) {
+          console.warn('Unknown agent chat placement prune failed:', e);
+        }
+      }
+      flowTrace('folder:unknown-agent-chat-pruned', {
+        count: staleAgentChatRows.length,
+      });
+    }
+    if (ignoredAgentChat.length > 0) {
+      flowTrace('folder:unknown-agent-chat-ignored', {
+        count: ignoredAgentChat.length,
+      });
+    }
+
     if (autoStageAgentChat.length > 0) {
       let nextStaged = stagedBaseline;
-      let nextCards = cardsBaseline;
+      let nextCards = cardsForScan;
       for (const change of autoStageAgentChat) {
         if (isScanStale()) break;
         if (resolvePlacement(nextCards, nextStaged, change.key) === 'canvas') {
@@ -661,6 +761,7 @@ export function useFolderLinkScan({
           await commitPlacementState(scanProjectId, {
             artifactPlacements: patchedMap,
             reason: 'folderScan:agentStage',
+            pushRemote: true,
           });
         } catch (e) {
           console.warn('Folder scan placement commit failed:', e);

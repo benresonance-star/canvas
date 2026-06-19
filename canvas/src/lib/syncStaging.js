@@ -156,6 +156,215 @@ export function findSyncEntryForFolderGroup(list, folderKey, group) {
   return (list ?? []).find((entry) => bookmarkUrlForSyncEntry(entry) === folderBookmarkUrl);
 }
 
+function entryContentHashes(entry) {
+  return new Set(
+    (entry?.versions ?? [])
+      .map((version) => version?.content_hash)
+      .filter(Boolean),
+  );
+}
+
+function groupContentHashes(group) {
+  return new Set(
+    (group?.versions ?? [])
+      .map((version) => version?.content_hash)
+      .filter(Boolean),
+  );
+}
+
+function entryArtifactIds(entry) {
+  const ids = new Set();
+  const ref = artifactRefFromSyncEntry(entry);
+  if (ref?.id) ids.add(ref.id);
+  for (const version of entry?.versions ?? []) {
+    const versionRef = version?.artifactRef;
+    if (versionRef?.id && (versionRef.type ?? 'artifact') === 'artifact') {
+      ids.add(versionRef.id);
+    }
+  }
+  return ids;
+}
+
+function groupArtifactIds(group) {
+  return new Set(
+    (group?.versions ?? [])
+      .map((version) => version?.artifactRef)
+      .filter((ref) => ref?.id && (ref.type ?? 'artifact') === 'artifact')
+      .map((ref) => ref.id),
+  );
+}
+
+function addIndexedCandidate(index, id, candidate) {
+  if (!id) return;
+  const existing = index.get(id) ?? [];
+  existing.push(candidate);
+  index.set(id, existing);
+}
+
+function isFolderRenameCandidate(entry, foundCanonicalKeys) {
+  if (!entry) return false;
+  if (normalizeCardType(entry.type) === 'bookmark') return false;
+  const oldKey = canonicalKeyForSyncEntry(entry);
+  return Boolean(oldKey) && !foundCanonicalKeys.has(toCanonicalSyncKey(oldKey));
+}
+
+function mergeRenamedVersions(existingVersions = [], diskVersions = []) {
+  if (existingVersions.length === 0) return diskVersions;
+  const diskByVersion = new Map(diskVersions.map((version) => [version.version, version]));
+  return existingVersions.map((version) => {
+    const disk = diskByVersion.get(version.version);
+    if (!disk) return version;
+    return {
+      ...version,
+      ...disk,
+      artifactRef: disk.artifactRef ?? version.artifactRef,
+      artifactSyncState: disk.artifactRef ? 'synced' : version.artifactSyncState,
+    };
+  });
+}
+
+function renameSyncEntry(entry, newKey, group) {
+  const firstVersion = group?.versions?.[0] ?? {};
+  const relativePath = folderRelativePathFromVersion(firstVersion);
+  return {
+    ...entry,
+    key: newKey,
+    ...(relativePath ? { relativePath, folderPath: relativePath } : {}),
+    prefix: group?.parsed?.prefix ?? entry.prefix,
+    name: group?.parsed?.name ?? entry.name,
+    versions: mergeRenamedVersions(entry.versions ?? [], group?.versions ?? []),
+  };
+}
+
+function collectUnmatchedGroups(grouped, canvasCards, stagedCards) {
+  return Object.entries(grouped ?? [])
+    .filter(([key, group]) => !findSyncEntryForFolderGroup(canvasCards, key, group)
+      && !findSyncEntryForFolderGroup(stagedCards, key, group))
+    .map(([key, group]) => ({ key, group }));
+}
+
+function collectMissingEntries(cards, stagedCards, foundCanonicalKeys) {
+  const out = [];
+  (cards ?? []).forEach((entry, index) => {
+    if (isFolderRenameCandidate(entry, foundCanonicalKeys)) {
+      out.push({ surface: 'canvas', index, entry });
+    }
+  });
+  (stagedCards ?? []).forEach((entry, index) => {
+    if (isFolderRenameCandidate(entry, foundCanonicalKeys)) {
+      out.push({ surface: 'dock', index, entry });
+    }
+  });
+  return out;
+}
+
+function renameCandidatesFromIndex(groupIndex, entryIndex, usedGroups, usedEntries, source) {
+  const renames = [];
+  for (const [id, groups] of groupIndex.entries()) {
+    const entries = entryIndex.get(id) ?? [];
+    const usableGroups = groups.filter((candidate) => !usedGroups.has(candidate.key));
+    const usableEntries = entries.filter((candidate) => !usedEntries.has(candidate.entry));
+    if (usableGroups.length !== 1 || usableEntries.length !== 1) continue;
+    const group = usableGroups[0];
+    const entry = usableEntries[0];
+    renames.push({
+      ...entry,
+      key: group.key,
+      group: group.group,
+      source,
+      identity: id,
+    });
+    usedGroups.add(group.key);
+    usedEntries.add(entry.entry);
+  }
+  return renames;
+}
+
+export function reconcileFolderRenamesByIdentity(grouped, canvasCards = [], stagedCards = []) {
+  const foundCanonicalKeys = new Set(
+    Object.keys(grouped ?? {})
+      .map((key) => toCanonicalSyncKey(key))
+      .filter(Boolean),
+  );
+  const unmatchedGroups = collectUnmatchedGroups(grouped, canvasCards, stagedCards);
+  const missingEntries = collectMissingEntries(canvasCards, stagedCards, foundCanonicalKeys);
+  if (unmatchedGroups.length === 0 || missingEntries.length === 0) {
+    return {
+      cards: canvasCards,
+      stagedSyncCards: stagedCards,
+      renames: [],
+      changed: false,
+    };
+  }
+
+  const groupByArtifact = new Map();
+  const entryByArtifact = new Map();
+  const groupByHash = new Map();
+  const entryByHash = new Map();
+  for (const candidate of unmatchedGroups) {
+    for (const id of groupArtifactIds(candidate.group)) {
+      addIndexedCandidate(groupByArtifact, id, candidate);
+    }
+    for (const hash of groupContentHashes(candidate.group)) {
+      addIndexedCandidate(groupByHash, hash, candidate);
+    }
+  }
+  for (const candidate of missingEntries) {
+    for (const id of entryArtifactIds(candidate.entry)) {
+      addIndexedCandidate(entryByArtifact, id, candidate);
+    }
+    for (const hash of entryContentHashes(candidate.entry)) {
+      addIndexedCandidate(entryByHash, hash, candidate);
+    }
+  }
+
+  const usedGroups = new Set();
+  const usedEntries = new Set();
+  const renames = [
+    ...renameCandidatesFromIndex(
+      groupByArtifact,
+      entryByArtifact,
+      usedGroups,
+      usedEntries,
+      'artifactRef',
+    ),
+    ...renameCandidatesFromIndex(
+      groupByHash,
+      entryByHash,
+      usedGroups,
+      usedEntries,
+      'content_hash',
+    ),
+  ];
+
+  if (renames.length === 0) {
+    return {
+      cards: canvasCards,
+      stagedSyncCards: stagedCards,
+      renames: [],
+      changed: false,
+    };
+  }
+
+  const cards = [...(canvasCards ?? [])];
+  const stagedSyncCards = [...(stagedCards ?? [])];
+  for (const rename of renames) {
+    const renamed = renameSyncEntry(rename.entry, rename.key, rename.group);
+    if (rename.surface === 'canvas') {
+      cards[rename.index] = renamed;
+    } else {
+      stagedSyncCards[rename.index] = renamed;
+    }
+  }
+
+  return {
+    cards,
+    stagedSyncCards,
+    renames,
+    changed: true,
+  };
+}
+
 /**
  * @param {Record<string, { parsed: unknown, versions: Array<{ version: number }> }>} grouped
  * @param {Array<{ key: string, versions?: Array<{ version: number }> }>} canvasCards
@@ -218,14 +427,23 @@ export function isAgentChatSyncChange(change) {
 /**
  * @param {ReturnType<typeof buildSyncChangesFromFolder>['changes']} changes
  */
-export function partitionSyncChanges(changes) {
+export function partitionSyncChanges(changes, { knownAgentChatKeys = null } = {}) {
   const autoStageAgentChat = [];
   const confirmChanges = [];
+  const ignoredAgentChat = [];
   for (const change of changes ?? []) {
-    if (isAgentChatSyncChange(change)) autoStageAgentChat.push(change);
-    else confirmChanges.push(change);
+    if (isAgentChatSyncChange(change)) {
+      const canonical = toCanonicalSyncKey(change.key);
+      if (!knownAgentChatKeys || knownAgentChatKeys.has(canonical)) {
+        autoStageAgentChat.push(change);
+      } else {
+        ignoredAgentChat.push(change);
+      }
+    } else {
+      confirmChanges.push(change);
+    }
   }
-  return { autoStageAgentChat, confirmChanges };
+  return { autoStageAgentChat, confirmChanges, ignoredAgentChat };
 }
 
 /**

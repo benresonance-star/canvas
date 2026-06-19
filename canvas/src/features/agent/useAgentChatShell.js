@@ -10,7 +10,9 @@ import { DEFAULT_ENABLED_AGENT_IDS } from '../../lib/agentProfiles.js';
 import {
   CONNECTORS,
   DEFAULT_SINGLE_CONNECTOR_ID,
+  defaultAgentTypeLabelForProvider,
   getConnectorById,
+  getConnectorByProvider,
   getConnectorProvider,
 } from '../../lib/agentConnectors.js';
 import {
@@ -24,6 +26,7 @@ import {
 } from '../../lib/agentChatPersistence.js';
 import {
   syncAgentChatArtifact,
+  formatAgentChatTranscript,
   parseAgentChatTranscript,
   loadThreadTranscript,
 } from '../../lib/agentChatArtifact.js';
@@ -43,6 +46,9 @@ import {
   linkCardToThreadInIndex,
   resolveThreadForCard,
   emptyThreadIndex,
+  applyAgentTypeToThread,
+  clearAgentTypeFromThread,
+  createAgentTypeChangeMessage,
 } from '../../lib/agentChatThreads.js';
 import { addSuppressedSyncKey, readSuppressedSyncKeys } from '../../lib/syncSuppressedKeys.js';
 import { ensureAgentChatCardOnCanvas } from '../../lib/ensureAgentChatCardOnCanvas.js';
@@ -51,6 +57,10 @@ import { enqueueArtifactSyncRetry } from '../../lib/artifactSyncOutbox.js';
 import {
   getAgentHealth,
   listAgentConnectors,
+  listAgentTemplates,
+  saveAgentTemplate,
+  importMasterAgentTemplates,
+  deleteAgentTemplate,
   saveAgentCredential,
   deleteAgentCredential,
   estimateAgentChat,
@@ -69,6 +79,7 @@ import {
   MINIMAL_AGENT_SYSTEM_CONTEXT,
   estimateContextDocuments,
   getContextLimits,
+  getPinnedVersion,
 } from '../../lib/agentContextContent.js';
 import {
   createContextRegistry,
@@ -80,10 +91,62 @@ import {
   buildApiMessageHistoryAsync,
 } from '../../lib/agentContextSession.js';
 import { isApiAvailable } from '../../lib/primitivesApi.js';
+import { upsertAgentTemplateList } from '../../lib/agentTemplates.js';
 import { usePageHideFlush } from '../sync/usePageHideFlush.js';
+import { fetchFlow } from '../flow/api/flowApi.js';
+import {
+  flowGraphFromPreview,
+  formatFlowDiagramForAgent,
+} from '../flow/domain/flowDocument.js';
+
+function resolveAgentChatSyncReason(reason) {
+  if (reason === 'ingest_failed') return 'ingest_failed';
+  if (reason === 'folder_write_denied' || reason === 'folder_write_failed') {
+    return reason;
+  }
+  return 'api_unavailable';
+}
+
+function isFolderWriteSyncReason(reason) {
+  return reason === 'folder_write_denied' || reason === 'folder_write_failed';
+}
 
 const AGENT_EXTENDED_CONTEXT_KEY = 'canvas:agent-extended-context';
+
+function connectorIdFromAgentChatFilename(filename) {
+  const base = String(filename || '').split(/[\\/]/).pop() || '';
+  const match = base.match(/^notes__agent-chat-(.+?)(?:-[a-f0-9]{8})?-v\d+\.md$/i);
+  if (!match) return null;
+  const safe = match[1];
+  const bySafeId = CONNECTORS.find(
+    (connector) => String(connector.id).replace(/[^a-zA-Z0-9_-]/g, '-') === safe,
+  );
+  return bySafeId?.id ?? null;
+}
 const AGENT_TOKEN_CONFIRM_THRESHOLD = 25_000;
+
+function connectorIdFromAgentChatCard(card) {
+  const values = [
+    card?.key,
+    card?.filename,
+    card?.versions?.[0]?.filename,
+    card?.versions?.[0]?.relativePath,
+  ].filter(Boolean);
+  for (const connector of CONNECTORS) {
+    const safeConnector = String(connector.id).replace(/[^a-zA-Z0-9_-]/g, '-');
+    const storagePrefix = `notes__agent-chat-${safeConnector}`;
+    const filenamePrefix = `agent-chat-${safeConnector}`;
+    if (
+      values.some((value) => {
+        const text = String(value);
+        return text.includes(storagePrefix) || text.includes(filenamePrefix);
+      })
+    ) {
+      return connector.id;
+    }
+  }
+  return null;
+}
 
 export function readAgentExtendedContext() {
   try {
@@ -144,8 +207,11 @@ export function useAgentChatShell({
   const [agentPanelMode, setAgentPanelMode] = useState('single');
   const [singleConnectorId, setSingleConnectorId] = useState(DEFAULT_SINGLE_CONNECTOR_ID);
   const [agentConnectors, setAgentConnectors] = useState([]);
+  const [agentTemplates, setAgentTemplates] = useState([]);
+  const [activeAgentTemplateId, setActiveAgentTemplateId] = useState(null);
   const [agentSecretsConfigured, setAgentSecretsConfigured] = useState(true);
   const [agentConnectorsOffline, setAgentConnectorsOffline] = useState(false);
+  const [embeddedAgentPanelOpen, setEmbeddedAgentPanelOpen] = useState(false);
   const [agentOpenaiReachable, setAgentOpenaiReachable] = useState(null);
   const [agentOpenaiReachabilityError, setAgentOpenaiReachabilityError] = useState(null);
   const [agentContextStatusByCardId, setAgentContextStatusByCardId] = useState({});
@@ -159,6 +225,7 @@ export function useAgentChatShell({
   const [apiKeySaving, setApiKeySaving] = useState(false);
   const agentChatIdRef = useRef(0);
   const agentContextRegistryRef = useRef(createContextRegistry());
+  const flowContextLoaderRef = useRef(null);
   const agentChatArtifactMetaRefLocal = useRef({
     artifactRef: null,
     filename: null,
@@ -167,7 +234,7 @@ export function useAgentChatShell({
   const agentChatArtifactMetaRef = agentChatArtifactMetaRefProp ?? agentChatArtifactMetaRefLocal;
   const agentChatPersistSkipRef = useRef(false);
   const [agentChatArtifactRef, setAgentChatArtifactRef] = useState(null);
-  /** @type {'api_unavailable' | 'ingest_failed' | null} */
+  /** @type {'api_unavailable' | 'ingest_failed' | 'folder_write_denied' | 'folder_write_failed' | null} */
   const [agentChatArtifactSyncReason, setAgentChatArtifactSyncReason] = useState(null);
   const [agentChatPersistTrimmed, setAgentChatPersistTrimmed] = useState(false);
   const [chatSyncRetrying, setChatSyncRetrying] = useState(false);
@@ -185,6 +252,7 @@ export function useAgentChatShell({
   const persistAgentChatSessionRef = useRef(async () => ({ ok: false }));
   const prevAgentConnectorsOfflineRef = useRef(false);
   const agentPanelOpenSyncRetryRef = useRef(false);
+  const agentPanelThreadSelectionSyncKeyRef = useRef(null);
 
   useEffect(() => {
     agentChatMessagesRef.current = agentChatMessages;
@@ -221,11 +289,21 @@ export function useAgentChatShell({
 
   const refreshAgentConnectors = useCallback(async () => {
     try {
-      const [data, health] = await Promise.all([
+      const [data, templateData, health] = await Promise.all([
         listAgentConnectors(),
+        listAgentTemplates().catch(() => ({ templates: null })),
         getAgentHealth().catch(() => ({ openaiReachable: null })),
       ]);
       setAgentConnectors(data.connectors || []);
+      if (Array.isArray(templateData.templates)) {
+        setAgentTemplates(templateData.templates);
+        setActiveAgentTemplateId((current) => {
+          if (current && templateData.templates.some((template) => template.id === current)) {
+            return current;
+          }
+          return templateData.templates.find((template) => template.enabled)?.id ?? null;
+        });
+      }
       setAgentSecretsConfigured(data.secretsConfigured !== false);
       setAgentConnectorsOffline(false);
       setAgentOpenaiReachable(
@@ -243,15 +321,201 @@ export function useAgentChatShell({
         })),
       );
       setAgentSecretsConfigured(false);
+      setAgentTemplates([]);
+      setActiveAgentTemplateId(null);
       setAgentConnectorsOffline(true);
       setAgentOpenaiReachable(null);
       setAgentOpenaiReachabilityError(null);
     }
   }, []);
 
+  const registerEmbeddedAgentPanelOpen = useCallback((open) => {
+    setEmbeddedAgentPanelOpen(Boolean(open));
+  }, []);
+
   useEffect(() => {
-    if (agentPanelOpen) refreshAgentConnectors();
-  }, [agentPanelOpen, refreshAgentConnectors]);
+    if (!agentPanelOpen && !embeddedAgentPanelOpen) return undefined;
+    void refreshAgentConnectors();
+    const intervalId = setInterval(() => {
+      void refreshAgentConnectors();
+    }, 20000);
+    return () => clearInterval(intervalId);
+  }, [agentPanelOpen, embeddedAgentPanelOpen, refreshAgentConnectors]);
+
+  const activeAgentTemplate = useMemo(
+    () => agentTemplates.find((template) => template.id === activeAgentTemplateId) ?? null,
+    [agentTemplates, activeAgentTemplateId],
+  );
+
+  const selectedConnectorProvider = useMemo(
+    () => getConnectorProvider(singleConnectorId),
+    [singleConnectorId],
+  );
+
+  const activeAgentTemplateCompatible = Boolean(
+    activeAgentTemplate
+    && selectedConnectorProvider
+    && activeAgentTemplate.provider === selectedConnectorProvider,
+  );
+
+  const compatibleActiveAgentTemplate = activeAgentTemplateCompatible
+    ? activeAgentTemplate
+    : null;
+
+  const handleSingleConnectorIdChange = useCallback((connectorId) => {
+    const nextProvider = getConnectorProvider(connectorId);
+    setSingleConnectorId(connectorId);
+    setActiveAgentTemplateId((current) => {
+      const template = agentTemplates.find((entry) => entry.id === current);
+      if (template && nextProvider && template.provider !== nextProvider) return null;
+      return current;
+    });
+  }, [agentTemplates]);
+
+  const resolveThreadConnectorId = useCallback(
+    (thread) => {
+      if (!thread) return null;
+      if (thread.connectorId && getConnectorById(thread.connectorId)) {
+        return thread.connectorId;
+      }
+      const template = thread.agentTemplateId
+        ? agentTemplates.find((entry) => entry.id === thread.agentTemplateId)
+        : null;
+      const provider = thread.provider || template?.provider || null;
+      return provider ? getConnectorByProvider(provider)?.id ?? null : null;
+    },
+    [agentTemplates],
+  );
+
+  const syncPanelSelectionToThread = useCallback(
+    (thread) => {
+      if (!thread) return;
+      const connectorId = resolveThreadConnectorId(thread);
+      const provider = getConnectorProvider(connectorId || singleConnectorId);
+      const templateId = thread.agentTemplateId ?? null;
+      const template = templateId
+        ? agentTemplates.find((entry) => entry.id === templateId) ?? null
+        : null;
+
+      if (connectorId && connectorId !== singleConnectorId) {
+        setSingleConnectorId(connectorId);
+      }
+
+      if (templateId) {
+        if (!template || !provider || template.provider === provider) {
+          setActiveAgentTemplateId(templateId);
+        }
+        return;
+      }
+
+      setActiveAgentTemplateId(null);
+    },
+    [agentTemplates, resolveThreadConnectorId, singleConnectorId],
+  );
+
+  const activeAgentThread = useMemo(
+    () => agentChatThreadIndex.threads.find((thread) => thread.threadId === activeThreadId) ?? null,
+    [agentChatThreadIndex.threads, activeThreadId],
+  );
+
+  const threadAgentTemplate = useMemo(
+    () =>
+      activeAgentThread?.agentTemplateId
+        ? agentTemplates.find((template) => template.id === activeAgentThread.agentTemplateId) ?? null
+        : null,
+    [activeAgentThread, agentTemplates],
+  );
+
+  const activeThreadAgentProvider =
+    activeAgentThread?.provider
+    || threadAgentTemplate?.provider
+    || null;
+
+  const activeThreadAgentTypeCompatible = Boolean(
+    !activeThreadAgentProvider
+    || !selectedConnectorProvider
+    || activeThreadAgentProvider === selectedConnectorProvider,
+  );
+
+  const selectedAgentTypeDiffersFromThread = Boolean(
+    activeAgentThread?.threadId
+    && compatibleActiveAgentTemplate?.id
+    && activeAgentThread.agentTemplateId !== compatibleActiveAgentTemplate.id,
+  );
+
+  const selectedThreadNeedsDefaultAgentType = Boolean(
+    activeAgentThread?.threadId
+    && !activeThreadAgentTypeCompatible
+    && !compatibleActiveAgentTemplate,
+  );
+
+  useEffect(() => {
+    if (!agentPanelOpen || agentPanelMode !== 'single') {
+      agentPanelThreadSelectionSyncKeyRef.current = null;
+      return;
+    }
+    if (!activeAgentThread?.threadId) return;
+
+    const syncKey = [
+      activeAgentThread.threadId,
+      activeAgentThread.connectorId ?? '',
+      activeAgentThread.agentTemplateId ?? '',
+      activeAgentThread.provider ?? '',
+      activeAgentThread.model ?? '',
+      agentTemplates.map((template) => `${template.id}:${template.provider}`).join('|'),
+    ].join('::');
+    if (agentPanelThreadSelectionSyncKeyRef.current === syncKey) return;
+    agentPanelThreadSelectionSyncKeyRef.current = syncKey;
+    syncPanelSelectionToThread(activeAgentThread);
+  }, [
+    agentPanelOpen,
+    agentPanelMode,
+    activeAgentThread,
+    agentTemplates,
+    syncPanelSelectionToThread,
+  ]);
+
+  const handleSelectAgentTemplate = useCallback((templateId) => {
+    const template = agentTemplates.find((entry) => entry.id === templateId);
+    if (template?.provider && selectedConnectorProvider && template.provider !== selectedConnectorProvider) {
+      setActiveAgentTemplateId(null);
+      return;
+    }
+    setActiveAgentTemplateId(templateId || null);
+  }, [agentTemplates, selectedConnectorProvider]);
+
+  const handleSaveAgentTemplate = useCallback(
+    async (template, expectedRevision = 0) => {
+      const data = await saveAgentTemplate(template, expectedRevision);
+      const saved = data.template;
+      if (saved?.id) {
+        setAgentTemplates((current) => upsertAgentTemplateList(current, saved));
+        setActiveAgentTemplateId(
+          saved.provider === selectedConnectorProvider ? saved.id : null,
+        );
+      }
+      await refreshAgentConnectors();
+      return saved;
+    },
+    [refreshAgentConnectors, selectedConnectorProvider],
+  );
+
+  const handleDeleteAgentTemplate = useCallback(
+    async (templateId) => {
+      await deleteAgentTemplate(templateId);
+      await refreshAgentConnectors();
+      setActiveAgentTemplateId((current) => (current === templateId ? null : current));
+    },
+    [refreshAgentConnectors],
+  );
+
+  const handleImportMasterAgentTemplates = useCallback(async () => {
+    const data = await importMasterAgentTemplates();
+    await refreshAgentConnectors();
+    const first = data.templates?.find((template) => template?.enabled) ?? data.templates?.[0];
+    if (first?.id) setActiveAgentTemplateId(first.id);
+    return data.templates ?? [];
+  }, [refreshAgentConnectors]);
 
   const handleSaveAgentApiKey = useCallback(
     async (provider, apiKey) => {
@@ -328,13 +592,60 @@ export function useAgentChatShell({
           connectorLabel: connector?.label ?? connectorId,
           threadId,
           title: title ?? undefined,
+          agentTemplateId: threadMeta?.agentTemplateId ?? null,
+          agentTypeLabel: threadMeta?.agentTypeLabel ?? null,
+          model: threadMeta?.model ?? null,
           messages,
           artifactRef: meta.artifactRef,
           filename: meta.filename,
         });
         if (syncResult.ok) {
           setAgentChatArtifactSyncReason(null);
-          if (syncResult.artifactRef) {
+        } else {
+          if (syncResult.filename) {
+            enqueueArtifactSyncRetry({
+              kind: 'agent_chat',
+              projectId,
+              projectName: stateProjectName,
+              connectorId,
+              connectorLabel: connector?.label ?? connectorId,
+              threadId,
+              filename: syncResult.filename,
+              cardKey: syncResult.filename.replace(/-v\d+\.[^.]+$/, ''),
+              title: title ?? undefined,
+              markdown: syncResult.markdown ?? null,
+              contentHash: syncResult.content_hash ?? null,
+              lastError: syncResult.reason ?? 'ingest_failed',
+            });
+          }
+          if (!syncResult.artifactRef) {
+            const stagedResult = stageAgentChatCard(
+              stagedSyncCardsRef.current,
+              stateRef.current.cards,
+              {
+                filename: syncResult.filename,
+                title,
+                threadId,
+                syncResult: {
+                  content_hash: syncResult.content_hash,
+                  artifactRef: null,
+                  artifactSyncState: 'pending',
+                },
+              },
+            );
+            if (stagedResult.stagedCards !== stagedSyncCardsRef.current) {
+              setStagedSyncCards(stagedResult.stagedCards);
+              stagedSyncCardsRef.current = stagedResult.stagedCards;
+              requestStructuralSync();
+            }
+          }
+          setAgentChatArtifactSyncReason(resolveAgentChatSyncReason(syncResult.reason));
+          if (isFolderWriteSyncReason(syncResult.reason)) {
+            setSyncStatus({ error: strings.agent.agentChatTranscriptFolderWriteFailed });
+            setTimeout(() => setSyncStatus(null), 5000);
+          }
+        }
+        if (syncResult.artifactRef) {
             agentChatArtifactMetaRef.current = {
               artifactRef: syncResult.artifactRef,
               filename: syncResult.filename ?? meta.filename,
@@ -415,54 +726,14 @@ export function useAgentChatShell({
             if (nextCards !== prevCards || nextStaged !== prevStaged) {
               requestStructuralSync();
             }
-          } else {
-            const nextIndex = upsertThreadInIndex(agentChatThreadIndexRef.current, {
-              ...threadMeta,
-              threadId,
-              updatedAt: Date.now(),
-            });
-            setAgentChatThreadIndex(nextIndex);
-            saveThreadIndexLocal(projectId, connectorId, nextIndex);
-          }
-        } else {
-          if (syncResult.filename) {
-            enqueueArtifactSyncRetry({
-              kind: 'agent_chat',
-              projectId,
-              projectName: stateProjectName,
-              connectorId,
-              connectorLabel: connector?.label ?? connectorId,
-              threadId,
-              filename: syncResult.filename,
-              cardKey: syncResult.filename.replace(/-v\d+\.[^.]+$/, ''),
-              title: title ?? undefined,
-              markdown: syncResult.markdown ?? null,
-              contentHash: syncResult.content_hash ?? null,
-              lastError: syncResult.reason ?? 'ingest_failed',
-            });
-            const stagedResult = stageAgentChatCard(
-              stagedSyncCardsRef.current,
-              stateRef.current.cards,
-              {
-                filename: syncResult.filename,
-                title,
-                threadId,
-                syncResult: {
-                  content_hash: syncResult.content_hash,
-                  artifactRef: null,
-                  artifactSyncState: 'pending',
-                },
-              },
-            );
-            if (stagedResult.stagedCards !== stagedSyncCardsRef.current) {
-              setStagedSyncCards(stagedResult.stagedCards);
-              stagedSyncCardsRef.current = stagedResult.stagedCards;
-              requestStructuralSync();
-            }
-          }
-          setAgentChatArtifactSyncReason(
-            syncResult.reason === 'ingest_failed' ? 'ingest_failed' : 'api_unavailable',
-          );
+        } else if (syncResult.ok) {
+          const nextIndex = upsertThreadInIndex(agentChatThreadIndexRef.current, {
+            ...threadMeta,
+            threadId,
+            updatedAt: Date.now(),
+          });
+          setAgentChatThreadIndex(nextIndex);
+          saveThreadIndexLocal(projectId, connectorId, nextIndex);
         }
         return syncResult;
       } catch {
@@ -480,6 +751,7 @@ export function useAgentChatShell({
       stagedSyncCardsRef,
       setState,
       setStagedSyncCards,
+      setSyncStatus,
     ],
   );
 
@@ -782,13 +1054,14 @@ export function useAgentChatShell({
     const connectorId = singleConnectorId;
     if (!projectId || !connectorId) return;
 
-    const meta = createThreadMeta({ connectorId });
+    const meta = createThreadMeta({ connectorId, agentTemplate: compatibleActiveAgentTemplate });
     let index = upsertThreadInIndex(agentChatThreadIndexRef.current, meta);
     index = setActiveThreadInIndex(index, meta.threadId);
     saveThreadIndexLocal(projectId, connectorId, index);
     agentChatThreadIndexRef.current = index;
     setAgentChatThreadIndex(index);
     setActiveThreadId(meta.threadId);
+    if (meta.agentTemplateId) setActiveAgentTemplateId(meta.agentTemplateId);
     setThreadPickerOpen(false);
 
     setAgentChatMessages([]);
@@ -825,6 +1098,7 @@ export function useAgentChatShell({
     }
   }, [
     singleConnectorId,
+    compatibleActiveAgentTemplate,
     requestThreadTranscriptSync,
     ensureThreadChatCardOnCanvas,
     removeCardFromSelection,
@@ -855,6 +1129,13 @@ export function useAgentChatShell({
         agentChatThreadIndexRef.current,
         threadId,
       );
+      const thread = index.threads.find((entry) => entry.threadId === threadId);
+      if (
+        thread?.agentTemplateId
+        && agentTemplates.some((template) => template.id === thread.agentTemplateId)
+      ) {
+        setActiveAgentTemplateId(thread.agentTemplateId);
+      }
       saveThreadIndexLocal(projectId, connectorId, index);
       agentChatThreadIndexRef.current = index;
       setAgentChatThreadIndex(index);
@@ -862,7 +1143,13 @@ export function useAgentChatShell({
       setThreadPickerOpen(false);
       await loadThreadSessionIntoState(projectId, connectorId, threadId);
     },
-    [singleConnectorId, loadThreadSessionIntoState, requestThreadTranscriptSync, activeProjectIdRef],
+    [
+      singleConnectorId,
+      loadThreadSessionIntoState,
+      requestThreadTranscriptSync,
+      activeProjectIdRef,
+      agentTemplates,
+    ],
   );
 
   const handleRenameAgentThread = useCallback(
@@ -1003,7 +1290,13 @@ export function useAgentChatShell({
         setSyncStatus({ toast: strings.agent.agentChatRetrySuccess });
         setTimeout(() => setSyncStatus(null), 2500);
       } else if (result?.reason !== 'skipped') {
-        setSyncStatus({ error: strings.agent.agentChatRetryFailed });
+        const message = (
+          result?.reason === 'folder_write_denied'
+          || result?.reason === 'folder_write_failed'
+        )
+          ? strings.agent.agentChatRetryFolderFailed
+          : strings.agent.agentChatRetryFailed;
+        setSyncStatus({ error: message });
         setTimeout(() => setSyncStatus(null), 4000);
       }
     } finally {
@@ -1220,6 +1513,88 @@ export function useAgentChatShell({
     agentContextRevision,
   ]);
 
+  const loadAgentChatContextText = useCallback(
+    async (card) => {
+      if (!card || card.type !== 'agent_chat') return null;
+      const projectId = activeProjectIdRef.current;
+      if (!projectId) return null;
+
+      const filename = card.versions?.[0]?.filename;
+      const inferredConnectorId = connectorIdFromAgentChatFilename(filename);
+      const connectorIds = [
+        inferredConnectorId,
+        singleConnectorId,
+        ...CONNECTORS.map((connector) => connector.id),
+      ].filter(Boolean);
+      const uniqueConnectorIds = [...new Set(connectorIds)];
+
+      for (const connectorId of uniqueConnectorIds) {
+        const index = connectorId === singleConnectorId
+          ? agentChatThreadIndexRef.current
+          : await loadThreadIndex(projectId, connectorId);
+        const thread = resolveThreadForCard(index, card, connectorId);
+        if (!thread?.threadId) continue;
+        const session = await loadAgentChatSession(projectId, connectorId, thread.threadId);
+        if (!session?.messages?.length) continue;
+        const connector = getConnectorById(connectorId);
+        return formatAgentChatTranscript(session.messages, {
+          projectName: stateProjectName,
+          connectorId,
+          connectorLabel: connector?.label ?? connectorId,
+          threadId: thread.threadId,
+          title: thread.title ?? session.title ?? card.name,
+          agentTemplateId: thread.agentTemplateId ?? null,
+          agentTypeLabel: thread.agentTypeLabel ?? null,
+          provider: thread.provider ?? connector?.provider ?? null,
+          model: thread.model ?? null,
+        });
+      }
+
+      return null;
+    },
+    [activeProjectIdRef, singleConnectorId, stateProjectName],
+  );
+
+  const defaultLoadFlowContextText = useCallback(async (card) => {
+    if (!card || card.type !== 'flow') return null;
+    const pinned = getPinnedVersion(card);
+    if (!pinned) return null;
+    const flowId = pinned.flowId ?? pinned.artifactRef?.id;
+    if (flowId) {
+      try {
+        const flow = await fetchFlow(flowId);
+        return formatFlowDiagramForAgent(
+          { title: flow.title, description: flow.description },
+          flow.nodes ?? [],
+          flow.edges ?? [],
+        );
+      } catch {
+        /* fall through to embedded preview */
+      }
+    }
+    if (pinned.flowPreview) {
+      const graph = flowGraphFromPreview(pinned.flowPreview);
+      return formatFlowDiagramForAgent(
+        { title: card.name, description: pinned.flowPreview.description },
+        graph.nodes,
+        graph.edges,
+      );
+    }
+    return null;
+  }, []);
+
+  const loadFlowContextText = useCallback(async (card) => {
+    if (flowContextLoaderRef.current) {
+      const custom = await flowContextLoaderRef.current(card);
+      if (custom != null) return custom;
+    }
+    return defaultLoadFlowContextText(card);
+  }, [defaultLoadFlowContextText]);
+
+  const registerFlowContextLoader = useCallback((loader) => {
+    flowContextLoaderRef.current = loader;
+  }, []);
+
   useEffect(() => {
     if (!agentPanelOpen || agentPanelMode !== 'single') {
       setAgentContextEstimates([]);
@@ -1232,6 +1607,8 @@ export function useAgentChatShell({
       try {
         const estimates = await estimateContextDocuments(cards, {
           folderHandle,
+          loadAgentChatText: loadAgentChatContextText,
+          loadFlowContextText,
           profile,
         });
         if (!cancelled) setAgentContextEstimates(estimates);
@@ -1250,6 +1627,8 @@ export function useAgentChatShell({
     agentExtendedContext,
     agentContextCards,
     folderHandle,
+    loadAgentChatContextText,
+    loadFlowContextText,
   ]);
 
   const contextDeliveryState = useMemo(() => {
@@ -1318,6 +1697,90 @@ export function useAgentChatShell({
     [removeCardFromSelection, requestThreadTranscriptSync, setSyncStatus],
   );
 
+  const handleApplyAgentTypeToActiveThread = useCallback(async () => {
+    const projectId = activeProjectIdRef.current;
+    const connectorId = singleConnectorId;
+    const thread = activeAgentThread;
+    const template = compatibleActiveAgentTemplate;
+    if (!projectId || !connectorId || !thread?.threadId || !template?.id) return;
+    if (thread.agentTemplateId === template.id) return;
+
+    const ok = window.confirm(
+      `Change Agent Type for this thread from ${thread.agentTypeLabel || defaultAgentTypeLabelForProvider(selectedConnectorProvider)} to ${template.label}? Future replies in this thread will use the new Agent Type.`,
+    );
+    if (!ok) return;
+
+    const at = Date.now();
+    const changeMsg = createAgentTypeChangeMessage({
+      fromThread: thread,
+      toTemplate: template,
+      at,
+      fromDefaultLabel: defaultAgentTypeLabelForProvider(selectedConnectorProvider),
+      toDefaultLabel: defaultAgentTypeLabelForProvider(selectedConnectorProvider),
+    });
+    const nextThread = applyAgentTypeToThread(thread, template);
+    const nextIndex = upsertThreadInIndex(agentChatThreadIndexRef.current, nextThread);
+    agentChatThreadIndexRef.current = nextIndex;
+    setAgentChatThreadIndex(nextIndex);
+    await saveThreadIndexLocal(projectId, connectorId, nextIndex, { awaitRemote: true });
+
+    const nextMessages = [...agentChatMessagesRef.current, changeMsg];
+    setAgentChatMessages(nextMessages);
+    await requestThreadTranscriptSync(nextMessages, { reason: 'agentTypeChange' });
+    setSyncStatus({ toast: `Agent Type changed to ${template.label} for this thread.` });
+    setTimeout(() => setSyncStatus(null), 3000);
+  }, [
+    compatibleActiveAgentTemplate,
+    activeAgentThread,
+    activeProjectIdRef,
+    singleConnectorId,
+    selectedConnectorProvider,
+    requestThreadTranscriptSync,
+    setSyncStatus,
+  ]);
+
+  const handleUseDefaultAgentTypeForActiveThread = useCallback(async () => {
+    const projectId = activeProjectIdRef.current;
+    const connectorId = singleConnectorId;
+    const thread = activeAgentThread;
+    const defaultLabel = defaultAgentTypeLabelForProvider(selectedConnectorProvider);
+    if (!projectId || !connectorId || !thread?.threadId) return;
+    if (!thread.agentTemplateId && !thread.provider && !thread.model) return;
+
+    const ok = window.confirm(
+      `Change Agent Type for this thread from ${thread.agentTypeLabel || defaultLabel} to ${defaultLabel}? Future replies in this thread will use the selected agent.`,
+    );
+    if (!ok) return;
+
+    const at = Date.now();
+    const changeMsg = createAgentTypeChangeMessage({
+      fromThread: thread,
+      toTemplate: null,
+      at,
+      fromDefaultLabel: defaultLabel,
+      toDefaultLabel: defaultLabel,
+    });
+    const nextThread = clearAgentTypeFromThread(thread);
+    const nextIndex = upsertThreadInIndex(agentChatThreadIndexRef.current, nextThread);
+    agentChatThreadIndexRef.current = nextIndex;
+    setAgentChatThreadIndex(nextIndex);
+    await saveThreadIndexLocal(projectId, connectorId, nextIndex, { awaitRemote: true });
+
+    const nextMessages = [...agentChatMessagesRef.current, changeMsg];
+    setAgentChatMessages(nextMessages);
+    await requestThreadTranscriptSync(nextMessages, { reason: 'agentTypeDefault' });
+    setActiveAgentTemplateId(null);
+    setSyncStatus({ toast: `Agent Type changed to ${defaultLabel} for this thread.` });
+    setTimeout(() => setSyncStatus(null), 3000);
+  }, [
+    activeAgentThread,
+    activeProjectIdRef,
+    singleConnectorId,
+    selectedConnectorProvider,
+    requestThreadTranscriptSync,
+    setSyncStatus,
+  ]);
+
   const handleAgentSendMessage = useCallback(
     async (payload) => {
       const { text, contextMode: mode, contextCards = [] } =
@@ -1337,7 +1800,43 @@ export function useAgentChatShell({
         return;
       }
 
-      const provider = getConnectorProvider(singleConnectorId);
+      if (!activeThreadAgentTypeCompatible) {
+        setAgentChatError(
+          strings.agent.threadAgentTypeIncompatible(
+            defaultAgentTypeLabelForProvider(selectedConnectorProvider),
+          ),
+        );
+        return;
+      }
+
+      const threadTemplate = threadAgentTemplate;
+      const hasThreadTemplate = Boolean(
+        threadTemplate?.id
+        && threadTemplate.provider === selectedConnectorProvider,
+      );
+      const selectedTemplate = compatibleActiveAgentTemplate;
+      const resolvedTemplateId =
+        threadTemplate?.id
+        ?? (!activeAgentThread?.agentTemplateId ? selectedTemplate?.id : null)
+        ?? selectedTemplate?.id
+        ?? null;
+      const resolvedAgentTypeLabel =
+        (hasThreadTemplate ? activeAgentThread?.agentTypeLabel : null)
+        || threadTemplate?.label
+        || selectedTemplate?.label
+        || null;
+      const resolvedProvider =
+        (hasThreadTemplate ? activeAgentThread?.provider : null)
+        || threadTemplate?.provider
+        || selectedTemplate?.provider
+        || selectedConnectorProvider;
+      const resolvedModel =
+        (hasThreadTemplate ? activeAgentThread?.model : null)
+        || threadTemplate?.model
+        || selectedTemplate?.model
+        || null;
+      const provider = resolvedProvider;
+      const connectorId = singleConnectorId;
       if (!provider) return;
 
       const registry = agentContextRegistryRef.current;
@@ -1355,6 +1854,8 @@ export function useAgentChatShell({
         if (diff.added.length) {
           const rawDocuments = await buildContextDocuments(diff.added, {
             folderHandle,
+            loadAgentChatText: loadAgentChatContextText,
+            loadFlowContextText,
             profile,
           });
           addDocuments = applyContextAddBudget(rawDocuments, profile);
@@ -1414,8 +1915,10 @@ export function useAgentChatShell({
         try {
           const estimate = await estimateAgentChat({
             provider,
+            connectorId,
             messages: historyForApi,
             systemContext,
+            templateId: resolvedTemplateId,
           });
           setAgentLastTokenEstimate(estimate);
           if (estimate.inputTokens > AGENT_TOKEN_CONFIRM_THRESHOLD) {
@@ -1433,8 +1936,10 @@ export function useAgentChatShell({
 
         const { reply } = await sendAgentChat({
           provider,
+          connectorId,
           messages: historyForApi,
           systemContext,
+          templateId: resolvedTemplateId,
         });
 
         for (const card of diff.added) {
@@ -1452,6 +1957,10 @@ export function useAgentChatShell({
           role: 'assistant',
           content: reply,
           at: Date.now(),
+          agentTemplateId: resolvedTemplateId,
+          agentTypeLabel: resolvedAgentTypeLabel,
+          provider,
+          model: resolvedModel,
         };
         const finalMessages = [
           ...agentChatMessages,
@@ -1497,10 +2006,16 @@ export function useAgentChatShell({
       }
     },
     [
+      compatibleActiveAgentTemplate,
+      activeAgentThread,
+      activeThreadAgentTypeCompatible,
+      threadAgentTemplate,
       agentPanelMode,
       singleConnectorId,
+      selectedConnectorProvider,
       agentChatMessages,
       folderHandle,
+      loadAgentChatContextText,
       agentExtendedContext,
       requestThreadTranscriptSync,
       stateRef,
@@ -1509,18 +2024,55 @@ export function useAgentChatShell({
   );
 
   const handleAgentChatCardActivate = useCallback(
-    (card) => {
-      if (!card || card.type !== 'agent_chat' || !singleConnectorId) return;
-      const thread = resolveThreadForCard(
-        agentChatThreadIndexRef.current,
-        card,
-        singleConnectorId,
-      );
-      if (!thread?.threadId) return;
+    async (card) => {
+      if (!card || card.type !== 'agent_chat') return;
+      const projectId = activeProjectIdRef.current;
+      if (!projectId) return;
+
+      let connectorId = singleConnectorId;
+      let index = agentChatThreadIndexRef.current;
+      let thread = connectorId
+        ? resolveThreadForCard(index, card, connectorId)
+        : null;
+
+      const inferredConnectorId = connectorIdFromAgentChatCard(card);
+      if (
+        (!thread?.threadId || inferredConnectorId !== connectorId)
+        && inferredConnectorId
+      ) {
+        connectorId = inferredConnectorId;
+        index = await loadThreadIndex(projectId, connectorId);
+        thread = resolveThreadForCard(index, card, connectorId);
+        if (thread?.threadId) {
+          setSingleConnectorId(connectorId);
+          singleConnectorIdRef.current = connectorId;
+          agentChatThreadIndexRef.current = index;
+          setAgentChatThreadIndex(index);
+        }
+      }
+
+      if (!thread?.threadId || !connectorId) return;
       setAgentPanelOpen(true);
-      void handleSelectAgentThread(thread.threadId);
+      if (connectorId === singleConnectorId) {
+        await handleSelectAgentThread(thread.threadId);
+        return;
+      }
+
+      const nextIndex = setActiveThreadInIndex(index, thread.threadId);
+      saveThreadIndexLocal(projectId, connectorId, nextIndex);
+      agentChatThreadIndexRef.current = nextIndex;
+      setAgentChatThreadIndex(nextIndex);
+      setActiveThreadId(thread.threadId);
+      setThreadPickerOpen(false);
+      await loadThreadSessionIntoState(projectId, connectorId, thread.threadId);
     },
-    [singleConnectorId, handleSelectAgentThread],
+    [
+      singleConnectorId,
+      singleConnectorIdRef,
+      activeProjectIdRef,
+      handleSelectAgentThread,
+      loadThreadSessionIntoState,
+    ],
   );
 
   const agentChatLiveCardId = useMemo(() => {
@@ -1558,13 +2110,28 @@ export function useAgentChatShell({
     agentPanelMode,
     setAgentPanelMode,
     singleConnectorId,
-    setSingleConnectorId,
+    setSingleConnectorId: handleSingleConnectorIdChange,
     agentConnectors,
+    agentTemplates,
+    activeAgentTemplateId,
+    activeAgentTemplate,
+    activeAgentThread,
+    threadAgentTemplate,
+    selectedAgentTypeDiffersFromThread,
+    activeThreadAgentTypeCompatible,
+    selectedThreadNeedsDefaultAgentType,
+    handleSelectAgentTemplate,
+    handleSaveAgentTemplate,
+    handleDeleteAgentTemplate,
+    handleImportMasterAgentTemplates,
+    handleApplyAgentTypeToActiveThread,
+    handleUseDefaultAgentTypeForActiveThread,
     agentSecretsConfigured,
     agentConnectorsOffline,
     agentOpenaiReachable,
     agentOpenaiReachabilityError,
     refreshAgentConnectors,
+    registerEmbeddedAgentPanelOpen,
     handleSaveAgentApiKey,
     apiKeySaving,
     handleClearAgentApiKey,
@@ -1609,7 +2176,6 @@ export function useAgentChatShell({
     handleDeleteAgentThread,
     handleRetryChatSync,
     handleClearAgentChat,
-    refreshAgentConnectors,
     handleRefreshContextSession,
     handleRemoveContextCard,
     handleAgentSendMessage,
@@ -1622,5 +2188,7 @@ export function useAgentChatShell({
     clusterMemberOptions,
     agentChatArtifactMetaRef,
     getContextLimits,
+    registerFlowContextLoader,
+    loadFlowContextText,
   };
 }

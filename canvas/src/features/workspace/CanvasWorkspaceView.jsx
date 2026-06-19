@@ -17,6 +17,7 @@ import {
 } from '../../lib/syncProjectionInvariants.js';
 import { SelectProjectPrompt } from '../../components/SelectProjectPrompt.jsx';
 import {
+  CANVAS_FIT_HORIZONTAL_PADDING_PX,
   clampCanvasZoom,
   canvasViewForCards,
   setViewZoomAtViewportCenter,
@@ -52,6 +53,8 @@ import { ProjectCreateNamePrompt } from '../../components/ProjectCreateNamePromp
 import { EmptyWorkspacePrompt } from '../../components/EmptyWorkspacePrompt.jsx';
 import { RightDock } from '../../components/RightDock.jsx';
 import { CreateClusterDialog } from '../../components/CreateClusterDialog.jsx';
+import { CreateFlowDialog } from '../flow/components/CreateFlowDialog.jsx';
+import { patchFlowCard } from '../flow/domain/flowDocument.js';
 
 const ARTIFACT_AUDIT_RETRY_MS = 500;
 const ARTIFACT_AUDIT_MAX_RETRIES = 10;
@@ -122,6 +125,7 @@ export function CanvasWorkspaceView({
     confirmChanges,
     setConfirmChanges,
     stagedSyncCards,
+    requestStructuralSync,
     applySyncChanges,
     resolveProjectConflictUseServer,
     resolveProjectConflictKeepLocal,
@@ -145,6 +149,7 @@ export function CanvasWorkspaceView({
     setCanvasViewportSize,
     savingNote,
     savingLink,
+    savingFlow,
     savingCardId,
     setCanvasView,
     fitCanvasViewToCards,
@@ -167,6 +172,8 @@ export function CanvasWorkspaceView({
     handleSaveNoteToProject,
     handleSaveNewNote,
     handleSaveNewLink,
+    handleSaveNewFlow,
+    handleFlowCardRefresh,
     removeCard,
     rehydratePreview,
   } = canvas;
@@ -211,6 +218,19 @@ export function CanvasWorkspaceView({
     singleConnectorId,
     setSingleConnectorId,
     agentConnectors,
+    agentTemplates,
+    activeAgentTemplateId,
+    activeAgentThread,
+    threadAgentTemplate,
+    selectedAgentTypeDiffersFromThread,
+    activeThreadAgentTypeCompatible,
+    selectedThreadNeedsDefaultAgentType,
+    handleSelectAgentTemplate,
+    handleSaveAgentTemplate,
+    handleDeleteAgentTemplate,
+    handleImportMasterAgentTemplates,
+    handleApplyAgentTypeToActiveThread,
+    handleUseDefaultAgentTypeForActiveThread,
     agentSecretsConfigured,
     agentConnectorsOffline,
     agentOpenaiReachable,
@@ -241,6 +261,7 @@ export function CanvasWorkspaceView({
     handleRetryChatSync,
     handleClearAgentChat,
     refreshAgentConnectors,
+    registerEmbeddedAgentPanelOpen,
     handleRemoveContextCard,
     activeThreadId,
     agentChatThreadIndex,
@@ -256,6 +277,7 @@ export function CanvasWorkspaceView({
     handleAgentChatCardActivate,
     agentChatLiveCardId,
     agentChatTranscriptRevision,
+    registerFlowContextLoader,
   } = agent;
 
   const primitiveSelectionIndex = useMemo(() =>
@@ -382,6 +404,7 @@ export function CanvasWorkspaceView({
     setCreateTaskOpen,
   } = dialogs;
   const isMobile = useIsMobile();
+  const [createFlowOpen, setCreateFlowOpen] = useState(false);
 
   const closeRightDock = useCallback(() => {
     closeWorkspaceTree();
@@ -439,6 +462,29 @@ export function CanvasWorkspaceView({
     return strings.empty.desktopHint;
   }, [folderNeedsReconnect, folderNeedsConnectUi, connectedFolderName]);
 
+  const rightDockOpen = workspaceTreeOpen || agentPanelOpen || inspectorOpen;
+  const sidePanelReservedWidth = useMemo(
+    () =>
+      rightDockOpen
+        ? Math.min(
+          RIGHT_DOCK_RESERVED_WIDTH_PX,
+          Math.max(0, canvasViewportSize.width - 320),
+        )
+        : 0,
+    [canvasViewportSize.width, rightDockOpen],
+  );
+
+  const handleResetCanvasView = useCallback(() => {
+    const fitOverrides =
+      sidePanelReservedWidth > 0
+        ? {
+            paddingRight:
+              CANVAS_FIT_HORIZONTAL_PADDING_PX + sidePanelReservedWidth,
+          }
+        : {};
+    fitCanvasViewToCards(filteredCards, fitOverrides);
+  }, [filteredCards, fitCanvasViewToCards, sidePanelReservedWidth]);
+
   const openCardOrExternalLink = useCallback((cardOrId) => {
     const card = typeof cardOrId === 'string'
       ? state.cards.find((candidate) => candidate.id === cardOrId)
@@ -485,6 +531,7 @@ export function CanvasWorkspaceView({
     attempt: 0,
   });
   const artifactAuditRetryTimerRef = useRef(null);
+  const artifactAuditSyncRequestRef = useRef('');
 
   useEffect(() => {
     if (!effectiveProjectId || !isServerSyncEnabled()) {
@@ -531,7 +578,23 @@ export function CanvasWorkspaceView({
           });
           return;
         }
-        const status = artifactCountAuditStatus(state.cards.length, counts);
+        const status = artifactCountAuditStatus(
+          { canvas: state.cards.length, dock: stagedSyncCards.length },
+          counts,
+        );
+        const syncRequestKey = `${signature}:${attempt}`;
+        if (status !== 'match' && artifactAuditSyncRequestRef.current !== syncRequestKey) {
+          artifactAuditSyncRequestRef.current = syncRequestKey;
+          if (typeof requestStructuralSync === 'function') {
+            void requestStructuralSync({
+              awaitLocal: true,
+              allowCleanupOverwrite: true,
+            });
+          }
+        }
+        if (status === 'match') {
+          artifactAuditSyncRequestRef.current = '';
+        }
         if (status !== 'match' && scheduleRetry()) {
           setArtifactCountAudit({
             projectId: effectiveProjectId,
@@ -556,19 +619,33 @@ export function CanvasWorkspaceView({
       .catch(() => {
         if (cancelled) return;
         if (scheduleRetry()) {
-          setArtifactCountAudit({
+          setArtifactCountAudit((prev) => ({
+            ...(prev?.projectId === effectiveProjectId ? prev : {}),
             projectId: effectiveProjectId,
             loading: true,
             syncing: true,
             status: 'unknown',
-          });
+          }));
           return;
         }
-        setArtifactCountAudit({
-          projectId: effectiveProjectId,
-          loading: false,
-          error: true,
-          status: 'unknown',
+        setArtifactCountAudit((prev) => {
+          if (
+            prev?.projectId === effectiveProjectId
+            && typeof prev.dbTotal === 'number'
+          ) {
+            return {
+              ...prev,
+              loading: false,
+              syncing: false,
+              error: false,
+            };
+          }
+          return {
+            projectId: effectiveProjectId,
+            loading: false,
+            error: true,
+            status: 'unknown',
+          };
         });
       });
     return () => {
@@ -583,6 +660,7 @@ export function CanvasWorkspaceView({
     state.cards.length,
     stagedSyncCards.length,
     artifactAuditRetry,
+    requestStructuralSync,
   ]);
 
   const visibleArtifactCountAudit =
@@ -740,9 +818,7 @@ export function CanvasWorkspaceView({
               setViewZoomAtViewportCenter(v, zoom, canvasViewportSize),
             );
           }}
-          onResetView={() => {
-            fitCanvasViewToCards(filteredCards);
-          }}
+          onResetView={handleResetCanvasView}
           syncStatus={syncStatus}
           syncLock={syncLock}
           onRefreshFromServer={undefined}
@@ -777,6 +853,7 @@ export function CanvasWorkspaceView({
           onChangeFolder={() => setChangeFolderDialog(true)}
           onNewNote={() => setNewNoteOpen(true)}
           onAddLink={() => setAddLinkOpen(true)}
+          onAddFlow={() => setCreateFlowOpen(true)}
           onImportFiles={importFilesToDock}
           onSync={() => {
             void handleSyncClick();
@@ -983,10 +1060,24 @@ export function CanvasWorkspaceView({
             singleConnectorId,
             onSingleConnectorChange: setSingleConnectorId,
             connectors: agentConnectors,
+            agentTemplates,
+            activeAgentTemplateId,
+            activeAgentThread,
+            threadAgentTemplate,
+            selectedAgentTypeDiffersFromThread,
+            activeThreadAgentTypeCompatible,
+            selectedThreadNeedsDefaultAgentType,
+            onAgentTemplateChange: handleSelectAgentTemplate,
+            onSaveAgentTemplate: handleSaveAgentTemplate,
+            onDeleteAgentTemplate: handleDeleteAgentTemplate,
+            onImportMasterAgentTemplates: handleImportMasterAgentTemplates,
+            onApplyAgentTypeToActiveThread: handleApplyAgentTypeToActiveThread,
+            onUseDefaultAgentTypeForActiveThread: handleUseDefaultAgentTypeForActiveThread,
             secretsConfigured: agentSecretsConfigured,
             connectorsOffline: agentConnectorsOffline,
             openaiReachable: agentOpenaiReachable,
             openaiReachabilityError: agentOpenaiReachabilityError,
+            onRetryConnectors: refreshAgentConnectors,
             onSaveApiKey: handleSaveAgentApiKey,
             apiKeySaving,
             onClearApiKey: handleClearAgentApiKey,
@@ -1088,6 +1179,22 @@ export function CanvasWorkspaceView({
         />
       )}
 
+      {createFlowOpen && (
+        <CreateFlowDialog
+          saving={savingFlow}
+          onClose={() => setCreateFlowOpen(false)}
+          onSave={async (values) => {
+            const view = state.canvasView ?? { x: 0, y: 0, zoom: 1 };
+            const position = {
+              x: (canvasViewportSize.width / 2 - view.x) / view.zoom - 180,
+              y: (canvasViewportSize.height / 2 - view.y) / view.zoom - 120,
+            };
+            const card = await handleSaveNewFlow({ ...values, position });
+            if (card) setCreateFlowOpen(false);
+          }}
+        />
+      )}
+
       {createClusterOpen && (
         <CreateClusterDialog
           onClose={() => setCreateClusterOpen(false)}
@@ -1134,18 +1241,40 @@ export function CanvasWorkspaceView({
           }}
           onGraphRefresh={refreshGraph}
           onSaveStatus={handleNoteSaveStatus}
+          flowArtifactCandidates={state.cards}
+          onFlowCardRefresh={(flow, nodes, edges) => {
+            const updates = patchFlowCard(openCard, flow, nodes, edges);
+            void handleFlowCardRefresh(openCard.id, updates);
+          }}
+          onRehydratePreview={rehydratePreview}
           agentPanelProps={{
             panelMode: 'single',
             panelModeLocked: true,
             contextScope: 'artifact',
             onOpen: refreshAgentConnectors,
+            onRetryConnectors: refreshAgentConnectors,
+            registerEmbeddedAgentPanelOpen,
             singleConnectorId,
             onSingleConnectorChange: setSingleConnectorId,
             connectors: agentConnectors,
+            agentTemplates,
+            activeAgentTemplateId,
+            activeAgentThread,
+            threadAgentTemplate,
+            selectedAgentTypeDiffersFromThread,
+            activeThreadAgentTypeCompatible,
+            selectedThreadNeedsDefaultAgentType,
+            onAgentTemplateChange: handleSelectAgentTemplate,
+            onSaveAgentTemplate: handleSaveAgentTemplate,
+            onDeleteAgentTemplate: handleDeleteAgentTemplate,
+            onImportMasterAgentTemplates: handleImportMasterAgentTemplates,
+            onApplyAgentTypeToActiveThread: handleApplyAgentTypeToActiveThread,
+            onUseDefaultAgentTypeForActiveThread: handleUseDefaultAgentTypeForActiveThread,
             secretsConfigured: agentSecretsConfigured,
             connectorsOffline: agentConnectorsOffline,
             openaiReachable: agentOpenaiReachable,
             openaiReachabilityError: agentOpenaiReachabilityError,
+            onRetryConnectors: refreshAgentConnectors,
             onSaveApiKey: handleSaveAgentApiKey,
             apiKeySaving,
             onClearApiKey: handleClearAgentApiKey,
@@ -1201,6 +1330,7 @@ export function CanvasWorkspaceView({
             onRenameThread: handleRenameAgentThread,
             onSwitchThread: handleSwitchAgentThread,
             onDeleteThread: handleDeleteAgentThread,
+            registerFlowContextLoader,
           }}
         />
       )}

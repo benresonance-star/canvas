@@ -186,4 +186,83 @@ describe('pushProjectPatchIfEnabled', () => {
       ),
     ).toBe(true);
   });
+
+  it('retries cleanup removals instead of adopting larger server payload', async () => {
+    const { patchCanvasProject } = await import('../canvasProjectsApi.js');
+    const { setCommittedPayloadForTests } = await import('../projectDocumentCommit.js');
+    const { writeLocalProjectSerialised } = await import('../sync/projectSyncLocal.js');
+    const { pushProjectPatchIfEnabled } = await import(
+      '../sync/projectSyncPatch.js'
+    );
+
+    const before = {
+      projectName: 'P',
+      cards: [
+        { id: 'keep-card', key: 'notes__keep', type: 'markdown', versions: [] },
+        {
+          id: 'stale-card',
+          key: 'notes__agent-chat-openai-stale',
+          type: 'agent_chat',
+          versions: [{ filename: 'notes__agent-chat-openai-stale-v1.md' }],
+        },
+      ],
+      stagedSyncCards: [],
+      artifactPlacements: {
+        notes__keep: { surface: 'canvas', ref: { id: 'keep-card', key: 'notes__keep' } },
+        'notes__agent-chat-openai-stale': {
+          surface: 'canvas',
+          ref: { id: 'stale-card', key: 'notes__agent-chat-openai-stale' },
+        },
+      },
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    const after = {
+      ...before,
+      cards: [before.cards[0]],
+      artifactPlacements: {
+        notes__keep: before.artifactPlacements.notes__keep,
+      },
+    };
+    setCommittedPayloadForTests('p-cleanup-conflict', before);
+    patchCanvasProject
+      .mockResolvedValueOnce({
+        ok: false,
+        conflict: true,
+        revision: 2,
+        updatedAt: '2025-06-15T00:00:10.000Z',
+        payload: before,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        revision: 3,
+        updatedAt: '2025-06-15T00:00:11.000Z',
+      });
+
+    const result = await pushProjectPatchIfEnabled(
+      'p-cleanup-conflict',
+      after,
+      'structuralChange',
+      before,
+      null,
+      false,
+      false,
+      true,
+    );
+
+    expect(result?.ok).toBe(true);
+    expect(patchCanvasProject).toHaveBeenCalledTimes(2);
+    expect(writeLocalProjectSerialised).toHaveBeenLastCalledWith(
+      'p-cleanup-conflict',
+      expect.stringContaining('"keep-card"'),
+    );
+    expect(writeLocalProjectSerialised).not.toHaveBeenCalledWith(
+      'p-cleanup-conflict',
+      expect.stringContaining('"stale-card"'),
+    );
+    expect(
+      patchCanvasProject.mock.calls[1][1].ops.some((op) =>
+        op.op === 'removeCard' && op.id === 'stale-card',
+      ),
+    ).toBe(true);
+  });
 });

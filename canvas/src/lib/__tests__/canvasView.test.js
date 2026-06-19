@@ -12,7 +12,6 @@ import {
   desktopChromeExclusionZones,
   canvasViewForCards,
   shouldAutoFitCanvasOnLoad,
-  computeCardsWorldBounds,
   fitCanvasViewToExtent,
   isPointInRect,
   parseZoomPercentInput,

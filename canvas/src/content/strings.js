@@ -27,13 +27,13 @@ export const strings = {
     nothingNew: 'Nothing new to sync',
     previewsRestored: 'Previews restored from folder',
     folderUnsupported: 'Folder access not supported in this browser. Use Chrome, Edge, or Arc.',
-    reconnectFolder: 'Repair folder access and refresh the canvas',
-    reconnectFolderAction: 'Repair folder',
+    reconnectFolder: 'Restore folder link and refresh the canvas',
+    reconnectFolderAction: 'Restore folder link',
     reconnectFolderHint:
-      'Your project folder is remembered. Repair folder to allow access again and refresh artefacts from disk.',
+      'Your project folder is remembered. Restore the folder link to allow access again and refresh artefacts from disk.',
     reconnectFolderNamed: (name) =>
-      `Repair access to “${name}” and refresh artefacts from disk. Choose “Allow on every visit” in Chrome to avoid prompts when switching projects.`,
-    repairFolderInProgress: 'Repairing folder access and refreshing artefacts…',
+      `Restore the link to “${name}” and refresh artefacts from disk. Choose “Allow on every visit” in Chrome to avoid prompts when switching projects.`,
+    repairFolderInProgress: 'Restoring folder link and refreshing artefacts…',
     repairFolderPickAgain:
       'Stored folder access could not be reused. Pick the folder again to repair and keep artefacts.',
     connectFolderNamed: (name) =>
@@ -218,7 +218,7 @@ export const strings = {
       `Restored ${n} project${n === 1 ? '' : 's'} from this browser and synced to server.`,
     purgedOrphanCaches: (n) =>
       `Removed ${n} unsynced project cache file${n === 1 ? '' : 's'} not in your workspace list.`,
-    syncedFromServer: (n) =>
+    syncedProjectsFromServer: (n) =>
       `${n} project${n === 1 ? '' : 's'} synced from server into this workspace.`,
     duplicateNamesBanner: (name, count) =>
       `${count} projects named “${name}” — review in the Projects menu.`,
@@ -324,6 +324,41 @@ export const strings = {
     empty: 'No other artifacts on the canvas with a synced artifact ref.',
     link: 'Link',
   },
+  flow: {
+    inspectorConnection: 'Connection',
+    connectionFrom: 'From',
+    connectionTo: 'To',
+    connectionFlowsFrom: 'Flows from',
+    connectionFlowsTo: 'Flows to',
+    connectionFlow: 'Animate flow',
+    connectionFlowHint: 'Shows a moving dashed stroke along the connection.',
+    reverseDirection: 'Reverse direction',
+    reverseDirectionHint: 'Flip which way this connection flows.',
+    removeConnection: 'Remove connection',
+    removeNode: 'Remove node',
+    connectionHint: 'Select a connection, then press Delete or use the button above.',
+    connectionType: 'Connection type',
+    connectionTypeCustom: 'Custom label',
+    connectionTypeDetail: 'Detail',
+    connectionTypeDetailPlaceholder: 'e.g. Love',
+    connectionLabelPreview: (label) => `Label: ${label}`,
+    connectionTypeUnspecified: 'Unspecified',
+    connectionProperties: 'Properties',
+    connectionPropertiesEmpty: 'No properties yet.',
+    connectionPropertyKey: 'Key',
+    connectionPropertyValue: 'Value',
+    connectionAddProperty: 'Add property',
+    connectionRemoveProperty: 'Remove property',
+    nodeHint: 'Select a node, then press Delete or use the button above.',
+    connectionRemoved: 'Connection removed.',
+    selectNodeOrConnection: 'Select a node or connection to inspect it.',
+    collapseInspector: 'Hide inspector',
+    expandInspector: 'Show inspector',
+    showContent: 'Show content',
+    hideContent: 'Hide content',
+    previewUnavailable: 'Source artifact is no longer on the canvas.',
+    localPreviewEmpty: 'No description to preview.',
+  },
   graph: {
     linked: 'Linked',
     outgoing: 'Links to',
@@ -418,6 +453,12 @@ export const strings = {
       'Server cannot store keys. Restart the API (npm run server) so it can create canvas/.data/agent-master.key.',
     credentialNotUsable:
       'A saved key exists but cannot be unlocked. Use Replace in the menu below and save your API key again.',
+    localAgentReady: 'Local Ollama agent is ready.',
+    localAgentUnavailable:
+      'Start Ollama on localhost:11434 and pull the selected model before chatting.',
+    retryConnectors: 'Retry connection',
+    threadAgentTypeIncompatible: (label) =>
+      `Change this thread to ${label} before chatting with the selected agent.`,
     threadsActiveLabel: 'Active thread',
     threadsHeading: 'Threads',
     threadsNew: 'New thread',
@@ -450,6 +491,12 @@ export const strings = {
     contextSelectedEmptyShift: 'Shift+click cards to multi-select',
     contextArtifact: 'This artifact',
     contextArtifactHint: 'Agent context is locked to the open artifact.',
+    contextFlow: 'This workflow',
+    contextFlowHint: 'Select nodes in the flow editor to scope the diagram. Artifact nodes in scope are sent as file context.',
+    contextFlowIncludeNetwork: 'Include connected network',
+    contextFlowSelectionSummary: (nodes, edges) => `${nodes} node${nodes === 1 ? '' : 's'}, ${edges} connection${edges === 1 ? '' : 's'}`,
+    contextFlowFullDiagram: 'Full diagram (no nodes selected)',
+    askAboutFlow: 'Discuss workflow with Agent',
     contextListHeading: 'In context',
     contextRemoveItem: 'Remove from context',
     contextIncluded: 'included',
@@ -481,9 +528,15 @@ export const strings = {
       'Chat saved locally; transcript could not sync to workspace (API offline).',
     agentChatTranscriptIngestFailed:
       'Chat saved locally; transcript could not sync to workspace (check API server logs).',
+    agentChatTranscriptFolderWriteFailed:
+      'Chat saved to workspace, but the linked folder denied write access. Reconnect the folder and retry sync.',
+    agentChatTranscriptFolderWriteDenied:
+      'Could not write chat transcript to the linked folder. Re-grant folder write access and retry sync.',
     agentChatRetrySync: 'Retry workspace sync',
     agentChatRetrySuccess: 'Chat transcript synced to workspace.',
     agentChatRetryFailed: 'Workspace sync still failed. Check API server and Postgres.',
+    agentChatRetryFolderFailed:
+      'Folder export still failed. Reconnect the project folder and grant write access.',
     contextNeedsFolder: 'needs folder',
     contextNoContent: 'no content',
     contextReconnectFolder:

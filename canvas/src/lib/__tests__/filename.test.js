@@ -4,7 +4,10 @@ import {
   cardTypeLabel,
   cardHeaderPrefix,
   cardHeaderLabel,
+  cardExtensionLabel,
+  cardDisplayFilename,
   isTextMarkdownPreviewType,
+  isCodePreviewType,
   cardKeyFromFilename,
   folderKeyFromRelativePath,
   toCanonicalSyncKey,
@@ -76,6 +79,23 @@ describe('fileTypeFromExt audio', () => {
   });
 });
 
+describe('fileTypeFromExt code', () => {
+  it('maps TypeScript and JavaScript extensions to code', () => {
+    for (const ext of ['ts', 'tsx', 'js', 'jsx']) {
+      expect(fileTypeFromExt(ext)).toBe('code');
+    }
+  });
+
+  it('labels code cards', () => {
+    expect(cardTypeLabel('code')).toBe('CODE');
+  });
+
+  it('detects code preview types separately from markdown', () => {
+    expect(isCodePreviewType('code')).toBe(true);
+    expect(isTextMarkdownPreviewType('code')).toBe(false);
+  });
+});
+
 describe('isTextMarkdownPreviewType', () => {
   it('includes markdown, note, and agent_chat', () => {
     expect(isTextMarkdownPreviewType('markdown')).toBe(true);
@@ -99,10 +119,23 @@ describe('isTextMarkdownPreviewType', () => {
     expect(cardHeaderPrefix({ type: 'user_note', prefix: 'notes' })).toBe('notes');
   });
 
-  it('cardHeaderLabel shows THREAD | CHAT for agent_chat', () => {
+  it('cardHeaderLabel shows THREAD | CHAT for agent_chat without extension metadata', () => {
     expect(
       cardHeaderLabel({ type: 'agent_chat', prefix: 'notes' }),
     ).toBe('thread | CHAT');
+  });
+
+  it('cardHeaderLabel omits file extension from header', () => {
+    const card = {
+      type: 'code',
+      prefix: 'general',
+      name: 'agent',
+      pinnedVersion: 1,
+      versions: [{ version: 1, filename: 'general__agent-v1.ts' }],
+    };
+    expect(cardExtensionLabel(card)).toBe('TS');
+    expect(cardHeaderLabel(card)).toBe('general | CODE');
+    expect(cardDisplayFilename(card)).toBe('agent.ts');
   });
 });
 
@@ -134,6 +167,16 @@ describe('resolveLoadedCardType', () => {
         key: 'markdown__readme',
       }),
     ).toBe('markdown');
+  });
+
+  it('migrates legacy file rows with TypeScript versions to code', () => {
+    expect(
+      resolveLoadedCardType({
+        type: 'file',
+        key: 'src__example',
+        versions: [{ filename: 'src__example-v1.ts' }],
+      }),
+    ).toBe('code');
   });
 });
 

@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.06.18.3
-**Version label:** folder-missing-artifact-alerts
+**Version:** 2026.06.19.1
+**Version label:** flow-artifacts-ollama-agent-templates
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -119,6 +119,11 @@ Extracted from `App.jsx` to reduce the god-component. Each hook owns effects + c
 - `useProjectSyncLifecycle.js` — boot, background sync, load/switch
 - `useFolderLinkScan.js` — folder handle, scan, restore
 - `useAgentChatShell.js` — agent panel orchestration
+
+**Done (flow editor):**
+- `features/flow/hooks/useFlowDocument.js` — flow load/save, revision CAS, SSE apply
+- `features/flow/hooks/useFlowAgentContext.js` — agent context from flow nodes/edges
+- `features/flow/hooks/useFlowAgentChatPreviewContext.js` — flow preview in agent chat
 
 **Done (Phase 1b):**
 - `useClusterContext.js` — cluster/inspector/graph, hulls, card selection
@@ -523,6 +528,89 @@ Cleanup rules:
 - `GET /bookmarks/embed` can serve same-origin proxied HTML for editor preview surfaces that need embeddable page content.
 - Canvas bookmark/link open behavior is external: double-clicking a bookmark card opens the pinned `externalUrl` in a new browser tab/window and does not open `CardModal` full-screen preview.
 
+### Flow artifacts (shipped)
+
+Flow cards are a separate artifact type (`flow`) with their own revisioned Postgres document, distinct from the project canvas layout JSON.
+
+Tables (`server/migrations/0014_flow_artifacts.sql`):
+
+- `flow_document` — title, description, viewport, revision CAS, optional `snapshot_path`
+- `flow_node` — `artifact` nodes (linked primitive) or `local` nodes (inline title/description)
+- `flow_edge` — directed connections with typed presentation metadata
+
+API (`server/routes/flows.js`):
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/projects/:projectId/flows` | Create flow artifact + document |
+| GET | `/flows/:flowId` | Fetch full flow snapshot |
+| PUT | `/flows/:flowId` | Replace snapshot with `expectedRevision` CAS (409 on conflict) |
+| DELETE | `/flows/:flowId` | Delete flow |
+| GET | `/flows/:flowId/stream` | SSE `flow_created` / `flow_updated` / `flow_deleted` |
+
+Client (`src/features/flow/`):
+
+- `FlowEditor.jsx` — `@xyflow/react` editor; artifact nodes embed live `CardPreview`
+- `FlowPreview.jsx` — compact canvas-card preview from `flowPreview` snapshot on pinned version
+- `useFlowDocument.js` — load, dirty tracking, debounced save, SSE apply with `clientId` skip
+- `flowSnapshot.js` — optional linked-folder snapshot file at `flows/<flowId>.json`
+- Flow cards on the main canvas use the `flow` card type; opening the modal launches the flow editor
+
+Rules:
+
+- Flow layout authority is `flow_document` + nodes/edges tables, not `canvas_project_document` cards layout
+- Artifact nodes reference existing primitive `artifact_id`; local nodes are flow-local only
+- Edge connection types and custom labels live in edge `presentation` JSON (`flowConnectionTypes.js`)
+- Agent context can include selected flow nodes via `useFlowAgentContext`
+
+### Agent templates (shipped)
+
+Database-backed agent definitions replace ad-hoc connector config for reusable multi-file agents.
+
+Tables (`server/migrations/0013_agent_templates.sql`):
+
+- `agent_template` — label, provider, model, enabled, compiled JSON, revision CAS
+- `agent_template_file` — `instructions`, `model`, `skill`, or `tool` file parts with parsed metadata
+
+API (`server/routes/agentTemplates.js`):
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/agent/templates` | List templates |
+| GET | `/agent/templates/:templateId` | Fetch one template + files |
+| POST | `/agent/templates` | Create template |
+| PUT | `/agent/templates/:templateId` | Update with `expectedRevision` CAS |
+| DELETE | `/agent/templates/:templateId` | Delete template |
+| POST | `/agent/templates/import-master` | Import `Agent - *` folders from `Canvas Master Files/` |
+
+Shared parsing lives in `src/lib/agentTemplates.js` (frontmatter, file-kind detection, tool allowlist). Template file kinds map to `instructions/`, `models/`, `skills/`, and `tools/` paths.
+
+### Multi-provider agent chat (shipped)
+
+`server/services/agentChatProvider.js` routes chat completion by provider:
+
+- **openai** — existing `openaiChat.js`; requires stored API credential
+- **ollama** — `ollamaChat.js` against `http://localhost:11434/api/chat`; no API key
+
+Connectors (`server/lib/agentConnectors.js`, mirrored client-side):
+
+| Connector id | Label | Provider | Model |
+|--------------|-------|----------|-------|
+| `openai` | ChatGPT | openai | gpt-4o-mini |
+| `ollama-gemma-12b` | Gemma 12B Local | ollama | gemma4:12b |
+| `ollama-gemma-26b` | Gemma 26B Local | ollama | gemma4:26b |
+
+Ollama availability is probed at runtime; 26B remains disabled until the model is pulled. Canvas context messages are folded into the latest user turn for Ollama text-only chat.
+
+### Code file previews (shipped)
+
+Source-code artifacts (`code` card type and extensions resolved by `isCodePreviewType`) render syntax-highlighted previews:
+
+- `src/lib/codeHighlight.js` — `highlight.js` wrapper; resolves language from extension/filename
+- `src/components/CodePreviewFrame.jsx` — compact and full-size highlighted `<pre>` used by `CardPreview` and `ModalContent`
+
+Supported extensions include `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs` (mapped to JavaScript/TypeScript grammars). Unknown languages fall back to escaped plain text.
+
 ### Phase 3 (partial): Postgres spec tables and dual-write
 
 Implemented by `server/migrations/0010_spec_data_plane.sql`:
@@ -649,7 +737,9 @@ Until layout is fully authoritative in `spec_canvas_state`, the client keeps `ca
 | `routes/clusters.js` | `/clusters/*`, `DELETE /projects/:projectId/artifacts/:artifactId` |
 | `routes/artifacts.js` | `/artifacts/*`, `/bookmarks/preview`, `/bookmarks/embed` |
 | `routes/primitives.js` | `/primitives/*`, `/relationships/*`, `/notes/*`, `/assertions/*`, `/tasks/*`, `/workspace/primitives`, `/workspace/events` |
-| `routes/agent.js` | `/agent/*` |
+| `routes/agent.js` | `/agent/chat`, provider-aware completion |
+| `routes/agentTemplates.js` | `/agent/templates/*` |
+| `routes/flows.js` | `/projects/:projectId/flows`, `/flows/:flowId`, `/flows/:flowId/stream` |
 
 `server/index.js` — middleware, DB init, route registration, listen only.
 
@@ -929,6 +1019,14 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-06-19 — Flow artifacts, Ollama agents, templates, and code previews (implemented)
+
+- Bumped the active spec to `2026.06.19.1`.
+- Added revisioned flow artifacts (`flow_document`, `flow_node`, `flow_edge`) with REST + per-flow SSE, `@xyflow/react` editor under `src/features/flow/`, and `flow` canvas cards with compact `FlowPreview`.
+- Added database-backed agent templates (`agent_template`, `agent_template_file`) with CRUD routes and optional `Canvas Master Files/` import.
+- Added multi-provider agent chat via `agentChatProvider.js`: OpenAI (credential required) and Ollama local Gemma 12B/26B connectors.
+- Added syntax-highlighted code previews (`codeHighlight.js`, `CodePreviewFrame`) for `code` card types in canvas and modal surfaces.
 
 ### 2026-06-18 — Folder missing artifact alerts (implemented)
 

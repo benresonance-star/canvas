@@ -265,6 +265,117 @@ html[data-theme='blue'] {
   font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
 }
 
+/* React Flow is scoped to flow artifacts; these mappings make its chrome a
+   native part of Canvas across every existing theme. */
+.react-flow {
+  --xy-background-color: var(--color-canvas);
+  --xy-node-color: var(--color-primary);
+  --xy-node-background-color: var(--color-surface);
+  --xy-node-border: 1px solid var(--color-border);
+  --xy-edge-stroke: var(--color-muted);
+  --xy-edge-stroke-selected: var(--color-accent);
+  --xy-minimap-background-color: var(--color-surface);
+  --xy-controls-button-background-color: var(--color-surface);
+  --xy-controls-button-background-color-hover: var(--color-surface-muted);
+  --xy-controls-button-color: var(--color-primary);
+  --xy-controls-button-border-color: var(--color-border);
+  background: var(--color-canvas);
+}
+
+.react-flow__controls,
+.react-flow__minimap {
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  box-shadow: 0 10px 24px rgb(0 0 0 / 0.12);
+}
+
+.react-flow__node:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+@keyframes flow-preview-dashdraw {
+  from {
+    stroke-dashoffset: 10;
+  }
+}
+
+.flow-preview-edge--animated {
+  stroke-dasharray: 5;
+  animation: flow-preview-dashdraw 0.5s linear infinite;
+}
+
+.flow-preview-edge--animated.flow-preview-edge--reverse {
+  animation-direction: reverse;
+}
+
+.react-flow__edge.flow-edge-reverse.animated path:not(.react-flow__edge-interaction) {
+  animation-direction: reverse;
+}
+
+.react-flow__node.flow-node-agent-scope {
+  box-shadow: 0 0 0 2px var(--color-accent);
+  border-radius: 0.5rem;
+}
+
+.react-flow__edge-textwrapper text {
+  fill: var(--color-primary);
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 10px;
+}
+
+.react-flow__edge-textbg {
+  fill: var(--color-surface);
+  fill-opacity: 0.92;
+}
+
+.code-highlight {
+  color: var(--color-secondary);
+}
+
+.code-highlight .hljs-keyword,
+.code-highlight .hljs-selector-tag {
+  color: var(--color-accent);
+}
+
+.code-highlight .hljs-title,
+.code-highlight .hljs-title.function_,
+.code-highlight .hljs-title.class_,
+.code-highlight .hljs-attr,
+.code-highlight .hljs-property {
+  color: var(--color-link);
+}
+
+.code-highlight .hljs-string,
+.code-highlight .hljs-regexp,
+.code-highlight .hljs-template-variable {
+  color: var(--color-success);
+}
+
+.code-highlight .hljs-number,
+.code-highlight .hljs-literal,
+.code-highlight .hljs-symbol {
+  color: var(--color-warning);
+}
+
+.code-highlight .hljs-built_in,
+.code-highlight .hljs-type,
+.code-highlight .hljs-variable.language_ {
+  color: var(--color-danger);
+}
+
+.code-highlight .hljs-comment,
+.code-highlight .hljs-quote {
+  color: var(--color-muted);
+  font-style: italic;
+}
+
+.code-highlight .hljs-meta,
+.code-highlight .hljs-doctag {
+  color: var(--color-muted);
+}
+
 .canvas-bg {
   background-color: var(--color-canvas);
   background-image: radial-gradient(circle, var(--dot-grid) 1px, transparent 1px);

@@ -23,6 +23,7 @@ const ARTIFACT_TYPE_COLORS = {
   transcript: '#a855f7',
   user_note: '#eab308',
   agent_chat: '#0ea5e9',
+  flow: '#b45309',
   other: '#64748b',
 };
 

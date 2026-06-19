@@ -1,5 +1,6 @@
 import { sha256HexFromString } from './ingest/hashFile.js';
 import {
+  ensureWritePermission,
   getFileHandleAtPath,
   writeTextFileToFolder,
   overwriteUserNoteFile,
@@ -55,7 +56,7 @@ export function parseAgentChatTranscript(markdown) {
 
   {
     const headerPattern =
-      /^\[(\d{2}:\d{2}:\d{2})\]\s+(Context: sent to AI|Context: removed|User|Assistant)(?::)?(?:\s+(?:\u2014|â€”)\s+(.+?))?\s*$/gm;
+      /^\[(\d{2}:\d{2}:\d{2})\]\s+(Context: sent to AI|Context: removed|Agent Type changed|User|Assistant)(?::)?(?:\s+(?:\u2014|â€”)\s+(.+?))?\s*$/gm;
     const headers = [...body.matchAll(headerPattern)];
     if (headers.length > 0) {
       const parsedMessages = [];
@@ -115,13 +116,31 @@ export function parseAgentChatTranscript(markdown) {
           continue;
         }
 
+        if (type === 'Agent Type changed') {
+          const at = parseTranscriptTime(timeStr, fallbackAt);
+          fallbackAt = at + 1;
+          const [fromAgentTypeLabel, toAgentTypeLabel] = (inlineValue || rest)
+            .split(/\s*(?:->|→)\s*/);
+          parsedMessages.push({
+            id: nextParseId('agent-type'),
+            role: 'system',
+            kind: 'agent_type_change',
+            fromAgentTypeLabel: fromAgentTypeLabel || 'Default ChatGPT agent',
+            toAgentTypeLabel: toAgentTypeLabel || 'Default ChatGPT agent',
+            at,
+          });
+          continue;
+        }
+
         if (type === 'Assistant') {
           const at = parseTranscriptTime(timeStr, fallbackAt);
           fallbackAt = at + 1;
+          const attribution = inlineValue ? parseAgentAttribution(inlineValue) : {};
           parsedMessages.push({
             id: nextParseId('a'),
             role: 'assistant',
             content: rest,
+            ...attribution,
             at,
           });
         }
@@ -192,6 +211,23 @@ export function parseAgentChatTranscript(markdown) {
       continue;
     }
 
+    const changeMatch = header.match(/^\[(\d{2}:\d{2}:\d{2})\] Agent Type changed — (.+)$/);
+    if (changeMatch) {
+      const at = parseTranscriptTime(changeMatch[1], fallbackAt);
+      fallbackAt = at + 1;
+      const [fromAgentTypeLabel, toAgentTypeLabel] = changeMatch[2]
+        .split(/\s*(?:->|→)\s*/);
+      messages.push({
+        id: nextParseId('agent-type'),
+        role: 'system',
+        kind: 'agent_type_change',
+        fromAgentTypeLabel: fromAgentTypeLabel || 'Default ChatGPT agent',
+        toAgentTypeLabel: toAgentTypeLabel || 'Default ChatGPT agent',
+        at,
+      });
+      continue;
+    }
+
     const assistantMatch = header.match(/^\[(\d{2}:\d{2}:\d{2})\] Assistant:$/);
     if (assistantMatch) {
       const at = parseTranscriptTime(assistantMatch[1], fallbackAt);
@@ -206,6 +242,29 @@ export function parseAgentChatTranscript(markdown) {
   }
 
   return messages;
+}
+
+function formatAgentAttribution(message) {
+  const label = message.agentTypeLabel || message.agentTemplateId;
+  if (!label) return '';
+  const model = message.model?.includes('/')
+    ? message.model
+    : message.model
+      ? `${message.provider || 'provider'}/${message.model}`
+      : '';
+  return model ? `${label} · ${model}` : label;
+}
+
+function parseAgentAttribution(value) {
+  const [label, modelRef] = String(value).split(' · ');
+  const attribution = {};
+  if (label) attribution.agentTypeLabel = label.trim();
+  if (modelRef?.includes('/')) {
+    const [provider, model] = modelRef.split('/');
+    attribution.provider = provider?.trim() || null;
+    attribution.model = model?.trim() || null;
+  }
+  return attribution;
 }
 
 /**
@@ -265,9 +324,15 @@ function formatMessageLine(message) {
     const labels = message.labels?.join(', ') || 'files';
     return `[${time}] Context: removed — ${labels}`;
   }
+  if (message.kind === 'agent_type_change') {
+    const fromLabel = message.fromAgentTypeLabel || 'Default ChatGPT agent';
+    const toLabel = message.toAgentTypeLabel || 'Default ChatGPT agent';
+    return `[${time}] Agent Type changed — ${fromLabel} -> ${toLabel}`;
+  }
   if (message.role === 'assistant') {
     const body = String(message.content ?? '').trim();
-    return `[${time}] Assistant:\n${body}`;
+    const attribution = formatAgentAttribution(message);
+    return `[${time}] Assistant:${attribution ? ` — ${attribution}` : ''}\n${body}`;
   }
   const body = String(message.content ?? '').trim();
   return `[${time}] User:\n${body}`;
@@ -275,10 +340,21 @@ function formatMessageLine(message) {
 
 /**
  * @param {object[]} messages
- * @param {{ projectName?: string, connectorId: string, connectorLabel?: string, threadId?: string, title?: string }} meta
+ * @param {{ projectName?: string, connectorId: string, connectorLabel?: string, threadId?: string, title?: string, agentTemplateId?: string | null, agentTypeLabel?: string | null, provider?: string | null, model?: string | null }} meta
  */
 export function formatAgentChatTranscript(messages, meta) {
-  const { projectName, connectorId, connectorLabel, threadId, title } = meta;
+  const {
+    projectName,
+    connectorId,
+    connectorLabel,
+    threadId,
+    title,
+    agentTemplateId,
+    agentTypeLabel,
+    provider,
+    model,
+  } = meta;
+  const headerAgentType = agentTypeLabel || agentTemplateId;
   const updated = new Date().toISOString();
   const header = [
     '# Agent chat transcript',
@@ -287,6 +363,7 @@ export function formatAgentChatTranscript(messages, meta) {
     `- **Connector:** ${connectorLabel || connectorId}`,
     ...(title ? [`- **Thread:** ${title}`] : []),
     ...(threadId ? [`- **Thread ID:** ${threadId}`] : []),
+    ...(headerAgentType ? [`- **Initial Agent Type:** ${headerAgentType}${model ? ` · ${model.includes('/') ? model : `${provider || 'provider'}/${model}`}` : ''}`] : []),
     `- **Updated:** ${updated}`,
     '',
     '---',
@@ -311,6 +388,46 @@ export function attachMessageTimestamps(messages) {
 }
 
 /**
+ * @param {FileSystemDirectoryHandle} folderHandle
+ * @param {string} filename
+ * @param {string} markdown
+ * @param {{ artifactRef?: { id: string } | null }} [options]
+ * @returns {Promise<{ ok: true } | { ok: false, reason: 'folder_write_denied' | 'folder_write_failed' }>}
+ */
+async function writeAgentChatTranscriptToFolder(
+  folderHandle,
+  filename,
+  markdown,
+  { artifactRef = null } = {},
+) {
+  const canWrite = await ensureWritePermission(folderHandle);
+  if (!canWrite) {
+    return { ok: false, reason: 'folder_write_denied' };
+  }
+  try {
+    if (artifactRef?.id) {
+      await overwriteUserNoteFile(folderHandle, filename, markdown);
+    } else {
+      await writeTextFileToFolder(folderHandle, filename, markdown);
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: 'folder_write_failed' };
+  }
+}
+
+function folderExportFailure(reason, base, extra = {}) {
+  return {
+    ok: false,
+    reason,
+    filename: base.filename,
+    content_hash: base.content_hash,
+    markdown: base.markdown,
+    ...extra,
+  };
+}
+
+/**
  * @param {{
  *   projectId: string,
  *   projectName?: string,
@@ -319,6 +436,9 @@ export function attachMessageTimestamps(messages) {
  *   connectorLabel?: string,
  *   threadId?: string,
  *   title?: string,
+ *   agentTemplateId?: string | null,
+ *   agentTypeLabel?: string | null,
+ *   model?: string | null,
  *   messages: object[],
  *   artifactRef?: { id: string, type?: string } | null,
  *   filename?: string | null,
@@ -333,6 +453,9 @@ export async function syncAgentChatArtifact(params) {
     connectorLabel,
     threadId,
     title,
+    agentTemplateId,
+    agentTypeLabel,
+    model,
     messages,
     artifactRef,
     filename: existingFilename,
@@ -345,6 +468,10 @@ export async function syncAgentChatArtifact(params) {
     connectorLabel,
     threadId,
     title,
+    agentTemplateId,
+    agentTypeLabel,
+    provider: connectorId,
+    model,
   });
   const content_hash = await sha256HexFromString(markdown);
 
@@ -354,27 +481,29 @@ export async function syncAgentChatArtifact(params) {
       ? buildAgentChatFilename(connectorId, threadId)
       : buildAgentChatFilename(connectorId, 'legacy'));
 
+  const base = { filename, content_hash, markdown };
+
+  let folderWriteOk = !folderHandle;
+  let folderWriteReason = null;
   if (folderHandle) {
-    try {
-      if (artifactRef?.id) {
-        await overwriteUserNoteFile(folderHandle, filename, markdown);
-      } else {
-        await writeTextFileToFolder(folderHandle, filename, markdown);
-      }
-    } catch {
-      /* folder transcript write is best-effort */
+    const folderWrite = await writeAgentChatTranscriptToFolder(
+      folderHandle,
+      filename,
+      markdown,
+      { artifactRef },
+    );
+    folderWriteOk = folderWrite.ok;
+    if (!folderWrite.ok) {
+      folderWriteReason = folderWrite.reason;
     }
   }
 
   const available = await isApiAvailable();
   if (!available) {
-    return {
-      ok: false,
-      reason: 'api_unavailable',
-      filename,
-      content_hash,
-      markdown,
-    };
+    if (folderHandle && !folderWriteOk) {
+      return folderExportFailure(folderWriteReason, base);
+    }
+    return folderExportFailure('api_unavailable', base);
   }
 
   if (artifactRef?.id) {
@@ -382,47 +511,56 @@ export async function syncAgentChatArtifact(params) {
       content_hash,
       payload_text: markdown,
     });
+    const nextArtifactRef = { id: artifactRef.id, type: 'artifact' };
+    if (folderHandle && !folderWriteOk) {
+      return folderExportFailure(folderWriteReason, base, {
+        artifactRef: nextArtifactRef,
+        serverSynced: true,
+      });
+    }
     return {
       ok: true,
-      artifactRef: { id: artifactRef.id, type: 'artifact' },
+      artifactRef: nextArtifactRef,
       filename,
       content_hash,
     };
   }
 
+  if (folderHandle && !folderWriteOk) {
+    return folderExportFailure(folderWriteReason, base);
+  }
+
   const cardKey = cardKeyFromFilename(filename);
   const uriThread = threadId || 'legacy';
 
-  if (folderHandle) {
-    const entry = await folderHandle.getFileHandle(filename);
-    const cacheKey = previewCacheKey(projectId, cardKey, 1);
-    const file = await readFileEntry(entry, { cacheKey });
-    const flat = [
-      {
-        ...file,
-        cardKey,
-        cardType: 'agent_chat',
-        filename,
-        content: markdown,
-        content_hash,
-        connectorId,
-        threadId: uriThread,
-        connectorLabel: connectorLabel || connectorId,
-      },
-    ];
-    await ensureClusterForProject(projectId, projectName || 'Project');
-    const ingest = await ingestFoundFiles(projectId, projectName || 'Project', flat, {});
-    const ref = ingest.byFilename[filename]?.artifactRef;
-    if (!ref) {
-      return {
-        ok: false,
-        reason: 'ingest_failed',
-        filename,
-        content_hash,
-        markdown,
-      };
+  if (folderHandle && folderWriteOk) {
+    try {
+      const entry = await folderHandle.getFileHandle(filename);
+      const cacheKey = previewCacheKey(projectId, cardKey, 1);
+      const file = await readFileEntry(entry, { cacheKey });
+      const flat = [
+        {
+          ...file,
+          cardKey,
+          cardType: 'agent_chat',
+          filename,
+          content: markdown,
+          content_hash,
+          connectorId,
+          threadId: uriThread,
+          connectorLabel: connectorLabel || connectorId,
+        },
+      ];
+      await ensureClusterForProject(projectId, projectName || 'Project');
+      const ingest = await ingestFoundFiles(projectId, projectName || 'Project', flat, {});
+      const ref = ingest.byFilename[filename]?.artifactRef;
+      if (!ref) {
+        return folderExportFailure('ingest_failed', base);
+      }
+      return { ok: true, artifactRef: ref, filename, content_hash };
+    } catch {
+      /* fall through to server-only ingest */
     }
-    return { ok: true, artifactRef: ref, filename, content_hash };
   }
 
   await ensureClusterForProject(projectId, projectName || 'Project');
@@ -450,13 +588,16 @@ export async function syncAgentChatArtifact(params) {
 
   const row = ingestRes.artifacts?.[0];
   if (!row?.artifactRef) {
-    return {
-      ok: false,
-      reason: 'ingest_failed',
-      filename,
-      content_hash,
-      markdown,
-    };
+    if (folderHandle && !folderWriteOk) {
+      return folderExportFailure(folderWriteReason, base);
+    }
+    return folderExportFailure('ingest_failed', base);
+  }
+  if (folderHandle && !folderWriteOk) {
+    return folderExportFailure(folderWriteReason, base, {
+      artifactRef: row.artifactRef,
+      serverSynced: true,
+    });
   }
   return {
     ok: true,

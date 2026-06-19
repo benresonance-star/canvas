@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AgentApiError, sendAgentChat } from '../agentApi.js';
+import { AgentApiError, saveAgentTemplate, sendAgentChat } from '../agentApi.js';
 
 describe('agentApi', () => {
   beforeEach(() => {
@@ -46,5 +46,67 @@ describe('agentApi', () => {
       expect(err.message).toContain('Cannot reach OpenAI');
       return true;
     });
+  });
+
+  it('retries a create conflict as an update with the server revision', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        statusText: 'Conflict',
+        json: async () => ({
+          error: 'conflict',
+          revision: 4,
+          template: { id: 'brainstorming', revision: 4 },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          template: { id: 'brainstorming', label: 'Brainstorming Agent', revision: 5 },
+          revision: 5,
+        }),
+      });
+
+    const result = await saveAgentTemplate({ id: 'brainstorming', label: 'Brainstorming Agent' }, 0);
+
+    expect(result.template.revision).toBe(5);
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('/agent/templates/brainstorming'),
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({
+          template: { id: 'brainstorming', label: 'Brainstorming Agent' },
+          expectedRevision: 4,
+        }),
+      }),
+    );
+  });
+
+  it('reads back the saved template when save response is missing template', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          template: { id: 'brainstorming', label: 'Brainstorming Agent', revision: 1 },
+        }),
+      });
+
+    const result = await saveAgentTemplate({ id: 'brainstorming', label: 'Brainstorming Agent' }, 0);
+
+    expect(result.template).toMatchObject({ id: 'brainstorming' });
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('/agent/templates/brainstorming'),
+      expect.anything(),
+    );
   });
 });

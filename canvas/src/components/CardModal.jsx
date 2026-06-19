@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, Box, File, Pin, X, Trash2 } from 'lucide-react';
 import {
   canOpenArtifactExternally,
@@ -8,13 +8,15 @@ import { ArtifactNotesPanel } from './ArtifactNotesPanel.jsx';
 import { ArtifactPrimitiveSection } from './ArtifactPrimitiveSection.jsx';
 import { AddAssertionForm } from './AddAssertionForm.jsx';
 import { CardLinkedSection } from './CardLinkedSection.jsx';
-import { cardHeaderLabel } from '../lib/filename.js';
+import { cardHeaderLabel, cardDisplayFilename } from '../lib/filename.js';
 import { strings } from '../content/strings.js';
 import { ModalContent } from './ModalContent.jsx';
 import { UserNoteEditor } from './UserNoteEditor.jsx';
 import { BookmarkCardEditor } from './BookmarkCardEditor.jsx';
 import { AgentSidePanel } from './AgentSidePanel.jsx';
 import { ARTIFACT_SIDEBAR_STORAGE_KEY } from '../lib/constants.js';
+import { FlowEditor } from '../features/flow/components/FlowEditor.jsx';
+import { useFlowAgentContext } from '../features/flow/hooks/useFlowAgentContext.js';
 
 function readStoredSidebarOpen() {
   try {
@@ -55,16 +57,64 @@ export function CardModal({
   onSaveNoteToProject,
   onUpdateCard,
   agentPanelProps = null,
+  flowArtifactCandidates = [],
+  onFlowCardRefresh,
+  onRehydratePreview,
 }) {
   const [currentVersion, setCurrentVersion] = useState(card?.pinnedVersion ?? 1);
   const [sidebarOpen, setSidebarOpen] = useState(readStoredSidebarOpen);
   const [agentOpen, setAgentOpen] = useState(false);
   const [editName, setEditName] = useState(card?.name ?? '');
   const noteEditorRef = useRef(null);
+  const flowSnapshotGetterRef = useRef(null);
   const version = card?.versions.find(v => v.version === currentVersion);
   const isUserNote = card?.type === 'user_note';
   const isBookmark = card?.type === 'bookmark';
+  const isFlow = card?.type === 'flow';
   const noteEditBlocked = missingFromFolder && userNoteDisabled;
+
+  const getFlowSnapshot = useCallback(
+    () => flowSnapshotGetterRef.current?.() ?? null,
+    [],
+  );
+
+  const flowAgent = useFlowAgentContext({
+    flowCard: card,
+    canvasCards: cards,
+    getFlowSnapshot,
+  });
+
+  useEffect(() => {
+    if (!isFlow || !agentOpen || !agentPanelProps?.registerFlowContextLoader) {
+      agentPanelProps?.registerFlowContextLoader?.(null);
+      return undefined;
+    }
+    agentPanelProps.registerFlowContextLoader(flowAgent.loadFlowContextText);
+    return () => agentPanelProps.registerFlowContextLoader(null);
+  }, [
+    agentOpen,
+    agentPanelProps,
+    flowAgent.loadFlowContextText,
+    isFlow,
+  ]);
+
+  useEffect(() => {
+    agentPanelProps?.registerEmbeddedAgentPanelOpen?.(agentOpen);
+    return () => agentPanelProps?.registerEmbeddedAgentPanelOpen?.(false);
+  }, [agentOpen, agentPanelProps?.registerEmbeddedAgentPanelOpen]);
+
+  const flowAgentPanelProps = useMemo(() => {
+    if (!agentPanelProps || !isFlow) return agentPanelProps;
+    return {
+      ...agentPanelProps,
+      contextScope: 'flow',
+      contextMode: 'selected',
+      contextCards: flowAgent.contextCards,
+      flowIncludeNetwork: flowAgent.includeNetwork,
+      onFlowIncludeNetworkChange: flowAgent.setIncludeNetwork,
+      flowSelectionSummary: flowAgent.selectionSummary,
+    };
+  }, [agentPanelProps, flowAgent, isFlow]);
 
   useEffect(() => {
     setEditName(card?.name ?? '');
@@ -79,7 +129,7 @@ export function CardModal({
     });
   }, []);
 
-  const canOpenExternal = canOpenArtifactExternally({
+  const canOpenExternal = !isFlow && canOpenArtifactExternally({
     folderHandle,
     version,
     missingFromFolder,
@@ -147,7 +197,7 @@ export function CardModal({
             />
           ) : (
             <div className={`serif text-xl truncate ${missingFromFolder ? 'text-danger' : ''}`}>
-              {card.name}
+              {cardDisplayFilename(card)}
             </div>
           )}
           {isUserNote && (
@@ -168,7 +218,7 @@ export function CardModal({
           {agentPanelProps && !isBookmark && !isUserNote && (
             <button
               type="button"
-              title={strings.agent.askAboutArtifact}
+              title={isFlow ? strings.agent.askAboutFlow : strings.agent.askAboutArtifact}
               aria-pressed={agentOpen}
               onClick={() => {
                 setAgentOpen((open) => {
@@ -189,7 +239,7 @@ export function CardModal({
               {strings.agent.openAgentMode}
             </button>
           )}
-          {!isUserNote && (
+          {!isUserNote && !isFlow && (
             <button
               type="button"
               title={sidebarOpen ? strings.modal.collapseSidebar : strings.modal.expandSidebar}
@@ -241,13 +291,44 @@ export function CardModal({
               <Pin size={12} strokeWidth={1.8} /> {strings.card.pinThisVersion}
             </button>
           )}
-          <button onClick={onClose} className="text-on-overlay/70 hover:text-on-overlay transition p-1">
+          <button aria-label="Close" onClick={onClose} className="text-on-overlay/70 hover:text-on-overlay transition p-1">
             <X size={20} strokeWidth={1.5} />
           </button>
         </div>
       </div>
       <div className="flex-1 mx-6 mb-6 min-h-0 flex flex-col">
-        {isBookmark ? (
+        {isFlow ? (
+          <div className="flex-1 bg-canvas rounded-lg overflow-hidden min-h-0 flex flex-col md:flex-row">
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+              <FlowEditor
+                card={card}
+                artifactCandidates={flowArtifactCandidates}
+                folderHandle={folderHandle}
+                projectId={projectId}
+                onRehydratePreview={onRehydratePreview}
+                onCardRefresh={onFlowCardRefresh}
+                onRegisterContextSnapshot={(getter) => {
+                  flowSnapshotGetterRef.current = getter;
+                }}
+                onSelectedNodeIdsChange={flowAgent.setSelectedNodeIds}
+                flowAgentScopeNodeIds={agentOpen ? flowAgent.scopeNodeIds : null}
+                agentModeActive={agentOpen}
+              />
+            </div>
+            {agentOpen && flowAgentPanelProps && (
+              <aside
+                aria-label={strings.agent.askAboutFlow}
+                className="shrink-0 bg-surface flex flex-col min-h-[18rem] max-md:max-h-[55vh] max-md:border-t max-md:border-border md:w-96 md:border-l md:border-border"
+              >
+                <AgentSidePanel
+                  className="flex-1 min-h-0"
+                  onClose={() => setAgentOpen(false)}
+                  {...flowAgentPanelProps}
+                />
+              </aside>
+            )}
+          </div>
+        ) : isBookmark ? (
           <div className="flex-1 bg-canvas rounded-lg overflow-hidden min-h-0 flex flex-col">
             <BookmarkCardEditor
               card={card}

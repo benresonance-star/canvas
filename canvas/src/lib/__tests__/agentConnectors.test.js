@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   CONNECTORS,
   DEFAULT_SINGLE_CONNECTOR_ID,
+  AGENT_API_OFFLINE_MESSAGE,
+  agentInputDisabledMessage,
   agentCanChat,
+  defaultAgentTypeLabelForProvider,
   getConnectorById,
+  getConnectorByProvider,
   getConnectorProvider,
   mergeConnectorMeta,
 } from '../agentConnectors.js';
@@ -13,8 +17,37 @@ describe('agentConnectors', () => {
     expect(CONNECTORS.some((c) => c.id === 'openai' && c.label === 'ChatGPT')).toBe(true);
   });
 
+  it('includes Gemma 12B Local connector', () => {
+    expect(
+      CONNECTORS.some(
+        (c) =>
+          c.id === 'ollama-gemma-12b' &&
+          c.label === 'Gemma 12B Local' &&
+          c.provider === 'ollama' &&
+          c.model === 'gemma4:12b' &&
+          c.requiresCredential === false,
+      ),
+    ).toBe(true);
+  });
+
+  it('includes Gemma 26B Local connector', () => {
+    expect(
+      CONNECTORS.some(
+        (c) =>
+          c.id === 'ollama-gemma-26b' &&
+          c.label === 'Gemma 26B Local' &&
+          c.provider === 'ollama' &&
+          c.model === 'gemma4:26b' &&
+          c.requiresCredential === false,
+      ),
+    ).toBe(true);
+  });
+
   it('resolves provider from connector id', () => {
     expect(getConnectorProvider(DEFAULT_SINGLE_CONNECTOR_ID)).toBe('openai');
+    expect(getConnectorProvider('ollama-gemma-12b')).toBe('ollama');
+    expect(getConnectorProvider('ollama-gemma-26b')).toBe('ollama');
+    expect(getConnectorByProvider('ollama')?.id).toBe('ollama-gemma-12b');
   });
 
   it('mergeConnectorMeta copies usable from API meta', () => {
@@ -60,5 +93,87 @@ describe('agentConnectors', () => {
         activeConnector: active,
       }),
     ).toBe(false);
+  });
+
+  it('agentCanChat allows usable credentialless connectors without secrets', () => {
+    const active = mergeConnectorMeta(getConnectorById('ollama-gemma-12b'), {
+      configured: true,
+      usable: true,
+    });
+    expect(
+      agentCanChat({
+        panelMode: 'single',
+        secretsConfigured: false,
+        activeConnector: active,
+      }),
+    ).toBe(true);
+  });
+
+  it('agentCanChat allows usable Gemma 26B without secrets', () => {
+    const active = mergeConnectorMeta(getConnectorById('ollama-gemma-26b'), {
+      configured: true,
+      usable: true,
+    });
+    expect(
+      agentCanChat({
+        panelMode: 'single',
+        secretsConfigured: false,
+        activeConnector: active,
+      }),
+    ).toBe(true);
+  });
+
+  it('labels provider defaults for Agent Types', () => {
+    expect(defaultAgentTypeLabelForProvider('openai')).toBe('Default ChatGPT agent');
+    expect(defaultAgentTypeLabelForProvider('ollama')).toBe('Default Gemma agent');
+  });
+
+  it('explains disabled local and incompatible thread chat states', () => {
+    const local = mergeConnectorMeta(getConnectorById('ollama-gemma-12b'), {
+      configured: true,
+      usable: false,
+      healthError: 'Ollama model missing',
+    });
+    expect(
+      agentInputDisabledMessage({
+        activeConnector: local,
+        hasActiveThread: true,
+      }),
+    ).toBe('Ollama model missing');
+    expect(
+      agentInputDisabledMessage({
+        activeConnector: local,
+        hasActiveThread: true,
+        threadCompatible: false,
+      }),
+    ).toContain('Gemma-compatible');
+  });
+
+  it('uses model-specific disabled copy for missing Gemma 26B', () => {
+    const local = mergeConnectorMeta(getConnectorById('ollama-gemma-26b'), {
+      configured: true,
+      usable: false,
+      healthError: 'Ollama is running, but gemma4:26b is not pulled.',
+    });
+    expect(
+      agentInputDisabledMessage({
+        activeConnector: local,
+        hasActiveThread: true,
+      }),
+    ).toContain('gemma4:26b');
+  });
+
+  it('prefers API offline copy over generic Ollama placeholder', () => {
+    const local = mergeConnectorMeta(getConnectorById('ollama-gemma-26b'), {
+      configured: false,
+      usable: false,
+    });
+    expect(
+      agentInputDisabledMessage({
+        activeConnector: local,
+        hasActiveThread: true,
+        connectorsOffline: true,
+      }),
+    ).toBe(AGENT_API_OFFLINE_MESSAGE);
   });
 });

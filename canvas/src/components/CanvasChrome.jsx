@@ -10,6 +10,7 @@ import {
   Network,
   CircuitBoard,
   Upload,
+  Workflow,
 } from 'lucide-react';
 import { strings } from '../content/strings.js';
 import { resolveSyncBanner, shouldShowRefreshFromServer } from '../lib/syncUi.js';
@@ -125,6 +126,7 @@ export function CanvasChrome({
   onChangeFolder,
   onNewNote,
   onAddLink,
+  onAddFlow,
   onImportFiles,
   onSync,
   onReconnectFolder,
@@ -435,6 +437,15 @@ export function CanvasChrome({
           </div>
         )}
         <div className="pointer-events-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onAddFlow}
+            disabled={syncLock !== 'live' || !activeProjectId}
+            className="sans flex items-center gap-2 bg-surface border border-border hover:bg-surface-muted text-primary text-xs px-4 py-2.5 rounded-full transition shadow-lg disabled:opacity-50"
+          >
+            <Workflow size={13} strokeWidth={1.8} />
+            Add Flow
+          </button>
           <button
             type="button"
             onClick={onAddLink}

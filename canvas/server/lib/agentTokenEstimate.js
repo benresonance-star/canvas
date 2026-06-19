@@ -1,5 +1,9 @@
 import { encodingForModel } from 'js-tiktoken';
-import { getConnectorByProvider } from './agentConnectors.js';
+import {
+  getConnectorById,
+  getConnectorByProvider,
+  normalizeProviderModelId,
+} from './agentConnectors.js';
 import { buildChatMessages } from '../services/openaiChat.js';
 import { estimateInputCostUsd } from './agentPricing.js';
 
@@ -39,27 +43,39 @@ function countMessageContentTokens(content, enc) {
 }
 
 /**
- * @param {{ provider: string, messages: object[], systemContext?: string }} params
+ * @param {{ provider: string, connectorId?: string | null, messages: object[], systemContext?: string, model?: string | null }} params
  */
-export function estimateChatInputTokens({ provider, messages, systemContext }) {
-  const connector = getConnectorByProvider(provider);
+export function estimateChatInputTokens({
+  provider,
+  connectorId = null,
+  messages,
+  systemContext,
+  model = null,
+}) {
+  const connector = connectorId
+    ? getConnectorById(connectorId)
+    : getConnectorByProvider(provider);
   if (!connector) {
-    throw new Error(`Unknown provider: ${provider}`);
+    throw new Error(connectorId ? `Unknown connector: ${connectorId}` : `Unknown provider: ${provider}`);
   }
+  const resolvedModel = normalizeProviderModelId(provider, model || connector.model);
 
   const chatMessages = buildChatMessages({ systemContext, messages });
-  const enc = getEncoding(connector.model);
+  const enc = getEncoding(resolvedModel);
   let total = 0;
   for (const m of chatMessages) {
     total += countMessageContentTokens(m.content, enc) + 4;
   }
   total += 2;
 
-  const estimatedInputUsd = estimateInputCostUsd(connector.model, total);
+  const estimatedInputUsd =
+    provider === 'openai'
+      ? estimateInputCostUsd(resolvedModel, total)
+      : 0;
 
   return {
     inputTokens: total,
-    model: connector.model,
+    model: resolvedModel,
     estimatedInputUsd: Math.round(estimatedInputUsd * 1_000_000) / 1_000_000,
   };
 }

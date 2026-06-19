@@ -31,4 +31,29 @@ describe('mergeArtifactRefsIntoCards', () => {
     expect(result[0].versions[0].artifactRef).toEqual({ id: 'art-2' });
     expect(result[0].versions[0].content_hash).toBe('h2');
   });
+
+  it('merges artifact refs after rename reconciliation updates the card key', () => {
+    const cards = [{
+      key: 'docs__renamed',
+      versions: [{ version: 1, filename: 'docs__renamed-v1.md', artifactRef: null }],
+    }];
+    const grouped = {
+      'docs__renamed': {
+        versions: [{
+          version: 1,
+          filename: 'docs__renamed-v1.md',
+          artifactRef: { id: 'art-renamed', type: 'artifact' },
+          content_hash: 'hash-renamed',
+        }],
+      },
+    };
+
+    const result = mergeArtifactRefsIntoCards(cards, grouped);
+
+    expect(result[0].versions[0].artifactRef).toEqual({
+      id: 'art-renamed',
+      type: 'artifact',
+    });
+    expect(result[0].versions[0].content_hash).toBe('hash-renamed');
+  });
 });

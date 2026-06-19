@@ -1,12 +1,17 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { strings } from '../content/strings.js';
-import { normalizeCardType, isTextMarkdownPreviewType } from '../lib/filename.js';
+import {
+  normalizeCardType,
+  isTextMarkdownPreviewType,
+  isCodePreviewType,
+} from '../lib/filename.js';
 import { resolveThreadForCard } from '../lib/agentChatThreads.js';
 import { useArtifactPayloadText } from '../hooks/useArtifactPayloadText.js';
 import { NotePreviewFrame } from './NotePreviewFrame.jsx';
 import { AgentChatThreadView } from './AgentChatThreadView.jsx';
 import { useAgentChatCardMessages } from '../hooks/useAgentChatCardMessages.js';
 import { UserNoteInlineEditor } from './UserNoteInlineEditor.jsx';
+import { CodePreviewFrame } from './CodePreviewFrame.jsx';
 import { PdfPreviewFrame } from './PdfPreviewFrame.jsx';
 import { SpreadsheetPreviewFrame } from './SpreadsheetPreviewFrame.jsx';
 import { AudioPlayer } from './AudioPlayer.jsx';
@@ -14,6 +19,7 @@ import { BookmarkPreview } from './BookmarkPreview.jsx';
 import { BookmarkInlineEditor } from './BookmarkInlineEditor.jsx';
 import { audioSkinUsesDarkText, resolveAudioSkinColor } from '../lib/audioSkin.js';
 import { buildHtmlPreviewSrcDoc } from '../lib/htmlPreviewDocument.js';
+import { FlowPreview } from '../features/flow/components/FlowPreview.jsx';
 
 export function CardPreview({
   card,
@@ -36,6 +42,7 @@ export function CardPreview({
   agentChatThreadIndex = null,
   agentChatConnectorId = null,
   folderHandle = null,
+  cardsById = null,
 }) {
   const [imgKey, setImgKey] = useState(0);
   const [bookmarkEditingKey, setBookmarkEditingKey] = useState(null);
@@ -88,6 +95,21 @@ export function CardPreview({
   if (!pinned) return <div className="serif italic text-muted text-sm">{strings.preview.noData}</div>;
 
   const cardType = normalizeCardType(card.type);
+  if (cardType === 'flow') {
+    const description = pinned?.flowPreview?.description?.trim() ?? '';
+    return (
+      <div className="h-full min-h-0 flex flex-col">
+        {!compact && description && (
+          <p className="sans text-xs text-secondary shrink-0 pb-2 line-clamp-3 leading-snug">
+            {description}
+          </p>
+        )}
+        <div className="flex-1 min-h-0">
+          <FlowPreview preview={pinned.flowPreview} compact={compact} cardsById={cardsById} />
+        </div>
+      </div>
+    );
+  }
   if (cardType === 'bookmark') {
     const bookmarkEditKey = `${card.id}:${pinned.version}:${pinned.externalUrl ?? ''}`;
     const bookmarkEditing = isActive && bookmarkEditingKey === bookmarkEditKey;
@@ -180,6 +202,9 @@ export function CardPreview({
           compact
           scrollOnUpdate={false}
           className="flex-1 h-full"
+          defaultAgentTypeLabel={
+            threadMeta?.agentTypeLabel || 'Default ChatGPT agent'
+          }
         />
       </div>
     );
@@ -192,6 +217,18 @@ export function CardPreview({
         content={content}
         contentKey={`${card.id}-v${pinned.version}-${cardType}`}
         isActive={isActive}
+      />
+    );
+  }
+
+  if (isCodePreviewType(card.type)) {
+    const content = pinned.content || artifactPayload.text || '';
+    return (
+      <CodePreviewFrame
+        content={content}
+        filename={pinned.filename}
+        ext={pinned.ext}
+        compact={compact}
       />
     );
   }

@@ -3,7 +3,9 @@ import {
   cardKeyFromFilename,
   folderPathBasename,
   folderRelativePathFromVersion,
+  parseFilename,
 } from './filename.js';
+import { CONNECTORS } from './agentConnectors.js';
 import {
   fetchAgentChatThreadIndex,
   saveAgentChatThreadIndexRemote,
@@ -66,19 +68,94 @@ export function buildAgentChatFilename(connectorId, threadId) {
 }
 
 /**
- * @param {{ connectorId: string, title?: string }} params
+ * @param {string} filename
+ * @returns {string | null}
  */
-export function createThreadMeta({ connectorId, title }) {
+export function connectorIdFromAgentChatFilename(filename) {
+  const { name } = parseFilename(String(filename ?? ''));
+  if (!name?.startsWith('agent-chat-')) return null;
+  const rest = name.slice('agent-chat-'.length);
+  const connectors = [...CONNECTORS].sort((a, b) => b.id.length - a.id.length);
+  for (const connector of connectors) {
+    const safeConnector = String(connector.id).replace(/[^a-zA-Z0-9_-]/g, '-');
+    if (rest === safeConnector || rest.startsWith(`${safeConnector}-`)) {
+      return connector.id;
+    }
+  }
+  return null;
+}
+
+export function agentTypeSnapshotFromTemplate(template) {
+  if (!template?.id) return {};
+  return {
+    agentTemplateId: template.id,
+    agentTypeLabel: template.label || template.id,
+    provider: template.provider ?? null,
+    model: template.model ?? null,
+  };
+}
+
+export function threadAgentTypeLabel(thread) {
+  return thread?.agentTypeLabel || thread?.agentTemplateId || '';
+}
+
+export function applyAgentTypeToThread(thread, template) {
+  return {
+    ...thread,
+    ...agentTypeSnapshotFromTemplate(template),
+    updatedAt: Date.now(),
+  };
+}
+
+export function clearAgentTypeFromThread(thread) {
+  return {
+    ...thread,
+    agentTemplateId: null,
+    agentTypeLabel: null,
+    provider: null,
+    model: null,
+    updatedAt: Date.now(),
+  };
+}
+
+export function createAgentTypeChangeMessage({
+  fromThread,
+  toTemplate,
+  at = Date.now(),
+  fromDefaultLabel = 'Default ChatGPT agent',
+  toDefaultLabel = 'Default ChatGPT agent',
+}) {
+  const toSnapshot = agentTypeSnapshotFromTemplate(toTemplate);
+  return {
+    id: `agent-type-${at}`,
+    role: 'system',
+    kind: 'agent_type_change',
+    fromAgentTemplateId: fromThread?.agentTemplateId ?? null,
+    fromAgentTypeLabel: threadAgentTypeLabel(fromThread) || fromDefaultLabel,
+    toAgentTemplateId: toSnapshot.agentTemplateId ?? null,
+    toAgentTypeLabel: toSnapshot.agentTypeLabel ?? toDefaultLabel,
+    provider: toSnapshot.provider ?? null,
+    model: toSnapshot.model ?? null,
+    at,
+  };
+}
+
+/**
+ * @param {{ connectorId: string, title?: string, agentTemplate?: object | null }} params
+ */
+export function createThreadMeta({ connectorId, title, agentTemplate = null }) {
   const threadId = crypto.randomUUID();
   const now = Date.now();
   return {
     threadId,
+    connectorId,
     title: title || formatThreadAutoTitle(),
     createdAt: now,
     updatedAt: now,
     filename: buildAgentChatFilename(connectorId, threadId),
     artifactRef: null,
     cardId: null,
+    ...agentTypeSnapshotFromTemplate(agentTemplate),
   };
 }
 
@@ -91,6 +168,18 @@ export function emptyThreadIndex() {
     activeThreadId: null,
     threads: [],
   };
+}
+
+export function normalizeThreadConnectorIds(index, connectorId) {
+  if (!connectorId) return parseThreadIndex(index);
+  const parsed = parseThreadIndex(index);
+  let changed = false;
+  const threads = parsed.threads.map((thread) => {
+    if (thread.connectorId) return thread;
+    changed = true;
+    return { ...thread, connectorId };
+  });
+  return changed ? { ...parsed, threads } : parsed;
 }
 
 function parseThreadIndex(data) {
@@ -197,16 +286,19 @@ export async function loadThreadIndex(projectId, connectorId) {
             remoteRow.revision,
           );
         }
-        const payload = { ...merged, version: THREAD_INDEX_VERSION };
+        const payload = {
+          ...normalizeThreadConnectorIds(merged, connectorId),
+          version: THREAD_INDEX_VERSION,
+        };
         localStorage.setItem(
           agentChatThreadIndexStorageKey(projectId, connectorId),
           JSON.stringify(payload),
         );
-        return merged;
+        return payload;
       }
     }
 
-    return local;
+    return normalizeThreadConnectorIds(local, connectorId);
   } catch {
     return emptyThreadIndex();
   }
@@ -357,14 +449,93 @@ export function removeThreadFromIndex(index, threadId) {
  * @param {object[]} cards
  * @param {string} connectorId
  */
+function agentChatKeyFromThread(thread) {
+  if (thread?.relativePath || thread?.filename) {
+    return cardKeyFromFilename(thread.relativePath || thread.filename);
+  }
+  return null;
+}
+
+function threadUpdatedAt(thread) {
+  const raw = thread?.updatedAt ?? thread?.createdAt ?? 0;
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  if (typeof raw === 'string') {
+    const parsed = Date.parse(raw);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+/**
+ * @param {{ threads?: object[], activeThreadId?: string | null } | object[]} threadIndex
+ */
+export function collectCanonicalAgentChatOwnership(threadIndex) {
+  const source = Array.isArray(threadIndex) ? { threads: threadIndex } : (threadIndex ?? {});
+  const byKey = new Map();
+  for (const thread of source.threads ?? []) {
+    const key = agentChatKeyFromThread(thread);
+    if (!key) continue;
+    const existing = byKey.get(key);
+    if (!existing || threadUpdatedAt(thread) >= threadUpdatedAt(existing)) {
+      byKey.set(key, thread);
+    }
+  }
+
+  const keys = new Set();
+  const cardIds = new Set();
+  const activeKeys = new Set();
+  for (const [key, thread] of byKey) {
+    keys.add(key);
+    if (thread?.cardId) cardIds.add(thread.cardId);
+    if (thread?.threadId && thread.threadId === source.activeThreadId) {
+      activeKeys.add(key);
+    }
+  }
+  return {
+    keys,
+    cardIds,
+    activeKeys,
+    enabled: keys.size > 0 || cardIds.size > 0 || activeKeys.size > 0,
+  };
+}
+
+function collectAgentChatRows(rows) {
+  const cardIds = new Set();
+  const keys = new Set();
+  for (const row of rows ?? []) {
+    if (row?.id) cardIds.add(row.id);
+    if (row?.stagingId) cardIds.add(row.stagingId);
+    if (row?.key) keys.add(row.key);
+  }
+  return { cardIds, keys };
+}
+
 /**
  * @param {ReturnType<typeof emptyThreadIndex>} threadIndex
+ * @param {{ cards?: object[], stagedSyncCards?: object[], includeActive?: boolean }} [options]
  */
-export function collectKnownAgentChatKeys(threadIndex) {
+export function collectKnownAgentChatKeys(threadIndex, options = {}) {
   const keys = new Set();
+  const hasScope =
+    Array.isArray(options.cards) || Array.isArray(options.stagedSyncCards);
+  const scoped = collectAgentChatRows([
+    ...(options.cards ?? []),
+    ...(options.stagedSyncCards ?? []),
+  ]);
   for (const t of threadIndex?.threads ?? []) {
-    if (t.relativePath || t.filename) {
-      keys.add(cardKeyFromFilename(t.relativePath || t.filename));
+    const key = agentChatKeyFromThread(t);
+    if (!key) continue;
+    if (!hasScope) {
+      keys.add(key);
+      continue;
+    }
+    if (
+      (options.includeActive !== false && t.threadId === threadIndex?.activeThreadId)
+      || (t.cardId && scoped.cardIds.has(t.cardId))
+      || scoped.keys.has(key)
+    ) {
+      keys.add(key);
     }
   }
   return keys;
@@ -577,6 +748,7 @@ export async function migrateLegacyAgentChatToThreads(projectId, connectorId) {
     data.filename || buildAgentChatFilename(connectorId, LEGACY_THREAD_ID);
   const threadMeta = {
     threadId,
+    connectorId,
     title: 'Previous chat',
     createdAt: data.updatedAt ?? Date.now(),
     updatedAt: data.updatedAt ?? Date.now(),

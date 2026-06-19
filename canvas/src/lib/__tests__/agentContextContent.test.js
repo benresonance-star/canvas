@@ -80,6 +80,57 @@ describe('agentContextContent', () => {
     expect(doc.text).toContain('Nested context body');
   });
 
+  it('loads agent chat transcript context from artifact payload text', async () => {
+    const doc = await loadContextDocumentForCard(
+      {
+        id: 'chat-card',
+        name: 'Brainstorming Canvas Agentic Systems',
+        type: 'agent_chat',
+        pinnedVersion: 1,
+        versions: [{
+          version: 1,
+          artifactRef: { type: 'artifact', id: 'artifact-chat' },
+        }],
+      },
+      {
+        fetchArtifact: async (id) => {
+          expect(id).toBe('artifact-chat');
+          return {
+            artifact: {
+              payload_text: 'User: How could we make this better?\nAssistant: Improve the agent spec.',
+            },
+          };
+        },
+      },
+    );
+
+    expect(doc.status).toBe('included');
+    expect(doc.type).toBe('agent_chat');
+    expect(doc.text).toContain('Improve the agent spec.');
+  });
+
+  it('falls back to stored agent chat text when artifact payload is empty', async () => {
+    const doc = await loadContextDocumentForCard(
+      {
+        id: 'chat-card',
+        name: 'Brainstorming Canvas Agentic Systems',
+        type: 'agent_chat',
+        pinnedVersion: 1,
+        versions: [{
+          version: 1,
+          artifactRef: { type: 'artifact', id: 'artifact-chat' },
+        }],
+      },
+      {
+        fetchArtifact: async () => ({ artifact: { payload_text: '' } }),
+        loadAgentChatText: async () => 'Stored transcript body',
+      },
+    );
+
+    expect(doc.status).toBe('included');
+    expect(doc.text).toBe('Stored transcript body');
+  });
+
   it('formatAgentSystemContext notes missing content', () => {
     const ctx = formatAgentSystemContext('selected', [
       {
@@ -177,10 +228,28 @@ describe('agentContextContent', () => {
     expect(hint.status).toBe('needs_folder');
   });
 
-  it('isContextTypeSupported for text, pdf, and image', () => {
+  it('isContextTypeSupported for text, pdf, image, and flow', () => {
     expect(isContextTypeSupported('markdown')).toBe(true);
     expect(isContextTypeSupported('pdf')).toBe(true);
     expect(isContextTypeSupported('image')).toBe(true);
+    expect(isContextTypeSupported('flow')).toBe(true);
+  });
+
+  it('loadContextDocumentForCard loads flow via injected loader', async () => {
+    const doc = await loadContextDocumentForCard(
+      {
+        id: 'flow-card',
+        name: 'Onboarding',
+        type: 'flow',
+        pinnedVersion: 1,
+        versions: [{ version: 1, flowId: 'flow-1' }],
+      },
+      {
+        loadFlowContextText: async () => '# Flow: Onboarding\n\n## Nodes',
+      },
+    );
+    expect(doc.status).toBe('included');
+    expect(doc.text).toContain('Flow: Onboarding');
   });
 
   it('dataUrlByteLength estimates base64 payload size', () => {

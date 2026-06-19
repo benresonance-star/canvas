@@ -31,6 +31,20 @@ describe('agentChatArtifact', () => {
     expect(md).toContain('**Thread:** Design review');
   });
 
+  it('formatAgentChatTranscript includes initial Agent Type metadata', () => {
+    const md = formatAgentChatTranscript([], {
+      projectName: 'P',
+      connectorId: 'openai',
+      threadId: 't1',
+      title: 'Design review',
+      agentTemplateId: 'brainstorming',
+      agentTypeLabel: 'Brainstorming Agent',
+      provider: 'openai',
+      model: 'gpt-5.5',
+    });
+    expect(md).toContain('**Initial Agent Type:** Brainstorming Agent · openai/gpt-5.5');
+  });
+
   it('formatAgentChatTranscript summarizes context without full bodies', () => {
     const md = formatAgentChatTranscript(
       [
@@ -75,6 +89,69 @@ describe('agentChatArtifact', () => {
     expect(parsed[0].content).toBe('Hello');
     expect(parsed[1].role).toBe('assistant');
     expect(parsed[1].content).toBe('Hi there');
+  });
+
+  it('round-trips Agent Type change events and assistant attribution', () => {
+    const md = formatAgentChatTranscript(
+      [
+        {
+          id: 'chg1',
+          kind: 'agent_type_change',
+          fromAgentTypeLabel: 'Brainstorming Agent',
+          toAgentTypeLabel: 'Planning Agent',
+          at: Date.UTC(2026, 4, 29, 12, 0, 1),
+        },
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: 'Planned response.',
+          agentTemplateId: 'planning',
+          agentTypeLabel: 'Planning Agent',
+          provider: 'openai',
+          model: 'gpt-5.5',
+          at: Date.UTC(2026, 4, 29, 12, 0, 5),
+        },
+      ],
+      {
+        projectName: 'P',
+        connectorId: 'openai',
+        threadId: 'dbfadeb5-3a5e-4c26-baa8-694ada8eae45',
+        title: 'Agent switches',
+      },
+    );
+    expect(md).toContain('Agent Type changed — Brainstorming Agent -> Planning Agent');
+    expect(md).toContain('Assistant: — Planning Agent · openai/gpt-5.5');
+
+    const parsed = parseAgentChatTranscript(md);
+    expect(parsed[0]).toMatchObject({
+      kind: 'agent_type_change',
+      fromAgentTypeLabel: 'Brainstorming Agent',
+      toAgentTypeLabel: 'Planning Agent',
+    });
+    expect(parsed[1]).toMatchObject({
+      role: 'assistant',
+      agentTypeLabel: 'Planning Agent',
+      provider: 'openai',
+      model: 'gpt-5.5',
+    });
+  });
+
+  it('parses legacy assistant transcript without attribution', () => {
+    const md = [
+      '# Agent chat transcript',
+      '',
+      '---',
+      '',
+      '[12:00:00] Assistant:',
+      'Legacy response.',
+      '',
+    ].join('\n');
+    const parsed = parseAgentChatTranscript(md);
+    expect(parsed[0]).toMatchObject({
+      role: 'assistant',
+      content: 'Legacy response.',
+    });
+    expect(parsed[0].agentTypeLabel).toBeUndefined();
   });
 
   it('parseAgentChatTranscript preserves assistant paragraphs and lists', () => {
@@ -149,6 +226,8 @@ describe('agentChatArtifact', () => {
       createWritable: vi.fn(async () => writable),
     };
     const folderHandle = {
+      queryPermission: vi.fn(async () => 'granted'),
+      requestPermission: vi.fn(async () => 'granted'),
       getFileHandle: vi.fn(async () => fileHandle),
     };
     const { syncAgentChatArtifact } = await import('../agentChatArtifact.js');
@@ -174,5 +253,78 @@ describe('agentChatArtifact', () => {
     );
     expect(writable.write).toHaveBeenCalledWith(expect.stringContaining('Hello'));
     expect(writable.close).toHaveBeenCalled();
+  });
+
+  it('returns folder_write_denied when linked folder write permission is denied', async () => {
+    vi.resetModules();
+    vi.doMock('../primitivesApi.js', () => ({
+      isApiAvailable: vi.fn(async () => true),
+      updateArtifactContent: vi.fn(),
+      ingestArtifacts: vi.fn(),
+      ensureClusterForProject: vi.fn(),
+    }));
+    const folderHandle = {
+      queryPermission: vi.fn(async () => 'denied'),
+      requestPermission: vi.fn(async () => 'denied'),
+      getFileHandle: vi.fn(),
+    };
+    const { syncAgentChatArtifact } = await import('../agentChatArtifact.js');
+
+    const result = await syncAgentChatArtifact({
+      projectId: 'p1',
+      projectName: 'Project',
+      folderHandle,
+      connectorId: 'ollama-gemma-12b',
+      threadId: 'abcd1234-5678-90ab-cdef-1234567890ab',
+      title: 'Gemma test',
+      messages: [{ role: 'user', content: 'Hello', at: Date.UTC(2026, 4, 29, 12, 0, 0) }],
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'folder_write_denied',
+      filename: 'notes__agent-chat-ollama-gemma-12b-abcd1234-v1.md',
+    });
+    expect(folderHandle.getFileHandle).not.toHaveBeenCalled();
+  });
+
+  it('returns partial failure when server updates but folder overwrite fails', async () => {
+    vi.resetModules();
+    const updateArtifactContent = vi.fn(async () => ({}));
+    vi.doMock('../primitivesApi.js', () => ({
+      isApiAvailable: vi.fn(async () => true),
+      updateArtifactContent,
+      ingestArtifacts: vi.fn(),
+      ensureClusterForProject: vi.fn(),
+    }));
+    const folderHandle = {
+      queryPermission: vi.fn(async () => 'granted'),
+      requestPermission: vi.fn(async () => 'granted'),
+      getFileHandle: vi.fn(async () => ({
+        createWritable: vi.fn(async () => {
+          throw new DOMException('Write failed', 'NotAllowedError');
+        }),
+      })),
+    };
+    const { syncAgentChatArtifact } = await import('../agentChatArtifact.js');
+
+    const result = await syncAgentChatArtifact({
+      projectId: 'p1',
+      projectName: 'Project',
+      folderHandle,
+      connectorId: 'ollama-gemma-26b',
+      threadId: 'abcd1234-5678-90ab-cdef-1234567890ab',
+      title: 'Gemma overwrite test',
+      messages: [{ role: 'user', content: 'Hello', at: Date.UTC(2026, 4, 29, 12, 0, 0) }],
+      artifactRef: { id: 'artifact-1' },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'folder_write_failed',
+      serverSynced: true,
+      artifactRef: { id: 'artifact-1', type: 'artifact' },
+    });
+    expect(updateArtifactContent).toHaveBeenCalled();
   });
 });

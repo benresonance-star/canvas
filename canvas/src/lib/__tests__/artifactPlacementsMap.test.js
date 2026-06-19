@@ -24,6 +24,25 @@ describe('artifactPlacementsMap', () => {
     expect(map['notes__b'].surface).toBe('dock');
   });
 
+  it('buildPlacementsFromArrays maps every docked agent chat row', () => {
+    const staged = ['a1', 'b2', 'c3'].map((slug) => ({
+      stagingId: `staged-${slug}`,
+      key: `notes__agent-chat-openai-${slug}`,
+      type: 'agent_chat',
+      agentThreadId: `thread-${slug}`,
+      versions: [{
+        version: 1,
+        filename: `notes__agent-chat-openai-${slug}-v1.md`,
+      }],
+    }));
+    const map = buildPlacementsFromArrays([], staged);
+
+    expect(Object.values(map).filter((entry) => entry.surface === 'dock')).toHaveLength(3);
+    expect(map['notes__agent-chat-openai-a1'].placement.stagingId).toBe('staged-a1');
+    expect(map['notes__agent-chat-openai-b2'].record.agentThreadId).toBe('thread-b2');
+    expect(map['notes__agent-chat-openai-c3'].surface).toBe('dock');
+  });
+
   it('deriveArraysFromPlacements round-trips v1 legacy records', () => {
     const cards = [{ id: 'c1', key: 'img__x', type: 'image', versions: [] }];
     const staged = [{ stagingId: 's1', key: 'img__y', type: 'image', versions: [] }];
@@ -82,7 +101,7 @@ describe('artifactPlacementsMap', () => {
     expect(out.artifactPlacements.notes__a.surface).toBe('canvas');
   });
 
-  it('buildProjectSavePayload syncs arrays from authoritative map', () => {
+  it('buildProjectSavePayload prunes stale full-record map entries when arrays are non-empty', () => {
     const staged = [
       {
         stagingId: 's1',
@@ -109,9 +128,9 @@ describe('artifactPlacementsMap', () => {
       [],
       { authoritativePlacements },
     );
-    expect(payload.cards).toHaveLength(1);
+    expect(payload.cards).toHaveLength(0);
     expect(payload.stagedSyncCards).toHaveLength(1);
-    expect(payload.artifactPlacements.notes__a.surface).toBe('canvas');
+    expect(payload.artifactPlacements.notes__a).toBeUndefined();
     expect(payload.artifactPlacements.notes__b.surface).toBe('dock');
   });
 
@@ -126,7 +145,6 @@ describe('artifactPlacementsMap', () => {
 
   it('applyPlacementMapToArrays moves duplicate on canvas to dock when map says dock', () => {
     const card = { id: 'c1', key: 'notes__dup', type: 'markdown', versions: [] };
-    const staged = { stagingId: 's1', key: 'notes__dup', type: 'markdown', versions: [] };
     const out = applyPlacementMapToArrays([card], [], {
       notes__dup: { surface: 'dock', placement: { key: 'notes__dup' } },
     });

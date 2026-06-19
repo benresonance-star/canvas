@@ -96,11 +96,25 @@ Each project remembers its connected folder in **IndexedDB** (per project id). A
 
 If you see “folder link could not be saved”, connect the folder again before refreshing.
 
-## Agent mode (single agent / ChatGPT)
+## Agent mode (single agent / ChatGPT or Gemma Local)
 
 Start the API with `npm run server`. On first run it creates `canvas/.data/agent-master.key` (gitignored) to encrypt keys in Postgres — you do **not** need to set `AGENT_SECRETS_KEY` for local use (optional override for production).
 
 In the app: **Agent mode** → Mode **Single agent** → **ChatGPT** → enter API key → **Save** once. Keys persist until **Replace** or **Remove** in the configuration menu. Chat requests go through `POST /api/agent/chat` so the key never returns to the browser.
+
+For a local model, run Ollama separately from the default Postgres compose
+service:
+
+```powershell
+docker run -d --name canvas-ollama -p 11434:11434 ollama/ollama
+docker exec canvas-ollama ollama pull gemma4:12b
+docker exec canvas-ollama ollama pull gemma4:26b  # optional 26B model
+```
+
+Then select **Gemma 12B Local** or **Gemma 26B Local** in the same agent
+selector. They use `http://localhost:11434/api/chat`, do not need an API key,
+and each model is enabled only when `/api/tags` reports its tag is available.
+Gemma 26B appears unavailable until `gemma4:26b` finishes pulling.
 
 ### Agent context (selected files)
 
@@ -143,7 +157,7 @@ On **Windows**, Node must trust the same certificates as Edge/Chrome. `npm run s
 - **Antivirus “HTTPS scanning”** can break Node until you disable it or add its root CA via `NODE_EXTRA_CA_CERTS`.
 - **Firewall/proxy** only if you use one: `$env:HTTPS_PROXY="http://proxy:8080"` before `npm run server`.
 
-`GET /agent/health` reports `{ openaiReachable, openaiReachabilityError, secretsConfigured }`.
+`GET /agent/health` reports `{ openaiReachable, openaiReachabilityError, ollamaReachable, ollamaModelAvailable, ollamaReachabilityError, secretsConfigured }`. Model-specific Ollama availability is reported by `GET /agent/connectors`.
 
 ## Inspect primitives
 

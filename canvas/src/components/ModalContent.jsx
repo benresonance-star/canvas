@@ -1,7 +1,7 @@
 import React from 'react';
 import { Download } from 'lucide-react';
 import { strings } from '../content/strings.js';
-import { normalizeCardType } from '../lib/filename.js';
+import { normalizeCardType, isCodePreviewType } from '../lib/filename.js';
 import { useArtifactPayloadText } from '../hooks/useArtifactPayloadText.js';
 import { buildHtmlPreviewSrcDoc } from '../lib/htmlPreviewDocument.js';
 import { PdfPreviewFrame } from './PdfPreviewFrame.jsx';
@@ -9,6 +9,7 @@ import { SpreadsheetPreviewFrame } from './SpreadsheetPreviewFrame.jsx';
 import { AudioPlayer } from './AudioPlayer.jsx';
 import { audioSkinUsesDarkText, resolveAudioSkinColor } from '../lib/audioSkin.js';
 import { NotePreviewFrame } from './NotePreviewFrame.jsx';
+import { CodePreviewFrame } from './CodePreviewFrame.jsx';
 
 export function ModalContent({ card, version }) {
   const cardType = normalizeCardType(card?.type);
@@ -168,6 +169,19 @@ export function ModalContent({ card, version }) {
         <div className="serif text-lg text-primary leading-relaxed max-w-2xl mx-auto whitespace-pre-wrap">
           {body}
         </div>
+      </div>
+    );
+  }
+
+  if (isCodePreviewType(cardType)) {
+    return (
+      <div className="h-full w-full min-h-0 p-4">
+        <CodePreviewFrame
+          content={version.content || ''}
+          filename={version.filename}
+          ext={version.ext}
+          compact={false}
+        />
       </div>
     );
   }

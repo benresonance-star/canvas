@@ -19,12 +19,20 @@ export function summarizeArtifactDatabaseCounts(doc) {
 }
 
 /**
- * @param {number} uiCanvas
+ * @param {number | { canvas?: number, dock?: number }} ui
  * @param {ReturnType<typeof summarizeArtifactDatabaseCounts> | null | undefined} db
  */
-export function artifactCountAuditStatus(uiCanvas, db) {
+export function artifactCountAuditStatus(ui, db) {
   if (!db) return 'unknown';
-  return uiCanvas === db.dbCanvas && db.dbCanvas === db.placementCanvas
+  const uiCanvas = typeof ui === 'number' ? ui : Number(ui?.canvas ?? 0);
+  const uiDock = typeof ui === 'number' ? 0 : Number(ui?.dock ?? 0);
+  const uiTotal = uiCanvas + uiDock;
+  return uiCanvas === db.dbCanvas
+    && uiCanvas === db.placementCanvas
+    && uiDock === db.dbDock
+    && uiDock === db.placementDock
+    && uiTotal === db.dbTotal
+    && uiTotal === db.placementTotal
     ? 'match'
     : 'mismatch';
 }

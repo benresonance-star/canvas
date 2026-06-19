@@ -13,6 +13,23 @@ npm run server         # API on :3001
 npm run dev            # Vite on :5173
 ```
 
+### Optional local Gemma agent
+
+Canvas can also use Ollama as a local agent provider. Run Ollama separately from
+the app's Postgres compose service:
+
+```bash
+docker run -d --name canvas-ollama -p 11434:11434 ollama/ollama
+docker exec canvas-ollama ollama pull gemma4:12b
+docker exec canvas-ollama ollama pull gemma4:26b  # optional 26B model
+```
+
+Then start Canvas normally and open **Agent mode** -> **Single agent**. The
+existing agent selector will show **Gemma 12B Local** and **Gemma 26B Local**
+alongside **ChatGPT**. Gemma uses `http://localhost:11434/api/chat` and does
+not need an API key. Gemma 26B remains unavailable until `/api/tags` reports
+`gemma4:26b` after the pull completes.
+
 ## Architecture
 
 See **[docs/ARCHITECTURE_MASTER_SPEC.md](docs/ARCHITECTURE_MASTER_SPEC.md)** — consolidated spec for module boundaries, target data architecture, spec migration, debugging, testing, and remediation progress.

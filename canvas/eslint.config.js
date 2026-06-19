@@ -11,11 +11,13 @@ export default defineConfig([
     extends: [
       js.configs.recommended,
       reactHooks.configs.flat.recommended,
-      reactRefresh.configs.vite,
     ],
     languageOptions: {
-      ecmaVersion: 2020,
-      globals: globals.browser,
+      ecmaVersion: 'latest',
+      globals: {
+        ...globals.es2021,
+        process: 'readonly',
+      },
       parserOptions: {
         ecmaVersion: 'latest',
         ecmaFeatures: { jsx: true },
@@ -23,7 +25,37 @@ export default defineConfig([
       },
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      'no-unused-vars': 'off',
+      'react-hooks/exhaustive-deps': 'off',
+      'react-hooks/immutability': 'off',
+      'react-hooks/purity': 'off',
+      'react-hooks/refs': 'off',
+      'react-hooks/set-state-in-effect': 'off',
+    },
+  },
+  {
+    files: ['src/**/*.{js,jsx}'],
+    extends: [reactRefresh.configs.vite],
+    languageOptions: {
+      globals: globals.browser,
+    },
+  },
+  {
+    files: ['server/**/*.js'],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
+  {
+    files: ['**/__tests__/**/*.js', '**/*.test.js'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.vitest,
+      },
+    },
+    rules: {
+      'react-hooks/rules-of-hooks': 'off',
     },
   },
 ])

@@ -13,7 +13,9 @@ import { strings } from '../content/strings.js';
 import { AGENT_PROFILES } from '../lib/agentProfiles.js';
 import {
   CONNECTORS,
+  agentInputDisabledMessage,
   agentCanChat,
+  defaultAgentTypeLabelForProvider,
   getConnectorById,
   mergeConnectorMeta,
 } from '../lib/agentConnectors.js';
@@ -21,6 +23,13 @@ import { AgentThreadSection } from './AgentThreadSection.jsx';
 import { AgentChatThreadView } from './AgentChatThreadView.jsx';
 import { cardLabel } from '../lib/agentContext.js';
 import { ThreadContextBar } from './ThreadContextBar.jsx';
+import {
+  compileAgentTemplateSystemContext,
+  detectTemplateFileKind,
+  normalizeAgentTemplate,
+  parseAgentModelFile,
+  slugifyAgentId,
+} from '../lib/agentTemplates.js';
 
 function loadStatusLabel(status, cardType) {
   if (status === 'included' && cardType === 'image') {
@@ -305,24 +314,464 @@ function AgentPanelSection({
   children,
   className = '',
   bodyClassName = '',
+  collapsible = false,
+  collapsed = false,
+  onToggleCollapsed,
 }) {
+  const headerClassName =
+    `flex items-center gap-2 px-2.5 py-1.5 border-b shrink-0 ${PANEL_SECTION_HEADER[variant] ?? PANEL_SECTION_HEADER.setup}`;
+  const titleNode = (
+    <>
+      <span className="w-1 h-3.5 rounded-full bg-accent shrink-0" aria-hidden />
+      <span className="sans text-[10px] uppercase tracking-[0.14em] text-primary font-medium">
+        {title}
+      </span>
+    </>
+  );
+
   return (
     <section
       className={`rounded-xl border overflow-hidden min-w-0 ${PANEL_SECTION_SHELL[variant] ?? PANEL_SECTION_SHELL.setup} ${className}`.trim()}
     >
       {title ? (
-        <header
-          className={`flex items-center gap-2 px-2.5 py-1.5 border-b shrink-0 ${PANEL_SECTION_HEADER[variant] ?? PANEL_SECTION_HEADER.setup}`}
-        >
-          <span className="w-1 h-3.5 rounded-full bg-accent shrink-0" aria-hidden />
-          <span className="sans text-[10px] uppercase tracking-[0.14em] text-primary font-medium">
-            {title}
-          </span>
+        <header className={headerClassName}>
+          {collapsible ? (
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              aria-expanded={!collapsed}
+              aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
+              onClick={onToggleCollapsed}
+            >
+              {titleNode}
+              <span className="ml-auto text-muted" aria-hidden>
+                {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+              </span>
+            </button>
+          ) : (
+            titleNode
+          )}
         </header>
       ) : null}
-      <div className={`px-2.5 py-2 space-y-2 min-w-0 ${bodyClassName}`.trim()}>
-        {children}
+      {!collapsed && (
+        <div className={`px-2.5 py-2 space-y-2 min-w-0 ${bodyClassName}`.trim()}>
+          {children}
+        </div>
+      )}
+    </section>
+  );
+}
+
+const DEFAULT_TEMPLATE_DRAFT = {
+  id: 'brainstorming',
+  label: 'Brainstorming Agent',
+  description: '',
+  provider: 'openai',
+  model: 'openai/gpt-5.5',
+  enabled: true,
+  instructions: '',
+  skillsText: '',
+  toolsText: '',
+  revision: 0,
+};
+
+function draftFromTemplate(template) {
+  if (!template) return DEFAULT_TEMPLATE_DRAFT;
+  const instructionsFile = template.files?.find((file) => file.kind === 'instructions');
+  const skillFiles = template.files?.filter((file) => file.kind === 'skill') ?? [];
+  const toolFile = template.files?.find((file) => file.kind === 'tool');
+  return {
+    id: template.id,
+    label: template.label,
+    description: template.description ?? '',
+    provider: template.provider ?? 'openai',
+    model: template.model ?? 'openai/gpt-5.5',
+    enabled: template.enabled !== false,
+    instructions: instructionsFile?.content ?? template.instructions ?? '',
+    skillsText:
+      skillFiles.map((file) => file.content).join('\n\n---skill---\n\n')
+      || template.skills?.map((skill) =>
+        `---\nname: ${skill.name}\ndescription: ${skill.description ?? ''}\n---\n\n${skill.body ?? ''}`,
+      ).join('\n\n---skill---\n\n')
+      || '',
+    toolsText:
+      toolFile?.content
+      || (template.tools?.length
+        ? `export default ${JSON.stringify({ tools: template.tools }, null, 2)};`
+        : ''),
+    revision: template.revision ?? 0,
+  };
+}
+
+function templateFromDraft(draft) {
+  const id = slugifyAgentId(draft.id || draft.label);
+  const files = [
+    {
+      id: 'instructions',
+      kind: 'instructions',
+      filename: 'Instructions.md',
+      content: draft.instructions,
+    },
+    {
+      id: 'model',
+      kind: 'model',
+      filename: 'agent.ts',
+      content: `model: "${draft.model || 'openai/gpt-5.5'}"`,
+    },
+  ];
+  const skillBodies = draft.skillsText
+    .split(/\n\s*---skill---\s*\n/g)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  skillBodies.forEach((content, index) => {
+    files.push({
+      id: `skill-${index + 1}`,
+      kind: 'skill',
+      filename: `skills-${index + 1}.md`,
+      content,
+    });
+  });
+  if (draft.toolsText.trim()) {
+    files.push({
+      id: 'tools',
+      kind: 'tool',
+      filename: 'tools.ts',
+      content: draft.toolsText,
+    });
+  }
+  return normalizeAgentTemplate({
+    id,
+    label: draft.label || `${id} Agent`,
+    description: draft.description,
+    provider: draft.provider || 'openai',
+    model: draft.model || 'openai/gpt-5.5',
+    enabled: draft.enabled,
+    files,
+  });
+}
+
+function AgentTemplateConfigurator({
+  templates,
+  activeTemplateId,
+  selectedProvider = 'openai',
+  activeThread,
+  threadTemplate,
+  selectedDiffersFromThread = false,
+  threadCompatible = true,
+  threadNeedsDefaultAgentType = false,
+  onTemplateChange,
+  onSaveTemplate,
+  onDeleteTemplate,
+  onImportMasterTemplates,
+  onApplyAgentTypeToThread,
+  onUseDefaultAgentTypeForThread,
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(DEFAULT_TEMPLATE_DRAFT);
+  const [status, setStatus] = useState(null);
+  const defaultLabel = defaultAgentTypeLabelForProvider(selectedProvider);
+  const compatibleTemplates = templates.filter((template) => template.provider === selectedProvider);
+  const activeTemplate =
+    compatibleTemplates.find((template) => template.id === activeTemplateId) ?? null;
+
+  const updateDraft = (patch) => setDraft((current) => ({ ...current, ...patch }));
+
+  const preview = (() => {
+    try {
+      return compileAgentTemplateSystemContext(
+        'You are a helpful assistant embedded in Canvas.',
+        templateFromDraft(draft),
+      );
+    } catch (err) {
+      return `Template validation error: ${err.message}`;
+    }
+  })();
+
+  const save = async () => {
+    setStatus(null);
+    try {
+      const template = templateFromDraft(draft);
+      const saved = await onSaveTemplate?.(template, draft.revision ?? 0);
+      if (!saved?.id) {
+        throw new Error('Template save did not return an Agent Type. Try again or refresh templates.');
+      }
+      const active = saved;
+      setDraft(draftFromTemplate(active));
+      onTemplateChange?.(active.id);
+      setStatus({
+        type: 'success',
+        text: `Saved ${active.label} as an Agent Type. It is now active for this chat.`,
+      });
+    } catch (err) {
+      setStatus({ type: 'error', text: err?.message || 'Could not save template.' });
+    }
+  };
+
+  const remove = async () => {
+    if (!activeTemplate?.id) return;
+    const ok = window.confirm(`Delete Agent Type "${activeTemplate.label}"?`);
+    if (!ok) return;
+    try {
+      await onDeleteTemplate?.(activeTemplate.id);
+      setDraft(DEFAULT_TEMPLATE_DRAFT);
+      setStatus({ type: 'success', text: 'Agent Type deleted.' });
+    } catch (err) {
+      setStatus({ type: 'error', text: err?.message || 'Could not delete template.' });
+    }
+  };
+
+  const importMaster = async () => {
+    setStatus(null);
+    try {
+      const imported = await onImportMasterTemplates?.();
+      setStatus({
+        type: 'success',
+        text: `Imported ${imported?.length ?? 0} template${imported?.length === 1 ? '' : 's'}.`,
+      });
+    } catch (err) {
+      setStatus({ type: 'error', text: err?.message || 'Could not import templates.' });
+    }
+  };
+
+  const uploadFiles = async (fileList) => {
+    const files = [...(fileList ?? [])];
+    if (!files.length) return;
+    setStatus(null);
+    try {
+      const parts = await Promise.all(
+        files.map(async (file) => ({
+          filename: file.webkitRelativePath || file.name,
+          content: await file.text(),
+        })),
+      );
+      const patch = {};
+      const skillContents = [];
+      for (const part of parts) {
+        const kind = detectTemplateFileKind(part.filename);
+        if (kind === 'instructions') patch.instructions = part.content;
+        if (kind === 'model') patch.model = parseAgentModelFile(part.content).model;
+        if (kind === 'skill') skillContents.push(part.content);
+        if (kind === 'tool') patch.toolsText = part.content;
+      }
+      if (skillContents.length) {
+        patch.skillsText = [draft.skillsText, ...skillContents]
+          .filter((value) => value?.trim())
+          .join('\n\n---skill---\n\n');
+      }
+      updateDraft(patch);
+      setStatus({ type: 'success', text: `Loaded ${parts.length} file${parts.length === 1 ? '' : 's'}.` });
+    } catch (err) {
+      setStatus({ type: 'error', text: err?.message || 'Could not load files.' });
+    }
+  };
+
+  return (
+    <section className="rounded-md border border-border-subtle bg-surface-muted/40 px-2 py-1.5 space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="sans text-[10px] uppercase tracking-wider text-muted">
+          Agent Type
+        </span>
+        <button
+          type="button"
+          className="sans text-[10px] text-link hover:underline"
+          onClick={() => {
+            if (open) {
+              setOpen(false);
+              return;
+            }
+            setDraft(draftFromTemplate(activeTemplate));
+            setStatus(null);
+            setOpen(true);
+          }}
+        >
+          {open ? 'Close configurator' : 'Create / edit'}
+        </button>
       </div>
+      <p className="sans text-[9px] text-muted leading-snug">
+        Agent Types are saved templates in Postgres. The selected type controls this chat's
+        instructions, skills, tools, and model.
+      </p>
+      <button
+        type="button"
+        className="sans text-[10px] text-link hover:underline"
+        onClick={importMaster}
+      >
+        Import Canvas Master Files
+      </button>
+      <select
+        className="w-full sans text-xs bg-surface border border-border rounded px-2 py-1 text-primary"
+        value={activeTemplate?.id ?? ''}
+        onChange={(e) => onTemplateChange?.(e.target.value || null)}
+      >
+        <option value="">{defaultLabel}</option>
+        {compatibleTemplates.map((template) => (
+          <option key={template.id} value={template.id}>
+            {template.label}
+          </option>
+        ))}
+      </select>
+      {activeTemplateId && !activeTemplate && (
+        <p className="sans text-[9px] text-warning">
+          The selected Agent Type is not compatible with this agent and has been ignored.
+        </p>
+      )}
+      {activeTemplate && (
+        <p className="sans text-[9px] text-muted">
+          Active: {activeTemplate.label} · {activeTemplate.model} · {activeTemplate.skills?.length ?? 0} skills · {activeTemplate.tools?.length ?? 0} tools · revision {activeTemplate.revision ?? 0}
+        </p>
+      )}
+      {!activeTemplate && (
+        <p className="sans text-[9px] text-muted">
+          Active: {defaultLabel}. Save a configurator draft to create a reusable Agent Type.
+        </p>
+      )}
+      <div className="rounded border border-border-subtle bg-surface/70 px-2 py-1">
+        {activeThread ? (
+          <>
+            <p className="sans text-[9px] text-muted">
+              Thread Agent Type:{' '}
+              <span className="text-primary">
+                {activeThread.agentTypeLabel || threadTemplate?.label || defaultLabel}
+              </span>
+              {activeThread.model
+                ? ` · ${activeThread.model.includes('/') ? activeThread.model : `${activeThread.provider || 'provider'}/${activeThread.model}`}`
+                : ''}
+            </p>
+            {activeThread.agentTemplateId && !threadTemplate && (
+              <p className="sans text-[9px] text-warning mt-0.5">
+                This thread's saved Agent Type is no longer available. Sends will use the selected fallback until you change the thread.
+              </p>
+            )}
+            {!threadCompatible && (
+              <p className="sans text-[9px] text-warning mt-0.5">
+                This thread's Agent Type is for another provider. Change it before chatting with this agent.
+              </p>
+            )}
+            {selectedDiffersFromThread && (
+              <button
+                type="button"
+                className="mt-1 sans text-[10px] bg-accent text-on-accent px-2.5 py-1 rounded-full"
+                onClick={onApplyAgentTypeToThread}
+              >
+                Change Agent Type for this thread
+              </button>
+            )}
+            {threadNeedsDefaultAgentType && (
+              <button
+                type="button"
+                className="mt-1 sans text-[10px] bg-accent text-on-accent px-2.5 py-1 rounded-full"
+                onClick={onUseDefaultAgentTypeForThread}
+              >
+                Change to {defaultLabel}
+              </button>
+            )}
+          </>
+        ) : (
+          <p className="sans text-[9px] text-muted">
+            No thread selected. The selected Agent Type will be bound to the next new thread.
+          </p>
+        )}
+      </div>
+      {open && (
+        <div className="space-y-1.5 pt-1 border-t border-border-subtle">
+          <div className="grid grid-cols-2 gap-1.5">
+            <label className="block">
+              <span className="sans text-[9px] uppercase tracking-wider text-muted">Agent ID</span>
+              <input
+                className="mt-0.5 w-full sans text-xs bg-surface border border-border rounded px-2 py-1 text-primary"
+                value={draft.id}
+                onChange={(e) => updateDraft({ id: e.target.value })}
+              />
+            </label>
+            <label className="block">
+              <span className="sans text-[9px] uppercase tracking-wider text-muted">Model</span>
+              <input
+                className="mt-0.5 w-full sans text-xs bg-surface border border-border rounded px-2 py-1 text-primary"
+                value={draft.model}
+                onChange={(e) => updateDraft({ model: e.target.value })}
+              />
+            </label>
+          </div>
+          <label className="block">
+            <span className="sans text-[9px] uppercase tracking-wider text-muted">Label</span>
+            <input
+              className="mt-0.5 w-full sans text-xs bg-surface border border-border rounded px-2 py-1 text-primary"
+              value={draft.label}
+              onChange={(e) => updateDraft({ label: e.target.value })}
+            />
+          </label>
+          <label className="block">
+            <span className="sans text-[9px] uppercase tracking-wider text-muted">Upload Agent Type files</span>
+            <input
+              type="file"
+              multiple
+              accept=".md,.ts"
+              className="mt-0.5 block w-full sans text-[10px] text-muted"
+              onChange={(e) => {
+                void uploadFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
+          </label>
+          <label className="block">
+            <span className="sans text-[9px] uppercase tracking-wider text-muted">Instructions.md</span>
+            <textarea
+              rows={4}
+              className="mt-0.5 w-full sans text-[11px] bg-surface border border-border rounded px-2 py-1 text-primary"
+              value={draft.instructions}
+              onChange={(e) => updateDraft({ instructions: e.target.value })}
+            />
+          </label>
+          <label className="block">
+            <span className="sans text-[9px] uppercase tracking-wider text-muted">Skills.md files</span>
+            <textarea
+              rows={4}
+              className="mt-0.5 w-full sans text-[11px] bg-surface border border-border rounded px-2 py-1 text-primary"
+              placeholder="Separate multiple skill files with ---skill---"
+              value={draft.skillsText}
+              onChange={(e) => updateDraft({ skillsText: e.target.value })}
+            />
+          </label>
+          <label className="block">
+            <span className="sans text-[9px] uppercase tracking-wider text-muted">Tools.ts</span>
+            <textarea
+              rows={3}
+              className="mt-0.5 w-full sans text-[11px] bg-surface border border-border rounded px-2 py-1 text-primary"
+              value={draft.toolsText}
+              onChange={(e) => updateDraft({ toolsText: e.target.value })}
+            />
+          </label>
+          <details>
+            <summary className="sans text-[10px] text-link cursor-pointer">Preview compiled prompt</summary>
+            <pre className="mt-1 max-h-28 overflow-y-auto whitespace-pre-wrap rounded bg-canvas/60 p-2 sans text-[9px] text-secondary">
+              {preview}
+            </pre>
+          </details>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="sans text-[10px] bg-accent text-on-accent px-2.5 py-1 rounded-full"
+              onClick={save}
+            >
+              Save Agent Type
+            </button>
+            {activeTemplate && (
+              <button
+                type="button"
+                className="sans text-[10px] text-danger hover:underline"
+                onClick={remove}
+              >
+                Delete
+              </button>
+            )}
+          </div>
+          {status && (
+            <p className={`sans text-[10px] ${status.type === 'error' ? 'text-danger' : 'text-success'}`}>
+              {status.text}
+            </p>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -335,8 +784,22 @@ export function AgentSidePanel({
   singleConnectorId,
   onSingleConnectorChange,
   connectors = [],
+  agentTemplates = [],
+  activeAgentTemplateId = null,
+  activeAgentThread = null,
+  threadAgentTemplate = null,
+  selectedAgentTypeDiffersFromThread = false,
+  activeThreadAgentTypeCompatible = true,
+  selectedThreadNeedsDefaultAgentType = false,
+  onAgentTemplateChange,
+  onSaveAgentTemplate,
+  onDeleteAgentTemplate,
+  onImportMasterAgentTemplates,
+  onApplyAgentTypeToActiveThread,
+  onUseDefaultAgentTypeForActiveThread,
   secretsConfigured = true,
   connectorsOffline = false,
+  onRetryConnectors,
   openaiReachable = null,
   openaiReachabilityError = null,
   onSaveApiKey,
@@ -388,17 +851,32 @@ export function AgentSidePanel({
   onRenameThread,
   onSwitchThread,
   onDeleteThread,
+  flowIncludeNetwork = true,
+  onFlowIncludeNetworkChange,
+  flowSelectionSummary = null,
 }) {
   const [draft, setDraft] = useState('');
   const [apiKeyDraft, setApiKeyDraft] = useState('');
   const [showReplaceKey, setShowReplaceKey] = useState(false);
   const [apiKeyFeedback, setApiKeyFeedback] = useState(null);
+  const [collapsedSections, setCollapsedSections] = useState({
+    setup: false,
+    context: false,
+  });
   const autoReplaceOpenedRef = useRef(false);
+
+  const toggleSectionCollapsed = (section) => {
+    setCollapsedSections((current) => ({
+      ...current,
+      [section]: !current[section],
+    }));
+  };
 
   const selectedCount = selectedCardIds?.size ?? 0;
   const enabledAgents = AGENT_PROFILES.filter((a) => enabledAgentIds.has(a.id));
   const isSingle = panelMode === 'single';
   const artifactScoped = contextScope === 'artifact';
+  const flowScoped = contextScope === 'flow';
 
   const connectorDef = getConnectorById(singleConnectorId) ?? CONNECTORS[0] ?? null;
   const connectorMeta = connectorDef
@@ -407,18 +885,26 @@ export function AgentSidePanel({
   const activeConnector = mergeConnectorMeta(connectorDef, connectorMeta);
   const connectorConfigured = Boolean(activeConnector?.configured);
   const connectorUsable = Boolean(activeConnector?.usable);
+  const connectorRequiresCredential = activeConnector?.requiresCredential !== false;
   const canChat =
     agentCanChat({
       panelMode,
       secretsConfigured,
       activeConnector,
-    }) && Boolean(activeThreadId) && !threadPickerOpen;
+    }) && Boolean(activeThreadId) && !threadPickerOpen && activeThreadAgentTypeCompatible;
+  const chatDisabledMessage = agentInputDisabledMessage({
+    activeConnector,
+    hasActiveThread: Boolean(activeThreadId),
+    threadCompatible: activeThreadAgentTypeCompatible,
+    connectorsOffline,
+  });
 
   useEffect(() => {
     if (
       connectorMeta?.configured
       && !connectorMeta?.usable
       && secretsConfigured
+      && connectorRequiresCredential
       && !autoReplaceOpenedRef.current
     ) {
       setShowReplaceKey(true);
@@ -427,12 +913,21 @@ export function AgentSidePanel({
     if (connectorMeta?.usable) {
       autoReplaceOpenedRef.current = false;
     }
-  }, [connectorMeta?.configured, connectorMeta?.usable, secretsConfigured]);
+  }, [
+    connectorMeta?.configured,
+    connectorMeta?.usable,
+    connectorRequiresCredential,
+    secretsConfigured,
+  ]);
 
   const chatSyncFailedMessage =
     chatArtifactSyncReason === 'ingest_failed'
       ? strings.agent.agentChatTranscriptIngestFailed
-      : strings.agent.agentChatTranscriptSyncFailed;
+      : chatArtifactSyncReason === 'folder_write_denied'
+        ? strings.agent.agentChatTranscriptFolderWriteDenied
+        : chatArtifactSyncReason === 'folder_write_failed'
+          ? strings.agent.agentChatTranscriptFolderWriteFailed
+          : strings.agent.agentChatTranscriptSyncFailed;
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -502,6 +997,9 @@ export function AgentSidePanel({
           title={strings.agent.panelSectionSetup}
           className="shrink-0"
           bodyClassName="!space-y-1.5"
+          collapsible
+          collapsed={collapsedSections.setup}
+          onToggleCollapsed={() => toggleSectionCollapsed('setup')}
         >
         {!panelModeLocked && (
           <label className="block">
@@ -550,8 +1048,11 @@ export function AgentSidePanel({
                           {meta?.usable && (
                             <span className="sans text-[9px] text-muted ml-auto">Ready</span>
                           )}
-                          {meta?.configured && !meta?.usable && (
+                          {meta?.configured && !meta?.usable && meta?.requiresCredential !== false && (
                             <span className="sans text-[9px] text-warning ml-auto">Re-save key</span>
+                          )}
+                          {meta?.configured && !meta?.usable && meta?.requiresCredential === false && (
+                            <span className="sans text-[9px] text-warning ml-auto">Unavailable</span>
                           )}
                         </div>
                       </button>
@@ -561,15 +1062,67 @@ export function AgentSidePanel({
               </ul>
             </section>
 
-            <section className="space-y-1">
-              <div className="flex items-center justify-between gap-2 min-h-7">
-                <span className="sans text-[10px] uppercase tracking-wider text-muted shrink-0">
-                  {strings.agent.apiKeyHeading}
-                </span>
-                {connectorConfigured && !showReplaceKey ? (
+            <AgentTemplateConfigurator
+              templates={agentTemplates}
+              activeTemplateId={activeAgentTemplateId}
+              selectedProvider={activeConnector?.provider || 'openai'}
+              activeThread={activeAgentThread}
+              threadTemplate={threadAgentTemplate}
+              selectedDiffersFromThread={selectedAgentTypeDiffersFromThread}
+              threadCompatible={activeThreadAgentTypeCompatible}
+              threadNeedsDefaultAgentType={selectedThreadNeedsDefaultAgentType}
+              onTemplateChange={onAgentTemplateChange}
+              onSaveTemplate={onSaveAgentTemplate}
+              onDeleteTemplate={onDeleteAgentTemplate}
+              onImportMasterTemplates={onImportMasterAgentTemplates}
+              onApplyAgentTypeToThread={onApplyAgentTypeToActiveThread}
+              onUseDefaultAgentTypeForThread={onUseDefaultAgentTypeForActiveThread}
+            />
+
+            {connectorRequiresCredential ? (
+              <section className="space-y-1">
+                <div className="flex items-center justify-between gap-2 min-h-7">
+                  <span className="sans text-[10px] uppercase tracking-wider text-muted shrink-0">
+                    {strings.agent.apiKeyHeading}
+                  </span>
+                  {connectorConfigured && !showReplaceKey ? (
+                    <ApiKeyPillMenu
+                      keyHint={activeConnector.keyHint}
+                      showReplaceForm={false}
+                      onReplace={() => setShowReplaceKey(true)}
+                      onRemove={() => onClearApiKey?.(activeConnector.provider)}
+                      onCancelReplace={() => {
+                        setShowReplaceKey(false);
+                        setApiKeyDraft('');
+                        setApiKeyFeedback(null);
+                      }}
+                      apiKeyDraft={apiKeyDraft}
+                      onApiKeyDraftChange={setApiKeyDraft}
+                      onSaveKey={handleSaveKey}
+                      apiKeySaving={apiKeySaving}
+                      apiKeyFeedback={apiKeyFeedback}
+                    />
+                  ) : null}
+                </div>
+                {connectorsOffline && (
+                  <p className="sans text-[10px] text-warning leading-snug">
+                    {strings.agent.apiOffline}
+                  </p>
+                )}
+                {!secretsConfigured && (
+                  <p className="sans text-[10px] text-warning leading-snug">
+                    {strings.agent.secretsNotConfigured}
+                  </p>
+                )}
+                {connectorConfigured && !connectorUsable && secretsConfigured && (
+                  <p className="sans text-[10px] text-warning leading-snug">
+                    {strings.agent.credentialNotUsable}
+                  </p>
+                )}
+                {connectorConfigured && showReplaceKey ? (
                   <ApiKeyPillMenu
                     keyHint={activeConnector.keyHint}
-                    showReplaceForm={false}
+                    showReplaceForm
                     onReplace={() => setShowReplaceKey(true)}
                     onRemove={() => onClearApiKey?.(activeConnector.provider)}
                     onCancelReplace={() => {
@@ -584,75 +1137,71 @@ export function AgentSidePanel({
                     apiKeyFeedback={apiKeyFeedback}
                   />
                 ) : null}
-              </div>
-              {connectorsOffline && (
-                <p className="sans text-[10px] text-warning leading-snug">
-                  {strings.agent.apiOffline}
-                </p>
-              )}
-              {!secretsConfigured && (
-                <p className="sans text-[10px] text-warning leading-snug">
-                  {strings.agent.secretsNotConfigured}
-                </p>
-              )}
-              {connectorConfigured && !connectorUsable && secretsConfigured && (
-                <p className="sans text-[10px] text-warning leading-snug">
-                  {strings.agent.credentialNotUsable}
-                </p>
-              )}
-              {connectorConfigured && showReplaceKey ? (
-                <ApiKeyPillMenu
-                  keyHint={activeConnector.keyHint}
-                  showReplaceForm
-                  onReplace={() => setShowReplaceKey(true)}
-                  onRemove={() => onClearApiKey?.(activeConnector.provider)}
-                  onCancelReplace={() => {
-                    setShowReplaceKey(false);
-                    setApiKeyDraft('');
-                    setApiKeyFeedback(null);
-                  }}
-                  apiKeyDraft={apiKeyDraft}
-                  onApiKeyDraftChange={setApiKeyDraft}
-                  onSaveKey={handleSaveKey}
-                  apiKeySaving={apiKeySaving}
-                  apiKeyFeedback={apiKeyFeedback}
-                />
-              ) : null}
-              {!connectorConfigured ? (
-                <form onSubmit={handleSaveKey} className="flex items-center gap-1.5">
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    value={apiKeyDraft}
-                    onChange={(e) => setApiKeyDraft(e.target.value)}
-                    placeholder={strings.agent.apiKeyPlaceholder}
-                    className="flex-1 min-w-0 sans text-xs bg-surface border border-border rounded-full px-2.5 py-1 text-primary"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!apiKeyDraft.trim() || apiKeySaving}
-                    className="sans text-[10px] bg-accent text-on-accent px-2.5 py-1 rounded-full disabled:opacity-40 shrink-0"
+                {!connectorConfigured ? (
+                  <form onSubmit={handleSaveKey} className="flex items-center gap-1.5">
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      value={apiKeyDraft}
+                      onChange={(e) => setApiKeyDraft(e.target.value)}
+                      placeholder={strings.agent.apiKeyPlaceholder}
+                      className="flex-1 min-w-0 sans text-xs bg-surface border border-border rounded-full px-2.5 py-1 text-primary"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!apiKeyDraft.trim() || apiKeySaving}
+                      className="sans text-[10px] bg-accent text-on-accent px-2.5 py-1 rounded-full disabled:opacity-40 shrink-0"
+                    >
+                      {apiKeySaving ? strings.agent.apiKeySaving : strings.agent.apiKeySave}
+                    </button>
+                  </form>
+                ) : null}
+                {apiKeyFeedback && !connectorConfigured && (
+                  <p
+                    className={`sans text-[10px] ${
+                      apiKeyFeedback.type === 'success' ? 'text-success' : 'text-danger'
+                    }`}
+                    role="status"
                   >
-                    {apiKeySaving ? strings.agent.apiKeySaving : strings.agent.apiKeySave}
-                  </button>
-                </form>
-              ) : null}
-              {apiKeyFeedback && !connectorConfigured && (
+                    {apiKeyFeedback.message}
+                  </p>
+                )}
+                {!connectorConfigured && secretsConfigured && (
+                  <p className="sans text-[10px] text-muted">{strings.agent.apiKeyMissing}</p>
+                )}
+              </section>
+            ) : (
+              <section className="space-y-1">
+                {connectorsOffline && (
+                  <p className="sans text-[10px] text-warning leading-snug" role="status">
+                    {strings.agent.apiOffline}
+                  </p>
+                )}
                 <p
-                  className={`sans text-[10px] ${
-                    apiKeyFeedback.type === 'success' ? 'text-success' : 'text-danger'
+                  className={`sans text-[10px] leading-snug ${
+                    connectorUsable ? 'text-muted' : 'text-warning'
                   }`}
                   role="status"
                 >
-                  {apiKeyFeedback.message}
+                  {connectorUsable
+                    ? strings.agent.localAgentReady
+                    : connectorsOffline
+                      ? strings.agent.apiOffline
+                      : activeConnector?.healthError || strings.agent.localAgentUnavailable}
                 </p>
-              )}
-              {!connectorConfigured && secretsConfigured && (
-                <p className="sans text-[10px] text-muted">{strings.agent.apiKeyMissing}</p>
-              )}
-            </section>
+                {!connectorUsable && onRetryConnectors && (
+                  <button
+                    type="button"
+                    className="sans text-[10px] text-link hover:text-link-hover hover:underline"
+                    onClick={() => void onRetryConnectors()}
+                  >
+                    {strings.agent.retryConnectors}
+                  </button>
+                )}
+              </section>
+            )}
 
-            {connectorConfigured && openaiReachable === false && (
+            {activeConnector?.provider === 'openai' && connectorConfigured && openaiReachable === false && (
               <p className="sans text-[10px] text-warning mb-2" role="status">
                 {openaiReachabilityError || strings.agent.openaiUnreachable}
               </p>
@@ -741,6 +1290,9 @@ export function AgentSidePanel({
           title={strings.agent.contextHeading}
           className="shrink-0 max-h-[28vh] flex flex-col overflow-hidden"
           bodyClassName="overflow-y-auto min-h-0 flex-1 !space-y-1.5"
+          collapsible
+          collapsed={collapsedSections.context}
+          onToggleCollapsed={() => toggleSectionCollapsed('context')}
         >
           {folderNeedsConnect && (
             <p className="sans text-[10px] text-warning mb-1 leading-snug">
@@ -794,7 +1346,7 @@ export function AgentSidePanel({
               contextEstimates={contextEstimates}
             />
           )}
-          {isSingle && onRefreshContextSession && !artifactScoped && (
+          {isSingle && onRefreshContextSession && !artifactScoped && !flowScoped && (
             <button
               type="button"
               className="sans text-[10px] text-link hover:underline mb-1"
@@ -818,6 +1370,49 @@ export function AgentSidePanel({
                 {contextCards.length > 0 && (
                   <>
                     <p className="sans text-[9px] uppercase tracking-wider text-muted mt-1 ml-3">
+                      {strings.agent.contextListHeading}
+                    </p>
+                    <ContextCardList
+                      cards={contextCards}
+                      statusByCardId={contextStatusByCardId}
+                      deliveryByCardId={contextDeliveryByCardId}
+                    />
+                  </>
+                )}
+              </div>
+            ) : flowScoped ? (
+              <div className="w-full rounded-md border border-success-border bg-success-muted px-2 py-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full border border-primary bg-primary shrink-0" />
+                  <span className="sans text-[11px] text-primary">
+                    {strings.agent.contextFlow}
+                  </span>
+                </div>
+                <p className="sans text-[9px] text-muted mt-0.5 ml-3 leading-snug">
+                  {strings.agent.contextFlowHint}
+                </p>
+                <p className="sans text-[9px] text-muted mt-1 ml-3 leading-snug">
+                  {flowSelectionSummary?.isFullFlow
+                    ? strings.agent.contextFlowFullDiagram
+                    : strings.agent.contextFlowSelectionSummary(
+                        flowSelectionSummary?.nodeCount ?? 0,
+                        flowSelectionSummary?.edgeCount ?? 0,
+                      )}
+                </p>
+                <label className="sans mt-2 ml-3 flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={flowIncludeNetwork}
+                    onChange={(event) => onFlowIncludeNetworkChange?.(event.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-border text-accent focus:ring-accent"
+                  />
+                  <span className="text-[10px] text-primary">
+                    {strings.agent.contextFlowIncludeNetwork}
+                  </span>
+                </label>
+                {contextCards.length > 0 && (
+                  <>
+                    <p className="sans text-[9px] uppercase tracking-wider text-muted mt-2 ml-3">
                       {strings.agent.contextListHeading}
                     </p>
                     <ContextCardList
@@ -1016,6 +1611,11 @@ export function AgentSidePanel({
             loading={chatLoading}
             error={chatError}
             className="flex-1"
+            defaultAgentTypeLabel={
+              activeAgentThread?.agentTypeLabel
+              || threadAgentTemplate?.label
+              || defaultAgentTypeLabelForProvider(activeConnector?.provider)
+            }
           />
         </div>
         <footer className="shrink-0 border-t border-border mt-1.5 pt-1.5 space-y-1">
@@ -1025,7 +1625,7 @@ export function AgentSidePanel({
             onChange={(e) => setDraft(e.target.value)}
             placeholder={
               isSingle && !canChat
-                ? strings.agent.apiKeyMissing
+                ? chatDisabledMessage
                 : strings.agent.inputPlaceholder
             }
             rows={5}

@@ -56,6 +56,59 @@ function ContextEventRow({ message, compact }) {
   );
 }
 
+function AgentTypeChangeRow({ message, compact }) {
+  const fromLabel = message.fromAgentTypeLabel || 'Default ChatGPT agent';
+  const toLabel = message.toAgentTypeLabel || 'Default ChatGPT agent';
+  const model = message.model ? ` · ${message.provider || 'provider'}/${message.model}` : '';
+  return (
+    <li
+      className={`sans rounded px-2 py-1.5 bg-surface-muted text-muted border border-border-subtle text-center ${
+        compact ? 'text-[10px]' : 'text-xs'
+      }`}
+    >
+      Agent Type changed: {fromLabel} -&gt; {toLabel}{model}
+    </li>
+  );
+}
+
+function formatAgentTypeLabel({ label, provider, model }) {
+  if (!label) return '';
+  const modelRef = model?.includes('/')
+    ? model
+    : model
+      ? `${provider || 'provider'}/${model}`
+      : '';
+  return modelRef ? `${label} · ${modelRef}` : label;
+}
+
+function resolveAgentAttribution(messages, index, defaultAgentTypeLabel = '') {
+  const message = messages[index];
+  if (message.role !== 'assistant') return '';
+
+  let label = message.agentTypeLabel || message.agentTemplateId;
+  let provider = message.provider;
+  let model = message.model;
+
+  if (!label) {
+    for (let i = index - 1; i >= 0; i -= 1) {
+      const prev = messages[i];
+      if (prev.kind === 'agent_type_change') {
+        label = prev.toAgentTypeLabel;
+        break;
+      }
+      if (prev.role === 'assistant' && (prev.agentTypeLabel || prev.agentTemplateId)) {
+        label = prev.agentTypeLabel || prev.agentTemplateId;
+        provider = prev.provider;
+        model = prev.model;
+        break;
+      }
+    }
+  }
+
+  if (!label) label = defaultAgentTypeLabel;
+  return formatAgentTypeLabel({ label, provider, model });
+}
+
 function hasConversationMessages(messages) {
   return (messages ?? []).some(
     (m) => !m.kind && (m.role === 'user' || m.role === 'assistant'),
@@ -72,6 +125,7 @@ export function AgentChatThreadView({
   compact = false,
   className = '',
   scrollOnUpdate = true,
+  defaultAgentTypeLabel = '',
 }) {
   const bottomRef = useRef(null);
   const [formattedView, setFormattedView] = useState(true);
@@ -117,11 +171,17 @@ export function AgentChatThreadView({
           {strings.agent.chatEmptyHint}
         </p>
       )}
-      {messages.map((m) => {
+      {messages.map((m, index) => {
         if (m.kind === 'context_add' || m.kind === 'context_remove') {
           return <ContextEventRow key={m.id} message={m} compact={compact} />;
         }
+        if (m.kind === 'agent_type_change') {
+          return <AgentTypeChangeRow key={m.id} message={m} compact={compact} />;
+        }
         const isUser = m.role === 'user';
+        const agentTypeLabel = !isUser
+          ? resolveAgentAttribution(messages, index, defaultAgentTypeLabel)
+          : '';
         return (
           <div
             key={m.id}
@@ -134,6 +194,15 @@ export function AgentChatThreadView({
                   : 'bg-surface border border-border-subtle text-secondary rounded-bl-md'
               }`}
             >
+              {agentTypeLabel && (
+                <p
+                  className={`sans text-muted border-b border-border-subtle/70 pb-1 mb-1.5 ${
+                    compact ? 'text-[9px]' : 'text-[10px]'
+                  }`}
+                >
+                  {agentTypeLabel}
+                </p>
+              )}
               {formattedView ? (
                 <MarkdownMessage content={m.content} compact={compact} />
               ) : (

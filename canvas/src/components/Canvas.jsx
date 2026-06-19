@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { getCardPixelSize, filterCardsForViewport } from '../lib/cards.js';
 import { clientToWorldPoint, clampCanvasZoom } from '../lib/canvasView.js';
 import { beginCardDragSession, endCardDragSession } from '../lib/cardDragSession.js';
@@ -135,6 +135,11 @@ export function Canvas({
       disable: cullDisabled,
     });
   }, [mergedCards, view, viewportSize, draggingCard, resizingCard, linkDrag, readOnly]);
+
+  const cardsById = useMemo(
+    () => new Map((allCards ?? cards ?? []).map((card) => [card.id, card])),
+    [allCards, cards],
+  );
 
   const clusterHulls = React.useMemo(
     () =>
@@ -961,6 +966,7 @@ export function Canvas({
               cardKey: card.key,
             })}
             bookmarkEditDisabled={readOnly}
+            cardsById={cardsById}
           />
         ))}
         <ClusterHullLayer

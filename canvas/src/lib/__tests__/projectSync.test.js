@@ -1907,6 +1907,11 @@ describe('projectSync', () => {
       cards: [{ id: 'c1', key: 'k1', versions: [{ version: 1 }] }],
       canvasView: { x: 0, y: 0, zoom: 1 },
     };
+    const repairPayload = {
+      projectName: 'Work',
+      cards: [],
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
     storage.set(`canvas:project:${projectId}`, JSON.stringify(localPayload));
     storage.set(`canvas:project-rev:${projectId}`, JSON.stringify(1));
 

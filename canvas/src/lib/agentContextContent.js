@@ -33,7 +33,7 @@ export const CONTEXT_MAX_FILE_CHARS = CONTEXT_PROFILES.standard.maxFileChars;
 /** @deprecated use CONTEXT_PROFILES.standard */
 export const CONTEXT_MAX_TOTAL_CHARS = CONTEXT_PROFILES.standard.maxTotalChars;
 
-const TEXT_TYPES = new Set(['markdown', 'note', 'user_note', 'html']);
+const TEXT_TYPES = new Set(['markdown', 'note', 'user_note', 'html', 'agent_chat']);
 
 /**
  * @param {'standard' | 'extended'} [profileName]
@@ -57,7 +57,7 @@ export function getPinnedVersion(card) {
  */
 export function isContextTypeSupported(type) {
   const t = normalizeCardType(type);
-  return TEXT_TYPES.has(t) || t === 'pdf' || t === 'image';
+  return TEXT_TYPES.has(t) || t === 'pdf' || t === 'image' || t === 'flow';
 }
 
 /**
@@ -126,6 +126,15 @@ export function contextStatusHint(card, options = {}) {
     };
   }
 
+  if (type === 'flow') {
+    const hasPreview = Boolean(pinned?.flowPreview?.nodes?.length || pinned?.flowId || pinned?.artifactRef?.id);
+    return {
+      cardId: card.id,
+      label,
+      status: hasPreview ? 'pending' : 'empty',
+    };
+  }
+
   if (!isContextTypeSupported(type)) {
     return { cardId: card.id, label, status: 'unsupported' };
   }
@@ -187,6 +196,8 @@ export function truncateText(text, max) {
  * @param {{
  *   folderHandle?: FileSystemDirectoryHandle | null,
  *   fetchArtifact?: typeof getArtifact,
+ *   loadAgentChatText?: (card: object) => Promise<string | null>,
+ *   loadFlowContextText?: (card: object) => Promise<string | null>,
  *   profile?: ContextProfileName,
  * }} options
  * @returns {Promise<ContextDocument>}
@@ -196,6 +207,8 @@ export async function loadContextDocumentForCard(card, options = {}) {
     folderHandle = null,
     fetchArtifact = getArtifact,
     profile = 'standard',
+    loadAgentChatText = null,
+    loadFlowContextText = null,
   } = options;
   const limits = getContextLimits(profile);
   const label = cardLabel(card);
@@ -232,6 +245,49 @@ export async function loadContextDocumentForCard(card, options = {}) {
       text: body || null,
       note: body ? undefined : 'No URL on this bookmark.',
     };
+  }
+
+  if (type === 'flow') {
+    if (!loadFlowContextText) {
+      return {
+        cardId: card.id,
+        label,
+        type,
+        status: 'unsupported',
+        note: 'Flow diagram context is not available.',
+      };
+    }
+    try {
+      const text = await loadFlowContextText(card);
+      if (!text?.trim()) {
+        return {
+          cardId: card.id,
+          label,
+          type,
+          status: 'empty',
+          note: 'This flow has no diagram content.',
+        };
+      }
+      const { text: trimmed, truncated } = truncateText(text.trim(), limits.maxFileChars);
+      return {
+        cardId: card.id,
+        label,
+        type,
+        status: 'included',
+        text: trimmed,
+        truncated,
+        originalChars: text.length,
+        includedChars: trimmed.length,
+      };
+    } catch (error) {
+      return {
+        cardId: card.id,
+        label,
+        type,
+        status: 'error',
+        note: error?.message || 'Could not load flow diagram.',
+      };
+    }
   }
 
   if (type === 'image') {
@@ -296,6 +352,17 @@ export async function loadContextDocumentForCard(card, options = {}) {
       const { artifact } = await fetchArtifact(pinned.artifactRef.id);
       if (artifact?.payload_text?.trim()) {
         text = artifact.payload_text.trim();
+      }
+    } catch {
+      /* fall through to folder */
+    }
+  }
+
+  if (!text && type === 'agent_chat' && loadAgentChatText) {
+    try {
+      const transcript = await loadAgentChatText(card);
+      if (transcript?.trim()) {
+        text = transcript.trim();
       }
     } catch {
       /* fall through to folder */
@@ -382,6 +449,8 @@ export async function loadContextDocumentForCard(card, options = {}) {
  * @param {{
  *   folderHandle?: FileSystemDirectoryHandle | null,
  *   fetchArtifact?: typeof getArtifact,
+ *   loadAgentChatText?: (card: object) => Promise<string | null>,
+ *   loadFlowContextText?: (card: object) => Promise<string | null>,
  *   profile?: ContextProfileName,
  * }} options
  */
@@ -390,6 +459,8 @@ export async function estimateContextDocument(card, options = {}) {
     folderHandle = null,
     fetchArtifact = getArtifact,
     profile = 'standard',
+    loadAgentChatText = null,
+    loadFlowContextText = null,
   } = options;
   const limits = getContextLimits(profile);
   const standardLimits = getContextLimits('standard');
@@ -404,6 +475,23 @@ export async function estimateContextDocument(card, options = {}) {
     return { cardId: card.id, label, type, wouldTruncate: false, estimatedChars: 0 };
   }
 
+  if (type === 'flow' && loadFlowContextText) {
+    try {
+      const text = await loadFlowContextText(card);
+      const estimatedChars = text?.length ?? 0;
+      return {
+        cardId: card.id,
+        label,
+        type,
+        estimatedChars,
+        wouldTruncate: estimatedChars > limits.maxFileChars,
+        wouldTruncateUnlessExtended: estimatedChars > standardLimits.maxFileChars,
+      };
+    } catch {
+      return { cardId: card.id, label, type, wouldTruncate: false, estimatedChars: 0 };
+    }
+  }
+
   let estimatedChars = 0;
   let pdfPagesTotal;
 
@@ -413,6 +501,15 @@ export async function estimateContextDocument(card, options = {}) {
       if (artifact?.payload_text) {
         estimatedChars = artifact.payload_text.length;
       }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (!estimatedChars && type === 'agent_chat' && loadAgentChatText) {
+    try {
+      const transcript = await loadAgentChatText(card);
+      if (transcript) estimatedChars = transcript.length;
     } catch {
       /* ignore */
     }

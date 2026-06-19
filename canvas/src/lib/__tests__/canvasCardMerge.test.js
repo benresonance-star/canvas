@@ -150,6 +150,115 @@ describe('dock staged agent chat cleanup', () => {
     expect(s).toHaveLength(0);
   });
 
+  it('sanitizeAgentChatProjectState removes agent_chat canvas cards outside thread index', () => {
+    const cards = [
+      {
+        id: 'owned-card',
+        key: 'notes__agent-chat-openai-owned',
+        type: 'agent_chat',
+        versions: [{ filename: 'notes__agent-chat-openai-owned-v1.md' }],
+      },
+      {
+        id: 'stale-card',
+        key: 'notes__agent-chat-openai-stale',
+        type: 'agent_chat',
+        versions: [{ filename: 'notes__agent-chat-openai-stale-v1.md' }],
+      },
+      { id: 'note-1', key: 'notes__regular', type: 'markdown', versions: [] },
+    ];
+
+    const { cards: c, keysMigrated } = sanitizeAgentChatProjectState(cards, [], {
+      connectorId: 'openai',
+      suppressedKeys: new Set(),
+      threads: [{
+        threadId: 'thread-owned',
+        filename: 'notes__agent-chat-openai-owned-v1.md',
+        cardId: 'owned-card',
+      }],
+    });
+
+    expect(keysMigrated).toBe(true);
+    expect(c.map((card) => card.id).sort()).toEqual(['note-1', 'owned-card']);
+  });
+
+  it('sanitizeAgentChatProjectState ignores stale historical thread cardIds', () => {
+    const cards = [
+      {
+        id: 'active-card',
+        key: 'notes__agent-chat-openai-active',
+        type: 'agent_chat',
+        versions: [{ filename: 'notes__agent-chat-openai-active-v1.md' }],
+      },
+      {
+        id: 'stale-card',
+        key: 'notes__agent-chat-openai-stale',
+        type: 'agent_chat',
+        name: 'agent-chat-openai-stale',
+        versions: [{ filename: 'notes__agent-chat-openai-stale-v1.md' }],
+      },
+      { id: 'note-1', key: 'notes__regular', type: 'markdown', versions: [] },
+    ];
+
+    const { cards: c, keysMigrated } = sanitizeAgentChatProjectState(cards, [], {
+      connectorId: 'openai',
+      preferredCardId: 'active-card',
+      suppressedKeys: new Set(),
+      activeThreadId: 'active-thread',
+      threads: [
+        {
+          threadId: 'active-thread',
+          filename: 'notes__agent-chat-openai-active-v1.md',
+          cardId: 'active-card',
+          updatedAt: 40,
+        },
+        {
+          threadId: 'stale-latest',
+          filename: 'notes__agent-chat-openai-stale-v1.md',
+          cardId: null,
+          updatedAt: 30,
+        },
+        {
+          threadId: 'stale-old',
+          filename: 'notes__agent-chat-openai-stale-v1.md',
+          cardId: 'stale-card',
+          updatedAt: 10,
+        },
+      ],
+    });
+
+    expect(keysMigrated).toBe(true);
+    expect(c.map((card) => card.id).sort()).toEqual(['active-card', 'note-1']);
+  });
+
+  it('sanitizeAgentChatProjectState removes agent_chat dock rows outside thread index', () => {
+    const staged = [
+      {
+        stagingId: 'owned-staged',
+        key: 'notes__agent-chat-openai-owned',
+        type: 'agent_chat',
+        versions: [{ filename: 'notes__agent-chat-openai-owned-v1.md' }],
+      },
+      {
+        stagingId: 'stale-staged',
+        key: 'notes__agent-chat-openai-stale',
+        type: 'agent_chat',
+        versions: [{ filename: 'notes__agent-chat-openai-stale-v1.md' }],
+      },
+    ];
+
+    const { stagedSyncCards: s, keysMigrated } = sanitizeAgentChatProjectState([], staged, {
+      connectorId: 'openai',
+      suppressedKeys: new Set(),
+      threads: [{
+        threadId: 'thread-owned',
+        filename: 'notes__agent-chat-openai-owned-v1.md',
+      }],
+    });
+
+    expect(keysMigrated).toBe(true);
+    expect(s.map((row) => row.stagingId)).toEqual(['owned-staged']);
+  });
+
   it('sanitizeAgentChatProjectState removes cards whose keys are suppressed on document', () => {
     const cards = [
       { id: '1', key: 'notes__agent-chat-openai', type: 'agent_chat', name: 'Previous chat' },

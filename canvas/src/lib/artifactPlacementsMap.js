@@ -47,10 +47,12 @@ export function buildPayloadFromAuthoritativePlacements(
   const allHaveRecords = Object.values(map).every(
     (e) => e?.record && typeof e.record === 'object',
   );
+  const arraysEmpty =
+    (baseCards?.length ?? 0) === 0 && (baseStaged?.length ?? 0) === 0;
 
   let cards;
   let stagedSyncCards;
-  if (allHaveRecords) {
+  if (allHaveRecords && arraysEmpty) {
     const derived = deriveArraysFromPlacements(map);
     cards = mergePlacementCoordsFromMap(derived.cards, map);
     stagedSyncCards = derived.stagedSyncCards;

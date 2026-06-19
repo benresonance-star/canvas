@@ -156,6 +156,9 @@ export async function scanFolderFiles(handle, options = {}) {
 
       const filename = entry.name;
       if (!filename) continue;
+      // Generated flow snapshots mirror database state and must never be
+      // re-ingested as ordinary file artifacts.
+      if (/\.flow\.json$/i.test(filename)) continue;
       const relativePath =
         entry.webkitRelativePath && typeof entry.webkitRelativePath === 'string'
           ? entry.webkitRelativePath

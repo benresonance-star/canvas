@@ -191,6 +191,7 @@ export function useProjectSyncLifecycle({
         preferredCardId,
         suppressedKeys,
         threads: agentChatThreadIndexRef.current?.threads ?? [],
+        activeThreadId: activeThreadIdRef.current,
       },
     );
     const placementCleanup = enforceExclusivePlacement(
@@ -296,11 +297,17 @@ export function useProjectSyncLifecycle({
     }
     if (
       (
-        (cleanedPersist && !placementChangedBySanitize)
+        cleanedPersist
+        || placementChangedBySanitize
         || placementCleanup.changed
       )
       && !switchingProjectRef.current
-      && (initialHydratedRef.current || placementCleanup.changed)
+      && (
+        initialHydratedRef.current
+        || cleanedPersist
+        || placementChangedBySanitize
+        || placementCleanup.changed
+      )
     ) {
       void saveProjectById(
         projectId,
@@ -791,7 +798,7 @@ export function useProjectSyncLifecycle({
             applyDuplicateNameBanner(refreshed);
           }
           setSyncStatus({
-            toast: strings.projects.syncedFromServer(serverSynced),
+            toast: strings.projects.syncedProjectsFromServer(serverSynced),
           });
           setTimeout(() => setSyncStatus(null), 6000);
         }
@@ -1054,6 +1061,7 @@ export function useProjectSyncLifecycle({
               preferredCardId,
               suppressedKeys: readSuppressedSyncKeys(projectId, normalized),
               threads: agentChatThreadIndexRef.current?.threads ?? [],
+              activeThreadId: activeThreadIdRef.current,
             },
           );
           const placementCleanup = enforceExclusivePlacement(
@@ -1086,7 +1094,8 @@ export function useProjectSyncLifecycle({
             || sanitized.keysMigrated
             || placementCleanup.changed;
           if (
-            (stagedChanged && !placementChangedBySanitize)
+            stagedChanged
+            || placementChangedBySanitize
             || placementCleanup.changed
           ) {
             const { stagedSyncCards: _s, cards: _c, ...rest } = normalized;

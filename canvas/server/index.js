@@ -13,6 +13,8 @@ import { registerClusterRoutes } from './routes/clusters.js';
 import { registerArtifactRoutes } from './routes/artifacts.js';
 import { registerPrimitiveRoutes } from './routes/primitives.js';
 import { registerAgentRoutes } from './routes/agent.js';
+import { registerAgentTemplateRoutes } from './routes/agentTemplates.js';
+import { registerFlowRoutes } from './routes/flows.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -34,6 +36,8 @@ registerSpecRoutes(app, routeDeps);
 registerClusterRoutes(app, routeDeps);
 registerArtifactRoutes(app);
 registerPrimitiveRoutes(app, routeDeps);
+registerFlowRoutes(app, routeDeps);
+registerAgentTemplateRoutes(app);
 registerAgentRoutes(app);
 
 async function start() {

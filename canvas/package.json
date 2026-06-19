@@ -18,8 +18,10 @@
     "db:up": "docker compose -f ../docker-compose.yml up -d"
   },
   "dependencies": {
+    "@xyflow/react": "^12.11.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "highlight.js": "^11.11.1",
     "js-tiktoken": "^1.0.20",
     "jsmediatags": "^3.9.7",
     "lucide-react": "^0.513.0",

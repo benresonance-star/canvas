@@ -5,6 +5,7 @@ import {
   toCanonicalSyncKey,
 } from './filename.js';
 import { enforceExclusivePlacement } from './artifactPlacement.js';
+import { collectCanonicalAgentChatOwnership } from './agentChatThreads.js';
 
 /**
  * Merge persisted project cards into live React canvas state without dropping
@@ -196,6 +197,26 @@ function canonicalKeyFromVersions(entry) {
   return toCanonicalSyncKey(entry?.key);
 }
 
+function isAgentChatForConnector(entry, connectorId) {
+  if (!connectorId || entry?.type !== 'agent_chat') return false;
+  const safe = String(connectorId).replace(/[^a-zA-Z0-9_-]/g, '-');
+  return entry.key?.startsWith(`notes__agent-chat-${safe}`);
+}
+
+function filterOwnedAgentChatRows(rows, connectorId, ownership, { surface }) {
+  if (!ownership.enabled) return { rows: rows ?? [], changed: false };
+  const filtered = (rows ?? []).filter((row) => {
+    if (!isAgentChatForConnector(row, connectorId)) return true;
+    const key = canonicalKeyFromVersions(row) || toCanonicalSyncKey(row.key);
+    if (key && ownership.activeKeys.has(key)) return true;
+    if (surface === 'canvas') {
+      return Boolean(row.id && ownership.cardIds.has(row.id));
+    }
+    return Boolean(key && ownership.keys.has(key));
+  });
+  return { rows: filtered, changed: filtered.length !== (rows ?? []).length };
+}
+
 /**
  * Rewrite folder-backed card keys to canonical fullBase from any version filename.
  * @param {object[]} cards
@@ -278,14 +299,30 @@ export function migrateAgentChatStagedKeys(stagedCards) {
 export function sanitizeAgentChatProjectState(
   cards,
   stagedCards,
-  { connectorId, preferredCardId, suppressedKeys, threads },
+  { connectorId, preferredCardId, suppressedKeys, threads, activeThreadId },
 ) {
   const folderBackedCards = migrateFolderBackedCardKeys(cards ?? []);
   const folderBackedStaged = migrateFolderBackedStagedKeys(stagedCards ?? []);
   const migratedCards = migrateAgentChatCardKeys(folderBackedCards.cards);
   const migratedStaged = migrateAgentChatStagedKeys(folderBackedStaged.stagedSyncCards);
-  let nextCards = dedupeAgentChatCardsForConnector(
+  const ownership = collectCanonicalAgentChatOwnership({
+    threads: threads ?? [],
+    activeThreadId,
+  });
+  const ownedCards = filterOwnedAgentChatRows(
     migratedCards.cards,
+    connectorId,
+    ownership,
+    { surface: 'canvas' },
+  );
+  const ownedStaged = filterOwnedAgentChatRows(
+    migratedStaged.stagedSyncCards,
+    connectorId,
+    ownership,
+    { surface: 'dock' },
+  );
+  let nextCards = dedupeAgentChatCardsForConnector(
+    ownedCards.rows,
     connectorId,
     preferredCardId,
     { threads: threads ?? [] },
@@ -294,7 +331,7 @@ export function sanitizeAgentChatProjectState(
     nextCards = nextCards.filter((c) => !c.key || !suppressedKeys.has(c.key));
   }
   let nextStaged = filterSuppressedStagedCards(
-    migratedStaged.stagedSyncCards,
+    ownedStaged.rows,
     suppressedKeys,
   );
   nextStaged = dedupeAgentChatStagedForConnector(nextStaged, connectorId);
@@ -312,6 +349,8 @@ export function sanitizeAgentChatProjectState(
       || folderBackedStaged.changed
       || migratedCards.changed
       || migratedStaged.changed
+      || ownedCards.changed
+      || ownedStaged.changed
       || exclusive.changed,
   };
 }

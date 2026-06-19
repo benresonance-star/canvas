@@ -2,6 +2,7 @@
 const STAGING_COLOR_BY_TYPE = {
   image: '#3b82f6',
   markdown: '#8b5cf6',
+  code: '#38bdf8',
   note: '#8b5cf6',
   html: '#06b6d4',
   pdf: '#ef4444',

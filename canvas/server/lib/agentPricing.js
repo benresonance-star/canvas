@@ -4,6 +4,8 @@ const INPUT_USD_PER_MILLION = {
   'gpt-4o': 2.5,
   'gpt-4.1-mini': 0.4,
   'gpt-4.1': 2.0,
+  'gpt-5.5': 1.25,
+  'openai/gpt-5.5': 1.25,
 };
 
 /**

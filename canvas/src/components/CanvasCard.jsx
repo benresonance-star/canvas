@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Bot, Box, Layers, Trash2, Link2 } from 'lucide-react';
 import { getCardPixelSize } from '../lib/cards.js';
-import { cardHeaderLabel } from '../lib/filename.js';
+import { cardHeaderLabel, cardDisplayFilename } from '../lib/filename.js';
 import { strings } from '../content/strings.js';
 import { TypeIcon } from './TypeIcon.jsx';
 import { CardPreview } from './CardPreview.jsx';
@@ -43,6 +43,7 @@ export function CanvasCard({
   agentChatThreadIndex = null,
   agentChatConnectorId = null,
   folderHandle = null,
+  cardsById = null,
 }) {
   const versions = card.versions ?? [];
   const pinned =
@@ -56,6 +57,7 @@ export function CanvasCard({
   const showSimplified = zoom < 0.5;
   const showResizeHandles = isActive && !showSimplified;
 
+  const displayFilename = cardDisplayFilename(card);
   const canEditUserNoteTitle =
     card.type === 'user_note' && isActive && !showSimplified && !userNoteDisabled;
   const [titleDraft, setTitleDraft] = useState({
@@ -170,9 +172,9 @@ export function CanvasCard({
             ) : (
               <div
                 className={`serif truncate ${missingFromFolder ? 'text-danger' : 'text-primary'} ${showSimplified ? 'text-sm' : 'text-base'}`}
-                title={card.name}
+                title={displayFilename}
               >
-                {card.name}
+                {displayFilename}
               </div>
             )}
           </div>
@@ -300,6 +302,7 @@ export function CanvasCard({
             agentChatThreadIndex={agentChatThreadIndex}
             agentChatConnectorId={agentChatConnectorId}
             folderHandle={folderHandle}
+            cardsById={cardsById}
           />
         </div>
       </div>

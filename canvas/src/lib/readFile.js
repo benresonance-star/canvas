@@ -37,7 +37,13 @@ export async function readFileEntry(entry, options = {}) {
   let previewCacheKey = null;
   let audioMeta = null;
 
-  if (type === 'markdown' || type === 'note' || type === 'user_note' || type === 'html') {
+  if (
+    type === 'markdown'
+    || type === 'note'
+    || type === 'user_note'
+    || type === 'html'
+    || type === 'code'
+  ) {
     if (isSmall) {
       content = await file.text();
     }

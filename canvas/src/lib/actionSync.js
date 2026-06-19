@@ -129,7 +129,11 @@ async function pushPayloadForProject(
   reason,
   traceId = null,
   beforePayload = null,
-  { allowEmptyRemoteOverwrite = false, allowDockOnlyRemoteOverwrite = false } = {},
+  {
+    allowEmptyRemoteOverwrite = false,
+    allowDockOnlyRemoteOverwrite = false,
+    allowCleanupOverwrite = false,
+  } = {},
 ) {
   syncTraceLog(traceId, 'actionSync:push-start', {
     projectId,
@@ -139,13 +143,17 @@ async function pushPayloadForProject(
     stagedCount: (payload.stagedSyncCards ?? []).length,
     hasBeforePayload: Boolean(beforePayload),
   });
-  const pushResult = await flushOutgoingProjectDocument(projectId, payload, {
+  const flushOptions = {
     reason,
     traceId,
     beforePayload,
     allowEmptyRemoteOverwrite,
     allowDockOnlyRemoteOverwrite,
-  });
+  };
+  if (allowCleanupOverwrite) {
+    flushOptions.allowCleanupOverwrite = true;
+  }
+  const pushResult = await flushOutgoingProjectDocument(projectId, payload, flushOptions);
   syncTraceLog(traceId, 'actionSync:push-done', {
     projectId,
     ok: pushResult?.ok,
@@ -194,13 +202,14 @@ function schedulePlacementPushRetry(projectId, reason = 'structuralChange') {
 /**
  * Action-based sync — not timer-driven.
  * @param {ActionSyncReason} reason
- * @param {{ projectId?: string, awaitLocal?: boolean, traceId?: string | null, allowEmptyRemoteOverwrite?: boolean, skipInboundReconcile?: boolean }} [options]
+ * @param {{ projectId?: string, awaitLocal?: boolean, traceId?: string | null, allowEmptyRemoteOverwrite?: boolean, allowCleanupOverwrite?: boolean, skipInboundReconcile?: boolean }} [options]
  */
 export function requestActionSync(reason, options = {}) {
   const {
     awaitLocal = false,
     traceId = null,
     allowEmptyRemoteOverwrite = false,
+    allowCleanupOverwrite = false,
     skipInboundReconcile = false,
   } = options;
   if (!handlers) {
@@ -241,6 +250,7 @@ export function requestActionSync(reason, options = {}) {
         pendingFolderScanRequest = {
           projectId,
           allowEmptyRemoteOverwrite,
+          allowCleanupOverwrite,
           skipInboundReconcile,
         };
       }
@@ -287,11 +297,12 @@ export function requestActionSync(reason, options = {}) {
           reason,
           traceId,
           beforePayload,
+          { allowCleanupOverwrite },
         );
         await handlers.touchIndex(projectId);
         return;
       }
-      await flushLocalAndPush(projectId, reason);
+      await flushLocalAndPush(projectId, reason, { allowCleanupOverwrite });
       await handlers.touchIndex(projectId);
       return;
     }

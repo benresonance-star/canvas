@@ -1,4 +1,7 @@
-import { getConnectorByProvider } from '../lib/agentConnectors.js';
+import {
+  getConnectorByProvider,
+  normalizeProviderModelId,
+} from '../lib/agentConnectors.js';
 import { fetchOpenAI } from '../lib/openaiFetch.js';
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
@@ -57,16 +60,17 @@ export function buildChatMessages({ systemContext, messages }) {
 }
 
 /**
- * @param {{ apiKey: string, provider: string, messages: object[], systemContext?: string }} params
+ * @param {{ apiKey: string, provider: string, messages: object[], systemContext?: string, model?: string | null }} params
  */
-export async function completeChat({ apiKey, provider, messages, systemContext }) {
+export async function completeChat({ apiKey, provider, messages, systemContext, model = null }) {
   const connector = getConnectorByProvider(provider);
   if (!connector) {
     throw new Error(`Unknown provider: ${provider}`);
   }
+  const resolvedModel = normalizeProviderModelId(provider, model || connector.model);
 
   const payload = {
-    model: connector.model,
+    model: resolvedModel,
     messages: buildChatMessages({ systemContext, messages }),
   };
 
@@ -102,7 +106,7 @@ export async function completeChat({ apiKey, provider, messages, systemContext }
 
   return {
     reply,
-    model: data.model || connector.model,
+    model: data.model || resolvedModel,
     usage: data.usage ?? null,
   };
 }

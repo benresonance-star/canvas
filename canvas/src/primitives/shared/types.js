@@ -16,6 +16,7 @@ export const ARTIFACT_TYPES = [
   'transcript',
   'user_note',
   'agent_chat',
+  'flow',
   'other',
 ];
 

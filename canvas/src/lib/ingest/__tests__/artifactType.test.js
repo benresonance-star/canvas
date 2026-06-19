@@ -18,6 +18,10 @@ describe('artifactTypeFromCardType', () => {
     expect(artifactTypeFromCardType('file', 'mp3')).toBe('audio');
     expect(artifactTypeFromCardType('file', 'mp4')).toBe('video');
   });
+
+  it('maps code cards to document artifacts', () => {
+    expect(artifactTypeFromCardType('code', 'ts')).toBe('doc');
+  });
 });
 
 describe('artifactTypeFromFile', () => {
@@ -25,5 +29,6 @@ describe('artifactTypeFromFile', () => {
     expect(artifactTypeFromFile('track.mp3')).toBe('audio');
     expect(artifactTypeFromFile('clip.mp4')).toBe('video');
     expect(artifactTypeFromFile('photo.png')).toBe('image');
+    expect(artifactTypeFromFile('source.ts')).toBe('doc');
   });
 });

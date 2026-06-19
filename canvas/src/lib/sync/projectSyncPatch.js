@@ -44,6 +44,12 @@ export function shouldFallbackToPutAfterPatch(patchResult) {
   return true;
 }
 
+function hasRemovalOps(ops) {
+  return (ops ?? []).some(
+    (op) => op?.op === 'removeCard' || op?.op === 'removeStaged',
+  );
+}
+
 /**
  * Push via PATCH when ops are small; returns null to signal PUT fallback.
  * @param {string} projectId
@@ -62,6 +68,7 @@ export async function pushProjectPatchIfEnabled(
   traceId = null,
   allowEmptyRemoteOverwrite = false,
   allowDockOnlyRemoteOverwrite = false,
+  allowCleanupOverwrite = false,
 ) {
   if (!getServerSyncEnabled() || !isProjectPatchSyncEnabled()) {
     syncTraceLog(traceId, 'patch:skipped', { projectId, reason: 'sync_disabled' });
@@ -77,6 +84,7 @@ export async function pushProjectPatchIfEnabled(
     ?? getPriorPayloadForPatch(projectId)
     ?? getCommittedPayload(projectId);
   const ops = buildPatchOpsFromCommit(before, syncPayload, reason);
+  const cleanupRemovesRows = allowCleanupOverwrite && hasRemovalOps(ops);
   if (!shouldUsePatchForOps(ops)) {
     syncTraceLog(traceId, 'patch:skipped', {
       projectId,
@@ -134,6 +142,7 @@ export async function pushProjectPatchIfEnabled(
       if (
         serverPayload
         && !retryablePayloadConflict
+        && !cleanupRemovesRows
         && needsProjectConflictResolution(syncPayload, serverPayload)
       ) {
         recordProjectConflict(
@@ -158,7 +167,7 @@ export async function pushProjectPatchIfEnabled(
       }
       const localCards = projectCardCount(syncPayload);
       const serverCards = projectCardCount(serverPayload);
-      if (serverPayload && serverCards > localCards) {
+      if (serverPayload && serverCards > localCards && !cleanupRemovesRows) {
         applyServerProjectRevision(projectId, result.updatedAt, result.revision);
         await writeLocalProjectSerialised(
           projectId,
@@ -176,7 +185,12 @@ export async function pushProjectPatchIfEnabled(
       }
       if (
         serverPayload
-        && (retryablePayloadConflict || localCards >= serverCards || clientBehind)
+        && (
+          retryablePayloadConflict
+          || localCards >= serverCards
+          || clientBehind
+          || cleanupRemovesRows
+        )
       ) {
         const retry = await patchCanvasProject(projectId, {
           ops,

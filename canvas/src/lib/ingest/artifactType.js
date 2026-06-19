@@ -9,7 +9,12 @@ export function artifactTypeFromCardType(cardType, ext) {
   if (cardType === 'audio') return 'audio';
   if (cardType === 'spreadsheet') return 'doc';
   if (cardType === 'pdf') return 'doc';
-  if (cardType === 'html' || cardType === 'markdown' || cardType === 'note') return 'doc';
+  if (
+    cardType === 'html'
+    || cardType === 'markdown'
+    || cardType === 'note'
+    || cardType === 'code'
+  ) return 'doc';
   if (cardType === 'file' && ext) {
     const fromExt = fileTypeFromExt(ext);
     if (fromExt === 'video') return 'video';

@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { Trash2 } from 'lucide-react';
-import { cardTypeLabel, isCardMissingFromFolder } from '../lib/filename.js';
+import { cardTypeLabel, isCardMissingFromFolder, cardDisplayFilename } from '../lib/filename.js';
 import { strings } from '../content/strings.js';
 import { TypeIcon } from './TypeIcon.jsx';
 
@@ -42,7 +42,7 @@ export function MobileView({ cards, onOpen, onPinVersion, onDeleteCard, folderKe
                       className="flex-1 min-w-0 bg-surface card-shadow rounded-lg p-4 text-left active:scale-[0.98] transition-transform"
                     >
                       <div className="flex items-start justify-between gap-3 mb-1">
-                        <div className={`serif text-base truncate flex-1 ${missing ? 'text-danger' : 'text-primary'}`}>{card.name}</div>
+                        <div className={`serif text-base truncate flex-1 ${missing ? 'text-danger' : 'text-primary'}`}>{cardDisplayFilename(card)}</div>
                         <div className="flex items-center gap-1 flex-shrink-0">
                           <span className="sans text-[10px] text-muted">v{card.pinnedVersion}</span>
                           <div className="w-1 h-1 rounded-full pin-dot"></div>

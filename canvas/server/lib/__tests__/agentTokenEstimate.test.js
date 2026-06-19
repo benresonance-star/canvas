@@ -14,6 +14,17 @@ describe('agentTokenEstimate', () => {
     expect(result.estimatedInputUsd).toBeGreaterThan(0);
   });
 
+  it('normalizes provider-prefixed template models', () => {
+    const result = estimateChatInputTokens({
+      provider: 'openai',
+      model: 'openai/gpt-5.5',
+      messages: [{ role: 'user', content: 'Hello' }],
+      systemContext: 'Focus on item A',
+    });
+    expect(result.model).toBe('gpt-5.5');
+    expect(result.inputTokens).toBeGreaterThan(10);
+  });
+
   it('buildChatMessages includes system context', () => {
     const msgs = buildChatMessages({
       systemContext: 'test context',

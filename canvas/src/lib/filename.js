@@ -81,6 +81,7 @@ export function syncKeysMatch(a, b) {
 
 export function fileTypeFromExt(ext) {
   if (['md', 'txt'].includes(ext)) return 'markdown';
+  if (['ts', 'tsx', 'js', 'jsx'].includes(ext)) return 'code';
   if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext)) return 'image';
   if (['html', 'htm'].includes(ext)) return 'html';
   if (ext === 'pdf') return 'pdf';
@@ -95,6 +96,15 @@ export function normalizeCardType(type) {
   if (type === 'note') return 'markdown';
   if (type === 'bookmark') return 'bookmark';
   return type;
+}
+
+function cardExtFromRow(card) {
+  for (const version of card?.versions ?? []) {
+    if (version?.ext) return String(version.ext).toLowerCase();
+    const relativePath = folderRelativePathFromVersion(version);
+    if (relativePath) return parseFilename(folderPathBasename(relativePath)).ext;
+  }
+  return '';
 }
 
 /**
@@ -118,6 +128,10 @@ export function resolveLoadedCardType(card) {
   if (!card) return 'markdown';
   const normalized = normalizeCardType(card.type);
   if (normalized === 'user_note') return 'user_note';
+  if (normalized === 'file') {
+    const extType = fileTypeFromExt(cardExtFromRow(card));
+    if (extType !== 'file') return extType;
+  }
   const prefix = cardPrefixFromRow(card);
   if (prefix === 'notes' && (normalized === 'markdown' || card.type === 'note')) {
     return 'user_note';
@@ -132,6 +146,7 @@ export function resolveLoadedCardType(card) {
 export function isFolderBackedCanvasCard(card) {
   const type = normalizeCardType(card?.type);
   if (type === 'bookmark') return false;
+  if (type === 'flow') return false;
   if (card?.prefix === 'links') return false;
   return true;
 }
@@ -255,6 +270,11 @@ export function isTextMarkdownPreviewType(type) {
   return t === 'markdown' || t === 'agent_chat';
 }
 
+/** Card types that render inline plain code/text. */
+export function isCodePreviewType(type) {
+  return normalizeCardType(type) === 'code';
+}
+
 /** Display prefix for card headers (agent_chat uses "thread", not storage prefix "notes"). */
 export function cardHeaderPrefix(card) {
   if (!card) return '';
@@ -262,9 +282,43 @@ export function cardHeaderPrefix(card) {
   return card.prefix ?? '';
 }
 
+export function pinnedCardVersion(card) {
+  return (card?.versions ?? []).find((version) => version.version === card?.pinnedVersion)
+    ?? card?.versions?.[0];
+}
+
+export function cardFileExtension(card) {
+  const pinned = pinnedCardVersion(card);
+  const ext = pinned?.ext || cardExtFromRow({ versions: pinned ? [pinned] : card?.versions });
+  return ext ? String(ext).toLowerCase() : '';
+}
+
+/**
+ * Display filename for artifacts: logical card name plus pinned file extension.
+ * @param {object} card
+ * @param {{ name?: string }} [options]
+ */
+export function cardDisplayFilename(card, { name = card?.name } = {}) {
+  const baseName = String(name ?? '').trim();
+  if (!baseName) return '';
+  const ext = cardFileExtension(card);
+  if (!ext) return baseName;
+  const suffix = `.${ext}`;
+  if (baseName.toLowerCase().endsWith(suffix)) return baseName;
+  return `${baseName}${suffix}`;
+}
+
+export function cardExtensionLabel(card) {
+  const ext = cardFileExtension(card);
+  return ext ? ext.toUpperCase() : '';
+}
+
 /** Full header line: `prefix | TYPE` */
 export function cardHeaderLabel(card) {
-  return `${cardHeaderPrefix(card)} | ${cardTypeLabel(card.type)}`;
+  return [
+    cardHeaderPrefix(card),
+    cardTypeLabel(card.type),
+  ].filter(Boolean).join(' | ');
 }
 
 /** Uppercase label for card headers */
@@ -272,6 +326,7 @@ export function cardTypeLabel(type) {
   const t = normalizeCardType(type);
   if (t === 'user_note') return 'NOTE';
   if (t === 'agent_chat') return 'CHAT';
+  if (t === 'code') return 'CODE';
   if (t === 'markdown') return 'MARKDOWN';
   if (t === 'image') return 'IMAGE';
   if (t === 'html') return 'HTML';
@@ -280,5 +335,6 @@ export function cardTypeLabel(type) {
   if (t === 'audio') return 'AUDIO';
   if (t === 'spreadsheet') return 'EXCEL';
   if (t === 'bookmark') return 'LINK';
+  if (t === 'flow') return 'FLOW';
   return 'FILE';
 }

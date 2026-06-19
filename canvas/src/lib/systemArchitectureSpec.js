@@ -1,5 +1,5 @@
 /** Bump when architecture or shipped load behavior changes. */
-export const ARCHITECTURE_SPEC_VERSION = '2026-06-14-subfolder-artifacts';
+export const ARCHITECTURE_SPEC_VERSION = '2026-06-19-flow-artifacts-ollama-templates';
 
 export const ARCHITECTURE_LAYERS = [
   {
@@ -18,14 +18,16 @@ export const ARCHITECTURE_LAYERS = [
       'load-target',
       'user-note-editing',
       'bookmark-editing',
+      'flow-artifacts',
+      'code-preview',
     ],
   },
   {
     id: 'api',
     label: 'API',
     description:
-      'Express 5 — project documents, spec canvas layout, clusters/primitives, previews, agent chat',
-    featureIds: ['revision-sync', 'previews-api', 'spec-canvas-dual-write'],
+      'Express 5 — project documents, spec canvas layout, clusters/primitives, previews, agent chat, flow artifacts, agent templates',
+    featureIds: ['revision-sync', 'previews-api', 'spec-canvas-dual-write', 'flow-artifacts', 'agent-templates'],
   },
   {
     id: 'data',
@@ -37,8 +39,8 @@ export const ARCHITECTURE_LAYERS = [
   {
     id: 'external',
     label: 'External',
-    description: 'Browser-linked project folder (File System Access), LLM providers',
-    featureIds: ['folder-ingest', 'folder-sync-identity', 'agent'],
+    description: 'Browser-linked project folder (File System Access), LLM providers (OpenAI, Ollama)',
+    featureIds: ['folder-ingest', 'folder-sync-identity', 'agent', 'ollama-provider'],
   },
 ];
 
@@ -178,6 +180,42 @@ export const ARCHITECTURE_FEATURES = [
     tags: ['performance'],
     status: 'current',
   },
+  {
+    id: 'flow-artifacts',
+    title: 'Flow artifacts',
+    shortDescription:
+      'Revisioned node/edge flow documents (`flow_document`, `flow_node`, `flow_edge`) separate from canvas layout. REST + per-flow SSE; `@xyflow/react` editor; `flow` cards show `FlowPreview` on canvas.',
+    layerIds: ['client', 'api', 'data'],
+    tags: ['flow', 'features'],
+    status: 'current',
+  },
+  {
+    id: 'agent-templates',
+    title: 'Agent templates',
+    shortDescription:
+      'Database-backed multi-file agent definitions (`agent_template`, `agent_template_file`) with revision CAS, compiled metadata, and optional import from `Canvas Master Files/Agent - *` folders.',
+    layerIds: ['api', 'data'],
+    tags: ['agent'],
+    status: 'current',
+  },
+  {
+    id: 'ollama-provider',
+    title: 'Ollama local agent provider',
+    shortDescription:
+      '`agentChatProvider.js` routes OpenAI (credential) and Ollama (local `http://localhost:11434`) chat. Gemma 12B/26B connectors probe model availability at runtime.',
+    layerIds: ['api', 'external', 'client'],
+    tags: ['agent'],
+    status: 'current',
+  },
+  {
+    id: 'code-preview',
+    title: 'Syntax-highlighted code previews',
+    shortDescription:
+      '`code` card types render via `CodePreviewFrame` + `highlight.js` (`codeHighlight.js`) in canvas and modal; JS/TS family extensions auto-detected.',
+    layerIds: ['client'],
+    tags: ['media', 'ux'],
+    status: 'current',
+  },
 ];
 
 /**
@@ -259,9 +297,19 @@ export const ARCHITECTURE_ENTITY_STORAGE = [
     summary:
       'Per-connector threads; transcripts as `notes__agent-chat-…` files in the linked folder. Default UI location is the **dock** until the user places on canvas (`thread.cardId`).',
     server:
-      '`canvas_agent_chat_session` · `canvas_agent_chat_thread_index` · `spec_chat` (spec path)',
+      '`canvas_agent_chat_session` · `canvas_agent_chat_thread_index` · `spec_chat` (spec path) · `agent_template` + `agent_template_file`',
     client:
-      'localStorage session + thread index; debounced server mirror · dock staging via `stageAgentChatCard`',
+      'localStorage session + thread index; debounced server mirror · dock staging via `stageAgentChatCard` · connector picker (OpenAI / Ollama)',
+  },
+  {
+    id: 'flows',
+    label: 'Flow artifacts',
+    summary:
+      'Directed node/edge diagrams referencing canvas artifacts or local nodes. Separate revision CAS from project canvas layout.',
+    server:
+      '`flow_document` · `flow_node` · `flow_edge` — `/projects/:id/flows`, `/flows/:id`, `/flows/:id/stream`',
+    client:
+      '`src/features/flow/*` editor + preview · optional linked-folder `flows/<id>.json` snapshot',
   },
 ];
 
@@ -279,6 +327,11 @@ const CORE_API_ROUTES = [
   'POST /clusters, GET /clusters/by-project/:id',
   'POST /agent/chat',
   'GET|PUT /canvas/agent-chat/...',
+  'GET|POST|PUT|DELETE /agent/templates',
+  'POST /agent/templates/import-master',
+  'POST /projects/:projectId/flows',
+  'GET|PUT|DELETE /flows/:flowId',
+  'GET /flows/:flowId/stream (SSE flow_updated)',
 ];
 
 const LOAD_ROADMAP = [
@@ -434,6 +487,19 @@ export function buildArchitectureMarkdown(runtime) {
     '## Bookmarks (current)',
     '- **`bookmark`** cards (`links__*`): URL + title editable on canvas and in modal (`BookmarkInlineEditor`, `saveBookmarkToProject`)',
     '- Not folder-backed; persisted in project JSON only',
+    '',
+    '## Flow artifacts (current)',
+    '- **`flow`** cards open a revisioned node/edge editor (`src/features/flow/`) backed by `flow_document` tables',
+    '- Artifact nodes embed live canvas previews; local nodes are flow-scoped only',
+    '- Per-flow SSE at `GET /flows/:flowId/stream`; saves use `expectedRevision` CAS',
+    '',
+    '## Agent providers (current)',
+    '- **OpenAI** — stored API credential required (`agentChatProvider` → `openaiChat`)',
+    '- **Ollama** — local `http://localhost:11434`; Gemma 12B/26B connectors; no API key',
+    '- **Agent templates** — multi-file definitions in `agent_template` tables; import from `Canvas Master Files/`',
+    '',
+    '## Code previews (current)',
+    '- **`code`** card types use `CodePreviewFrame` + `highlight.js` for JS/TS family files',
     '',
     '## Spec data plane (partial)',
     `- ${CONSOLIDATED_SPEC_NOTE}`,

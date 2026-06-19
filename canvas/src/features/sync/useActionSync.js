@@ -29,6 +29,15 @@ import {
   shouldDeferPlacementSyncForPendingCommit,
 } from '../../lib/placementCommitGate.js';
 import { strings } from '../../content/strings.js';
+import { sanitizeAgentChatProjectState } from '../../lib/canvasCardMerge.js';
+
+function inferAgentChatConnectorId(rows = []) {
+  for (const row of rows ?? []) {
+    const match = String(row?.key ?? '').match(/^notes__agent-chat-([a-zA-Z0-9_-]+)/);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
 
 /**
  * Action-sync handler registration and placement commit helpers.
@@ -55,18 +64,76 @@ export function useActionSync({
   setAgentChatThreadIndex,
   setSyncStatus,
 }) {
+  const sanitizeRowsForProjectSync = useCallback((projectId, state, stagedSyncCards) => {
+    const threads = agentChatThreadIndexRef?.current?.threads ?? [];
+    const connectorId =
+      threads.find((thread) => thread?.connectorId)?.connectorId
+      ?? inferAgentChatConnectorId([
+        ...(state?.cards ?? []),
+        ...(stagedSyncCards ?? []),
+      ]);
+    if (!connectorId) {
+      return { state, stagedSyncCards };
+    }
+    const sanitized = sanitizeAgentChatProjectState(
+      state?.cards ?? [],
+      stagedSyncCards ?? [],
+      {
+        connectorId,
+        suppressedKeys: suppressedKeysForSave(projectId, state),
+        threads,
+        activeThreadId: agentChatThreadIndexRef?.current?.activeThreadId ?? null,
+      },
+    );
+    if (!sanitized.keysMigrated) {
+      return { state, stagedSyncCards };
+    }
+    const nextState = { ...state, cards: sanitized.cards };
+    stateRef.current = nextState;
+    stagedSyncCardsRef.current = sanitized.stagedSyncCards;
+    setState((prev) => ({ ...prev, cards: sanitized.cards }));
+    setStagedSyncCards(sanitized.stagedSyncCards);
+    return { state: nextState, stagedSyncCards: sanitized.stagedSyncCards };
+  }, [
+    agentChatThreadIndexRef,
+    stateRef,
+    stagedSyncCardsRef,
+    setState,
+    setStagedSyncCards,
+  ]);
+
   const requestStructuralSync = useCallback((options = {}) => {
     const projectId = activeProjectIdRef.current;
+    const { awaitLocal = false, allowCleanupOverwrite = false } = options;
     if (
       !projectId
       || switchingProjectRef.current
       || creatingProjectRef.current
-      || !initialHydratedRef.current
     ) {
       return Promise.resolve();
     }
-    const { awaitLocal = false } = options;
-    return requestActionSync('structuralChange', { projectId, awaitLocal });
+    if (!initialHydratedRef.current) {
+      setTimeout(() => {
+        if (
+          activeProjectIdRef.current === projectId
+          && !switchingProjectRef.current
+          && !creatingProjectRef.current
+          && initialHydratedRef.current
+        ) {
+          void requestActionSync('structuralChange', {
+            projectId,
+            awaitLocal,
+            allowCleanupOverwrite,
+          });
+        }
+      }, 500);
+      return Promise.resolve();
+    }
+    return requestActionSync('structuralChange', {
+      projectId,
+      awaitLocal,
+      allowCleanupOverwrite,
+    });
   }, [
     activeProjectIdRef,
     switchingProjectRef,
@@ -154,9 +221,14 @@ export function useActionSync({
   const commitProjectDocumentForSync = useCallback(
     async (projectId, { reason = 'commit', pushRemote = false, traceId = null } = {}) => {
       if (!projectId) return { ok: false };
+      const sanitized = sanitizeRowsForProjectSync(
+        projectId,
+        stateRef.current,
+        stagedSyncCardsRef.current,
+      );
       return commitProjectDocument(projectId, {
-        state: stateRef.current,
-        stagedSyncCards: stagedSyncCardsRef.current,
+        state: sanitized.state,
+        stagedSyncCards: sanitized.stagedSyncCards,
         artifactPlacements: null,
         suppressedSyncKeys: suppressedKeysForSave(projectId, stateRef.current),
         stripNoteContent:
@@ -168,7 +240,13 @@ export function useActionSync({
         traceId,
       });
     },
-    [folderHandle, stateRef, stagedSyncCardsRef, folderPresentKeysRef],
+    [
+      folderHandle,
+      stateRef,
+      stagedSyncCardsRef,
+      folderPresentKeysRef,
+      sanitizeRowsForProjectSync,
+    ],
   );
 
   const commitPlacementState = useCallback(
@@ -412,10 +490,15 @@ export function useActionSync({
           await setProjectDisplayName(projectId, stateRef.current.projectName);
           projectNameDirtyRef.current = false;
         }
-        await saveProjectById(
+        const sanitized = sanitizeRowsForProjectSync(
           projectId,
           stateRef.current,
           stagedSyncCardsRef.current,
+        );
+        await saveProjectById(
+          projectId,
+          sanitized.state,
+          sanitized.stagedSyncCards,
           {
             pushRemote: true,
             allowEmptyRemoteOverwrite: options.allowEmptyRemoteOverwrite === true,
@@ -431,10 +514,15 @@ export function useActionSync({
             await setProjectDisplayName(projectId, stateRef.current.projectName);
             projectNameDirtyRef.current = false;
           }
-          await saveProjectById(
+          const sanitized = sanitizeRowsForProjectSync(
             projectId,
             stateRef.current,
             stagedSyncCardsRef.current,
+          );
+          await saveProjectById(
+            projectId,
+            sanitized.state,
+            sanitized.stagedSyncCards,
             { pushRemote: true },
           );
         }
@@ -448,6 +536,7 @@ export function useActionSync({
     flushArtifactRetriesForActiveProject,
     flushPendingPlacementCommit,
     flushPendingPlacementCommitForSwitch,
+    sanitizeRowsForProjectSync,
     folderHandle,
     activeProjectIdRef,
     stateRef,

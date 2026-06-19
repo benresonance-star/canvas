@@ -75,6 +75,26 @@ describe('completeChat', () => {
     expect(fetchOpenAI).toHaveBeenCalledOnce();
   });
 
+  it('strips provider prefix from template model before OpenAI request', async () => {
+    vi.mocked(fetchOpenAI).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        model: 'gpt-5.5',
+        choices: [{ message: { content: 'Hello from OpenAI' } }],
+      }),
+    });
+
+    await completeChat({
+      apiKey: 'sk-test',
+      provider: 'openai',
+      model: 'openai/gpt-5.5',
+      messages: [{ role: 'user', content: 'Hi' }],
+    });
+
+    const request = vi.mocked(fetchOpenAI).mock.calls[0][1];
+    expect(JSON.parse(request.body).model).toBe('gpt-5.5');
+  });
+
   it('throws OpenAI API error message on 401', async () => {
     vi.mocked(fetchOpenAI).mockResolvedValue({
       ok: false,

@@ -9,6 +9,7 @@ import {
   filterSyncChangesForConfirm,
   missingDockOnlyStagedRows,
   partitionSyncChanges,
+  reconcileFolderRenamesByIdentity,
   canvasCardToStaged,
   dockCardFromCanvas,
   groupStagedCardsByType,
@@ -65,6 +66,21 @@ describe('buildStagedSyncCardFromChange', () => {
       key: 'refs/img__photo',
       relativePath: 'refs/img__photo-v1.png',
       folderPath: 'refs/img__photo-v1.png',
+    });
+  });
+
+  it('stages TypeScript files as code cards', () => {
+    const staged = buildStagedSyncCardFromChange({
+      key: 'src/app__main',
+      group: {
+        parsed: { ext: 'ts', prefix: 'app', name: 'main' },
+        versions: [{ version: 1, filename: 'app__main-v1.ts' }],
+      },
+    });
+    expect(staged).toMatchObject({
+      key: 'src/app__main',
+      type: 'code',
+      pinnedVersion: 1,
     });
   });
 });
@@ -399,6 +415,38 @@ describe('buildSyncChangesFromFolder', () => {
     expect(confirmChanges[0].key).toBe('img__photo');
   });
 
+  it('partitionSyncChanges ignores unknown agent_chat files when known thread keys are provided', () => {
+    const changes = [
+      {
+        type: 'new',
+        key: 'notes__agent-chat-openai-owned',
+        group: {
+          parsed: { name: 'agent-chat-openai-owned', prefix: 'notes', ext: 'md' },
+          versions: [{ version: 1 }],
+        },
+      },
+      {
+        type: 'new',
+        key: 'notes__agent-chat-openai-other',
+        group: {
+          parsed: { name: 'agent-chat-openai-other', prefix: 'notes', ext: 'md' },
+          versions: [{ version: 1 }],
+        },
+      },
+    ];
+    const { autoStageAgentChat, ignoredAgentChat, confirmChanges } = partitionSyncChanges(
+      changes,
+      { knownAgentChatKeys: new Set(['notes__agent-chat-openai-owned']) },
+    );
+    expect(autoStageAgentChat.map((change) => change.key)).toEqual([
+      'notes__agent-chat-openai-owned',
+    ]);
+    expect(ignoredAgentChat.map((change) => change.key)).toEqual([
+      'notes__agent-chat-openai-other',
+    ]);
+    expect(confirmChanges).toHaveLength(0);
+  });
+
   it('mergeNewlyStaged dedupes canonical vs legacy key', () => {
     const staged = [
       {
@@ -455,6 +503,126 @@ describe('buildSyncChangesFromFolder', () => {
     expect(changes[0].type).toBe('updated');
     expect(changes[0].newVersions).toHaveLength(1);
     expect(changes[0].newVersions[0].version).toBe(2);
+  });
+});
+
+describe('reconcileFolderRenamesByIdentity', () => {
+  it('updates an existing canvas card when one missing row matches one renamed file hash', () => {
+    const grouped = {
+      'docs__renamed': {
+        parsed: { ext: 'md', prefix: 'docs', name: 'renamed' },
+        versions: [{
+          version: 1,
+          filename: 'docs__renamed-v1.md',
+          content_hash: 'hash-1',
+          content: 'same body',
+        }],
+      },
+    };
+    const cards = [{
+      id: 'card-1',
+      key: 'docs__old',
+      prefix: 'docs',
+      name: 'old',
+      type: 'markdown',
+      x: 10,
+      y: 20,
+      pinnedVersion: 1,
+      versions: [{
+        version: 1,
+        filename: 'docs__old-v1.md',
+        content_hash: 'hash-1',
+        artifactRef: { id: 'artifact-1', type: 'artifact' },
+      }],
+    }];
+
+    const result = reconcileFolderRenamesByIdentity(grouped, cards, []);
+
+    expect(result.changed).toBe(true);
+    expect(result.renames).toHaveLength(1);
+    expect(result.cards[0]).toMatchObject({
+      id: 'card-1',
+      key: 'docs__renamed',
+      prefix: 'docs',
+      name: 'renamed',
+      x: 10,
+      y: 20,
+    });
+    expect(result.cards[0].versions[0]).toMatchObject({
+      filename: 'docs__renamed-v1.md',
+      content_hash: 'hash-1',
+      content: 'same body',
+      artifactRef: { id: 'artifact-1', type: 'artifact' },
+    });
+    expect(buildSyncChangesFromFolder(grouped, result.cards, [])).toMatchObject({
+      changes: [],
+    });
+  });
+
+  it('updates a staged dock row while preserving staging identity', () => {
+    const grouped = {
+      'docs__renamed': {
+        parsed: { ext: 'md', prefix: 'docs', name: 'renamed' },
+        versions: [{
+          version: 1,
+          filename: 'docs__renamed-v1.md',
+          relativePath: 'folder/docs__renamed-v1.md',
+          content_hash: 'hash-1',
+        }],
+      },
+    };
+    const staged = [{
+      stagingId: 'staged-1',
+      key: 'docs__old',
+      prefix: 'docs',
+      name: 'old',
+      type: 'markdown',
+      pinnedVersion: 1,
+      versions: [{
+        version: 1,
+        filename: 'docs__old-v1.md',
+        content_hash: 'hash-1',
+      }],
+    }];
+
+    const result = reconcileFolderRenamesByIdentity(grouped, [], staged);
+
+    expect(result.changed).toBe(true);
+    expect(result.stagedSyncCards[0]).toMatchObject({
+      stagingId: 'staged-1',
+      key: 'docs__renamed',
+      relativePath: 'folder/docs__renamed-v1.md',
+      folderPath: 'folder/docs__renamed-v1.md',
+      prefix: 'docs',
+      name: 'renamed',
+    });
+    expect(buildSyncChangesFromFolder(grouped, [], result.stagedSyncCards)).toMatchObject({
+      changes: [],
+    });
+  });
+
+  it('does not auto-rename when duplicate scanned files share the same hash', () => {
+    const grouped = {
+      'docs__renamed-a': {
+        parsed: { ext: 'md', prefix: 'docs', name: 'renamed-a' },
+        versions: [{ version: 1, filename: 'docs__renamed-a-v1.md', content_hash: 'hash-1' }],
+      },
+      'docs__renamed-b': {
+        parsed: { ext: 'md', prefix: 'docs', name: 'renamed-b' },
+        versions: [{ version: 1, filename: 'docs__renamed-b-v1.md', content_hash: 'hash-1' }],
+      },
+    };
+    const cards = [{
+      id: 'card-1',
+      key: 'docs__old',
+      type: 'markdown',
+      versions: [{ version: 1, filename: 'docs__old-v1.md', content_hash: 'hash-1' }],
+    }];
+
+    const result = reconcileFolderRenamesByIdentity(grouped, cards, []);
+
+    expect(result.changed).toBe(false);
+    expect(result.cards).toBe(cards);
   });
 });
 

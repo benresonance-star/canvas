@@ -47,6 +47,7 @@ export const CARD_RESIZE_MAX_H = 1440;
 export const CARD_TYPE_DEFAULT_SIZE = {
   note: { w: 280, h: 180 },
   markdown: { w: 280, h: 180 },
+  code: { w: 320, h: 220 },
   user_note: { w: 300, h: 200 },
   image: { w: 280, h: 220 },
   html: { w: 320, h: 220 },
@@ -56,5 +57,6 @@ export const CARD_TYPE_DEFAULT_SIZE = {
   spreadsheet: { w: 320, h: 240 },
   bookmark: { w: 280, h: 200 },
   agent_chat: { w: 360, h: 280 },
+  flow: { w: 360, h: 240 },
   file: { w: 240, h: 140 },
 };

@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { cardHeaderLabel, cardHeaderPrefix } from '../lib/filename.js';
+import { cardHeaderLabel, cardHeaderPrefix, cardDisplayFilename } from '../lib/filename.js';
 import { getSearchShortcutKeys } from '../lib/searchShortcut.js';
 import { strings } from '../content/strings.js';
 
@@ -14,6 +14,7 @@ export function SearchOverlay({ query, setQuery, cards, onSelect, onClose }) {
     const q = query.toLowerCase();
     return cards.filter(
       (c) => c.name.toLowerCase().includes(q)
+        || cardDisplayFilename(c).toLowerCase().includes(q)
         || c.prefix.toLowerCase().includes(q)
         || cardHeaderPrefix(c).toLowerCase().includes(q),
     ).slice(0, 8);
@@ -53,7 +54,7 @@ export function SearchOverlay({ query, setQuery, cards, onSelect, onClose }) {
               >
                 <div className="min-w-0">
                   <div className="sans text-[10px] uppercase tracking-wider text-muted mb-0.5">{cardHeaderLabel(card)}</div>
-                  <div className="serif text-sm text-primary truncate">{card.name}</div>
+                  <div className="serif text-sm text-primary truncate">{cardDisplayFilename(card)}</div>
                 </div>
                 <span className="sans text-[10px] text-muted">v{card.pinnedVersion}</span>
               </button>

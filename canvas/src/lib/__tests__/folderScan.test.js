@@ -109,4 +109,17 @@ describe('scanFolderFiles', () => {
     });
     expect(found[1].cardKey).toBe('notes__real');
   });
+
+  it('ignores generated flow snapshots', async () => {
+    const root = directoryHandle('project', [
+      directoryHandle('flows', [
+        fileHandle('customer-onboarding--flow-1.flow.json', '{"schemaVersion":1}'),
+      ]),
+      fileHandle('notes__real-v1.md', 'real note'),
+    ]);
+
+    const { found } = await scanFolderFiles(root, { projectId: 'p1' });
+
+    expect(found.map((entry) => entry.relativePath)).toEqual(['notes__real-v1.md']);
+  });
 });

@@ -36,6 +36,7 @@ import {
 import {
   artifactRefFromSyncEntry,
   buildStagedSyncCardFromChange,
+  canonicalKeyForSyncEntry,
   mergeNewlyStaged,
   mergeVersionsForSyncUpdate,
 } from '../../lib/syncStaging.js';
@@ -52,11 +53,18 @@ import {
   isPointerNearTrayBottom,
 } from '../../lib/syncHoldingTrayHitTest.js';
 import { buildPayloadAfterDockRestore } from '../../lib/restoreDockToCanvas.js';
+import {
+  buildPlacementsFromArrays,
+  patchPlacementsMapFromArrays,
+} from '../../lib/artifactPlacementsMap.js';
 import { syncKeysMatch, noteRequiresProjectOnlySave } from '../../lib/filename.js';
 import { addSuppressedSyncKey } from '../../lib/syncSuppressedKeys.js';
 import { removeStagedCardsByKey } from '../../lib/canvasCardMerge.js';
 import { requestActionSync } from '../../lib/actionSync.js';
 import { deleteProjectArtifactPrimitive } from '../../lib/primitivesApi.js';
+import { commitProjectDocument } from '../../lib/projectDocumentCommit.js';
+import { createFlowArtifact } from '../flow/api/flowApi.js';
+import { flowCardFromDocument } from '../flow/domain/flowDocument.js';
 import {
   loadAgentChatSession,
   saveAgentChatSession,
@@ -64,6 +72,7 @@ import {
 import {
   saveThreadIndexLocal,
   clearCardIdFromThreadIndex,
+  collectKnownAgentChatKeys,
   linkCardToThreadInIndex,
   resolveThreadForCard,
 } from '../../lib/agentChatThreads.js';
@@ -235,6 +244,7 @@ export function useCanvasDocument({ refs, deps }) {
   const [canvasViewportSize, setCanvasViewportSize] = useState({ width: 0, height: 0 });
   const [savingNote, setSavingNote] = useState(false);
   const [savingLink, setSavingLink] = useState(false);
+  const [savingFlow, setSavingFlow] = useState(false);
   const [savingCardId, setSavingCardId] = useState(null);
 
   useEffect(() => {
@@ -283,7 +293,7 @@ export function useCanvasDocument({ refs, deps }) {
     canvasViewportSizeRef,
   ]);
 
-  const fitCanvasViewToCards = useCallback((cards) => {
+  const fitCanvasViewToCards = useCallback((cards, fitOverrides = {}) => {
     const viewport = canvasViewportSizeRef.current;
     if (viewport.width <= 0 || viewport.height <= 0) {
       pendingFitToExtentRef.current = true;
@@ -293,7 +303,10 @@ export function useCanvasDocument({ refs, deps }) {
     pendingFitToExtentRef.current = false;
     pendingFitCardsRef.current = null;
     const applyFit = () => {
-      setCanvasView(canvasViewForCards(cards, viewport, resolveCanvasFitOptions()));
+      setCanvasView(canvasViewForCards(cards, viewport, {
+        ...resolveCanvasFitOptions(),
+        ...fitOverrides,
+      }));
     };
     applyFit();
     const trayVisible =
@@ -598,6 +611,39 @@ export function useCanvasDocument({ refs, deps }) {
 
       const projectId = activeProjectIdRef.current;
       if (!projectId) return;
+      if (staged.type === 'agent_chat') {
+        const key = canonicalKeyForSyncEntry(staged);
+        const knownAgentChatKeys = collectKnownAgentChatKeys(
+          agentChatThreadIndexRef.current,
+          { cards: stateRef.current.cards ?? [] },
+        );
+        if (key && !knownAgentChatKeys.has(key)) {
+          const traceId = createSyncTraceId();
+          const nextStaged = stagedSyncCardsRef.current.filter(
+            (row) => row.stagingId !== stagingId,
+          );
+          setStagedSyncCards(nextStaged);
+          stagedSyncCardsRef.current = nextStaged;
+          syncTraceLog(traceId, 'placement:unknown-agent-chat-pruned', {
+            projectId,
+            stagingId,
+            key,
+          });
+          const patchedMap = patchPlacementsMapFromArrays(
+            getCommittedPayload(projectId)?.artifactPlacements
+            ?? buildPlacementsFromArrays(stateRef.current.cards ?? [], nextStaged),
+            stateRef.current.cards ?? [],
+            nextStaged,
+          );
+          await commitPlacementState(projectId, {
+            artifactPlacements: patchedMap,
+            reason: 'placementTransfer:unknownAgentChatPrune',
+            traceId,
+          });
+          await requestPlacementTransferSync({ traceId });
+          return;
+        }
+      }
       const result = transferStagedToCanvas(
         stateRef.current.cards,
         stagedSyncCardsRef.current,
@@ -1101,6 +1147,7 @@ export function useCanvasDocument({ refs, deps }) {
   }, [
     activeProjectIdRef,
     stateRef,
+    stagedSyncCardsRef,
     folderHandle,
     clusterId,
     refreshGraph,
@@ -1111,6 +1158,59 @@ export function useCanvasDocument({ refs, deps }) {
     setAddLinkOpen,
     setState,
   ]);
+
+  const handleSaveNewFlow = useCallback(async ({ title, description = '', position }) => {
+    const projectId = activeProjectIdRef.current;
+    if (!projectId) return null;
+    setSavingFlow(true);
+    try {
+      const flow = await createFlowArtifact(projectId, { title, description });
+      const fallbackPosition = {
+        x: 100 + (stateRef.current.cards.length % 4) * 320,
+        y: 100 + Math.floor(stateRef.current.cards.length / 4) * 240,
+      };
+      const newCard = flowCardFromDocument(flow, position ?? fallbackPosition);
+      const nextState = {
+        ...stateRef.current,
+        cards: [...stateRef.current.cards, newCard],
+      };
+      stateRef.current = nextState;
+      setState(nextState);
+      registerOptimisticCard(projectId, newCard.id);
+      await commitProjectDocument(projectId, {
+        state: nextState,
+        stagedSyncCards: stagedSyncCardsRef.current,
+        reason: 'flow:create',
+        pushRemote: true,
+      });
+      setOpenCardId(newCard.id);
+      return newCard;
+    } catch (error) {
+      setSyncStatus({ error: error.message });
+      setTimeout(() => setSyncStatus(null), 5000);
+      return null;
+    } finally {
+      setSavingFlow(false);
+    }
+  }, [
+    activeProjectIdRef,
+    setState,
+    setSyncStatus,
+    stagedSyncCardsRef,
+    stateRef,
+  ]);
+
+  const handleFlowCardRefresh = useCallback(async (cardId, updates) => {
+    updateCard(cardId, updates);
+    const projectId = activeProjectIdRef.current;
+    if (!projectId) return;
+    await commitProjectDocument(projectId, {
+      state: stateRef.current,
+      stagedSyncCards: stagedSyncCardsRef.current,
+      reason: 'flow:card-refresh',
+      pushRemote: true,
+    });
+  }, [activeProjectIdRef, stagedSyncCardsRef, stateRef, updateCard]);
 
   const removeCard = useCallback(async (id) => {
     const projectId = activeProjectIdRef.current;
@@ -1256,6 +1356,7 @@ export function useCanvasDocument({ refs, deps }) {
     setCanvasViewportSize,
     savingNote,
     savingLink,
+    savingFlow,
     savingCardId,
     setCanvasView,
     resolveCanvasFitOptions,
@@ -1286,6 +1387,8 @@ export function useCanvasDocument({ refs, deps }) {
     handleSaveNoteToProject,
     handleSaveNewNote,
     handleSaveNewLink,
+    handleSaveNewFlow,
+    handleFlowCardRefresh,
     removeCard,
     rehydratePreview,
     filteredCards,
