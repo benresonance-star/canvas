@@ -4,11 +4,12 @@ import {
   BackgroundVariant,
   Controls,
   MiniMap,
+  Panel,
   ReactFlow,
   ReactFlowProvider,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Plus, Redo2, Save, Search, Trash2, Undo2, Workflow, Eye, EyeOff, ArrowLeftRight, PanelRight, PanelRightClose } from 'lucide-react';
+import { Plus, Redo2, Save, Search, Trash2, Undo2, Workflow, Eye, EyeOff, ArrowLeftRight, PanelRight, PanelRightClose, Map as MapIcon } from 'lucide-react';
 import { strings } from '../../../content/strings.js';
 import { useFlowDocument } from '../hooks/useFlowDocument.js';
 import {
@@ -25,6 +26,7 @@ import {
   patchFlowNodePresentation,
   removeFlowEdgesById,
   removeFlowNodesById,
+  stripFlowNodeDimensions,
 } from '../domain/flowDocument.js';
 import { ArtifactFlowNode, LocalFlowNode } from './FlowNodes.jsx';
 import { FlowConnectionInspectorFields } from './FlowConnectionInspectorFields.jsx';
@@ -55,9 +57,27 @@ function FlowEditorInner({
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
   const [inspectorOpen, setInspectorOpen] = useState(() => !agentModeActive);
+  const [minimapOpen, setMinimapOpen] = useState(false);
   const canvasRef = useRef(null);
   const undoRef = useRef([]);
   const redoRef = useRef([]);
+  const viewportSyncedRef = useRef(false);
+
+  useEffect(() => {
+    viewportSyncedRef.current = false;
+  }, [flowId]);
+
+  useEffect(() => {
+    if (!instance || document.status.loading || !document.flow) return undefined;
+    if (viewportSyncedRef.current) return undefined;
+    viewportSyncedRef.current = true;
+    const frame = requestAnimationFrame(() => {
+      if (document.nodes.length > 0) {
+        void instance.fitView({ padding: 0.15, duration: 0 });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [document.flow, document.nodes.length, document.status.loading, instance]);
 
   const candidates = useMemo(() => (artifactCandidates ?? [])
     .filter((candidate) => candidate.type !== 'flow')
@@ -81,17 +101,6 @@ function FlowEditorInner({
     () => document.edges.map((edge) => normalizeFlowEdgeForEditor(edge)),
     [document.edges],
   );
-
-  const displayNodes = useMemo(() => {
-    if (!flowAgentScopeNodeIds) return document.nodes;
-    return document.nodes.map((node) => {
-      if (!flowAgentScopeNodeIds.has(node.id)) return node;
-      return {
-        ...node,
-        className: [node.className, 'flow-node-agent-scope'].filter(Boolean).join(' '),
-      };
-    });
-  }, [document.nodes, flowAgentScopeNodeIds]);
 
   useEffect(() => {
     if (!onRegisterContextSnapshot || !document.flow) return undefined;
@@ -130,13 +139,7 @@ function FlowEditorInner({
         next = patchFlowNodePresentation(next, patch.data);
       }
       if (patch.data?.showContent === false) {
-        const { width, height, ...rest } = next;
-        next = {
-          ...rest,
-          style: { ...(rest.style ?? {}) },
-        };
-        delete next.style.width;
-        delete next.style.height;
+        next = stripFlowNodeDimensions(next);
       }
       if (patch.width != null || patch.height != null) {
         next = patchFlowNodePresentation(next, {}, {
@@ -319,12 +322,13 @@ function FlowEditorInner({
     onRehydratePreview: onRehydratePreview ?? null,
     updateNode,
     checkpoint,
+    agentScopedNodeIds: flowAgentScopeNodeIds ?? null,
   };
 
   return (
     <FlowEditorProvider value={editorContextValue}>
     <div
-      className="h-full min-h-0 flex bg-canvas text-primary"
+      className="flex-1 min-h-0 h-full w-full flex bg-canvas text-primary"
       onPointerDown={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
     >
@@ -375,13 +379,15 @@ function FlowEditorInner({
           id="flow-editor-canvas"
           ref={canvasRef}
           tabIndex={0}
-          className="flex-1 min-h-0 outline-none"
+          className="relative flex-1 min-h-0 w-full h-full outline-none"
           onPointerDown={focusCanvas}
         >
           <ReactFlow
-            nodes={displayNodes}
+            className="h-full w-full"
+            nodes={document.nodes}
             edges={displayEdges}
             nodeTypes={NODE_TYPES}
+            proOptions={{ hideAttribution: true }}
             onInit={setInstance}
             onNodesChange={handleNodesChange}
             onEdgesChange={handleEdgesChange}
@@ -407,7 +413,26 @@ function FlowEditorInner({
             colorMode="system"
           >
             <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-border)" />
-            <MiniMap nodeColor={(node) => node.type === 'artifact' ? 'var(--color-accent)' : 'var(--color-muted)'} maskColor="var(--color-overlay-light)" />
+            <Panel position="bottom-right" className="m-3 flex flex-col items-end gap-2">
+              {minimapOpen && (
+                <MiniMap
+                  nodeColor={(node) => node.type === 'artifact' ? 'var(--color-accent)' : 'var(--color-muted)'}
+                  maskColor="var(--color-overlay-light)"
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => setMinimapOpen((open) => !open)}
+                aria-pressed={minimapOpen}
+                aria-label={minimapOpen ? strings.flow.hideMinimap : strings.flow.showMinimap}
+                title={minimapOpen ? strings.flow.hideMinimap : strings.flow.showMinimap}
+                className={`flex h-[26px] w-[26px] items-center justify-center rounded-md border bg-surface text-muted shadow-[0_10px_24px_rgb(0_0_0_/_0.12)] transition hover:text-primary ${
+                  minimapOpen ? 'border-accent/60 text-accent' : 'border-border'
+                }`}
+              >
+                <MapIcon size={14} strokeWidth={1.75} />
+              </button>
+            </Panel>
             <Controls showInteractive={false} />
           </ReactFlow>
         </div>

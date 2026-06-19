@@ -5,7 +5,7 @@ import { normalizeCardType, isCodePreviewType } from '../lib/filename.js';
 import { useArtifactPayloadText } from '../hooks/useArtifactPayloadText.js';
 import { buildHtmlPreviewSrcDoc } from '../lib/htmlPreviewDocument.js';
 import { PdfPreviewFrame } from './PdfPreviewFrame.jsx';
-import { SpreadsheetPreviewFrame } from './SpreadsheetPreviewFrame.jsx';
+import { SpreadsheetArtifactView } from './SpreadsheetArtifactView.jsx';
 import { AudioPlayer } from './AudioPlayer.jsx';
 import { audioSkinUsesDarkText, resolveAudioSkinColor } from '../lib/audioSkin.js';
 import { NotePreviewFrame } from './NotePreviewFrame.jsx';
@@ -26,11 +26,13 @@ export function ModalContent({ card, version }) {
 
   if (cardType === 'spreadsheet') {
     return (
-      <SpreadsheetPreviewFrame
+      <SpreadsheetArtifactView
         card={card}
         pinned={version}
         isActive
         compact={false}
+        showViewerSelect={false}
+        inCard={false}
       />
     );
   }

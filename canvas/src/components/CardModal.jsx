@@ -17,6 +17,9 @@ import { AgentSidePanel } from './AgentSidePanel.jsx';
 import { ARTIFACT_SIDEBAR_STORAGE_KEY } from '../lib/constants.js';
 import { FlowEditor } from '../features/flow/components/FlowEditor.jsx';
 import { useFlowAgentContext } from '../features/flow/hooks/useFlowAgentContext.js';
+import { SpreadsheetViewerSelect } from './SpreadsheetViewerSelect.jsx';
+import { useSpreadsheetViewerPreference } from '../hooks/useSpreadsheetViewerPreference.js';
+import { isCsvSpreadsheet } from '../lib/spreadsheetViewer.js';
 
 function readStoredSidebarOpen() {
   try {
@@ -71,7 +74,9 @@ export function CardModal({
   const isUserNote = card?.type === 'user_note';
   const isBookmark = card?.type === 'bookmark';
   const isFlow = card?.type === 'flow';
+  const isSpreadsheet = card?.type === 'spreadsheet';
   const noteEditBlocked = missingFromFolder && userNoteDisabled;
+  const { viewer: spreadsheetViewer, setViewer: setSpreadsheetViewer } = useSpreadsheetViewerPreference();
 
   const getFlowSnapshot = useCallback(
     () => flowSnapshotGetterRef.current?.() ?? null,
@@ -265,6 +270,14 @@ export function CardModal({
               <Trash2 size={14} strokeWidth={1.8} /> {strings.card.remove}
             </button>
           )}
+          {isSpreadsheet && version && (
+            <SpreadsheetViewerSelect
+              value={spreadsheetViewer}
+              onChange={setSpreadsheetViewer}
+              allowExtend={!isCsvSpreadsheet(version)}
+              className="text-on-overlay [&_span]:text-on-overlay/80"
+            />
+          )}
           {card.versions.length > 1 && (
             <select
               value={currentVersion}
@@ -299,7 +312,7 @@ export function CardModal({
       <div className="flex-1 mx-6 mb-6 min-h-0 flex flex-col">
         {isFlow ? (
           <div className="flex-1 bg-canvas rounded-lg overflow-hidden min-h-0 flex flex-col md:flex-row">
-            <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
               <FlowEditor
                 card={card}
                 artifactCandidates={flowArtifactCandidates}

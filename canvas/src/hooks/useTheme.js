@@ -1,5 +1,7 @@
-import { useCallback, useLayoutEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { THEME_CYCLE, THEME_STORAGE_KEY } from '../lib/constants.js';
+
+const themeListeners = new Set();
 
 export function isValidTheme(theme) {
   return THEME_CYCLE.includes(theme);
@@ -25,8 +27,22 @@ function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
 }
 
+function emitTheme(theme) {
+  for (const listener of themeListeners) {
+    listener(theme);
+  }
+}
+
 export function useTheme() {
   const [theme, setThemeState] = useState(readStoredTheme);
+
+  useEffect(() => {
+    const onExternalChange = (next) => {
+      setThemeState(next);
+    };
+    themeListeners.add(onExternalChange);
+    return () => themeListeners.delete(onExternalChange);
+  }, []);
 
   useLayoutEffect(() => {
     applyTheme(theme);
@@ -38,11 +54,17 @@ export function useTheme() {
   }, [theme]);
 
   const setTheme = useCallback((next) => {
-    setThemeState(isValidTheme(next) ? next : 'light');
+    const value = isValidTheme(next) ? next : 'light';
+    setThemeState(value);
+    emitTheme(value);
   }, []);
 
   const cycleTheme = useCallback(() => {
-    setThemeState((t) => nextTheme(t));
+    setThemeState((current) => {
+      const value = nextTheme(current);
+      emitTheme(value);
+      return value;
+    });
   }, []);
 
   return { theme, setTheme, cycleTheme, toggleTheme: cycleTheme };

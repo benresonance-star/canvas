@@ -317,16 +317,22 @@ function AgentPanelSection({
   collapsible = false,
   collapsed = false,
   onToggleCollapsed,
+  collapsedSummary = null,
 }) {
   const headerClassName =
     `flex items-center gap-2 px-2.5 py-1.5 border-b shrink-0 ${PANEL_SECTION_HEADER[variant] ?? PANEL_SECTION_HEADER.setup}`;
   const titleNode = (
-    <>
-      <span className="w-1 h-3.5 rounded-full bg-accent shrink-0" aria-hidden />
-      <span className="sans text-[10px] uppercase tracking-[0.14em] text-primary font-medium">
-        {title}
-      </span>
-    </>
+    <div className="flex min-w-0 flex-1 items-start gap-2">
+      <span className="w-1 h-3.5 rounded-full bg-accent shrink-0 mt-0.5" aria-hidden />
+      <div className="min-w-0 flex-1">
+        <span className="sans text-[10px] uppercase tracking-[0.14em] text-primary font-medium">
+          {title}
+        </span>
+        {collapsed && collapsedSummary ? (
+          <div className="mt-0.5">{collapsedSummary}</div>
+        ) : null}
+      </div>
+    </div>
   );
 
   return (
@@ -338,13 +344,13 @@ function AgentPanelSection({
           {collapsible ? (
             <button
               type="button"
-              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              className="flex min-w-0 flex-1 items-start gap-2 text-left"
               aria-expanded={!collapsed}
               aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title}`}
               onClick={onToggleCollapsed}
             >
               {titleNode}
-              <span className="ml-auto text-muted" aria-hidden>
+              <span className="ml-auto shrink-0 text-muted pt-0.5" aria-hidden>
                 {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
               </span>
             </button>
@@ -886,6 +892,36 @@ export function AgentSidePanel({
   const connectorConfigured = Boolean(activeConnector?.configured);
   const connectorUsable = Boolean(activeConnector?.usable);
   const connectorRequiresCredential = activeConnector?.requiresCredential !== false;
+  const activeSetupTemplate =
+    agentTemplates.find(
+      (template) =>
+        template.id === activeAgentTemplateId
+        && template.provider === (activeConnector?.provider || 'openai'),
+    ) ?? null;
+  const setupAgentTypeLabel =
+    activeSetupTemplate?.label
+    || defaultAgentTypeLabelForProvider(activeConnector?.provider || 'openai');
+  const setupCollapsedSummary = isSingle ? (
+    <div className="space-y-0.5">
+      <p className="sans text-[9px] text-muted truncate">
+        <span className="uppercase tracking-wider">{strings.agent.connectorHeading}:</span>{' '}
+        <span className="text-primary">{activeConnector?.label || '—'}</span>
+      </p>
+      <p className="sans text-[9px] text-muted truncate">
+        <span className="uppercase tracking-wider">{strings.agent.agentTypeHeading}:</span>{' '}
+        <span className="text-primary">{setupAgentTypeLabel}</span>
+      </p>
+    </div>
+  ) : (
+    <p className="sans text-[9px] text-muted truncate">
+      <span className="uppercase tracking-wider">{strings.agent.agentsLabel}:</span>{' '}
+      <span className="text-primary">
+        {enabledAgents.length
+          ? enabledAgents.map((agent) => agent.label).join(', ')
+          : strings.agent.noAgentsEnabled}
+      </span>
+    </p>
+  );
   const canChat =
     agentCanChat({
       panelMode,
@@ -1000,6 +1036,7 @@ export function AgentSidePanel({
           collapsible
           collapsed={collapsedSections.setup}
           onToggleCollapsed={() => toggleSectionCollapsed('setup')}
+          collapsedSummary={setupCollapsedSummary}
         >
         {!panelModeLocked && (
           <label className="block">

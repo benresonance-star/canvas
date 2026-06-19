@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.06.19.1
-**Version label:** flow-artifacts-ollama-agent-templates
+**Version:** 2026.06.19.2
+**Version label:** spreadsheet-viewer-canvas-navigation-agent-ui
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -510,7 +510,7 @@ Selection and navigation rules:
 
 - `workspacePlacementIndex.js` maps primitive refs to canvas/dock placement so selecting a canvas artifact highlights the matching workspace row and selecting a workspace row can highlight the canvas card.
 - Double-clicking artifacts or clusters in the workspace tree zooms the canvas with right-dock-aware padding; the inspector is not the owner of zoom behavior.
-- Agent chat cards use the same canvas card shell as artifacts but carry a thin `#39ff14` outline matching the agent robot icon to make thread cards recognizable.
+- Agent chat cards use the same canvas card shell as artifacts but carry a thread outline and bot icon in agent green: `#50c878` in light mode (2px outline) and neon `#39ff14` in dark mode (1px outline). Theme tokens live in `index.css` (`--color-agent-chat-outline`, `--color-agent-chat`).
 
 Cleanup rules:
 
@@ -610,6 +610,33 @@ Source-code artifacts (`code` card type and extensions resolved by `isCodePrevie
 - `src/components/CodePreviewFrame.jsx` — compact and full-size highlighted `<pre>` used by `CardPreview` and `ModalContent`
 
 Supported extensions include `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs` (mapped to JavaScript/TypeScript grammars). Unknown languages fall back to escaped plain text.
+
+### Spreadsheet previews (shipped)
+
+Excel/CSV artifacts support two persisted viewer modes selected via `SpreadsheetViewerSelect` on canvas cards and in `CardModal`:
+
+- **Simple table** — existing SheetJS HTML table (`SpreadsheetPreviewFrame.jsx`)
+- **Excel viewer** — `@extend-ai/react-xlsx` WASM viewer (`ExtendSpreadsheetPreviewFrame.jsx`), lazy-loaded via `xlsxWasm.js`
+
+Shared client modules:
+
+- `useSpreadsheetBuffer.js` — binary load from linked folder / artifact ref
+- `useSpreadsheetViewerPreference.js` — persisted viewer choice with in-memory pub/sub so card and modal stay in sync
+- `SpreadsheetArtifactView.jsx` — orchestrates viewer switch + buffer state
+- `spreadsheetViewerTheme.js` — maps app palette (`light` / `dark` / `green` / `blue`) to viewer chrome; `useTheme.js` pub/sub keeps Extend viewer in sync when the palette changes
+
+Canvas card toolbar clicks and artifact scroll regions are excluded from card drag via `cardDragIgnoresTarget` (`data-artifact-scroll`, `data-card-artifact-controls`).
+
+### Canvas viewport navigation (shipped)
+
+`Canvas.jsx` owns pan/zoom for the main workspace:
+
+- **Background left-drag** pans the viewport (`viewCommit` on pointer-up).
+- **Mouse wheel** pans; **Ctrl/Meta + wheel** zooms toward the cursor (`clampCanvasZoom` 0.1–3).
+- **Ctrl/Meta + left-drag** over artifacts, cluster grips, resize handles, or link handles pans instead of moving cards (`canvasPanModifier.js`, `beginPanGesture`). Pan uses synchronous refs plus window `pointermove`/`pointerup` so drag begins immediately when Ctrl and the primary button are held together. Pressing Ctrl while the primary button is already down cancels an in-flight card/cluster drag and switches to pan without releasing the mouse.
+- Artifact scroll areas (`[data-artifact-scroll]`) keep wheel scrolling local; canvas wheel handling does not intercept those targets.
+
+Agent Mode context selection on canvas cards uses theme tokens `--color-agent-selection-ring` / `--color-agent-selection-glow` (accent orange in light mode, white in dark/green/blue).
 
 ### Phase 3 (partial): Postgres spec tables and dual-write
 
@@ -1020,6 +1047,13 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 
 ## 14. Changelog
 
+### 2026-06-19 — Spreadsheet viewer, canvas Ctrl-pan, and agent UI polish (implemented)
+
+- Bumped the active spec to `2026.06.19.2`.
+- Added persisted spreadsheet viewer switcher: SheetJS simple table plus lazy-loaded `@extend-ai/react-xlsx` Excel viewer on canvas cards and in `CardModal`, with palette-aware theming and shared preference pub/sub.
+- Added Ctrl/Meta + left-drag pan over artifacts and cluster grips (`canvasPanModifier.js`); pan uses immediate pointer tracking so Ctrl and primary-button drags work together without releasing the mouse.
+- Updated Agent Mode light-theme context selection ring to accent orange; thread (`agent_chat`) cards use `#50c878` outline and bot icon in light mode.
+
 ### 2026-06-19 — Flow artifacts, Ollama agents, templates, and code previews (implemented)
 
 - Bumped the active spec to `2026.06.19.1`.
@@ -1042,7 +1076,7 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 - Added project primitive cleanup paths for project deletion, missing dock-only folder artifacts, missing/red canvas card deletion, and one-off orphan workspace purge tooling.
 - Hardened bookmark previews for Amazon generic-logo cases, added refresh paths for stale cached previews, and documented `/bookmarks/embed` for same-origin editor preview surfaces.
 - Changed canvas bookmark/link double-click behavior to open the pinned URL externally instead of opening a full-screen card modal.
-- Added thin `#39ff14` outlines on canvas agent chat cards to match the robot agent icon.
+- Added thin agent-green outlines on canvas agent chat cards (now theme-aware: `#50c878` light, `#39ff14` dark) to match the robot agent icon.
 
 ### 2026-06-18 — Sync repair, bookmark sidecars, and agent markdown (implemented)
 

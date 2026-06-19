@@ -45,8 +45,11 @@
   --color-link-hover: #92400e;
   --color-inspector-highlight-bg: rgb(180 83 9 / 0.1);
   --color-inspector-highlight-ring: rgb(180 83 9 / 0.4);
-  --color-agent-selection-ring: #111827;
-  --color-agent-selection-glow: rgb(17 24 39 / 0.28);
+  --color-agent-selection-ring: var(--color-accent);
+  --color-agent-selection-glow: rgb(180 83 9 / 0.28);
+  --color-agent-chat-outline: #50c878;
+  --color-agent-chat-outline-width: 2px;
+  --color-agent-chat-icon-hover: #6dd99a;
 }
 
 [data-theme='dark'] {
@@ -93,6 +96,9 @@
   --color-inspector-highlight-ring: rgb(245 158 11 / 0.4);
   --color-agent-selection-ring: #ffffff;
   --color-agent-selection-glow: rgb(255 255 255 / 0.38);
+  --color-agent-chat-outline: #39ff14;
+  --color-agent-chat-outline-width: 1px;
+  --color-agent-chat-icon-hover: #7cff5a;
 }
 
 [data-theme='green'] {
@@ -234,6 +240,8 @@
   --color-on-overlay: var(--color-on-overlay);
   --color-link: var(--color-link);
   --color-link-hover: var(--color-link-hover);
+  --color-agent-chat: var(--color-agent-chat-outline, #39ff14);
+  --color-agent-chat-hover: var(--color-agent-chat-icon-hover, #7cff5a);
 }
 
 html,
@@ -270,8 +278,8 @@ html[data-theme='blue'] {
 .react-flow {
   --xy-background-color: var(--color-canvas);
   --xy-node-color: var(--color-primary);
-  --xy-node-background-color: var(--color-surface);
-  --xy-node-border: 1px solid var(--color-border);
+  --xy-node-background-color: transparent;
+  --xy-node-border: none;
   --xy-edge-stroke: var(--color-muted);
   --xy-edge-stroke-selected: var(--color-accent);
   --xy-minimap-background-color: var(--color-surface);
@@ -280,6 +288,18 @@ html[data-theme='blue'] {
   --xy-controls-button-color: var(--color-primary);
   --xy-controls-button-border-color: var(--color-border);
   background: var(--color-canvas);
+}
+
+.react-flow__node {
+  background: transparent !important;
+  border: none !important;
+  padding: 0;
+}
+
+#flow-editor-canvas .react-flow {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .react-flow__controls,
@@ -312,11 +332,6 @@ html[data-theme='blue'] {
 
 .react-flow__edge.flow-edge-reverse.animated path:not(.react-flow__edge-interaction) {
   animation-direction: reverse;
-}
-
-.react-flow__node.flow-node-agent-scope {
-  box-shadow: 0 0 0 2px var(--color-accent);
-  border-radius: 0.5rem;
 }
 
 .react-flow__edge-textwrapper text {
@@ -423,6 +438,10 @@ html[data-theme='blue'] {
     var(--shadow-card-active);
 }
 
+.canvas-card-agent-chat {
+  outline: var(--color-agent-chat-outline-width, 1px) solid var(--color-agent-chat-outline, #39ff14);
+}
+
 /* Card drag: shield non-dragged cards at session start (avoids mid-hover pointer-events trap) */
 [data-card-dragging] .group:not([data-dragging-card]) {
   pointer-events: none;
@@ -456,4 +475,38 @@ html[data-theme='blue'] {
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+.canvas-xlsx-viewer {
+  background: var(--color-preview-bg);
+  color: var(--color-primary);
+}
+
+.canvas-xlsx-viewer [data-xlsx-viewer-toolbar] {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-primary);
+}
+
+.canvas-xlsx-viewer [data-xlsx-viewer-toolbar] button {
+  color: var(--color-secondary);
+}
+
+.canvas-xlsx-viewer [data-xlsx-viewer-toolbar] button:hover {
+  color: var(--color-primary);
+  background: var(--color-surface-muted);
+}
+
+.canvas-xlsx-viewer [data-xlsx-sheet-tabs] {
+  background: var(--color-surface-muted);
+  border-top: 1px solid var(--color-border);
+}
+
+.canvas-xlsx-viewer [data-xlsx-sheet-tabs] button {
+  color: var(--color-muted);
+}
+
+.canvas-xlsx-viewer [data-xlsx-sheet-tabs] button[data-active='true'] {
+  color: var(--color-on-accent);
+  background: var(--color-accent);
 }

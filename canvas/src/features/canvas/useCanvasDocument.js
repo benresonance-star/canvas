@@ -615,7 +615,10 @@ export function useCanvasDocument({ refs, deps }) {
         const key = canonicalKeyForSyncEntry(staged);
         const knownAgentChatKeys = collectKnownAgentChatKeys(
           agentChatThreadIndexRef.current,
-          { cards: stateRef.current.cards ?? [] },
+          {
+            cards: stateRef.current.cards ?? [],
+            stagedSyncCards: stagedSyncCardsRef.current ?? [],
+          },
         );
         if (key && !knownAgentChatKeys.has(key)) {
           const traceId = createSyncTraceId();
@@ -624,6 +627,8 @@ export function useCanvasDocument({ refs, deps }) {
           );
           setStagedSyncCards(nextStaged);
           stagedSyncCardsRef.current = nextStaged;
+          setSyncStatus({ toast: strings.projects.agentChatPlacementPruned });
+          setTimeout(() => setSyncStatus(null), 5000);
           syncTraceLog(traceId, 'placement:unknown-agent-chat-pruned', {
             projectId,
             stagingId,
@@ -737,6 +742,7 @@ export function useCanvasDocument({ refs, deps }) {
       agentChatThreadIndexRef,
       activeThreadIdRef,
       agentChatArtifactMetaRef,
+      setSyncStatus,
     ],
   );
 

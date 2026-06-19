@@ -12,12 +12,13 @@ import { defaultFlowNodePreviewSize, flowArtifactNodeDisplayTitle } from '../dom
 import { useFlowEditorContext } from './FlowEditorContext.jsx';
 import { FlowNodePreview } from './FlowNodePreview.jsx';
 
-function NodeShell({ children, accent = false, expanded = false }) {
+function NodeShell({ children, accent = false, agentScoped = false, expanded = false }) {
+  const highlighted = accent || agentScoped;
   return (
     <div
-      className={`rounded-xl border-2 bg-surface shadow-lg flex flex-col min-h-0 ${
-        expanded ? 'h-full w-full' : 'min-w-44 max-w-64'
-      } ${accent ? 'border-accent' : 'border-border'}`}
+      className={`rounded-xl border-2 bg-surface shadow-lg flex flex-col min-h-0 w-full ${
+        expanded ? 'h-full' : 'min-w-44 max-w-64'
+      } ${highlighted && !expanded ? 'border-accent' : 'border-border'}`}
     >
       <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-surface !bg-accent" />
       {children}
@@ -92,14 +93,15 @@ function ExpandedNodeBody({ nodeType, data, selected }) {
 }
 
 export function ArtifactFlowNode({ id, data, selected }) {
-  const { cardsById } = useFlowEditorContext();
+  const { cardsById, agentScopedNodeIds } = useFlowEditorContext();
   const card = cardsById.get(data.cardId);
   const showContent = data.showContent === true;
   const onToggle = useShowContentToggle(id, 'artifact', data, card);
   const displayTitle = flowArtifactNodeDisplayTitle(data, card);
+  const agentScoped = Boolean(agentScopedNodeIds?.has(id));
 
   return (
-    <NodeShell accent={selected} expanded={showContent}>
+    <NodeShell accent={selected} agentScoped={agentScoped} expanded={showContent}>
       <div className="flex items-start gap-2 px-3 py-3 shrink-0">
         <FileText size={14} className="mt-0.5 shrink-0 text-accent" />
         <div className="min-w-0 flex-1">
@@ -114,11 +116,13 @@ export function ArtifactFlowNode({ id, data, selected }) {
 }
 
 export function LocalFlowNode({ id, data, selected }) {
+  const { agentScopedNodeIds } = useFlowEditorContext();
   const showContent = data.showContent === true;
   const onToggle = useShowContentToggle(id, 'local', data, null);
+  const agentScoped = Boolean(agentScopedNodeIds?.has(id));
 
   return (
-    <NodeShell accent={selected} expanded={showContent}>
+    <NodeShell accent={selected} agentScoped={agentScoped} expanded={showContent}>
       <div className="flex items-start gap-2 px-3 py-3 shrink-0">
         <Workflow size={14} className="mt-0.5 shrink-0 text-secondary" />
         <div className="min-w-0 flex-1">

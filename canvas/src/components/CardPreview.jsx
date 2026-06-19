@@ -13,7 +13,7 @@ import { useAgentChatCardMessages } from '../hooks/useAgentChatCardMessages.js';
 import { UserNoteInlineEditor } from './UserNoteInlineEditor.jsx';
 import { CodePreviewFrame } from './CodePreviewFrame.jsx';
 import { PdfPreviewFrame } from './PdfPreviewFrame.jsx';
-import { SpreadsheetPreviewFrame } from './SpreadsheetPreviewFrame.jsx';
+import { SpreadsheetArtifactView } from './SpreadsheetArtifactView.jsx';
 import { AudioPlayer } from './AudioPlayer.jsx';
 import { BookmarkPreview } from './BookmarkPreview.jsx';
 import { BookmarkInlineEditor } from './BookmarkInlineEditor.jsx';
@@ -25,6 +25,7 @@ export function CardPreview({
   card,
   pinned,
   isActive,
+  cardSelected = false,
   compact = false,
   onRehydratePreview,
   onInlineSaveUserNote,
@@ -235,12 +236,15 @@ export function CardPreview({
 
   if (cardType === 'spreadsheet' && (mediaSrc || pinned.previewCacheKey)) {
     return (
-      <SpreadsheetPreviewFrame
+      <SpreadsheetArtifactView
         card={card}
         pinned={pinned}
         isActive={isActive}
+        cardSelected={cardSelected}
         onRehydratePreview={onRehydratePreview}
         compact={compact}
+        showViewerSelect
+        inCard
       />
     );
   }

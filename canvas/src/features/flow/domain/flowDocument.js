@@ -36,20 +36,42 @@ export function defaultFlowNodePreviewSize(node, card = null) {
 }
 
 /**
+ * Collapsed flow nodes should hug their header; fixed dimensions are only for expanded previews.
+ * @param {object} node
+ */
+export function stripFlowNodeDimensions(node) {
+  const next = {
+    ...node,
+    style: { ...(node.style ?? {}) },
+  };
+  delete next.width;
+  delete next.height;
+  delete next.measured;
+  delete next.style.width;
+  delete next.style.height;
+  return next;
+}
+
+/**
  * @param {object} node
  * @param {object | null | undefined} [card]
  */
 export function normalizeFlowNodeForEditor(node, card = null) {
   if (!node) return node;
+  if (node.data?.showContent !== true) {
+    const width = node.width ?? node.style?.width ?? null;
+    const height = node.height ?? node.style?.height ?? null;
+    if (width || height || node.measured) {
+      return stripFlowNodeDimensions(node);
+    }
+    return node;
+  }
   const width = node.width ?? node.style?.width ?? null;
   const height = node.height ?? node.style?.height ?? null;
-  if (node.data?.showContent === true && (!width || !height)) {
+  if (!width || !height) {
     return patchFlowNodePresentation(node, {}, defaultFlowNodePreviewSize(node, card));
   }
-  if (width && height) {
-    return patchFlowNodePresentation(node, {}, { width, height });
-  }
-  return node;
+  return patchFlowNodePresentation(node, {}, { width, height });
 }
 
 /**
@@ -245,8 +267,8 @@ export function snapshotForSave(flow, nodes, edges, viewport) {
       type: node.type,
       artifactId: node.type === 'artifact' ? (node.artifactId || node.data?.artifactId) : null,
       position: node.position,
-      width: node.measured?.width ?? node.width,
-      height: node.measured?.height ?? node.height,
+      width: node.data?.showContent === true ? node.width : null,
+      height: node.data?.showContent === true ? node.height : null,
       data: node.data ?? {},
     })),
     edges: edges.map((edge) => serializeFlowEdgeForSave(edge)),

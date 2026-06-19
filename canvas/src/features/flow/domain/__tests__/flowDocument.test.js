@@ -197,10 +197,54 @@ describe('flow document isolation', () => {
     expect(next.style).toEqual({ width: 320, height: 220 });
   });
 
-  it('normalizeFlowNodeForEditor applies saved dimensions to style', () => {
-    const node = { id: 'n1', type: 'artifact', width: 280, height: 320, data: {}, style: {} };
+  it('normalizeFlowNodeForEditor applies saved dimensions to style when expanded', () => {
+    const node = {
+      id: 'n1',
+      type: 'artifact',
+      width: 280,
+      height: 320,
+      data: { showContent: true },
+      style: {},
+    };
     const normalized = normalizeFlowNodeForEditor(node);
     expect(normalized.style).toEqual({ width: 280, height: 320 });
+  });
+
+  it('normalizeFlowNodeForEditor strips stale dimensions from collapsed nodes', () => {
+    const node = {
+      id: 'n1',
+      type: 'artifact',
+      width: 280,
+      height: 320,
+      measured: { width: 280, height: 320 },
+      data: { showContent: false },
+      style: { width: 280, height: 320 },
+    };
+    const normalized = normalizeFlowNodeForEditor(node);
+    expect(normalized.width).toBeUndefined();
+    expect(normalized.height).toBeUndefined();
+    expect(normalized.measured).toBeUndefined();
+    expect(normalized.style).toEqual({});
+  });
+
+  it('snapshotForSave omits dimensions for collapsed nodes', () => {
+    const snapshot = snapshotForSave(
+      { revision: 1, title: 'Flow', description: '' },
+      [{
+        id: 'node-1',
+        type: 'artifact',
+        artifactId: 'artifact-1',
+        position: { x: 0, y: 0 },
+        width: 320,
+        height: 220,
+        measured: { width: 320, height: 220 },
+        data: { title: 'Doc', showContent: false, cardId: 'card-1' },
+      }],
+      [],
+      { x: 0, y: 0, zoom: 1 },
+    );
+    expect(snapshot.nodes[0].width).toBeNull();
+    expect(snapshot.nodes[0].height).toBeNull();
   });
 
   it('snapshotForSave retains showContent in node data', () => {

@@ -4,7 +4,9 @@ export function cardDragIgnoresTarget(target) {
   return Boolean(
     target.closest('[data-card-resize-handle]')
     || target.closest('[data-link-handle]')
-    || target.closest('[data-card-interactive-edit]'),
+    || target.closest('[data-card-interactive-edit]')
+    || target.closest('[data-artifact-scroll]')
+    || target.closest('[data-card-artifact-controls]'),
   );
 }
 

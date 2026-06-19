@@ -214,6 +214,41 @@ describe('agentChatThreads', () => {
     expect(keys.has('notes__agent-chat-openai-stale')).toBe(false);
   });
 
+  it('collectKnownAgentChatKeys includes dock-only agent chat when stagedSyncCards scoped', () => {
+    let index = emptyThreadIndex();
+    index = upsertThreadInIndex(index, {
+      threadId: 'active-thread',
+      filename: 'notes__agent-chat-openai-active-v1.md',
+      cardId: null,
+    });
+    index = upsertThreadInIndex(index, {
+      threadId: 'docked-thread',
+      filename: 'notes__agent-chat-openai-docked-v1.md',
+      cardId: null,
+    });
+    index = setActiveThreadInIndex(index, 'active-thread');
+
+    const dockOnlyStaged = [{
+      stagingId: 'dock-staging-1',
+      key: 'notes__agent-chat-openai-docked',
+      type: 'agent_chat',
+    }];
+
+    const canvasOnlyKeys = collectKnownAgentChatKeys(index, {
+      cards: [],
+      stagedSyncCards: [],
+    });
+    expect(canvasOnlyKeys.has('notes__agent-chat-openai-docked')).toBe(false);
+    expect(canvasOnlyKeys.has('notes__agent-chat-openai-active')).toBe(true);
+
+    const dockScopedKeys = collectKnownAgentChatKeys(index, {
+      cards: [],
+      stagedSyncCards: dockOnlyStaged,
+    });
+    expect(dockScopedKeys.has('notes__agent-chat-openai-docked')).toBe(true);
+    expect(dockScopedKeys.has('notes__agent-chat-openai-active')).toBe(true);
+  });
+
   it('collectCanonicalAgentChatOwnership keeps only latest cardId per filename', () => {
     const ownership = collectCanonicalAgentChatOwnership({
       activeThreadId: 'active-thread',

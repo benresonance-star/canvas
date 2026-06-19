@@ -7,6 +7,7 @@ import React, { createContext, useContext } from 'react';
  *   onRehydratePreview: ((cardId: string, version: number, opts?: object) => Promise<boolean>) | null,
  *   updateNode: (nodeId: string, patch: { data?: Record<string, unknown>, width?: number, height?: number }, options?: { checkpoint?: boolean }) => void,
  *   checkpoint: () => void,
+ *   agentScopedNodeIds: Set<string> | null,
  * }>} */
 const FlowEditorContext = createContext(null);
 

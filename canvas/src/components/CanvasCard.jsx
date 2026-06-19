@@ -103,7 +103,7 @@ export function CanvasCard({
     ? 'ring-2 ring-accent/50 ring-offset-1 ring-offset-canvas'
     : '';
   const agentChatHighlight = card.type === 'agent_chat'
-    ? 'outline outline-1 outline-[#39ff14]'
+    ? 'canvas-card-agent-chat'
     : '';
   const missingHeaderTint = missingFromFolder ? 'bg-danger-muted border-danger-border' : 'border-border';
 
@@ -192,7 +192,7 @@ export function CanvasCard({
                   type="button"
                   title="Open chat thread"
                   aria-label="Open chat thread"
-                  className="p-1 text-[#39ff14] hover:text-[#7cff5a] transition pointer-events-auto"
+                  className="p-1 text-agent-chat hover:text-agent-chat-hover transition pointer-events-auto"
                   onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -275,6 +275,7 @@ export function CanvasCard({
             card={card}
             pinned={pinned}
             isActive={isActive && !showSimplified}
+            cardSelected={isActive}
             compact={showSimplified}
             onRehydratePreview={onRehydratePreview}
             onInlineSaveUserNote={

@@ -25,6 +25,10 @@ import {
   computeDragPosition,
   computeResizeRect,
 } from '../lib/canvasPointerGeometry.js';
+import {
+  exceedsPanGestureThreshold,
+  isCanvasPanModifier,
+} from '../lib/canvasPanModifier.js';
 
 export function Canvas({
   state,
@@ -95,8 +99,17 @@ export function Canvas({
   const [draggingCluster, setDraggingCluster] = useState(null);
   const cardDragEndedRef = useRef(false);
   const resizeEndedRef = useRef(false);
+  const panGestureMovedRef = useRef(false);
+  const panGestureOriginRef = useRef(null);
+  const panningRef = useRef(false);
+  const panStartRef = useRef(null);
+  const panBaseViewRef = useRef(null);
+  const panPreviewRef = useRef(null);
+  const panEndedRef = useRef(false);
+  const lastPointerClientRef = useRef({ x: 0, y: 0 });
   const draggingCardRef = useRef(null);
   const resizingCardRef = useRef(null);
+  const draggingClusterRef = useRef(null);
   const linkDragRef = useRef(null);
   const wheelCommitTimerRef = useRef(null);
 
@@ -257,19 +270,90 @@ export function Canvas({
     return () => ro.disconnect();
   }, [onViewportSizeChange]);
 
+  const beginPanGesture = useCallback((e) => {
+    const viewAtStart = latestCanvasViewRef.current;
+    panEndedRef.current = false;
+    panBaseViewRef.current = viewAtStart;
+    panGestureMovedRef.current = false;
+    panGestureOriginRef.current = { x: e.clientX, y: e.clientY };
+    panningRef.current = true;
+    panStartRef.current = { x: e.clientX - viewAtStart.x, y: e.clientY - viewAtStart.y };
+    panPreviewRef.current = null;
+    onInteractionStart?.('pan');
+    beginCanvasInteraction('pan');
+    setPanning(true);
+    setPanStart(panStartRef.current);
+    setActiveCardId(null);
+    setVersionStackOpen(null);
+    if (!agentSelectionMode) {
+      onClearCardSelection?.();
+      onClearClusterSelection?.();
+    }
+  }, [
+    agentSelectionMode,
+    onClearCardSelection,
+    onClearClusterSelection,
+    onInteractionStart,
+    setActiveCardId,
+    setVersionStackOpen,
+  ]);
+
+  const applyPanPointerMove = useCallback((clientX, clientY) => {
+    if (!panningRef.current || !panStartRef.current) return;
+    if (exceedsPanGestureThreshold(panGestureOriginRef.current, clientX, clientY)) {
+      panGestureMovedRef.current = true;
+    }
+    const base = panBaseViewRef.current ?? latestCanvasViewRef.current;
+    const preview = {
+      ...base,
+      x: clientX - panStartRef.current.x,
+      y: clientY - panStartRef.current.y,
+    };
+    panPreviewRef.current = preview;
+    setPanPreview(preview);
+  }, []);
+
+  const finishPanGesture = useCallback(() => {
+    if (!panningRef.current || panEndedRef.current) return;
+    panEndedRef.current = true;
+    const preview = panPreviewRef.current;
+    if (preview) {
+      onCommitCanvasView?.(preview);
+      endInteraction('viewCommit', { canvasView: preview });
+    }
+    panningRef.current = false;
+    panStartRef.current = null;
+    panBaseViewRef.current = null;
+    panPreviewRef.current = null;
+    setPanPreview(null);
+    setPanning(false);
+    setPanStart(null);
+    endCanvasInteraction('pan');
+    if (!panGestureMovedRef.current) {
+      panGestureOriginRef.current = null;
+    }
+  }, [endInteraction, onCommitCanvasView]);
+
+  const abortDragForPan = useCallback(() => {
+    endCardDragSession(canvasRef.current);
+    cardDragEndedRef.current = true;
+    resizeEndedRef.current = true;
+    draggingCardRef.current = null;
+    resizingCardRef.current = null;
+    draggingClusterRef.current = null;
+    setPositionOverrides(null);
+    setDraggingCard(null);
+    setResizingCard(null);
+    setDraggingCluster(null);
+    endCanvasInteraction('card');
+    endCanvasInteraction('cluster');
+    endCanvasInteraction('resize');
+  }, []);
+
   const onMouseDown = (e) => {
     if (linkDrag) return;
     if (e.target === canvasRef.current || e.target.dataset.canvasBg) {
-      onInteractionStart?.('pan');
-      beginCanvasInteraction('pan');
-      setPanning(true);
-      setPanStart({ x: e.clientX - baseView.x, y: e.clientY - baseView.y });
-      setActiveCardId(null);
-      setVersionStackOpen(null);
-      if (!agentSelectionMode) {
-        onClearCardSelection?.();
-        onClearClusterSelection?.();
-      }
+      beginPanGesture(e);
     }
   };
 
@@ -319,14 +403,52 @@ export function Canvas({
   }, [draggingCluster, onBatchUpdateCardPositions, view.zoom]);
 
   const onMouseMove = (e) => {
-    if (panning && panStart) {
-      setPanPreview({
-        ...baseView,
-        x: e.clientX - panStart.x,
-        y: e.clientY - panStart.y,
-      });
-    }
+    applyPanPointerMove(e.clientX, e.clientY);
   };
+
+  useEffect(() => {
+    const onPointerMove = (e) => {
+      lastPointerClientRef.current = { x: e.clientX, y: e.clientY };
+      applyPanPointerMove(e.clientX, e.clientY);
+    };
+    window.addEventListener('pointermove', onPointerMove);
+    return () => window.removeEventListener('pointermove', onPointerMove);
+  }, [applyPanPointerMove]);
+
+  useEffect(() => {
+    if (!panning) return undefined;
+
+    const onPointerEnd = (e) => {
+      if (e.button !== 0) return;
+      if (draggingCardRef.current || resizingCardRef.current || draggingClusterRef.current) return;
+      finishPanGesture();
+    };
+
+    window.addEventListener('pointerup', onPointerEnd);
+    window.addEventListener('pointercancel', onPointerEnd);
+    return () => {
+      window.removeEventListener('pointerup', onPointerEnd);
+      window.removeEventListener('pointercancel', onPointerEnd);
+    };
+  }, [panning, finishPanGesture]);
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key !== 'Control' && e.key !== 'Meta') return;
+      if (e.repeat) return;
+      if (!(e.buttons & 1)) return;
+      if (panningRef.current) return;
+
+      const { x, y } = lastPointerClientRef.current;
+      if (draggingCardRef.current || resizingCardRef.current || draggingClusterRef.current) {
+        abortDragForPan();
+        beginPanGesture({ clientX: x, clientY: y });
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [abortDragForPan, beginPanGesture]);
 
   const reportLinkStatus = useCallback(
     (payload) => {
@@ -482,6 +604,7 @@ export function Canvas({
       endInteraction('layoutCommit', { cardUpdates: updates });
     }
     setPositionOverrides(null);
+    draggingClusterRef.current = null;
     setDraggingCluster(null);
     endCanvasInteraction('cluster');
   }, [onBatchUpdateCardPositions, endInteraction]);
@@ -546,14 +669,7 @@ export function Canvas({
       finishResize(e.clientX, e.clientY);
       return;
     }
-    if (panning && panPreview) {
-      onCommitCanvasView?.(panPreview);
-      endInteraction('viewCommit', { canvasView: panPreview });
-      setPanPreview(null);
-      endCanvasInteraction('pan');
-    }
-    setPanning(false);
-    setPanStart(null);
+    finishPanGesture();
     setDraggingCard(null);
     setResizingCard(null);
     setDraggingCluster(null);
@@ -653,6 +769,7 @@ export function Canvas({
     resizeEndedRef.current = true;
     draggingCardRef.current = null;
     resizingCardRef.current = null;
+    draggingClusterRef.current = null;
     setPositionOverrides(null);
     setPanPreview(null);
     setDraggingCard(null);
@@ -683,6 +800,13 @@ export function Canvas({
   }, []);
 
   const startClusterMove = (hull, e) => {
+    if (e.button !== 0) return;
+    if (isCanvasPanModifier(e)) {
+      if (linkDrag) return;
+      e.preventDefault();
+      beginPanGesture(e);
+      return;
+    }
     if (readOnly || linkDrag || !hull.memberCardIds?.length) return;
     const cardById = new Map(cards.map((c) => [c.id, c]));
     const startPositions = new Map();
@@ -703,10 +827,23 @@ export function Canvas({
       startMouseY: e.clientY,
       startPositions,
     });
+    draggingClusterRef.current = {
+      clusterId: hull.clusterId,
+      memberCardIds: hull.memberCardIds,
+      startMouseX: e.clientX,
+      startMouseY: e.clientY,
+      startPositions,
+    };
   };
 
   const startCardDrag = (e, card) => {
-    if (readOnly || linkDrag || e.button !== 0) return;
+    if (linkDrag || e.button !== 0) return;
+    if (isCanvasPanModifier(e)) {
+      e.preventDefault();
+      beginPanGesture(e);
+      return;
+    }
+    if (readOnly) return;
     if (cardDragIgnoresTarget(e.target)) {
       return;
     }
@@ -732,7 +869,14 @@ export function Canvas({
   };
 
   const startLinkDrag = (e, card) => {
-    if (readOnly || e.button !== 0) return;
+    if (e.button !== 0) return;
+    if (isCanvasPanModifier(e)) {
+      if (linkDrag) return;
+      e.preventDefault();
+      beginPanGesture(e);
+      return;
+    }
+    if (readOnly) return;
     e.stopPropagation();
     e.preventDefault();
     setDraggingCard(null);
@@ -753,7 +897,14 @@ export function Canvas({
   };
 
   const startResize = (e, card, corner) => {
-    if (readOnly || linkDrag || e.button !== 0) return;
+    if (e.button !== 0) return;
+    if (isCanvasPanModifier(e)) {
+      if (linkDrag) return;
+      e.preventDefault();
+      beginPanGesture(e);
+      return;
+    }
+    if (readOnly || linkDrag) return;
     e.stopPropagation();
     e.preventDefault();
     setDraggingCard(null);
@@ -891,6 +1042,12 @@ export function Canvas({
             agentSelectionMode={agentSelectionMode}
             isBeingDragged={draggingCard?.id === card.id}
             onActivate={(e) => {
+              if (panGestureMovedRef.current) {
+                panGestureMovedRef.current = false;
+                panGestureOriginRef.current = null;
+                return;
+              }
+
               const threadForCard =
                 card.type === 'agent_chat'
                 && agentChatConnectorId

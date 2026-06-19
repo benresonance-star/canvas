@@ -90,6 +90,13 @@ export const strings = {
     modalResyncHint: 'Re-sync the connected folder to load this file again for a full preview.',
     modalTooLarge: 'File too large to preview inline',
   },
+  spreadsheet: {
+    viewerLabel: 'Viewer',
+    viewerSimple: 'Simple table',
+    viewerExtend: 'Excel viewer',
+    extendLoadFailed: 'Could not load workbook in Excel viewer.',
+    loading: 'Loading spreadsheet preview…',
+  },
   card: {
     pinned: 'Pinned',
     versions: 'Versions',
@@ -262,6 +269,8 @@ export const strings = {
     dockRestoreAction: 'Restore to canvas',
     dockRestoredToast: (n) =>
       `Restored ${n} item${n === 1 ? '' : 's'} from the sync dock to the canvas.`,
+    agentChatPlacementPruned:
+      'Chat transcript removed from layout (file still on disk). Open the chat thread or click Sync to restore.',
     syncMissingBody: 'Canvas data missing on server — open in the browser that has this project to upload.',
     syncErrorBody: 'Could not sync this project (file may be too large for server storage).',
     active: 'Current project',
@@ -354,6 +363,8 @@ export const strings = {
     selectNodeOrConnection: 'Select a node or connection to inspect it.',
     collapseInspector: 'Hide inspector',
     expandInspector: 'Show inspector',
+    showMinimap: 'Show minimap',
+    hideMinimap: 'Hide minimap',
     showContent: 'Show content',
     hideContent: 'Hide content',
     previewUnavailable: 'Source artifact is no longer on the canvas.',
@@ -433,6 +444,9 @@ export const strings = {
     modeMultiAgent: 'Multi-agent panel',
     modeSingleAgent: 'Single agent',
     connectorHeading: 'Agent',
+    agentTypeHeading: 'Agent type',
+    agentsLabel: 'Agents',
+    noAgentsEnabled: 'None enabled',
     apiKeyHeading: 'API key',
     apiKeyLabel: 'OpenAI API key',
     apiKeyPlaceholder: 'sk-…',

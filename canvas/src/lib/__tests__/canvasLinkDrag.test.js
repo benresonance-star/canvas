@@ -25,6 +25,14 @@ describe('cardDragIgnoresTarget', () => {
   it('ignores inline edit surfaces', () => {
     expect(cardDragIgnoresTarget(mockTarget(['[data-card-interactive-edit]']))).toBe(true);
   });
+
+  it('ignores artifact scroll surfaces', () => {
+    expect(cardDragIgnoresTarget(mockTarget(['[data-artifact-scroll]']))).toBe(true);
+  });
+
+  it('ignores artifact control surfaces', () => {
+    expect(cardDragIgnoresTarget(mockTarget(['[data-card-artifact-controls]']))).toBe(true);
+  });
 });
 
 describe('artifactRefFromPinnedVersion', () => {

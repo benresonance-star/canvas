@@ -23,6 +23,8 @@ export const AGENT_CHAT_STORAGE_SOFT_BYTES = 3 * 1024 * 1024;
 export const THEME_STORAGE_KEY = 'canvas:theme';
 export const THEME_CYCLE = ['light', 'dark', 'green', 'blue'];
 export const ARTIFACT_SIDEBAR_STORAGE_KEY = 'canvas:artifact-sidebar-open';
+export const SPREADSHEET_VIEWER_STORAGE_KEY = 'canvas:spreadsheet-viewer';
+export const SPREADSHEET_VIEWER_MODES = ['simple', 'extend'];
 /** Max file size (bytes) to load fully as text or base64 dataUrl */
 export const STORAGE_LIMIT = 4 * 1024 * 1024; // 4MB safety margin under 5MB limit
 /** Serialized project JSON above this triggers aggressive slimming (~browser localStorage quota) */

@@ -1,70 +1,51 @@
 import React, { useEffect, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { getPreview } from '../lib/previewStore.js';
+import { useSpreadsheetBuffer } from '../hooks/useSpreadsheetBuffer.js';
 import { strings } from '../content/strings.js';
 
 export function SpreadsheetPreviewFrame({ card, pinned, isActive, onRehydratePreview, compact = false }) {
+  const { buffer, error, loading } = useSpreadsheetBuffer({ card, pinned, onRehydratePreview });
   const [rows, setRows] = useState(null);
-  const [error, setError] = useState(null);
+  const [parseError, setParseError] = useState(null);
   const [sheetNames, setSheetNames] = useState([]);
   const [activeSheet, setActiveSheet] = useState(0);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setError(null);
+    if (!buffer) {
       setRows(null);
-      try {
-        let buf = null;
-        if (pinned.previewCacheKey) {
-          const blob = await getPreview(pinned.previewCacheKey);
-          if (blob) buf = await blob.arrayBuffer();
-        }
-        if (!buf && pinned.objectUrl) {
-          const res = await fetch(pinned.objectUrl);
-          buf = await res.arrayBuffer();
-        }
-        if (!buf && pinned.dataUrl) {
-          const res = await fetch(pinned.dataUrl);
-          buf = await res.arrayBuffer();
-        }
-        if (!buf && pinned.previewCacheKey && onRehydratePreview) {
-          await onRehydratePreview(card.id, pinned.version, { force: true });
-          const blob = await getPreview(pinned.previewCacheKey);
-          if (blob) buf = await blob.arrayBuffer();
-        }
-        if (!buf) {
-          if (!cancelled) setError(strings.preview.loadingPdf);
-          return;
-        }
-        const wb = XLSX.read(buf, { type: 'array' });
-        if (cancelled) return;
-        setSheetNames(wb.SheetNames || []);
-        const name = wb.SheetNames[activeSheet] || wb.SheetNames[0];
-        const sheet = wb.Sheets[name];
-        const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-        setRows(data.slice(0, compact ? 30 : 80));
-      } catch (e) {
-        if (!cancelled) setError(e.message || strings.preview.tooLarge);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [card.id, pinned, activeSheet, compact, onRehydratePreview]);
+      setParseError(null);
+      setSheetNames([]);
+      return undefined;
+    }
 
-  if (error) {
+    try {
+      const wb = XLSX.read(buffer, { type: 'array' });
+      setSheetNames(wb.SheetNames || []);
+      const name = wb.SheetNames[activeSheet] || wb.SheetNames[0];
+      const sheet = wb.Sheets[name];
+      const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      setRows(data.slice(0, compact ? 30 : 80));
+      setParseError(null);
+    } catch (e) {
+      setRows(null);
+      setParseError(e.message || strings.preview.tooLarge);
+    }
+  }, [buffer, activeSheet, compact]);
+
+  const displayError = error || parseError;
+
+  if (displayError) {
     return (
       <div className="h-full flex items-center justify-center text-center px-2">
-        <p className="serif text-muted text-sm">{error}</p>
+        <p className="serif text-muted text-sm">{displayError}</p>
       </div>
     );
   }
 
-  if (!rows) {
+  if (loading || !rows) {
     return (
       <div className="h-full flex items-center justify-center">
-        <p className="sans text-xs text-muted">{strings.preview.loadingPdf}</p>
+        <p className="sans text-xs text-muted">{strings.spreadsheet.loading}</p>
       </div>
     );
   }
