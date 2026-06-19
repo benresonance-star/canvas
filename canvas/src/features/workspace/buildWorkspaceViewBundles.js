@@ -87,6 +87,7 @@ export function buildWorkspaceViewBundles(ctx) {
       handleUpdateVersion: ctx.handleUpdateVersion,
       handleNoteSaveStatus: ctx.handleNoteSaveStatus,
       handleInlineSaveUserNote: ctx.handleInlineSaveUserNote,
+      handleInlineSaveMarkdown: ctx.handleInlineSaveMarkdown,
       handleInlineSaveBookmark: ctx.handleInlineSaveBookmark,
       handleSaveNoteToProject: ctx.handleSaveNoteToProject,
       handleSaveNewNote: ctx.handleSaveNewNote,

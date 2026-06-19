@@ -4,7 +4,7 @@ import { validateArtifact } from '../../src/primitives/artifact.js';
 import { appendEvent } from '../events.js';
 import { addClusterMember } from './clusters.js';
 
-export async function upsertArtifactByHash(clusterId, fields) {
+export async function upsertArtifactByHash(clusterId, fields, { addToCluster = false } = {}) {
   const existing = await query(
     'SELECT * FROM artifact WHERE content_hash = $1',
     [fields.content_hash],
@@ -19,7 +19,7 @@ export async function upsertArtifactByHash(clusterId, fields) {
     ) {
       await query('UPDATE artifact SET type = $2 WHERE id = $1', [row.id, fields.type]);
     }
-    if (clusterId) {
+    if (addToCluster && clusterId) {
       await addClusterMember(clusterId, { id: row.id, type: 'artifact' });
     }
     const fresh = await query('SELECT * FROM artifact WHERE id = $1', [row.id]);
@@ -56,7 +56,7 @@ export async function upsertArtifactByHash(clusterId, fields) {
     ],
   );
 
-  if (clusterId) {
+  if (addToCluster && clusterId) {
     await addClusterMember(clusterId, { id, type: 'artifact' });
   }
 

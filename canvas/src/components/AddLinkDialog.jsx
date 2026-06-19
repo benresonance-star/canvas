@@ -25,6 +25,7 @@ export function AddLinkDialog({
     if (!normalized) {
       setPreview(null);
       setPreviewError(null);
+      setPreviewLoading(false);
       return undefined;
     }
     let cancelled = false;
@@ -32,7 +33,10 @@ export function AddLinkDialog({
       setPreviewLoading(true);
       setPreviewError(null);
       const result = await fetchBookmarkPreview(normalized);
-      if (cancelled) return;
+      if (cancelled) {
+        setPreviewLoading(false);
+        return;
+      }
       setPreviewLoading(false);
       if (!result.url) {
         setPreviewError(result.error || strings.bookmark.previewFailed);
@@ -45,6 +49,7 @@ export function AddLinkDialog({
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      setPreviewLoading(false);
     };
   }, [normalized]);
 
@@ -72,13 +77,18 @@ export function AddLinkDialog({
     });
   };
 
-  const handleSubmit = (e) => {
+  const handleBackdropClose = () => {
+    if (saving) return;
+    onClose();
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!normalized || !preview) return;
+    if (!normalized || !preview || saving) return;
     const linkTargetRefs = targets
       .filter((t) => selectedCardIds.has(t.cardId))
       .map((t) => t.artifactRef);
-    onSave({
+    await onSave({
       url: normalized,
       preview,
       titleOverride: titleOverride.trim(),
@@ -102,14 +112,25 @@ export function AddLinkDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close" onClick={onClose} />
+      <button
+        type="button"
+        className={`absolute inset-0 bg-black/40 ${saving ? 'pointer-events-none' : ''}`}
+        aria-label="Close"
+        onClick={handleBackdropClose}
+      />
       <form
         onSubmit={handleSubmit}
+        onMouseDown={(e) => e.stopPropagation()}
         className="relative w-full max-w-lg bg-surface border border-border rounded-lg shadow-2xl flex flex-col max-h-[85vh]"
       >
         <header className="flex items-center justify-between px-4 py-3 border-b border-border">
           <h2 className="sans text-xs uppercase tracking-wider text-primary">{strings.bookmark.title}</h2>
-          <button type="button" onClick={onClose} className="text-muted hover:text-primary p-1">
+          <button
+            type="button"
+            onClick={handleBackdropClose}
+            disabled={saving}
+            className="text-muted hover:text-primary p-1 disabled:opacity-50"
+          >
             <X size={16} />
           </button>
         </header>
@@ -183,7 +204,12 @@ export function AddLinkDialog({
           )}
         </div>
         <footer className="px-4 py-3 border-t border-border flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="sans text-xs text-muted px-3 py-1.5">
+          <button
+            type="button"
+            onClick={handleBackdropClose}
+            disabled={saving}
+            className="sans text-xs text-muted px-3 py-1.5 disabled:opacity-50"
+          >
             {strings.bookmark.cancel}
           </button>
           <button

@@ -66,7 +66,7 @@ export function SyncHoldingTray({
   }, [onDropZoneRectChange]);
 
   useLayoutEffect(() => {
-    if (!visible && stagedCards.length === 0) {
+    if (stagedCards.length === 0 && !visible) {
       onDropZoneRectChange?.(null);
       return undefined;
     }
@@ -173,12 +173,9 @@ export function SyncHoldingTray({
     onDragActiveChange?.(true);
   }, [onDragActiveChange]);
 
-  if (!visible && stagedCards.length === 0) return null;
+  if (stagedCards.length === 0 && !visible) return null;
 
   const isEmpty = stagedCards.length === 0;
-  const hintText = isEmpty && visible
-    ? strings.syncHolding.emptyTrayDrop
-    : strings.syncHolding.dragHint;
 
   return (
     <>
@@ -240,9 +237,11 @@ export function SyncHoldingTray({
             )}
           </div>
         </div>
-        <p className="sans text-[9px] text-muted text-center mt-1.5 pointer-events-none">
-          {hintText}
-        </p>
+        {!isEmpty && (
+          <p className="sans text-[9px] text-muted text-center mt-1.5 pointer-events-none">
+            {strings.syncHolding.dragHint}
+          </p>
+        )}
       </div>
 
       {dragging && (

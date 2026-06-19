@@ -33,7 +33,80 @@ export const CONTEXT_MAX_FILE_CHARS = CONTEXT_PROFILES.standard.maxFileChars;
 /** @deprecated use CONTEXT_PROFILES.standard */
 export const CONTEXT_MAX_TOTAL_CHARS = CONTEXT_PROFILES.standard.maxTotalChars;
 
-const TEXT_TYPES = new Set(['markdown', 'note', 'user_note', 'html', 'agent_chat']);
+const TEXT_TYPES = new Set(['markdown', 'note', 'user_note', 'html', 'agent_chat', 'code']);
+
+function prefersFolderTextFirst(type) {
+  const normalized = normalizeCardType(type);
+  return TEXT_TYPES.has(normalized) && normalized !== 'agent_chat';
+}
+
+async function readFolderTextForPinned(pinned, folderHandle) {
+  if (!folderHandle || !pinned?.filename) return null;
+  try {
+    const relativePath = folderRelativePathFromVersion(pinned);
+    const entry = await getFileHandleAtPath(folderHandle, relativePath);
+    const file = await readFileEntry(entry, { relativePath });
+    const text = file.content?.trim();
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
+async function readArtifactText(pinned, fetchArtifact) {
+  if (!pinned?.artifactRef?.id) return null;
+  try {
+    const { artifact } = await fetchArtifact(pinned.artifactRef.id);
+    const text = artifact?.payload_text?.trim();
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve text body for folder-backed context cards.
+ * Linked folder files win for markdown/code/html notes; agent_chat keeps API-first order.
+ */
+async function resolveTextContextForCard(card, pinned, type, {
+  folderHandle = null,
+  fetchArtifact = getArtifact,
+  loadAgentChatText = null,
+} = {}) {
+  const folderFirst = prefersFolderTextFirst(type);
+
+  if (folderFirst && folderHandle && pinned?.filename) {
+    const folderText = await readFolderTextForPinned(pinned, folderHandle);
+    if (folderText) return folderText;
+  }
+
+  if (!folderFirst) {
+    const artifactText = await readArtifactText(pinned, fetchArtifact);
+    if (artifactText) return artifactText;
+  }
+
+  if (type === 'agent_chat' && loadAgentChatText) {
+    try {
+      const transcript = await loadAgentChatText(card);
+      if (transcript?.trim()) return transcript.trim();
+    } catch {
+      /* fall through */
+    }
+  }
+
+  if (folderFirst) {
+    const artifactText = await readArtifactText(pinned, fetchArtifact);
+    if (artifactText) return artifactText;
+  }
+
+  if (!folderFirst && folderHandle && pinned?.filename) {
+    const folderText = await readFolderTextForPinned(pinned, folderHandle);
+    if (folderText) return folderText;
+  }
+
+  if (pinned.content?.trim()) return pinned.content.trim();
+  return null;
+}
 
 /**
  * @param {'standard' | 'extended'} [profileName]
@@ -144,13 +217,25 @@ export function contextStatusHint(card, options = {}) {
   if ((type === 'pdf' || TEXT_TYPES.has(type)) && !pinned.artifactRef?.id && !pinned.filename) {
     return { cardId: card.id, label, status: 'empty' };
   }
-  if (!folderLinked && type === 'pdf') {
-    return { cardId: card.id, label, status: 'needs_folder' };
-  }
-  if (type === 'image' && !folderLinked && !pinned.previewCacheKey) {
+  if (contextCardNeedsFolderLink(card, folderLinked)) {
     return { cardId: card.id, label, status: 'needs_folder' };
   }
   return { cardId: card.id, label, status: 'pending' };
+}
+
+/**
+ * @param {object} card
+ * @param {boolean} folderLinked
+ */
+export function contextCardNeedsFolderLink(card, folderLinked) {
+  if (folderLinked) return false;
+  const type = normalizeCardType(card?.type);
+  const pinned = getPinnedVersion(card);
+  if (!pinned) return false;
+  if (type === 'pdf') return true;
+  if (type === 'image' && !pinned.previewCacheKey) return true;
+  if (TEXT_TYPES.has(type) && pinned.filename && !pinned.artifactRef?.id) return true;
+  return false;
 }
 
 /**
@@ -347,57 +432,32 @@ export async function loadContextDocumentForCard(card, options = {}) {
   let pdfPagesTotal;
   let pdfPagesIncluded;
 
-  if (pinned.artifactRef?.id) {
-    try {
-      const { artifact } = await fetchArtifact(pinned.artifactRef.id);
-      if (artifact?.payload_text?.trim()) {
-        text = artifact.payload_text.trim();
-      }
-    } catch {
-      /* fall through to folder */
-    }
-  }
-
-  if (!text && type === 'agent_chat' && loadAgentChatText) {
-    try {
-      const transcript = await loadAgentChatText(card);
-      if (transcript?.trim()) {
-        text = transcript.trim();
-      }
-    } catch {
-      /* fall through to folder */
-    }
-  }
-
-  if (!text && folderHandle && pinned.filename) {
+  if (TEXT_TYPES.has(type)) {
+    text = await resolveTextContextForCard(card, pinned, type, {
+      folderHandle,
+      fetchArtifact,
+      loadAgentChatText,
+    });
+  } else if (folderHandle && pinned.filename && type === 'pdf') {
     try {
       const relativePath = folderRelativePathFromVersion(pinned);
       const entry = await getFileHandleAtPath(folderHandle, relativePath);
-      if (TEXT_TYPES.has(type)) {
-        const file = await readFileEntry(entry, { relativePath });
-        if (file.content?.trim()) {
-          text = file.content.trim();
-        }
-      } else if (type === 'pdf') {
-        const rawFile = await entry.getFile();
-        const extracted = await extractPdfText(rawFile, {
-          maxPages: limits.pdfMaxPages,
-          maxChars: limits.maxFileChars,
-        });
-        text = extracted.text;
-        pdfPagesTotal = extracted.pagesTotal;
-        pdfPagesIncluded = extracted.pagesIncluded;
-      }
+      const rawFile = await entry.getFile();
+      const extracted = await extractPdfText(rawFile, {
+        maxPages: limits.pdfMaxPages,
+        maxChars: limits.maxFileChars,
+      });
+      text = extracted.text;
+      pdfPagesTotal = extracted.pagesTotal;
+      pdfPagesIncluded = extracted.pagesIncluded;
     } catch (e) {
-      if (!text) {
-        return {
-          cardId: card.id,
-          label,
-          type,
-          status: 'error',
-          note: e?.message || 'Could not read file from folder.',
-        };
-      }
+      return {
+        cardId: card.id,
+        label,
+        type,
+        status: 'error',
+        note: e?.message || 'Could not read file from folder.',
+      };
     }
   }
 
@@ -495,7 +555,12 @@ export async function estimateContextDocument(card, options = {}) {
   let estimatedChars = 0;
   let pdfPagesTotal;
 
-  if (pinned.artifactRef?.id) {
+  if (prefersFolderTextFirst(type) && folderHandle && pinned.filename) {
+    const folderText = await readFolderTextForPinned(pinned, folderHandle);
+    if (folderText) estimatedChars = folderText.length;
+  }
+
+  if (!estimatedChars && !prefersFolderTextFirst(type) && pinned.artifactRef?.id) {
     try {
       const { artifact } = await fetchArtifact(pinned.artifactRef.id);
       if (artifact?.payload_text) {
@@ -513,6 +578,22 @@ export async function estimateContextDocument(card, options = {}) {
     } catch {
       /* ignore */
     }
+  }
+
+  if (!estimatedChars && prefersFolderTextFirst(type) && pinned.artifactRef?.id) {
+    try {
+      const { artifact } = await fetchArtifact(pinned.artifactRef.id);
+      if (artifact?.payload_text) {
+        estimatedChars = artifact.payload_text.length;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (!estimatedChars && !prefersFolderTextFirst(type) && folderHandle && pinned.filename) {
+    const folderText = await readFolderTextForPinned(pinned, folderHandle);
+    if (folderText) estimatedChars = folderText.length;
   }
 
   if (!estimatedChars && pinned.size) {
@@ -725,8 +806,25 @@ export function formatAgentSystemContext(mode, documents) {
   return `The user is focused on ${kind}:\n\n${sections.join('\n\n')}`;
 }
 
-const CONTEXT_ADD_PREFIX =
+export const CONTEXT_ADD_PREFIX =
   '[Canvas context — the following file content is now available for this conversation]';
+
+/**
+ * @param {Array<{ status?: string, text?: string, imageDataUrl?: string }>} documents
+ */
+export function contextDocumentsIncludeContent(documents) {
+  return (documents ?? []).some(
+    (doc) => doc.status === 'included' && (Boolean(doc.text) || Boolean(doc.imageDataUrl)),
+  );
+}
+
+/**
+ * @param {string} content
+ */
+export function storedContextAddHasIncludedContent(content) {
+  const text = String(content ?? '');
+  return text.includes(CONTEXT_ADD_PREFIX) && !text.includes('[Content not included:');
+}
 
 /**
  * @param {'selected' | 'visible'} mode

@@ -41,6 +41,7 @@ import {
   buildFolderConnectConfirmChanges,
   buildSyncChangesFromFolder,
   findSyncEntryByFolderKey,
+  isSuppressedBookmarkFolderChange,
   missingDockOnlyStagedRows,
   partitionSyncChanges,
   reconcileFolderRenamesByIdentity,
@@ -52,7 +53,7 @@ import {
 } from '../../lib/artifactPlacement.js';
 import { collectKnownAgentChatKeys } from '../../lib/agentChatThreads.js';
 import { backfillMissingAgentChatTranscripts } from '../../lib/agentChatFolderBackfill.js';
-import { readSuppressedSyncKeys } from '../../lib/syncSuppressedKeys.js';
+import { readSuppressedSyncKeys, readSuppressedBookmarkUrls } from '../../lib/syncSuppressedKeys.js';
 import { resolveScanExitStatus } from '../../lib/syncScanning.js';
 import {
   ingestFoundFiles,
@@ -661,6 +662,10 @@ export function useFolderLinkScan({
 
     let stagedBaseline = stagedForScan;
     const suppressedKeys = readSuppressedSyncKeys(projectId, stateRef.current);
+    const suppressedBookmarkUrls = readSuppressedBookmarkUrls(
+      projectId,
+      stateRef.current,
+    );
     const { changes, refreshPatches, stagedRefreshPatches } = buildSyncChangesFromFolder(
       groupedFinal,
       cardsForScan,
@@ -668,7 +673,8 @@ export function useFolderLinkScan({
     );
     const filteredChanges = changes
       .filter((c) => !suppressedKeys.has(c.key))
-      .filter((c) => !suppressedKeys.has(toCanonicalSyncKey(c.key)));
+      .filter((c) => !suppressedKeys.has(toCanonicalSyncKey(c.key)))
+      .filter((c) => !isSuppressedBookmarkFolderChange(c, suppressedBookmarkUrls));
     const knownAgentChatKeys = collectKnownAgentChatKeys(
       agentChatThreadIndexRef.current,
       { cards: cardsForScan, stagedSyncCards: stagedBaseline },
@@ -802,7 +808,11 @@ export function useFolderLinkScan({
       if (scanSeq !== folderScanSeqRef.current || stagingDragActiveRef.current) {
         return [];
       }
-      const opts = { suppressedKeys, knownAgentChatKeys };
+      const opts = {
+        suppressedKeys,
+        suppressedBookmarkUrls,
+        knownAgentChatKeys,
+      };
       if (preferImportDialog) {
         return buildFolderConnectConfirmChanges(
           groupedFinal,

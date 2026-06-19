@@ -56,6 +56,7 @@ export function Canvas({
   projectName,
   onPatchCardVersion,
   onInlineSaveUserNote,
+  onInlineSaveMarkdown,
   onInlineSaveBookmark,
   savingCardId,
   onLinkDeleteStatus,
@@ -1102,6 +1103,11 @@ export function Canvas({
                 ? (payload) => onInlineSaveUserNote(card, payload)
                 : undefined
             }
+            onInlineSaveMarkdown={
+              onInlineSaveMarkdown
+                ? (payload) => onInlineSaveMarkdown(card, payload)
+                : undefined
+            }
             onInlineSaveBookmark={
               onInlineSaveBookmark
                 ? (payload) => onInlineSaveBookmark(card, payload)
@@ -1109,6 +1115,7 @@ export function Canvas({
             }
             onUpdateCard={onUpdateCard}
             userNoteSaving={savingCardId === card.id}
+            markdownSaving={savingCardId === card.id}
             bookmarkSaving={savingCardId === card.id}
             agentChatLiveMessages={agentChatLiveMessages}
             agentChatLiveCardId={agentChatLiveCardId}
@@ -1123,6 +1130,7 @@ export function Canvas({
               cardKey: card.key,
             })}
             bookmarkEditDisabled={readOnly}
+            markdownEditDisabled={readOnly}
             cardsById={cardsById}
           />
         ))}

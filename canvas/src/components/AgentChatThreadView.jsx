@@ -44,7 +44,7 @@ function ContextEventRow({ message, compact }) {
                 )}
               </button>
               {expanded && (
-                <p className="mt-1 text-[10px] text-muted whitespace-pre-wrap line-clamp-6">
+                <p className="mt-1 text-[10px] text-muted whitespace-pre-wrap line-clamp-6 select-text">
                   {message.preview}
                 </p>
               )}
@@ -188,7 +188,7 @@ export function AgentChatThreadView({
             className={`flex flex-col max-w-full ${isUser ? `items-end ${sidePad}` : `items-start ${sidePad}`}`}
           >
             <div
-              className={`sans ${textSize} rounded-lg ${padX} max-w-full whitespace-pre-wrap ${
+              className={`sans ${textSize} rounded-lg ${padX} max-w-full whitespace-pre-wrap select-text ${
                 isUser
                   ? 'bg-surface-muted border border-border text-primary rounded-br-md'
                   : 'bg-surface border border-border-subtle text-secondary rounded-bl-md'

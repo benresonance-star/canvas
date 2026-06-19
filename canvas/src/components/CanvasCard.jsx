@@ -6,6 +6,7 @@ import { strings } from '../content/strings.js';
 import { TypeIcon } from './TypeIcon.jsx';
 import { CardPreview } from './CardPreview.jsx';
 import { AudioSkinTrigger } from './AudioSkinPicker.jsx';
+import { MediaMinimalToggle } from './MediaMinimalToggle.jsx';
 import { resolveAudioSkinColor } from '../lib/audioSkin.js';
 
 export function CanvasCard({
@@ -30,11 +31,14 @@ export function CanvasCard({
   onRehydratePreview,
   onInspectArtifact,
   onInlineSaveUserNote,
+  onInlineSaveMarkdown,
   onInlineSaveBookmark,
   onUpdateCard,
   userNoteSaving,
+  markdownSaving,
   bookmarkSaving,
   userNoteDisabled,
+  markdownEditDisabled = false,
   bookmarkEditDisabled,
   isBeingDragged = false,
   agentChatLiveMessages = null,
@@ -55,7 +59,9 @@ export function CanvasCard({
   const { w: cw, h: ch } = getCardPixelSize(card);
 
   const showSimplified = zoom < 0.5;
-  const showResizeHandles = isActive && !showSimplified;
+  const isMediaCard = card.type === 'image' || card.type === 'video';
+  const minimalChrome = isMediaCard && Boolean(card.minimalPreview);
+  const showResizeHandles = isActive && !showSimplified && !minimalChrome;
 
   const displayFilename = cardDisplayFilename(card);
   const canEditUserNoteTitle =
@@ -95,17 +101,30 @@ export function CanvasCard({
   };
 
   const missingRing = missingFromFolder ? 'ring-2 ring-danger-ring ring-offset-1 ring-offset-canvas' : '';
-  const linkHighlight = isLinkDropHighlight ? 'ring-2 ring-accent ring-offset-1 ring-offset-canvas' : '';
+  const linkHighlight = !minimalChrome && isLinkDropHighlight ? 'ring-2 ring-accent ring-offset-1 ring-offset-canvas' : '';
   const agentSelectedRing = agentSelectionMode && isMultiSelected
     ? 'canvas-card-agent-selected'
     : '';
-  const multiSelectRing = isMultiSelected && !isActive && !agentSelectedRing
+  const multiSelectRing = !minimalChrome && isMultiSelected && !isActive && !agentSelectedRing
     ? 'ring-2 ring-accent/50 ring-offset-1 ring-offset-canvas'
     : '';
   const agentChatHighlight = card.type === 'agent_chat'
     ? 'canvas-card-agent-chat'
     : '';
   const missingHeaderTint = missingFromFolder ? 'bg-danger-muted border-danger-border' : 'border-border';
+  const canDeleteFromCanvas =
+    isActive
+    && !bookmarkEditDisabled
+    && (missingFromFolder || card.type === 'bookmark');
+
+  const toggleMinimalPreview = () => {
+    if (!onUpdateCard) return;
+    onUpdateCard(card.id, { minimalPreview: !card.minimalPreview });
+  };
+
+  const shellClassName = minimalChrome
+    ? `canvas-card canvas-card-media-minimal relative h-full flex flex-col overflow-hidden transition-[box-shadow,opacity] ${missingRing} ${agentSelectedRing}`
+    : `canvas-card bg-surface rounded-lg overflow-hidden h-full flex flex-col transition-[box-shadow,opacity] ${missingRing} ${linkHighlight} ${multiSelectRing} ${agentSelectedRing} ${agentChatHighlight} ${isActive && !agentSelectedRing ? 'card-shadow-active' : 'card-shadow'}`;
 
   return (
     <div
@@ -122,9 +141,8 @@ export function CanvasCard({
       onClick={(e) => { e.stopPropagation(); onActivate(e); }}
       onDoubleClick={(e) => { e.stopPropagation(); onOpen(); }}
     >
-      <div
-        className={`canvas-card bg-surface rounded-lg overflow-hidden h-full flex flex-col transition-[box-shadow,opacity] ${missingRing} ${linkHighlight} ${multiSelectRing} ${agentSelectedRing} ${agentChatHighlight} ${isActive && !agentSelectedRing ? 'card-shadow-active' : 'card-shadow'}`}
-      >
+      <div className={shellClassName}>
+        {!minimalChrome && (
         <div
           className={`shrink-0 flex items-start justify-between gap-2 border-b ${missingHeaderTint} ${
             showSimplified ? 'px-2 pt-2 pb-1' : 'px-4 pt-3 pb-2'
@@ -187,6 +205,12 @@ export function CanvasCard({
                   compact
                 />
               )}
+              {isMediaCard && isActive && onUpdateCard && (
+                <MediaMinimalToggle
+                  minimal={Boolean(card.minimalPreview)}
+                  onToggle={toggleMinimalPreview}
+                />
+              )}
               {card.type === 'agent_chat' && (
                 <button
                   type="button"
@@ -217,7 +241,7 @@ export function CanvasCard({
                   <Box size={13} strokeWidth={1.5} />
                 </button>
               )}
-              {missingFromFolder && (
+              {canDeleteFromCanvas && (
                 <button
                   type="button"
                   title={strings.card.removeFromCanvas}
@@ -245,6 +269,15 @@ export function CanvasCard({
             </div>
           )}
         </div>
+        )}
+
+        {minimalChrome && isActive && onUpdateCard && (
+          <MediaMinimalToggle
+            minimal
+            floating
+            onToggle={toggleMinimalPreview}
+          />
+        )}
 
         {showSimplified
           && card.type === 'user_note'
@@ -255,7 +288,7 @@ export function CanvasCard({
             {strings.userNote.zoomToEdit}
           </p>
         )}
-        {showSimplified && missingFromFolder && (
+        {showSimplified && canDeleteFromCanvas && !minimalChrome && (
           <button
             type="button"
             title={strings.card.removeFromCanvas}
@@ -267,20 +300,40 @@ export function CanvasCard({
           </button>
         )}
 
+        {minimalChrome && canDeleteFromCanvas && (
+          <button
+            type="button"
+            title={strings.card.removeFromCanvas}
+            className="absolute top-1.5 left-1.5 z-20 p-1.5 rounded-md text-danger hover:bg-danger-muted pointer-events-auto bg-surface/90 border border-danger-border shadow-sm"
+            onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+            onClick={(e) => { e.stopPropagation(); onDeleteCard(); }}
+          >
+            <Trash2 size={14} strokeWidth={1.8} />
+          </button>
+        )}
+
         <div
-          className={`flex-1 min-h-0 overflow-hidden ${missingFromFolder ? 'bg-danger-muted/30' : ''} ${showSimplified ? 'px-2 pb-2' : 'px-4 pb-4'}`}
-          {...(isActive && !showSimplified ? { 'data-artifact-scroll': '' } : {})}
+          className={`flex-1 min-h-0 overflow-hidden ${missingFromFolder && !minimalChrome ? 'bg-danger-muted/30' : ''} ${
+            minimalChrome ? 'p-0' : showSimplified ? 'px-2 pb-2' : 'px-4 pb-4'
+          }`}
+          {...(isActive && !showSimplified && !minimalChrome ? { 'data-artifact-scroll': '' } : {})}
         >
           <CardPreview
             card={card}
             pinned={pinned}
-            isActive={isActive && !showSimplified}
+            isActive={isActive && !showSimplified && !minimalChrome}
             cardSelected={isActive}
             compact={showSimplified}
+            minimalChrome={minimalChrome}
             onRehydratePreview={onRehydratePreview}
             onInlineSaveUserNote={
               card.type === 'user_note' && isActive && !showSimplified
                 ? (payload) => onInlineSaveUserNote?.({ ...payload, name: editName })
+                : undefined
+            }
+            onInlineSaveMarkdown={
+              card.type === 'markdown' && isActive && !showSimplified
+                ? onInlineSaveMarkdown
                 : undefined
             }
             onInlineSaveBookmark={
@@ -289,14 +342,13 @@ export function CanvasCard({
                 : undefined
             }
             userNoteSaving={userNoteSaving}
+            markdownSaving={markdownSaving}
             bookmarkSaving={bookmarkSaving}
             userNoteDisabled={userNoteDisabled}
+            markdownEditDisabled={markdownEditDisabled}
             bookmarkEditDisabled={bookmarkEditDisabled}
             userNoteEditTitle={editName}
             userNoteInitialTitle={card.name}
-            showTapToEditHint={
-              card.type === 'user_note' && !isActive && !showSimplified
-            }
             agentChatLiveMessages={agentChatLiveMessages}
             agentChatLiveCardId={agentChatLiveCardId}
             agentChatTranscriptRevision={agentChatTranscriptRevision}
@@ -350,7 +402,7 @@ export function CanvasCard({
         </button>
       )}
 
-      {versionStackOpen && !showSimplified && (
+      {versionStackOpen && !showSimplified && !minimalChrome && (
         <div
           className="absolute top-0 left-full ml-3 z-40 bg-surface rounded-lg card-shadow w-56 overflow-hidden"
           onMouseDown={(e) => e.stopPropagation()}

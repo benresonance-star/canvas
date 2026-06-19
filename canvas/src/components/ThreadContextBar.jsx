@@ -3,8 +3,14 @@ import { strings } from '../content/strings.js';
 import { cardLabel } from '../lib/agentContext.js';
 
 function deliverySuffix(status) {
+  if (status === 'sent_to_ai') {
+    return strings.agent.threadContextSent;
+  }
   if (status === 'sends_on_next' || status === 'updated_resend') {
     return strings.agent.threadContextPending;
+  }
+  if (status === 'needs_folder') {
+    return strings.agent.threadContextNeedsFolder;
   }
   return null;
 }

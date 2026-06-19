@@ -16,7 +16,7 @@ import {
   flushProjectSync,
   isServerSyncEnabled,
 } from '../../lib/projects.js';
-import { suppressedKeysForSave } from '../../lib/syncSuppressedKeys.js';
+import { suppressedKeysForSave, suppressedBookmarkUrlsForSave } from '../../lib/syncSuppressedKeys.js';
 import { syncTraceLog } from '../../lib/sync/syncTrace.js';
 import { syncKeysMatch } from '../../lib/filename.js';
 import { flushArtifactSyncOutbox } from '../../lib/artifactSyncOutbox.js';
@@ -231,6 +231,7 @@ export function useActionSync({
         stagedSyncCards: sanitized.stagedSyncCards,
         artifactPlacements: null,
         suppressedSyncKeys: suppressedKeysForSave(projectId, stateRef.current),
+        suppressedBookmarkUrls: suppressedBookmarkUrlsForSave(projectId, stateRef.current),
         stripNoteContent:
           Boolean(folderHandle)
           && Boolean(folderPresentKeysRef.current?.length)
@@ -283,6 +284,7 @@ export function useActionSync({
         stagedSyncCards: stagedSyncCardsRef.current,
         artifactPlacements,
         suppressedSyncKeys: suppressedKeysForSave(projectId, stateRef.current),
+        suppressedBookmarkUrls: suppressedBookmarkUrlsForSave(projectId, stateRef.current),
         stripNoteContent:
           Boolean(folderHandle)
           && Boolean(folderPresentKeysRef.current?.length)
@@ -424,6 +426,7 @@ export function useActionSync({
       stagedSyncCards: stagedSyncCardsRef.current,
       artifactPlacements: pending.artifactPlacements,
       suppressedSyncKeys: suppressedKeysForSave(projectId, stateRef.current),
+      suppressedBookmarkUrls: suppressedBookmarkUrlsForSave(projectId, stateRef.current),
       stripNoteContent:
         Boolean(folderHandle)
         && Boolean(folderPresentKeysRef.current?.length)
@@ -456,6 +459,10 @@ export function useActionSync({
               && Boolean(folderPresentKeysRef.current?.length)
               && isServerSyncEnabled(),
             authoritativePlacements,
+            suppressedBookmarkUrls: suppressedBookmarkUrlsForSave(
+              activeProjectIdRef.current,
+              state,
+            ),
           },
         ),
       commitProjectDocument: (projectId, opts) =>

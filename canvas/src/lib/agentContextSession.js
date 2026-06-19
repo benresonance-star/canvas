@@ -2,7 +2,10 @@ import { cardLabel } from './agentContext.js';
 import {
   buildContextAddApiContent,
   buildContextDocuments,
+  contextCardNeedsFolderLink,
+  contextDocumentsIncludeContent,
   getPinnedVersion,
+  storedContextAddHasIncludedContent,
 } from './agentContextContent.js';
 
 /**
@@ -123,9 +126,7 @@ export function getContextDeliveryStatus(card, registry, options = {}) {
 
   if (!pinned) return 'empty';
 
-  const type = card.type;
-  if (type === 'pdf' && !folderLinked) return 'needs_folder';
-  if (type === 'image' && !folderLinked && !pinned.previewCacheKey) return 'needs_folder';
+  if (contextCardNeedsFolderLink(card, folderLinked)) return 'needs_folder';
 
   if (registry.keys.has(key)) return 'sent_to_ai';
   if (prev && prev.key !== key) return 'updated_resend';
@@ -144,10 +145,17 @@ export function chatMessageToApiPayload(msg) {
 
 /**
  * @param {object} msg
- * @param {{ cards?: object[], folderHandle?: FileSystemDirectoryHandle | null, contextMode?: 'selected' | 'visible', profile?: string }} hydrate
+ * @param {{
+ *   cards?: object[],
+ *   folderHandle?: FileSystemDirectoryHandle | null,
+ *   contextMode?: 'selected' | 'visible',
+ *   profile?: string,
+ *   fetchArtifact?: typeof import('./agentApi.js').getArtifact,
+ *   loadAgentChatText?: (card: object) => Promise<string | null>,
+ *   loadFlowContextText?: (card: object) => Promise<string | null>,
+ * }} hydrate
  */
 export async function hydrateContextAddMessage(msg, hydrate = {}) {
-  if (msg.apiContent?.length) return msg;
   if (msg.kind !== 'context_add' || !msg.cardIds?.length) return msg;
 
   const cards = hydrate.cards ?? [];
@@ -158,8 +166,20 @@ export async function hydrateContextAddMessage(msg, hydrate = {}) {
   const documents = await buildContextDocuments(toLoad, {
     folderHandle: hydrate.folderHandle ?? null,
     profile: hydrate.profile ?? 'standard',
+    fetchArtifact: hydrate.fetchArtifact,
+    loadAgentChatText: hydrate.loadAgentChatText ?? null,
+    loadFlowContextText: hydrate.loadFlowContextText ?? null,
   });
   const mode = msg.contextMode ?? hydrate.contextMode ?? 'selected';
+  if (
+    !contextDocumentsIncludeContent(documents)
+    && storedContextAddHasIncludedContent(msg.content)
+  ) {
+    return {
+      ...msg,
+      apiContent: [{ type: 'text', text: String(msg.content) }],
+    };
+  }
   return {
     ...msg,
     apiContent: buildContextAddApiContent(mode, documents),
@@ -173,6 +193,9 @@ export async function hydrateContextAddMessage(msg, hydrate = {}) {
  *   folderHandle?: FileSystemDirectoryHandle | null,
  *   contextMode?: 'selected' | 'visible',
  *   profile?: string,
+ *   fetchArtifact?: typeof import('./agentApi.js').getArtifact,
+ *   loadAgentChatText?: (card: object) => Promise<string | null>,
+ *   loadFlowContextText?: (card: object) => Promise<string | null>,
  * }} [hydrate]
  */
 export async function buildApiMessageHistoryAsync(messages, hydrate = {}) {

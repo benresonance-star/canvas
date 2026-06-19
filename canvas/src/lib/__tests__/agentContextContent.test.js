@@ -15,6 +15,7 @@ import {
   CONTEXT_PROFILES,
   getContextLimits,
   loadContextDocumentForCard,
+  estimateContextDocument,
 } from '../agentContextContent.js';
 
 describe('agentContextContent', () => {
@@ -78,6 +79,174 @@ describe('agentContextContent', () => {
 
     expect(doc.status).toBe('included');
     expect(doc.text).toContain('Nested context body');
+  });
+
+  it('loads code context from nested folder-relative paths', async () => {
+    const fileHandle = {
+      async getFile() {
+        return new File(['export const answer = 42;\n'], 'src__example-v1.ts', {
+          type: 'text/typescript',
+        });
+      },
+    };
+    const nestedDir = {
+      getFileHandle: async (name) => {
+        expect(name).toBe('src__example-v1.ts');
+        return fileHandle;
+      },
+    };
+    const folderHandle = {
+      getDirectoryHandle: async (name) => {
+        expect(name).toBe('lib');
+        return nestedDir;
+      },
+    };
+
+    const doc = await loadContextDocumentForCard(
+      {
+        id: 'card-ts',
+        key: 'lib/src__example',
+        name: 'example.ts',
+        type: 'code',
+        pinnedVersion: 1,
+        versions: [{
+          version: 1,
+          filename: 'src__example-v1.ts',
+          relativePath: 'lib/src__example-v1.ts',
+        }],
+      },
+      { folderHandle, fetchArtifact: async () => ({ artifact: null }) },
+    );
+
+    expect(doc.status).toBe('included');
+    expect(doc.type).toBe('code');
+    expect(doc.text).toContain('export const answer = 42');
+  });
+
+  it('prefers folder text over stale artifact payload when folder is linked', async () => {
+    const fileHandle = {
+      async getFile() {
+        return new File(['Fresh instructions body'], 'general__Instructions-v1.md', {
+          type: 'text/markdown',
+        });
+      },
+    };
+    const folderHandle = {
+      getFileHandle: async () => fileHandle,
+    };
+
+    const doc = await loadContextDocumentForCard(
+      {
+        id: 'instructions',
+        name: 'Instructions',
+        type: 'markdown',
+        pinnedVersion: 1,
+        versions: [{
+          version: 1,
+          filename: 'general__Instructions-v1.md',
+          artifactRef: { id: 'artifact-1' },
+        }],
+      },
+      {
+        folderHandle,
+        fetchArtifact: async () => ({
+          artifact: { payload_text: 'Stale instructions body' },
+        }),
+      },
+    );
+
+    expect(doc.status).toBe('included');
+    expect(doc.text).toContain('Fresh instructions body');
+    expect(doc.text).not.toContain('Stale instructions body');
+  });
+
+  it('uses artifact text when folder is not linked', async () => {
+    const doc = await loadContextDocumentForCard(
+      {
+        id: 'instructions',
+        name: 'Instructions',
+        type: 'markdown',
+        pinnedVersion: 1,
+        versions: [{
+          version: 1,
+          filename: 'general__Instructions-v1.md',
+          artifactRef: { id: 'artifact-1' },
+        }],
+      },
+      {
+        folderHandle: null,
+        fetchArtifact: async () => ({
+          artifact: { payload_text: 'Artifact-only body' },
+        }),
+      },
+    );
+
+    expect(doc.status).toBe('included');
+    expect(doc.text).toBe('Artifact-only body');
+  });
+
+  it('falls back to artifact text when folder read fails', async () => {
+    const folderHandle = {
+      getFileHandle: async () => {
+        throw new DOMException('Not found', 'NotFoundError');
+      },
+    };
+
+    const doc = await loadContextDocumentForCard(
+      {
+        id: 'instructions',
+        name: 'Instructions',
+        type: 'markdown',
+        pinnedVersion: 1,
+        versions: [{
+          version: 1,
+          filename: 'general__Instructions-v1.md',
+          artifactRef: { id: 'artifact-1' },
+        }],
+      },
+      {
+        folderHandle,
+        fetchArtifact: async () => ({
+          artifact: { payload_text: 'Artifact fallback body' },
+        }),
+      },
+    );
+
+    expect(doc.status).toBe('included');
+    expect(doc.text).toBe('Artifact fallback body');
+  });
+
+  it('estimateContextDocument prefers folder size over stale artifact payload', async () => {
+    const fileHandle = {
+      async getFile() {
+        return new File(['x'.repeat(5000)], 'readme-v1.md', { type: 'text/markdown' });
+      },
+    };
+    const folderHandle = {
+      getFileHandle: async () => fileHandle,
+    };
+
+    const estimate = await estimateContextDocument(
+      {
+        id: 'md-1',
+        name: 'readme',
+        type: 'markdown',
+        pinnedVersion: 1,
+        versions: [{
+          version: 1,
+          filename: 'readme-v1.md',
+          artifactRef: { id: 'artifact-1' },
+        }],
+      },
+      {
+        folderHandle,
+        fetchArtifact: async () => ({
+          artifact: { payload_text: 'short' },
+        }),
+      },
+    );
+
+    expect(estimate.estimatedChars).toBe(5000);
   });
 
   it('loads agent chat transcript context from artifact payload text', async () => {
@@ -228,11 +397,61 @@ describe('agentContextContent', () => {
     expect(hint.status).toBe('needs_folder');
   });
 
-  it('isContextTypeSupported for text, pdf, image, and flow', () => {
+  it('isContextTypeSupported for text, pdf, image, flow, and code', () => {
     expect(isContextTypeSupported('markdown')).toBe(true);
     expect(isContextTypeSupported('pdf')).toBe(true);
     expect(isContextTypeSupported('image')).toBe(true);
     expect(isContextTypeSupported('flow')).toBe(true);
+    expect(isContextTypeSupported('code')).toBe(true);
+  });
+
+  it('contextStatusHint marks code cards as pending when folder file exists', () => {
+    const hint = contextStatusHint(
+      {
+        id: 'c1',
+        name: 'example.ts',
+        type: 'code',
+        versions: [{ version: 1, filename: 'src__example-v1.ts' }],
+      },
+      { folderLinked: true },
+    );
+    expect(hint.status).toBe('pending');
+  });
+
+  it('contextStatusHint marks code cards as needs_folder without folder or artifact', () => {
+    const hint = contextStatusHint(
+      {
+        id: 'c1',
+        name: 'agent.ts',
+        type: 'code',
+        versions: [{ version: 1, filename: 'models__agent-v1.ts' }],
+      },
+      { folderLinked: false },
+    );
+    expect(hint.status).toBe('needs_folder');
+  });
+
+  it('loadContextDocumentForCard uses pinned.content when artifact and folder are unavailable', async () => {
+    const doc = await loadContextDocumentForCard(
+      {
+        id: 'card-ts',
+        name: 'agent.ts',
+        type: 'code',
+        pinnedVersion: 1,
+        versions: [{
+          version: 1,
+          filename: 'models__agent-v1.ts',
+          content: 'model: "openai/gpt-5.5"',
+        }],
+      },
+      {
+        folderHandle: null,
+        fetchArtifact: async () => ({ artifact: null }),
+      },
+    );
+
+    expect(doc.status).toBe('included');
+    expect(doc.text).toBe('model: "openai/gpt-5.5"');
   });
 
   it('loadContextDocumentForCard loads flow via injected loader', async () => {

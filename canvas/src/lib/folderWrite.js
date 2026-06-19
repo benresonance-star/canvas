@@ -106,6 +106,14 @@ export async function writeBookmarkFile(handle, { filename, url, title }) {
   return markdownFilename;
 }
 
+export async function overwriteTextFileAtPath(handle, relativePath, body) {
+  const entry = await getFileHandleAtPath(handle, relativePath, { create: true });
+  const writable = await entry.createWritable();
+  await writable.write(body);
+  await writable.close();
+  return relativePath;
+}
+
 export async function overwriteUserNoteFile(handle, filename, body) {
   await writeTextFileToFolder(handle, filename, body);
   return filename;
@@ -123,6 +131,35 @@ export async function fileExistsInFolder(handle, filename) {
 
 export async function removeFileFromFolder(handle, filename) {
   await handle.removeEntry(filename);
+}
+
+export async function fileExistsAtFolderPath(handle, relativePath) {
+  const parts = splitRelativePath(relativePath);
+  if (!handle || !parts.length) return false;
+  if (parts.length === 1) {
+    return fileExistsInFolder(handle, parts[0]);
+  }
+  try {
+    await getFileHandleAtPath(handle, relativePath, { create: false });
+    return true;
+  } catch (e) {
+    if (e?.name === 'NotFoundError') return false;
+    throw e;
+  }
+}
+
+export async function removeFileAtFolderPath(handle, relativePath) {
+  const parts = splitRelativePath(relativePath);
+  if (!handle || !parts.length) return;
+  if (parts.length === 1) {
+    await removeFileFromFolder(handle, parts[0]);
+    return;
+  }
+  let dir = handle;
+  for (const segment of parts.slice(0, -1)) {
+    dir = await dir.getDirectoryHandle(segment, { create: false });
+  }
+  await dir.removeEntry(parts[parts.length - 1]);
 }
 
 /**

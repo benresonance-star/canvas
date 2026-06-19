@@ -10,7 +10,9 @@ import {
   buildApiMessageHistory,
   buildApiMessageHistoryAsync,
   stripApiContentForStorage,
+  hydrateContextAddMessage,
 } from '../agentContextSession.js';
+import { CONTEXT_ADD_PREFIX } from '../agentContextContent.js';
 
 function card(id, hash, overrides = {}) {
   return {
@@ -126,6 +128,80 @@ describe('agentContextSession', () => {
     expect(getContextDeliveryStatus(c, registry, { folderLinked: false })).toBe(
       'sends_on_next',
     );
+  });
+
+  it('getContextDeliveryStatus needs folder for code card without artifact', () => {
+    const registry = createContextRegistry();
+    const c = card('ts', 'h1', {
+      type: 'code',
+      versions: [{ version: 1, content_hash: 'h1', filename: 'models__agent-v1.ts' }],
+    });
+    expect(getContextDeliveryStatus(c, registry, { folderLinked: false })).toBe(
+      'needs_folder',
+    );
+  });
+
+  it('hydrateContextAddMessage falls back to stored content when reload is empty', async () => {
+    const storedContent = `${CONTEXT_ADD_PREFIX}\n\n## agent (code)\nmodel: "openai/gpt-5.5"`;
+    const hydrated = await hydrateContextAddMessage(
+      {
+        kind: 'context_add',
+        role: 'user',
+        cardIds: ['ts-card'],
+        content: storedContent,
+      },
+      {
+        cards: [{
+          id: 'ts-card',
+          name: 'agent',
+          type: 'code',
+          pinnedVersion: 1,
+          versions: [{ version: 1, filename: 'models__agent-v1.ts' }],
+        }],
+        folderHandle: null,
+      },
+    );
+    expect(hydrated.apiContent).toEqual([{ type: 'text', text: storedContent }]);
+  });
+
+  it('rehydrates context_add even when apiContent is already cached', async () => {
+    const folderHandle = {
+      getFileHandle: async () => ({
+        async getFile() {
+          return new File(['Updated on disk'], 'readme-v1.md', { type: 'text/markdown' });
+        },
+      }),
+    };
+
+    const hydrated = await hydrateContextAddMessage(
+      {
+        kind: 'context_add',
+        role: 'user',
+        cardIds: ['md-1'],
+        content: 'old display',
+        apiContent: [{
+          type: 'text',
+          text: `${CONTEXT_ADD_PREFIX}\n\n## readme (markdown)\nStale cached body`,
+        }],
+      },
+      {
+        cards: [{
+          id: 'md-1',
+          name: 'readme',
+          type: 'markdown',
+          pinnedVersion: 1,
+          versions: [{ version: 1, filename: 'readme-v1.md' }],
+        }],
+        folderHandle,
+        fetchArtifact: async () => ({
+          artifact: { payload_text: 'Stale cached body' },
+        }),
+      },
+    );
+
+    const textPart = hydrated.apiContent.find((part) => part.type === 'text');
+    expect(textPart.text).toContain('Updated on disk');
+    expect(textPart.text).not.toContain('Stale cached body');
   });
 
   it('unregisterContextCard removes entry', () => {

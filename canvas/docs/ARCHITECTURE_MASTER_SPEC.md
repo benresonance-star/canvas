@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.06.19.2
-**Version label:** spreadsheet-viewer-canvas-navigation-agent-ui
+**Version:** 2026.06.19.7
+**Version label:** folder-save-agent-context-freshness
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -466,7 +466,7 @@ GET    /projects/:id/chats
 - **Save:** `buildProjectSavePayload` → `attachArtifactPlacementsToPayload`
 - **Compatibility:** `cards` and `stagedSyncCards` remain in the payload until cutover
 
-### Linked-folder subfolder artifacts (read-only first slice)
+### Linked-folder subfolder artifacts
 
 Linked folder scans are recursive. Root-level files keep their historical canonical sync keys, while nested files include their normalized relative path so duplicate basenames do not collide:
 
@@ -481,7 +481,9 @@ Rules:
 - `scanFolderFiles` walks directory handles recursively with stale-scan cancellation, ignored folders (`node_modules`, `.git`, hidden/system folders), max-depth, and max-file limits.
 - Folder-backed versions may carry both `filename` (basename) and `relativePath` (normalized path from the linked root). Consumers must resolve file reads through `relativePath` when present.
 - Preview cache keys, staging, `folderPresentKeys`, artifact ingest URIs, outbox entries, agent context reads, external open, and stripped-content hydration use the path-aware canonical key.
-- App-created notes, bookmarks, and agent chat transcripts still write to the linked-folder root. Nested files are read and staged from subfolders, but app writes into subfolders require a separate explicit create-in-folder flow.
+- **Canvas edits** to `user_note` and `markdown` cards save to the linked folder via `saveUserNote` / `saveMarkdownArtifact` when `noteRequiresProjectOnlySave` is false (folder linked and card key present in `folderPresentKeys`). Writes use `folderRelativePathFromVersion` (`overwriteTextFileAtPath` in `folderWrite.js`) so nested subfolder files update in place, not only at the linked-folder root.
+- `noteRequiresProjectOnlySave` (`filename.js`) returns true only when there is no `folderHandle`, or when the card key is absent from a non-empty `folderPresentKeys` scan set. An empty scan set is treated as presence-unknown (not “all missing”). Nested `relativePath` no longer forces project-only saves.
+- App-created notes, bookmarks, and agent chat transcripts still **create** at the linked-folder root. Nested files are read and staged from subfolders; in-place body edits hit the on-disk path via `relativePath`.
 - Dock hover UI may show nested `relativePath` for disambiguation; root files keep the existing label behavior.
 - Bookmark writes prefer `.url` shortcuts, then fall back to `.bookmark.md` when the browser or filesystem rejects shortcut filenames.
 - Bookmark sidecars use Markdown:
@@ -562,6 +564,7 @@ Rules:
 - Artifact nodes reference existing primitive `artifact_id`; local nodes are flow-local only
 - Edge connection types and custom labels live in edge `presentation` JSON (`flowConnectionTypes.js`)
 - Agent context can include selected flow nodes via `useFlowAgentContext`
+- Flow agent mode UI (`flowAgentUiPersistence.js`) persists per-flow-card last thread and panel section layout; restored when agent mode is re-enabled on that flow card
 
 ### Agent templates (shipped)
 
@@ -611,6 +614,14 @@ Source-code artifacts (`code` card type and extensions resolved by `isCodePrevie
 
 Supported extensions include `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs` (mapped to JavaScript/TypeScript grammars). Unknown languages fall back to escaped plain text.
 
+Agent context (`agentContextContent.js`) includes `code` cards as text, subject to the same per-file and total char budgets as markdown.
+
+**Load authority when a folder is linked:** for `markdown`, `user_note`, `code`, `html`, and legacy `note` types, `loadContextDocumentForCard` reads the linked folder file **before** `artifact.payload_text`. Artifact API text is a fallback when the folder is unlinked, unreadable, or empty. `agent_chat` keeps API-first order (artifact → transcript loader → folder).
+
+**Pre-linked freshness:** `hydrateContextAddMessage` (`agentContextSession.js`) rebuilds `apiContent` from current cards on **every** agent send (no in-memory `apiContent` short-circuit). Historical `context_add` messages in the thread therefore reflect the latest on-disk bodies after canvas saves, without re-adding cards. When `content_hash` changes, the existing registry still appends `context_remove` + `context_add` deltas via `diffContextRegistry`.
+
+**Canvas inline edit:** active `user_note` and `markdown` cards support preview-first inline edit (`CardPreview` → `UserNoteInlineEditor` / `EditableMarkdownMessage`). Save routes through `handleInlineSaveUserNote` / `handleInlineSaveMarkdown` in `useCanvasDocument.js`. Successful folder writes show a **Saved to folder** toast (`strings.userNote.savedToFolder`).
+
 ### Spreadsheet previews (shipped)
 
 Excel/CSV artifacts support two persisted viewer modes selected via `SpreadsheetViewerSelect` on canvas cards and in `CardModal`:
@@ -637,6 +648,16 @@ Canvas card toolbar clicks and artifact scroll regions are excluded from card dr
 - Artifact scroll areas (`[data-artifact-scroll]`) keep wheel scrolling local; canvas wheel handling does not intercept those targets.
 
 Agent Mode context selection on canvas cards uses theme tokens `--color-agent-selection-ring` / `--color-agent-selection-glow` (accent orange in light mode, white in dark/green/blue).
+
+### Per-card media minimal preview (shipped)
+
+Image and video cards on the **main canvas** support an optional per-card `minimalPreview` flag (persisted on the card document like `audioSkinColor`):
+
+- **Full mode (default):** standard card chrome — type/filename header, shadow, padding, toolbar.
+- **Minimal mode:** preview-only shell — media fills the card; no header, surface shadow, or decorative rings. A toolbar toggle appears when the card is **selected** in full mode; a floating corner toggle appears when a minimal card is selected so the user can restore full chrome.
+- **Scope:** `image` and `video` card types only; flow editor and other card types are unchanged.
+
+Client: `MediaMinimalToggle.jsx`, `CanvasCard.jsx` (`minimalChrome` branch), `CardPreview.jsx` (full-bleed image layout). Serialization: `projectSlim.js`, `syncStaging.js`, `specDataPlane.js`.
 
 ### Phase 3 (partial): Postgres spec tables and dual-write
 
@@ -1047,6 +1068,33 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 
 ## 14. Changelog
 
+### 2026-06-19 — Folder saves and fresh agent context (implemented)
+
+- Bumped the active spec to `2026.06.19.7`.
+- Canvas `user_note` / `markdown` inline saves write to linked-folder files at `relativePath` (nested subfolders supported). `noteRequiresProjectOnlySave` no longer blocks nested paths; empty `folderPresentKeys` no longer forces project-only for all cards.
+- Agent context loads folder-backed text from disk before stale `artifact.payload_text` when a folder is linked. `context_add` messages re-hydrate on every agent send so pre-linked files reflect post-save edits in the same session.
+- Added unified formatted markdown editor (`EditableMarkdownMessage`, `markdownMessage.js` document converters) and **Saved to folder** save feedback.
+
+### 2026-06-19 — Flow agent UI restore fix (implemented)
+
+- Bumped the active spec to `2026.06.19.6`.
+- Fixed per-flow agent restore after browser refresh: auto-persist no longer overwrites stored flow thread before restore runs; `panelLayout` is flushed on close/`pagehide` even without a selected thread; collapse state is applied synchronously when agent mode is enabled.
+
+### 2026-06-19 — Flow agent UI persistence (implemented)
+
+- Bumped the active spec to `2026.06.19.5`.
+- Flow modal agent mode persists per-flow-card last active thread and agent side panel section collapse state in `localStorage` (`canvas:flow-agent-ui:{projectId}`); restored when the user reopens the same flow and enables agent mode (flow modal is not auto-reopened on refresh).
+
+### 2026-06-19 — Agent context for code cards (implemented)
+
+- Bumped the active spec to `2026.06.19.4`.
+- Included `code` cards (JS/TS family: `.ts`, `.tsx`, `.js`, `.jsx`, etc.) in agent context as text, loaded from linked-folder files or artifact `payload_text` like markdown.
+
+### 2026-06-19 — Per-card media minimal preview (implemented)
+
+- Bumped the active spec to `2026.06.19.3`.
+- Added per-card `minimalPreview` for image and video canvas cards: selected-card toolbar toggle switches between full artifact chrome and preview-only layout; preference persists on the project card record.
+
 ### 2026-06-19 — Spreadsheet viewer, canvas Ctrl-pan, and agent UI polish (implemented)
 
 - Bumped the active spec to `2026.06.19.2`.
@@ -1100,8 +1148,8 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ### 2026-06-14 — Linked-folder subfolder artifacts (implemented)
 
 - Added recursive linked-folder scans with path-aware canonical sync keys.
-- Preserved root-file key compatibility while using `relativePath` for nested artifact reads, previews, ingest, staging, and agent context.
-- Kept app-created notes, bookmarks, and agent chat transcript writes at the linked-folder root for the first subfolder slice.
+- Preserved root-file key compatibility while using `relativePath` for nested artifact reads, previews, ingest, staging, agent context, and in-place canvas edits.
+- Kept app-created notes, bookmarks, and agent chat transcript **creates** at the linked-folder root; nested paths are writable on edit via `relativePath`.
 
 ### 2026-06-14 — Spec consolidation (implemented)
 

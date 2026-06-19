@@ -1,5 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { saveUserNoteToProject, saveBookmarkToProject } from '../projectCardEdits.js';
+import { saveUserNoteToProject, saveBookmarkToProject, saveTextContentToProject } from '../projectCardEdits.js';
+
+describe('saveTextContentToProject', () => {
+  it('updates pinned version content without renaming', () => {
+    const card = {
+      id: 'c1',
+      key: 'markdown__readme',
+      name: 'readme',
+      type: 'markdown',
+      prefix: 'markdown',
+      pinnedVersion: 1,
+      versions: [{ version: 1, content: 'old', filename: 'markdown__readme-v1.md' }],
+    };
+    const result = saveTextContentToProject(card, {
+      body: 'new body',
+      versionNum: 1,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.cardUpdates.versions[0].content).toBe('new body');
+    expect(result.cardUpdates.name).toBeUndefined();
+  });
+});
 
 describe('saveUserNoteToProject', () => {
   it('updates note content and title in project JSON', () => {

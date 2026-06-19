@@ -43,7 +43,7 @@ export function NotePreviewFrame({
             </button>
           </div>
         ) : null}
-        <div className={`leading-relaxed ${bodyClass}`}>
+        <div className={`leading-relaxed select-text ${bodyClass}`}>
           <div className={contentClass}>
             {formattedView ? (
               <MarkdownMessage content={content} compact={compact} />

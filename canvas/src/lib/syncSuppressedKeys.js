@@ -1,4 +1,7 @@
+import { normalizeBookmarkUrl } from './bookmarkUrl.js';
+
 const STORAGE_PREFIX = 'canvas:suppressed-sync-keys:';
+const URL_STORAGE_PREFIX = 'canvas:suppressed-bookmark-urls:';
 
 /**
  * @param {object | null | undefined} document
@@ -91,4 +94,91 @@ export function clearSuppressedSyncKeys(projectId) {
  */
 export function suppressedKeysForSave(projectId, stateOrDocument) {
   return suppressedKeysArray(readSuppressedSyncKeys(projectId, stateOrDocument));
+}
+
+/**
+ * @param {object | null | undefined} document
+ * @returns {Set<string>}
+ */
+export function readSuppressedBookmarkUrlsFromDocument(document) {
+  const urls = document?.suppressedBookmarkUrls;
+  if (!Array.isArray(urls)) return new Set();
+  const out = new Set();
+  for (const raw of urls) {
+    const normalized = normalizeBookmarkUrl(raw);
+    if (normalized) out.add(normalized);
+  }
+  return out;
+}
+
+/**
+ * Bookmark URLs removed from canvas; folder sync must not re-import them.
+ * @param {string} projectId
+ * @param {object | null | undefined} [document]
+ * @returns {Set<string>}
+ */
+export function readSuppressedBookmarkUrls(projectId, document = null) {
+  const merged = readSuppressedBookmarkUrlsFromDocument(document);
+  if (!projectId) return merged;
+  try {
+    const raw = localStorage.getItem(`${URL_STORAGE_PREFIX}${projectId}`);
+    if (!raw) return merged;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      for (const entry of parsed) {
+        const normalized = normalizeBookmarkUrl(entry);
+        if (normalized) merged.add(normalized);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return merged;
+}
+
+/**
+ * @param {Set<string>} urls
+ * @returns {string[]}
+ */
+export function suppressedBookmarkUrlsArray(urls) {
+  return [...(urls ?? new Set())].filter(Boolean).sort();
+}
+
+/**
+ * @param {string} projectId
+ * @param {string[]} urls
+ */
+function writeSuppressedBookmarkUrlsLocal(projectId, urls) {
+  if (!projectId) return;
+  try {
+    if (!urls.length) {
+      localStorage.removeItem(`${URL_STORAGE_PREFIX}${projectId}`);
+      return;
+    }
+    localStorage.setItem(`${URL_STORAGE_PREFIX}${projectId}`, JSON.stringify(urls));
+  } catch {
+    /* quota — best effort */
+  }
+}
+
+/**
+ * @param {string} projectId
+ * @param {string} url
+ * @param {object | null | undefined} [document]
+ */
+export function addSuppressedBookmarkUrl(projectId, url, document = null) {
+  const normalized = normalizeBookmarkUrl(url);
+  if (!projectId || !normalized) return;
+  const set = readSuppressedBookmarkUrls(projectId, document);
+  if (set.has(normalized)) return;
+  set.add(normalized);
+  writeSuppressedBookmarkUrlsLocal(projectId, suppressedBookmarkUrlsArray(set));
+}
+
+/**
+ * @param {string} projectId
+ * @param {object | null | undefined} stateOrDocument
+ */
+export function suppressedBookmarkUrlsForSave(projectId, stateOrDocument) {
+  return suppressedBookmarkUrlsArray(readSuppressedBookmarkUrls(projectId, stateOrDocument));
 }

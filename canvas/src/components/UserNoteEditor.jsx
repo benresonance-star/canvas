@@ -1,8 +1,9 @@
 import React, { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 import { strings } from '../content/strings.js';
 import { saveUserNote } from '../lib/ingest/saveUserNote.js';
+import { noteRequiresProjectOnlySave } from '../lib/filename.js';
 import { markdownViewToggleLabel } from '../lib/markdownMessage.js';
-import { MarkdownMessage } from './MarkdownMessage.jsx';
+import { EditableMarkdownMessage } from './EditableMarkdownMessage.jsx';
 
 export const UserNoteEditor = forwardRef(function UserNoteEditor({
   card,
@@ -10,6 +11,8 @@ export const UserNoteEditor = forwardRef(function UserNoteEditor({
   versionNum,
   title,
   folderHandle,
+  folderConnected = false,
+  folderKeySet = null,
   projectId,
   projectName,
   clusterId,
@@ -42,9 +45,14 @@ export const UserNoteEditor = forwardRef(function UserNoteEditor({
   const bodyDirty = body !== initialBody;
   const nameDirty = (title ?? '') !== initialName;
   const dirty = bodyDirty || nameDirty;
-  const projectOnly = !folderHandle || !version?.filename;
+  const projectOnly = noteRequiresProjectOnlySave({
+    folderHandle,
+    folderConnected,
+    folderKeySet,
+    card,
+  });
   const editBlocked = userNoteDisabled;
-  const canSave = dirty && !saving && (projectOnly || Boolean(folderHandle && version?.filename));
+  const canSave = dirty && !saving && !editBlocked && (projectOnly || Boolean(folderHandle && version?.filename));
 
   const handleSave = async () => {
     if (!dirty || saving || !canSave) return;
@@ -118,6 +126,8 @@ export const UserNoteEditor = forwardRef(function UserNoteEditor({
       }
       if (result.apiUnavailable) {
         onSaveStatus?.({ toast: strings.sync.primitivesNotUpdated });
+      } else {
+        onSaveStatus?.({ toast: strings.userNote.savedToFolder });
       }
       onGraphRefresh?.();
     } catch (e) {
@@ -143,39 +153,53 @@ export const UserNoteEditor = forwardRef(function UserNoteEditor({
     <div className="h-full flex flex-col min-h-0">
       {projectOnly && (
         <p className="sans text-xs text-muted px-12 pt-4 shrink-0">
-          {strings.userNote.savedProjectOnly}
+          {folderHandle && folderKeySet?.size
+            ? strings.userNote.savedProjectOnlyMissingFromFolder
+            : strings.userNote.savedProjectOnly}
         </p>
       )}
       <p className="sans text-[10px] text-muted px-12 pt-4 shrink-0">
         {strings.userNote.editHint}
       </p>
-      <div className="shrink-0 flex justify-end px-12 pt-2">
-        <button
-          type="button"
-          className="sans rounded-full border border-border-subtle bg-surface-muted/90 px-2.5 py-1 text-[10px] text-muted shadow-sm hover:text-primary"
-          onClick={() => setFormattedView((value) => !value)}
-          aria-pressed={!formattedView}
-        >
-          {markdownViewToggleLabel(formattedView)}
-        </button>
-      </div>
       <div className="flex-1 min-h-0 px-12 py-4">
         {formattedView ? (
           <div className="h-full min-h-[20rem] overflow-y-auto rounded border border-border bg-surface px-4 py-3 text-primary leading-relaxed">
-            {body ? (
-              <MarkdownMessage content={body} />
-            ) : (
-              <p className="serif text-muted italic">{strings.userNote.bodyPlaceholder}</p>
-            )}
+            <EditableMarkdownMessage
+              value={body}
+              onChange={setBody}
+              disabled={editBlocked || saving}
+              toolbarRight={(
+                <button
+                  type="button"
+                  className="sans rounded-full border border-border-subtle bg-surface-muted/90 px-2.5 py-1 text-[10px] text-muted shadow-sm hover:text-primary"
+                  onClick={() => setFormattedView(false)}
+                  aria-pressed={false}
+                >
+                  {markdownViewToggleLabel(formattedView)}
+                </button>
+              )}
+            />
           </div>
         ) : (
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            disabled={editBlocked}
-            className="w-full h-full min-h-[20rem] sans text-sm bg-surface border border-border rounded px-4 py-3 text-primary font-serif leading-relaxed resize-none disabled:opacity-60"
-            placeholder={strings.userNote.bodyPlaceholder}
-          />
+          <>
+            <div className="shrink-0 flex justify-end pb-2">
+              <button
+                type="button"
+                className="sans rounded-full border border-border-subtle bg-surface-muted/90 px-2.5 py-1 text-[10px] text-muted shadow-sm hover:text-primary"
+                onClick={() => setFormattedView(true)}
+                aria-pressed
+              >
+                {markdownViewToggleLabel(formattedView)}
+              </button>
+            </div>
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              disabled={editBlocked}
+              className="w-full h-full min-h-[20rem] sans text-sm bg-surface border border-border rounded px-4 py-3 text-primary font-serif leading-relaxed resize-none disabled:opacity-60 cursor-text"
+              placeholder={strings.userNote.bodyPlaceholder}
+            />
+          </>
         )}
       </div>
       {missingFromFolder && (

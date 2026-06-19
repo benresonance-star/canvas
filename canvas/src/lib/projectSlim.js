@@ -71,6 +71,7 @@ export function stripCardForPersist(card, opts = {}) {
     clusterId: card.clusterId,
     versions: pinned ? [pinned] : versions.slice(0, 1),
     ...(card.audioSkinColor ? { audioSkinColor: card.audioSkinColor } : {}),
+    ...(card.minimalPreview ? { minimalPreview: true } : {}),
   };
 }
 

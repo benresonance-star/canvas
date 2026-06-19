@@ -313,6 +313,36 @@ describe('buildSyncChangesFromFolder', () => {
     expect(confirm[0].key).toBe('links__ebay-com-au-62c18cac');
   });
 
+  it('buildConfirmChangesForDialog filters suppressed bookmark URLs', () => {
+    const grouped = {
+      'links__orphan': {
+        parsed: { name: 'orphan', prefix: 'links', ext: 'bookmark.md' },
+        versions: [{
+          version: 1,
+          filename: 'links__orphan-v1.bookmark.md',
+          externalUrl: 'https://deleted.example.com/page',
+        }],
+      },
+    };
+    const confirm = buildConfirmChangesForDialog(grouped, [], [], {
+      suppressedBookmarkUrls: new Set(['https://deleted.example.com/page']),
+    });
+    expect(confirm).toHaveLength(0);
+  });
+
+  it('filterSyncChangesForConfirm drops no-op bookmark updated rows', () => {
+    const changes = [{
+      type: 'updated',
+      key: 'links__example',
+      newVersions: [],
+      group: {
+        parsed: { prefix: 'links', name: 'example', ext: 'bookmark.md' },
+        versions: [{ version: 1, externalUrl: 'https://example.com' }],
+      },
+    }];
+    expect(filterSyncChangesForConfirm(changes, [])).toHaveLength(0);
+  });
+
   it('buildConfirmChangesForDialog uses live canvas after dock placement', () => {
     const grouped = {
       'general__Test Excel': {

@@ -6,10 +6,11 @@ vi.mock('../db.js', () => ({ query }));
 vi.mock('../events.js', () => ({ appendEvent: vi.fn() }));
 vi.mock('./clusters.js', () => ({ addClusterMember: vi.fn() }));
 
-const { findRelationship, insertRelationshipIfAbsent } = await import('./relationships.js');
+const { addClusterMember } = await import('./clusters.js');
+const { findRelationship, insertRelationshipIfAbsent, insertRelationship } = await import('./relationships.js');
 
-const fromRef = { id: '01HNOTE0000000000000000001', type: 'artifact' };
-const toRef = { id: '01HTARGET000000000000000001', type: 'artifact' };
+const fromRef = { id: '01KVFSHET98Q4N5DE5QTA6R0X4', type: 'artifact' };
+const toRef = { id: '01KVFSHETF31J7PZ0AFPGTY179', type: 'artifact' };
 const fields = {
   from_ref: fromRef,
   to_ref: toRef,
@@ -18,7 +19,7 @@ const fields = {
 };
 
 const existingRow = {
-  id: '01HREL00000000000000000001',
+  id: '01KVFSHSNFRT89NTZXB41JX417',
   from_id: fromRef.id,
   from_type: fromRef.type,
   to_id: toRef.id,
@@ -32,6 +33,7 @@ const existingRow = {
 
 beforeEach(() => {
   query.mockReset();
+  addClusterMember.mockReset();
 });
 
 describe('insertRelationshipIfAbsent', () => {
@@ -58,5 +60,20 @@ describe('insertRelationshipIfAbsent', () => {
 
     expect(result).toBeNull();
     expect(query.mock.calls[0][1][4]).toBe('part_of');
+  });
+});
+
+describe('insertRelationship', () => {
+  it('still joins the cluster when a new relationship is created', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await insertRelationship('cluster-1', fields);
+
+    expect(addClusterMember).toHaveBeenCalledWith('cluster-1', {
+      id: expect.any(String),
+      type: 'relationship',
+    });
   });
 });

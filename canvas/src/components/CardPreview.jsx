@@ -2,7 +2,6 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { strings } from '../content/strings.js';
 import {
   normalizeCardType,
-  isTextMarkdownPreviewType,
   isCodePreviewType,
 } from '../lib/filename.js';
 import { resolveThreadForCard } from '../lib/agentChatThreads.js';
@@ -27,14 +26,17 @@ export function CardPreview({
   isActive,
   cardSelected = false,
   compact = false,
+  minimalChrome = false,
   onRehydratePreview,
   onInlineSaveUserNote,
+  onInlineSaveMarkdown,
   onInlineSaveBookmark,
   userNoteSaving = false,
+  markdownSaving = false,
   bookmarkSaving = false,
   userNoteDisabled = false,
+  markdownEditDisabled = false,
   bookmarkEditDisabled = false,
-  showTapToEditHint = false,
   userNoteEditTitle,
   userNoteInitialTitle,
   agentChatLiveMessages = null,
@@ -47,6 +49,8 @@ export function CardPreview({
 }) {
   const [imgKey, setImgKey] = useState(0);
   const [bookmarkEditingKey, setBookmarkEditingKey] = useState(null);
+  const [noteEditingKey, setNoteEditingKey] = useState(null);
+  const [markdownEditingKey, setMarkdownEditingKey] = useState(null);
 
   const cardTypeEarly = normalizeCardType(card.type);
   const isAgentChat = cardTypeEarly === 'agent_chat';
@@ -80,6 +84,13 @@ export function CardPreview({
   const mediaSrc = pinned?.objectUrl || pinned?.dataUrl || null;
   const msgClass = compact ? 'text-xs' : 'text-sm';
   const hintClass = compact ? 'text-[9px]' : 'text-[10px]';
+
+  useEffect(() => {
+    if (!isActive) {
+      setNoteEditingKey(null);
+      setMarkdownEditingKey(null);
+    }
+  }, [isActive]);
 
   useEffect(() => {
     if (mediaSrc || !pinned?.previewCacheKey || !onRehydratePreview) return;
@@ -150,29 +161,46 @@ export function CardPreview({
     );
   }
   if (cardType === 'user_note') {
-    if (isActive && onInlineSaveUserNote && !compact) {
+    const noteEditKey = `${card.id}:${pinned.version}`;
+    const noteEditing = isActive && noteEditingKey === noteEditKey;
+    const noteContent = pinned.content || '';
+
+    if (noteEditing && onInlineSaveUserNote && !compact) {
       return (
         <UserNoteInlineEditor
-          content={pinned.content || ''}
+          content={noteContent}
           initialTitle={userNoteInitialTitle ?? card.name}
           title={userNoteEditTitle ?? card.name}
           disabled={userNoteDisabled}
           saving={userNoteSaving}
-          onSave={onInlineSaveUserNote}
+          onSave={async (payload) => {
+            const ok = await onInlineSaveUserNote(payload);
+            if (ok) setNoteEditingKey(null);
+          }}
         />
       );
     }
+
     return (
       <div className="h-full w-full min-h-0 flex flex-col">
         <NotePreviewFrame
-          content={pinned.content || ''}
+          content={noteContent}
           contentKey={`${card.id}-v${pinned.version}-${cardType}`}
           isActive={isActive}
         />
-        {showTapToEditHint && !userNoteDisabled && (
-          <p className="sans text-[9px] text-muted text-center py-1 shrink-0 pointer-events-none">
+        {isActive && !compact && !userNoteDisabled && onInlineSaveUserNote && (
+          <button
+            type="button"
+            className="sans text-[9px] text-muted hover:text-accent text-center py-1 shrink-0 pointer-events-auto"
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={() => {
+              setNoteEditingKey(noteEditKey);
+            }}
+          >
             {strings.userNote.tapToEdit}
-          </p>
+          </button>
         )}
       </div>
     );
@@ -211,14 +239,49 @@ export function CardPreview({
     );
   }
 
-  if (isTextMarkdownPreviewType(card.type)) {
+  if (cardType === 'markdown') {
     const content = localTranscript || artifactPayload.text || '';
+    const markdownEditKey = `${card.id}:${pinned.version}`;
+    const markdownEditing = isActive && markdownEditingKey === markdownEditKey;
+
+    if (markdownEditing && onInlineSaveMarkdown && !compact) {
+      return (
+        <UserNoteInlineEditor
+          content={content}
+          initialTitle={card.name}
+          title={card.name}
+          disabled={markdownEditDisabled}
+          saving={markdownSaving}
+          onSave={async ({ body }) => {
+            const ok = await onInlineSaveMarkdown({ body, name: card.name });
+            if (ok) setMarkdownEditingKey(null);
+          }}
+        />
+      );
+    }
+
     return (
-      <NotePreviewFrame
-        content={content}
-        contentKey={`${card.id}-v${pinned.version}-${cardType}`}
-        isActive={isActive}
-      />
+      <div className="h-full w-full min-h-0 flex flex-col">
+        <NotePreviewFrame
+          content={content}
+          contentKey={`${card.id}-v${pinned.version}-${cardType}`}
+          isActive={isActive}
+        />
+        {isActive && !compact && !markdownEditDisabled && onInlineSaveMarkdown && (
+          <button
+            type="button"
+            className="sans text-[9px] text-muted hover:text-accent text-center py-1 shrink-0 pointer-events-auto"
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={() => {
+              setMarkdownEditingKey(markdownEditKey);
+            }}
+          >
+            {strings.userNote.tapToEdit}
+          </button>
+        )}
+      </div>
     );
   }
 
@@ -275,13 +338,17 @@ export function CardPreview({
 
   if (card.type === 'image' && mediaSrc) {
     return (
-      <div className="h-full flex items-center justify-center overflow-hidden">
+      <div className={`h-full overflow-hidden ${minimalChrome ? 'w-full' : 'flex items-center justify-center'}`}>
         <img
           key={`${card.id}-v${pinned.version}-img-${imgKey}`}
           src={mediaSrc}
           alt={card.name}
           draggable={false}
-          className={`max-h-full max-w-full object-contain select-none ${compact ? 'max-h-[85%]' : ''}`}
+          className={`select-none ${
+            minimalChrome
+              ? 'h-full w-full object-contain'
+              : `max-h-full max-w-full object-contain ${compact ? 'max-h-[85%]' : ''}`
+          }`}
           onError={handleImgError}
         />
       </div>

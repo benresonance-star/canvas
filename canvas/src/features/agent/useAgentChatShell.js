@@ -52,6 +52,7 @@ import {
 } from '../../lib/agentChatThreads.js';
 import { addSuppressedSyncKey, readSuppressedSyncKeys } from '../../lib/syncSuppressedKeys.js';
 import { ensureAgentChatCardOnCanvas } from '../../lib/ensureAgentChatCardOnCanvas.js';
+import { ensureCardArtifactRef } from '../../lib/ensureCardArtifactRef.js';
 import { stageAgentChatCard } from '../../lib/stageAgentChatCard.js';
 import { enqueueArtifactSyncRetry } from '../../lib/artifactSyncOutbox.js';
 import {
@@ -1849,10 +1850,68 @@ export function useAgentChatShell({
       setAgentLastTokenEstimate(null);
 
       let userMsg = null;
+      let optimisticIds = null;
+      const rollbackOptimisticMessages = () => {
+        if (!optimisticIds?.size) return;
+        const next = agentChatMessagesRef.current.filter((m) => !optimisticIds.has(m.id));
+        setAgentChatMessages(next);
+        agentChatMessagesRef.current = next;
+      };
       try {
         let addDocuments = [];
         if (diff.added.length) {
-          const rawDocuments = await buildContextDocuments(diff.added, {
+          const cardsForContextLoad = await (async () => {
+            const projectId = activeProjectIdRef.current;
+            if (!folderHandle || !projectId) return diff.added;
+            const cardById = new Map(
+              stateRef.current.cards.map((canvasCard) => [canvasCard.id, canvasCard]),
+            );
+            const prepared = [];
+            const patchedCards = [];
+            for (const ctxCard of diff.added) {
+              let card = cardById.get(ctxCard.id) ?? ctxCard;
+              const pinned = getPinnedVersion(card);
+              if (pinned?.artifactRef?.id || !pinned?.filename) {
+                prepared.push(card);
+                continue;
+              }
+              const ensured = await ensureCardArtifactRef({
+                projectId,
+                projectName: stateRef.current.projectName ?? stateProjectName,
+                folderHandle,
+                card,
+              });
+              if (!ensured.ok) {
+                prepared.push(card);
+                continue;
+              }
+              const nextCard = {
+                ...card,
+                versions: card.versions.map((version) =>
+                  version.version === ensured.version.version
+                    ? { ...version, ...ensured.version }
+                    : version,
+                ),
+              };
+              prepared.push(nextCard);
+              patchedCards.push(nextCard);
+            }
+            if (patchedCards.length) {
+              const patchById = new Map(patchedCards.map((canvasCard) => [canvasCard.id, canvasCard]));
+              const nextCards = stateRef.current.cards.map(
+                (canvasCard) => patchById.get(canvasCard.id) ?? canvasCard,
+              );
+              stateRef.current = { ...stateRef.current, cards: nextCards };
+              setState((prev) => ({
+                ...prev,
+                cards: prev.cards.map(
+                  (canvasCard) => patchById.get(canvasCard.id) ?? canvasCard,
+                ),
+              }));
+            }
+            return prepared;
+          })();
+          const rawDocuments = await buildContextDocuments(cardsForContextLoad, {
             folderHandle,
             loadAgentChatText: loadAgentChatContextText,
             loadFlowContextText,
@@ -1901,14 +1960,20 @@ export function useAgentChatShell({
         const userId = `u-${++agentChatIdRef.current}`;
         userMsg = { id: userId, role: 'user', content: text, at: now };
         const outgoingMessages = [...deltaMessages, userMsg];
+        const optimisticMessages = [...agentChatMessages, ...outgoingMessages];
+        optimisticIds = new Set(outgoingMessages.map((m) => m.id));
+        setAgentChatMessages(optimisticMessages);
+        agentChatMessagesRef.current = optimisticMessages;
         const hydrateOpts = {
           cards: stateRef.current.cards,
           folderHandle,
           contextMode: mode,
           profile,
+          loadAgentChatText: loadAgentChatContextText,
+          loadFlowContextText,
         };
         const historyForApi = await buildApiMessageHistoryAsync(
-          [...agentChatMessages, ...outgoingMessages],
+          optimisticMessages,
           hydrateOpts,
         );
 
@@ -1928,7 +1993,10 @@ export function useAgentChatShell({
                 estimate.estimatedInputUsd ?? 0,
               ),
             );
-            if (!ok) return;
+            if (!ok) {
+              rollbackOptimisticMessages();
+              return;
+            }
           }
         } catch {
           /* estimate is optional */
@@ -1962,13 +2030,9 @@ export function useAgentChatShell({
           provider,
           model: resolvedModel,
         };
-        const finalMessages = [
-          ...agentChatMessages,
-          ...deltaMessages,
-          userMsg,
-          assistantMsg,
-        ];
+        const finalMessages = [...optimisticMessages, assistantMsg];
         setAgentChatMessages(finalMessages);
+        agentChatMessagesRef.current = finalMessages;
         await requestThreadTranscriptSync(finalMessages, { reason: 'chatTurnComplete' });
 
         if (diff.added.length) {
@@ -1993,12 +2057,11 @@ export function useAgentChatShell({
           }, diff.added.length ? 4500 : 0);
         }
       } catch (e) {
-        if (userMsg) {
-          const rolledBack = agentChatMessagesRef.current.filter(
-            (m) => m.id !== userMsg.id,
-          );
-          setAgentChatMessages(rolledBack);
-          void requestThreadTranscriptSync(rolledBack, { reason: 'chatTurnFailed' });
+        rollbackOptimisticMessages();
+        if (optimisticIds?.size) {
+          void requestThreadTranscriptSync(agentChatMessagesRef.current, {
+            reason: 'chatTurnFailed',
+          });
         }
         setAgentChatError(e.message || strings.agent.chatError);
       } finally {
@@ -2016,9 +2079,12 @@ export function useAgentChatShell({
       agentChatMessages,
       folderHandle,
       loadAgentChatContextText,
+      loadFlowContextText,
       agentExtendedContext,
       requestThreadTranscriptSync,
       stateRef,
+      stateProjectName,
+      setState,
       setSyncStatus,
     ],
   );

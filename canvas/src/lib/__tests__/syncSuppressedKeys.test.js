@@ -4,6 +4,9 @@ import {
   readSuppressedSyncKeysFromDocument,
   addSuppressedSyncKey,
   suppressedKeysForSave,
+  readSuppressedBookmarkUrls,
+  addSuppressedBookmarkUrl,
+  suppressedBookmarkUrlsForSave,
 } from '../syncSuppressedKeys.js';
 
 const storage = new Map();
@@ -53,5 +56,26 @@ describe('syncSuppressedKeys', () => {
       suppressedSyncKeys: ['a', 'z'],
     });
     expect(keys).toEqual(['a', 'z']);
+  });
+
+  it('merges document and local suppressed bookmark URLs', () => {
+    localStorage.setItem(
+      'canvas:suppressed-bookmark-urls:proj-1',
+      JSON.stringify(['https://example.com/page']),
+    );
+    const merged = readSuppressedBookmarkUrls(projectId, {
+      suppressedBookmarkUrls: ['https://other.test/'],
+    });
+    expect([...merged].sort()).toEqual([
+      'https://example.com/page',
+      'https://other.test/',
+    ]);
+  });
+
+  it('addSuppressedBookmarkUrl normalizes and persists', () => {
+    addSuppressedBookmarkUrl(projectId, 'HTTPS://Example.COM/path');
+    expect(readSuppressedBookmarkUrls(projectId).has('https://example.com/path')).toBe(true);
+    const urls = suppressedBookmarkUrlsForSave(projectId, {});
+    expect(urls).toEqual(['https://example.com/path']);
   });
 });

@@ -269,7 +269,7 @@ describe('noteRequiresProjectOnlySave', () => {
     ).toBe(false);
   });
 
-  it('uses project-only save for nested folder-backed notes in the first slice', () => {
+  it('uses folder save for nested path when key is in scan set', () => {
     expect(
       noteRequiresProjectOnlySave({
         folderHandle: {},
@@ -282,6 +282,17 @@ describe('noteRequiresProjectOnlySave', () => {
           versions: [{ filename: 'notes__a-v1.md', relativePath: 'notes/sub/notes__a-v1.md' }],
         },
       }),
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  it('does not force project-only when folder key set is empty', () => {
+    expect(
+      noteRequiresProjectOnlySave({
+        folderHandle: {},
+        folderConnected: true,
+        folderKeySet: new Set(),
+        card: { key: 'notes__a', type: 'user_note', prefix: 'notes' },
+      }),
+    ).toBe(false);
   });
 });

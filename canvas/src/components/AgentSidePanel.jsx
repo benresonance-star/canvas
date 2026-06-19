@@ -860,22 +860,32 @@ export function AgentSidePanel({
   flowIncludeNetwork = true,
   onFlowIncludeNetworkChange,
   flowSelectionSummary = null,
+  initialCollapsedSections = null,
+  onCollapsedSectionsChange = null,
 }) {
   const [draft, setDraft] = useState('');
   const [apiKeyDraft, setApiKeyDraft] = useState('');
   const [showReplaceKey, setShowReplaceKey] = useState(false);
   const [apiKeyFeedback, setApiKeyFeedback] = useState(null);
-  const [collapsedSections, setCollapsedSections] = useState({
-    setup: false,
-    context: false,
-  });
+  const [collapsedSections, setCollapsedSections] = useState(() => (
+    initialCollapsedSections ?? { setup: false, context: false }
+  ));
   const autoReplaceOpenedRef = useRef(false);
 
+  useEffect(() => {
+    if (!initialCollapsedSections) return;
+    setCollapsedSections(initialCollapsedSections);
+  }, [initialCollapsedSections]);
+
   const toggleSectionCollapsed = (section) => {
-    setCollapsedSections((current) => ({
-      ...current,
-      [section]: !current[section],
-    }));
+    setCollapsedSections((current) => {
+      const next = {
+        ...current,
+        [section]: !current[section],
+      };
+      onCollapsedSectionsChange?.(next);
+      return next;
+    });
   };
 
   const selectedCount = selectedCardIds?.size ?? 0;
@@ -1383,7 +1393,7 @@ export function AgentSidePanel({
               contextEstimates={contextEstimates}
             />
           )}
-          {isSingle && onRefreshContextSession && !artifactScoped && !flowScoped && (
+          {isSingle && onRefreshContextSession && !artifactScoped && (
             <button
               type="button"
               className="sans text-[10px] text-link hover:underline mb-1"
@@ -1427,6 +1437,9 @@ export function AgentSidePanel({
                 </div>
                 <p className="sans text-[9px] text-muted mt-0.5 ml-3 leading-snug">
                   {strings.agent.contextFlowHint}
+                </p>
+                <p className="sans text-[9px] text-muted mt-0.5 ml-3 leading-snug">
+                  {strings.agent.contextFlowSendHint}
                 </p>
                 <p className="sans text-[9px] text-muted mt-1 ml-3 leading-snug">
                   {flowSelectionSummary?.isFullFlow

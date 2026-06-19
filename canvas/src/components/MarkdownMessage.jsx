@@ -1,7 +1,9 @@
 import React from 'react';
 import {
   parseInlineMarkdown,
+  parseLatexInlineSegments,
   parseMarkdownMessage,
+  resolveMarkdownCopyText,
 } from '../lib/markdownMessage.js';
 
 function selectionTouchesNode(selection, node) {
@@ -18,29 +20,57 @@ function selectionTouchesNode(selection, node) {
   return false;
 }
 
+function renderInlineSegment(segment, index, compact) {
+  const key = `${segment.type}-${index}`;
+  if (segment.type === 'strong') {
+    return (
+      <strong key={key} className="font-semibold text-primary">
+        {parseLatexInlineSegments(segment.text).map((child, childIndex) => (
+          renderInlineSegment(child, childIndex, compact)
+        ))}
+      </strong>
+    );
+  }
+  if (segment.type === 'emphasis') {
+    return (
+      <em key={key}>
+        {parseLatexInlineSegments(segment.text).map((child, childIndex) => (
+          renderInlineSegment(child, childIndex, compact)
+        ))}
+      </em>
+    );
+  }
+  if (segment.type === 'code') {
+    return (
+      <code
+        key={key}
+        className={`rounded bg-surface-muted px-1 py-0.5 font-mono ${
+          compact ? 'text-[9px]' : 'text-[11px]'
+        }`}
+      >
+        {parseLatexInlineSegments(segment.text).map((child, childIndex) => (
+          renderInlineSegment(child, childIndex, compact)
+        ))}
+      </code>
+    );
+  }
+  if (segment.type === 'symbol') {
+    return (
+      <span
+        key={key}
+        className={`inline-block px-0.5 text-primary ${compact ? 'text-[11px]' : 'text-sm'}`}
+        title={segment.raw}
+        aria-label={segment.raw}
+      >
+        {segment.text}
+      </span>
+    );
+  }
+  return <React.Fragment key={key}>{segment.text}</React.Fragment>;
+}
+
 function InlineText({ text, compact }) {
-  return parseInlineMarkdown(text).map((segment, index) => {
-    const key = `${segment.type}-${index}`;
-    if (segment.type === 'strong') {
-      return <strong key={key} className="font-semibold text-primary">{segment.text}</strong>;
-    }
-    if (segment.type === 'emphasis') {
-      return <em key={key}>{segment.text}</em>;
-    }
-    if (segment.type === 'code') {
-      return (
-        <code
-          key={key}
-          className={`rounded bg-surface-muted px-1 py-0.5 font-mono ${
-            compact ? 'text-[9px]' : 'text-[11px]'
-          }`}
-        >
-          {segment.text}
-        </code>
-      );
-    }
-    return <React.Fragment key={key}>{segment.text}</React.Fragment>;
-  });
+  return parseInlineMarkdown(text).map((segment, index) => renderInlineSegment(segment, index, compact));
 }
 
 export function MarkdownMessage({ content, compact = false }) {
@@ -50,7 +80,9 @@ export function MarkdownMessage({ content, compact = false }) {
     const selection = window.getSelection?.();
     if (!selection?.toString().trim()) return;
     if (!selectionTouchesNode(selection, event.currentTarget)) return;
-    event.clipboardData.setData('text/plain', String(content ?? '').trim());
+    const copyText = resolveMarkdownCopyText(selection.toString(), content);
+    if (!copyText) return;
+    event.clipboardData.setData('text/plain', copyText);
     event.preventDefault();
   };
 

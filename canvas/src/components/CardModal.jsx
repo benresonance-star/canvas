@@ -15,6 +15,16 @@ import { UserNoteEditor } from './UserNoteEditor.jsx';
 import { BookmarkCardEditor } from './BookmarkCardEditor.jsx';
 import { AgentSidePanel } from './AgentSidePanel.jsx';
 import { ARTIFACT_SIDEBAR_STORAGE_KEY } from '../lib/constants.js';
+import {
+  readFlowAgentUiState,
+  writeFlowAgentUiState,
+  flowAgentPanelLayoutToCollapsedSections,
+  collapsedSectionsToFlowAgentPanelLayout,
+} from '../lib/flowAgentUiPersistence.js';
+import {
+  planFlowAgentUiRestore,
+  buildFlowAgentUiFlushPayload,
+} from '../lib/flowAgentUiRestore.js';
 import { FlowEditor } from '../features/flow/components/FlowEditor.jsx';
 import { useFlowAgentContext } from '../features/flow/hooks/useFlowAgentContext.js';
 import { SpreadsheetViewerSelect } from './SpreadsheetViewerSelect.jsx';
@@ -42,6 +52,8 @@ export function CardModal({
   clusterId,
   cards = [],
   folderHandle,
+  folderConnected = false,
+  folderKeySet = null,
   projectId,
   projectName,
   onClose,
@@ -67,9 +79,20 @@ export function CardModal({
   const [currentVersion, setCurrentVersion] = useState(card?.pinnedVersion ?? 1);
   const [sidebarOpen, setSidebarOpen] = useState(readStoredSidebarOpen);
   const [agentOpen, setAgentOpen] = useState(false);
+  const [flowAgentCollapsedSections, setFlowAgentCollapsedSections] = useState({
+    setup: false,
+    context: false,
+  });
   const [editName, setEditName] = useState(card?.name ?? '');
   const noteEditorRef = useRef(null);
   const flowSnapshotGetterRef = useRef(null);
+  const restoredFlowAgentUiRef = useRef(false);
+  const pendingFlowThreadRestoreRef = useRef(null);
+  const lastFlowAgentThreadRef = useRef(null);
+  const prevAgentOpenRef = useRef(false);
+  const agentOpenRef = useRef(agentOpen);
+  const flowAgentCollapsedSectionsRef = useRef(flowAgentCollapsedSections);
+  const agentPanelPropsRef = useRef(agentPanelProps);
   const version = card?.versions.find(v => v.version === currentVersion);
   const isUserNote = card?.type === 'user_note';
   const isBookmark = card?.type === 'bookmark';
@@ -108,6 +131,190 @@ export function CardModal({
     return () => agentPanelProps?.registerEmbeddedAgentPanelOpen?.(false);
   }, [agentOpen, agentPanelProps?.registerEmbeddedAgentPanelOpen]);
 
+  useEffect(() => {
+    agentOpenRef.current = agentOpen;
+  }, [agentOpen]);
+
+  useEffect(() => {
+    flowAgentCollapsedSectionsRef.current = flowAgentCollapsedSections;
+  }, [flowAgentCollapsedSections]);
+
+  useEffect(() => {
+    agentPanelPropsRef.current = agentPanelProps;
+  }, [agentPanelProps]);
+
+  const persistFlowAgentUi = useCallback((partial) => {
+    if (!projectId || !card?.id) return;
+    writeFlowAgentUiState(projectId, card.id, partial);
+    if (partial?.activeThreadId) {
+      lastFlowAgentThreadRef.current = {
+        threadId: partial.activeThreadId,
+        connectorId: partial.connectorId ?? agentPanelPropsRef.current?.singleConnectorId ?? null,
+      };
+    }
+  }, [projectId, card?.id]);
+
+  const flushFlowAgentUiSnapshot = useCallback(() => {
+    if (!isFlow || !projectId || !card?.id) return;
+    const panel = agentPanelPropsRef.current;
+    const threadId = panel?.activeThreadId ?? lastFlowAgentThreadRef.current?.threadId ?? null;
+    const connectorId = panel?.singleConnectorId
+      ?? lastFlowAgentThreadRef.current?.connectorId
+      ?? null;
+    writeFlowAgentUiState(
+      projectId,
+      card.id,
+      buildFlowAgentUiFlushPayload({
+        collapsedSections: flowAgentCollapsedSectionsRef.current,
+        activeThreadId: threadId,
+        connectorId,
+      }),
+    );
+    if (threadId) {
+      lastFlowAgentThreadRef.current = { threadId, connectorId };
+    }
+  }, [isFlow, projectId, card?.id]);
+
+  const handleCloseFlowAgent = useCallback(() => {
+    flushFlowAgentUiSnapshot();
+    setAgentOpen(false);
+  }, [flushFlowAgentUiSnapshot]);
+
+  const handleFlowCollapsedSectionsChange = useCallback((sections) => {
+    setFlowAgentCollapsedSections(sections);
+    if (!isFlow || !agentOpen || !projectId || !card?.id) return;
+    persistFlowAgentUi({
+      panelLayout: collapsedSectionsToFlowAgentPanelLayout(sections),
+    });
+  }, [isFlow, agentOpen, projectId, card?.id, persistFlowAgentUi]);
+
+  useEffect(() => {
+    if (!isFlow || !agentOpen || !projectId || !card?.id || !agentPanelProps) return;
+    if (!restoredFlowAgentUiRef.current) return;
+    const threadId = agentPanelProps.activeThreadId ?? null;
+    if (!threadId) return;
+    persistFlowAgentUi({
+      activeThreadId: threadId,
+      connectorId: agentPanelProps.singleConnectorId ?? null,
+    });
+  }, [
+    isFlow,
+    agentOpen,
+    projectId,
+    card?.id,
+    agentPanelProps?.activeThreadId,
+    agentPanelProps?.singleConnectorId,
+    persistFlowAgentUi,
+    agentPanelProps,
+  ]);
+
+  useEffect(() => {
+    if (prevAgentOpenRef.current && !agentOpen && isFlow) {
+      flushFlowAgentUiSnapshot();
+    }
+    prevAgentOpenRef.current = agentOpen;
+  }, [agentOpen, isFlow, flushFlowAgentUiSnapshot]);
+
+  useEffect(() => {
+    if (!isFlow || !projectId || !card?.id) return undefined;
+    const flushFlowAgentUi = () => {
+      flushFlowAgentUiSnapshot();
+    };
+    window.addEventListener('pagehide', flushFlowAgentUi);
+    return () => {
+      window.removeEventListener('pagehide', flushFlowAgentUi);
+      flushFlowAgentUiSnapshot();
+    };
+  }, [isFlow, projectId, card?.id, flushFlowAgentUiSnapshot]);
+
+  useEffect(() => {
+    if (!isFlow || !agentOpen || !projectId || !card?.id || !agentPanelProps) return;
+    if (restoredFlowAgentUiRef.current || pendingFlowThreadRestoreRef.current) return;
+
+    const plan = planFlowAgentUiRestore(
+      readFlowAgentUiState(projectId, card.id),
+      agentPanelProps.singleConnectorId ?? null,
+    );
+
+    if (plan.collapsedSections) {
+      setFlowAgentCollapsedSections(plan.collapsedSections);
+    }
+
+    if (plan.pendingThreadRestore) {
+      lastFlowAgentThreadRef.current = {
+        threadId: plan.pendingThreadRestore.threadId,
+        connectorId: plan.pendingThreadRestore.connectorId,
+      };
+    }
+
+    if (plan.restoreComplete) {
+      restoredFlowAgentUiRef.current = true;
+      return;
+    }
+
+    pendingFlowThreadRestoreRef.current = plan.pendingThreadRestore;
+
+    if (plan.connectorIdToSwitch) {
+      agentPanelProps.onSingleConnectorChange?.(plan.connectorIdToSwitch);
+    }
+  }, [
+    isFlow,
+    agentOpen,
+    projectId,
+    card?.id,
+    agentPanelProps,
+  ]);
+
+  useEffect(() => {
+    const pending = pendingFlowThreadRestoreRef.current;
+    if (!isFlow || !agentOpen || !pending || restoredFlowAgentUiRef.current || !agentPanelProps) {
+      return;
+    }
+    if (pending.connectorId && pending.connectorId !== agentPanelProps.singleConnectorId) {
+      return;
+    }
+
+    const threads = agentPanelProps.chatThreads ?? [];
+    if (threads.length === 0) {
+      if (agentPanelProps.threadPickerOpen) {
+        restoredFlowAgentUiRef.current = true;
+        pendingFlowThreadRestoreRef.current = null;
+      }
+      return;
+    }
+    if (!threads.some((thread) => thread.threadId === pending.threadId)) {
+      restoredFlowAgentUiRef.current = true;
+      pendingFlowThreadRestoreRef.current = null;
+      return;
+    }
+
+    if (agentPanelProps.activeThreadId === pending.threadId) {
+      restoredFlowAgentUiRef.current = true;
+      pendingFlowThreadRestoreRef.current = null;
+      return;
+    }
+
+    restoredFlowAgentUiRef.current = true;
+    pendingFlowThreadRestoreRef.current = null;
+    void agentPanelProps.onSelectThread?.(pending.threadId);
+  }, [
+    isFlow,
+    agentOpen,
+    agentPanelProps?.singleConnectorId,
+    agentPanelProps?.chatThreads,
+    agentPanelProps?.activeThreadId,
+    agentPanelProps?.onSelectThread,
+    agentPanelProps?.threadPickerOpen,
+    agentPanelProps,
+  ]);
+
+  useEffect(() => {
+    if (!agentOpen) {
+      restoredFlowAgentUiRef.current = false;
+      pendingFlowThreadRestoreRef.current = null;
+    }
+  }, [agentOpen]);
+
   const flowAgentPanelProps = useMemo(() => {
     if (!agentPanelProps || !isFlow) return agentPanelProps;
     return {
@@ -118,13 +325,52 @@ export function CardModal({
       flowIncludeNetwork: flowAgent.includeNetwork,
       onFlowIncludeNetworkChange: flowAgent.setIncludeNetwork,
       flowSelectionSummary: flowAgent.selectionSummary,
+      initialCollapsedSections: flowAgentCollapsedSections,
+      onCollapsedSectionsChange: handleFlowCollapsedSectionsChange,
+      onSingleConnectorChange: (connectorId) => {
+        agentPanelProps.onSingleConnectorChange?.(connectorId);
+        if (agentOpenRef.current) {
+          const threadId = agentPanelPropsRef.current?.activeThreadId
+            ?? lastFlowAgentThreadRef.current?.threadId
+            ?? null;
+          if (threadId) {
+            persistFlowAgentUi({ activeThreadId: threadId, connectorId });
+          }
+        }
+      },
+      onSelectThread: async (threadId) => {
+        await agentPanelProps.onSelectThread?.(threadId);
+        persistFlowAgentUi({
+          activeThreadId: threadId,
+          connectorId: agentPanelPropsRef.current?.singleConnectorId ?? null,
+        });
+      },
+      onCreateThread: async () => {
+        await agentPanelProps.onCreateThread?.();
+        queueMicrotask(() => flushFlowAgentUiSnapshot());
+      },
     };
-  }, [agentPanelProps, flowAgent, isFlow]);
+  }, [
+    agentPanelProps,
+    flowAgent,
+    isFlow,
+    flowAgentCollapsedSections,
+    handleFlowCollapsedSectionsChange,
+    persistFlowAgentUi,
+    flushFlowAgentUiSnapshot,
+  ]);
 
   useEffect(() => {
     setEditName(card?.name ?? '');
-    setAgentOpen(false);
   }, [card?.id, card?.name]);
+
+  useEffect(() => {
+    setAgentOpen(false);
+    restoredFlowAgentUiRef.current = false;
+    pendingFlowThreadRestoreRef.current = null;
+    lastFlowAgentThreadRef.current = null;
+    setFlowAgentCollapsedSections({ setup: false, context: false });
+  }, [card?.id]);
 
   const toggleSidebar = useCallback(() => {
     setSidebarOpen((open) => {
@@ -226,6 +472,14 @@ export function CardModal({
               title={isFlow ? strings.agent.askAboutFlow : strings.agent.askAboutArtifact}
               aria-pressed={agentOpen}
               onClick={() => {
+                if (!agentOpen && isFlow && projectId && card?.id) {
+                  const stored = readFlowAgentUiState(projectId, card.id);
+                  if (stored?.panelLayout) {
+                    setFlowAgentCollapsedSections(
+                      flowAgentPanelLayoutToCollapsedSections(stored.panelLayout),
+                    );
+                  }
+                }
                 setAgentOpen((open) => {
                   const next = !open;
                   if (next) {
@@ -260,14 +514,14 @@ export function CardModal({
               <Box size={14} strokeWidth={1.5} aria-hidden />
             </button>
           )}
-          {missingFromFolder && (
+          {(missingFromFolder || (isBookmark && !bookmarkEditDisabled)) && (
             <button
               type="button"
-              title={strings.card.removeFromCanvas}
+              title={isBookmark ? strings.bookmark.deleteConfirm : strings.card.removeFromCanvas}
               onClick={() => onDeleteCard(card.id)}
               className="sans flex items-center gap-1.5 text-xs bg-danger-muted hover:bg-danger-border text-danger px-3 py-1.5 rounded transition border border-danger-border"
             >
-              <Trash2 size={14} strokeWidth={1.8} /> {strings.card.remove}
+              <Trash2 size={14} strokeWidth={1.8} /> {isBookmark ? strings.bookmark.deleteConfirm : strings.card.remove}
             </button>
           )}
           {isSpreadsheet && version && (
@@ -335,7 +589,7 @@ export function CardModal({
               >
                 <AgentSidePanel
                   className="flex-1 min-h-0"
-                  onClose={() => setAgentOpen(false)}
+                  onClose={handleCloseFlowAgent}
                   {...flowAgentPanelProps}
                 />
               </aside>
@@ -360,6 +614,8 @@ export function CardModal({
               versionNum={currentVersion}
               title={editName}
               folderHandle={folderHandle}
+              folderConnected={Boolean(folderHandle)}
+              folderKeySet={folderKeySet}
               projectId={projectId}
               projectName={projectName}
               clusterId={clusterId}

@@ -1,15 +1,8 @@
 import {
   ensureWritePermission,
   getFileHandleAtPath,
-  overwriteTextFileAtPath,
-  renameUserNoteFile,
-  fileExistsInFolder,
 } from '../folderWrite.js';
-import {
-  buildFilename,
-  folderRelativePathFromVersion,
-  parseFilename,
-} from '../filename.js';
+import { folderRelativePathFromVersion, parseFilename } from '../filename.js';
 import { readFileEntry } from '../readFile.js';
 import { updateArtifactContent, isApiAvailable } from '../primitivesApi.js';
 import { ingestFoundFiles } from './syncIngest.js';
@@ -17,14 +10,6 @@ import {
   buildCardKeyToArtifactRef,
   ingestLinksFromVersions,
 } from './linkIngest.js';
-
-export function validateUserNoteName(name) {
-  const trimmed = (name ?? '').trim();
-  if (!trimmed) return { ok: false, reason: 'name_required' };
-  if (/[\\/:*?"<>|]/.test(trimmed)) return { ok: false, reason: 'name_invalid' };
-  if (trimmed.includes('__')) return { ok: false, reason: 'name_invalid' };
-  return { ok: true, name: trimmed };
-}
 
 async function refreshVersionFromFile(folderHandle, ver, filename) {
   const relativePath = folderRelativePathFromVersion({ ...ver, filename });
@@ -44,53 +29,12 @@ async function refreshVersionFromFile(folderHandle, ver, filename) {
   };
 }
 
-async function checkRenameCollisions(folderHandle, card, newName) {
-  const prefix = card.prefix;
-  for (const v of card.versions) {
-    const newFilename = buildFilename({ prefix, name: newName, version: v.version, ext: 'md' });
-    if (newFilename !== v.filename && (await fileExistsInFolder(folderHandle, newFilename))) {
-      return true;
-    }
-  }
-  return false;
-}
-
-async function renameAllVersions({ folderHandle, card, versionNum, body, newName }) {
-  if (await checkRenameCollisions(folderHandle, card, newName)) {
-    return { ok: false, reason: 'name_collision' };
-  }
-
-  const prefix = card.prefix;
-  const updatedVersions = [];
-
-  for (const v of card.versions) {
-    const versionBody = v.version === versionNum ? body : undefined;
-    const result = await renameUserNoteFile(folderHandle, v.filename, {
-      prefix,
-      name: newName,
-      version: v.version,
-      body: versionBody,
-    });
-    if (result?.collision) {
-      return { ok: false, reason: 'name_collision' };
-    }
-    const filename = typeof result === 'string' ? result : v.filename;
-    updatedVersions.push(await refreshVersionFromFile(folderHandle, v, filename));
-  }
-
-  const parsed = parseFilename(updatedVersions.find((v) => v.version === versionNum)?.filename
-    ?? buildFilename({ prefix, name: newName, version: versionNum, ext: 'md' }));
-
-  return {
-    ok: true,
-    versions: updatedVersions,
-    cardUpdates: {
-      key: parsed.fullBase,
-      name: parsed.name,
-      prefix: parsed.prefix,
-      versions: updatedVersions,
-    },
-  };
+async function overwriteArtifactFile(folderHandle, ver, body) {
+  const relativePath = folderRelativePathFromVersion(ver);
+  const entry = await getFileHandleAtPath(folderHandle, relativePath);
+  const writable = await entry.createWritable();
+  await writable.write(body);
+  await writable.close();
 }
 
 async function patchArtifactAndLinks({
@@ -120,6 +64,7 @@ async function patchArtifactAndLinks({
 
   let artifactRef = ver.artifactRef ?? null;
   let apiUnavailable = false;
+  const cardType = card.type ?? 'markdown';
 
   const apiOk = await isApiAvailable();
   if (apiOk && artifactRef?.id) {
@@ -136,7 +81,7 @@ async function patchArtifactAndLinks({
       const flat = [{
         ...updatedVersion,
         cardKey,
-        cardType: 'user_note',
+        cardType,
       }];
       const ingest = await ingestFoundFiles(projectId, projectName, flat, {});
       const ing = ingest.byFilename?.[relativePath];
@@ -162,7 +107,7 @@ async function patchArtifactAndLinks({
     cardKeyToRef.set(cardKey, artifactRef);
     await ingestLinksFromVersions({
       clusterId,
-      flatVersions: [{ ...versionWithRef, cardKey, cardType: 'user_note' }],
+      flatVersions: [{ ...versionWithRef, cardKey, cardType }],
       cardKeyToRef,
     });
   }
@@ -170,7 +115,7 @@ async function patchArtifactAndLinks({
   return { versionWithRef, apiUnavailable };
 }
 
-export async function saveUserNote({
+export async function saveMarkdownArtifact({
   projectId,
   projectName,
   folderHandle,
@@ -178,7 +123,6 @@ export async function saveUserNote({
   card,
   versionNum,
   body,
-  name,
   cards = [],
 }) {
   if (!folderHandle) {
@@ -194,48 +138,21 @@ export async function saveUserNote({
     return { ok: false, reason: 'no_version' };
   }
 
-  const nameValidation = validateUserNoteName(name ?? card.name);
-  if (!nameValidation.ok) {
-    return { ok: false, reason: nameValidation.reason };
-  }
-  const trimmedName = nameValidation.name;
-  const nameChanged = trimmedName !== card.name;
+  await overwriteArtifactFile(folderHandle, ver, body);
+  const updated = await refreshVersionFromFile(folderHandle, ver, ver.filename);
+  const workingVersions = card.versions.map((v) =>
+    v.version === versionNum ? updated : v,
+  );
 
-  let cardKey = card.key;
-  let cardUpdates = null;
-  let workingVersions = card.versions;
-
-  if (nameChanged) {
-    const renameResult = await renameAllVersions({
-      folderHandle,
-      card,
-      versionNum,
-      body,
-      newName: trimmedName,
-    });
-    if (!renameResult.ok) return renameResult;
-    cardUpdates = renameResult.cardUpdates;
-    workingVersions = renameResult.versions;
-    cardKey = cardUpdates.key;
-  } else {
-    const relativePath = folderRelativePathFromVersion(ver);
-    await overwriteTextFileAtPath(folderHandle, relativePath, body);
-    const updated = await refreshVersionFromFile(folderHandle, ver, ver.filename);
-    workingVersions = card.versions.map((v) =>
-      v.version === versionNum ? updated : v,
-    );
-  }
-
-  const pinnedVer = workingVersions.find((v) => v.version === versionNum) ?? ver;
   const { versionWithRef, apiUnavailable } = await patchArtifactAndLinks({
     projectId,
     projectName,
     folderHandle,
     clusterId,
     card,
-    cardKey,
+    cardKey: card.key,
     versionNum,
-    ver: pinnedVer,
+    ver: updated,
     body,
     cards,
   });
@@ -244,17 +161,11 @@ export async function saveUserNote({
     v.version === versionNum ? versionWithRef : v,
   );
 
-  if (cardUpdates) {
-    cardUpdates.versions = finalVersions;
-  }
-
   return {
     ok: true,
     apiUnavailable,
     version: versionWithRef,
     versionNum,
-    cardUpdates: cardUpdates
-      ? { ...cardUpdates, versions: finalVersions }
-      : null,
+    cardUpdates: { versions: finalVersions },
   };
 }

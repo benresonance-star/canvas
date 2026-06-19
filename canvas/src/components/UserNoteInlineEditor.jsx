@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { strings } from '../content/strings.js';
 import { markdownViewToggleLabel } from '../lib/markdownMessage.js';
-import { MarkdownMessage } from './MarkdownMessage.jsx';
+import { EditableMarkdownMessage } from './EditableMarkdownMessage.jsx';
 
 export function UserNoteInlineEditor({
   content,
@@ -31,6 +31,21 @@ export function UserNoteInlineEditor({
     e.stopPropagation();
   };
 
+  const viewToggleButton = (nextFormattedView) => (
+    <button
+      type="button"
+      className="sans rounded-full border border-border-subtle bg-surface-muted/90 px-2 py-0.5 text-[9px] text-muted shadow-sm hover:text-primary pointer-events-auto"
+      onMouseDown={stopBubble}
+      onClick={(e) => {
+        stopBubble(e);
+        setFormattedView(nextFormattedView);
+      }}
+      aria-pressed={!nextFormattedView}
+    >
+      {markdownViewToggleLabel(nextFormattedView)}
+    </button>
+  );
+
   return (
     <div
       className="h-full w-full min-h-0 flex flex-col"
@@ -38,38 +53,31 @@ export function UserNoteInlineEditor({
       onMouseDown={stopBubble}
       onClick={stopBubble}
     >
-      <div className="shrink-0 flex justify-end px-1 pb-1">
-        <button
-          type="button"
-          className="sans rounded-full border border-border-subtle bg-surface-muted/90 px-2 py-0.5 text-[9px] text-muted shadow-sm hover:text-primary pointer-events-auto"
-          onMouseDown={stopBubble}
-          onClick={(e) => {
-            stopBubble(e);
-            setFormattedView((value) => !value);
-          }}
-          aria-pressed={!formattedView}
-        >
-          {markdownViewToggleLabel(formattedView)}
-        </button>
+      <div className="flex-1 min-h-0 flex flex-col px-1 py-1 text-sm text-secondary leading-relaxed select-text">
+        {formattedView ? (
+          <EditableMarkdownMessage
+            value={body}
+            onChange={setBody}
+            compact
+            disabled={disabled || saving}
+            toolbarRight={viewToggleButton(formattedView)}
+          />
+        ) : (
+          <>
+            <div className="shrink-0 flex justify-end pb-1">
+              {viewToggleButton(formattedView)}
+            </div>
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              disabled={disabled || saving}
+              className="flex-1 min-h-0 w-full sans text-xs bg-surface border-0 px-1 py-1 text-primary font-serif leading-relaxed resize-none focus:outline-none focus:ring-1 focus:ring-accent/40 rounded disabled:opacity-60 cursor-text"
+              placeholder={strings.userNote.bodyPlaceholder}
+              onMouseDown={stopBubble}
+            />
+          </>
+        )}
       </div>
-      {formattedView ? (
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-1 py-1 text-sm text-secondary leading-relaxed">
-          {body ? (
-            <MarkdownMessage content={body} compact />
-          ) : (
-            <p className="serif text-muted italic">{strings.userNote.bodyPlaceholder}</p>
-          )}
-        </div>
-      ) : (
-        <textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          disabled={disabled || saving}
-          className="flex-1 min-h-0 w-full sans text-xs bg-surface border-0 px-1 py-1 text-primary font-serif leading-relaxed resize-none focus:outline-none focus:ring-1 focus:ring-accent/40 rounded disabled:opacity-60"
-          placeholder={strings.userNote.bodyPlaceholder}
-          onMouseDown={stopBubble}
-        />
-      )}
       <div className="shrink-0 flex justify-end gap-1 pt-1 border-t border-border-subtle">
         <button
           type="button"

@@ -105,6 +105,8 @@ export const strings = {
     older: 'older',
     removeFromCanvas: 'Remove from canvas',
     remove: 'Remove',
+    mediaMinimalOn: 'Show preview only',
+    mediaMinimalOff: 'Show artifact info',
     pinThisVersion: 'Pin this version',
     newerDraft: '· newer draft',
   },
@@ -299,8 +301,24 @@ export const strings = {
     saveEdit: 'Save',
     savingEdit: 'Saving…',
     savedProjectOnly: 'Saved to project. Connect a folder to sync this link to disk.',
+    savedToCanvas: 'Link added to canvas.',
+    needProject: 'Select or create a project before adding a link.',
     invalidUrl: 'Enter a valid URL (https://…).',
     primitivesNotUpdated: 'Link saved on canvas; primitives API was unavailable.',
+    deleteTitle: 'Delete link?',
+    deleteBody: (linkName, { folderConnected = false } = {}) => {
+      const name = linkName?.trim() || 'this link';
+      const base = `Remove "${name}" from your project and database? This cannot be undone.`;
+      if (folderConnected) {
+        return `${base} The link file in your connected folder will also be deleted.`;
+      }
+      return base;
+    },
+    deleteConfirm: 'Delete link',
+    deleteFolderWriteDenied:
+      'Link removed from project. Could not delete the folder file — reconnect the folder with write access or delete the file manually.',
+    deleteFolderFileFailed:
+      'Link removed from project. The folder file could not be deleted — remove it manually if it is still on disk.',
   },
   userNote: {
     title: 'New note',
@@ -325,7 +343,17 @@ export const strings = {
     nameCollision: 'A note with that title already exists in the folder.',
     connectToEdit: 'Connect and sync the project folder to edit this note.',
     savedProjectOnly: 'Saved to project. Connect a folder to write notes to disk.',
+    savedProjectOnlyMissingFromFolder:
+      'Saved to project. File not found in linked folder.',
+    savedToFolder: 'Saved to folder',
     zoomToEdit: 'Zoom in to edit on the canvas.',
+  },
+  markdownFormat: {
+    toolbarLabel: 'Text formatting',
+    bold: 'Bold',
+    italic: 'Italic',
+    bulletList: 'Bullet list',
+    numberedList: 'Numbered list',
   },
   linkArtifact: {
     title: 'Link to artifact',
@@ -491,6 +519,8 @@ export const strings = {
     threadContextEmpty:
       'No files in context yet — select artefacts on the canvas to add them.',
     threadContextPending: 'sends on next message',
+    threadContextSent: 'sent to AI',
+    threadContextNeedsFolder: 'needs folder to send content',
     threadContextRestored: 'Context restored from this thread.',
     chatError: 'Could not get a reply.',
     openaiUnreachable:
@@ -507,6 +537,8 @@ export const strings = {
     contextArtifactHint: 'Agent context is locked to the open artifact.',
     contextFlow: 'This workflow',
     contextFlowHint: 'Select nodes in the flow editor to scope the diagram. Artifact nodes in scope are sent as file context.',
+    contextFlowSendHint:
+      'File bodies send on your next chat message when newly added, or after Resend all selected files to AI.',
     contextFlowIncludeNetwork: 'Include connected network',
     contextFlowSelectionSummary: (nodes, edges) => `${nodes} node${nodes === 1 ? '' : 's'}, ${edges} connection${edges === 1 ? '' : 's'}`,
     contextFlowFullDiagram: 'Full diagram (no nodes selected)',

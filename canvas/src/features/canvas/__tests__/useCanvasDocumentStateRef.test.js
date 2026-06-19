@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyLayoutCommitPayloadToStateRef,
+  bookmarkFolderFilenamesToRemove,
+  cleanupBookmarkFolderFile,
   cleanupProjectArtifactForSyncEntry,
   commitCanvasViewToStateRef,
   updateCardVersionInStateRef,
@@ -123,5 +125,98 @@ describe('useCanvasDocument stateRef commit helpers', () => {
 
     expect(result).toEqual({ attempted: false });
     expect(deleteProjectArtifact).not.toHaveBeenCalled();
+  });
+});
+
+describe('bookmark folder cleanup', () => {
+  it('builds paired .url and .bookmark.md candidates', () => {
+    expect(bookmarkFolderFilenamesToRemove('links__example-com-v1.url')).toEqual([
+      'links__example-com-v1.url',
+      'links__example-com-v1.bookmark.md',
+    ]);
+    expect(bookmarkFolderFilenamesToRemove('links__example-com-v1.bookmark.md')).toEqual([
+      'links__example-com-v1.bookmark.md',
+      'links__example-com-v1.url',
+    ]);
+  });
+
+  it('removes existing bookmark folder files when write access is granted', async () => {
+    const ensureWrite = vi.fn().mockResolvedValue(true);
+    const existsAtPath = vi.fn(async (_handle, name) => name.endsWith('.bookmark.md'));
+    const removeAtPath = vi.fn().mockResolvedValue(undefined);
+    const card = {
+      type: 'bookmark',
+      pinnedVersion: 1,
+      versions: [{ version: 1, filename: 'links__example-com-v1.url' }],
+    };
+
+    const result = await cleanupBookmarkFolderFile({
+      folderHandle: {},
+      card,
+      ensureWrite,
+      existsAtPath,
+      removeAtPath,
+    });
+
+    expect(result).toEqual({
+      attempted: true,
+      removed: ['links__example-com-v1.bookmark.md'],
+      candidatesFound: true,
+    });
+    expect(removeAtPath).toHaveBeenCalledTimes(1);
+    expect(removeAtPath).toHaveBeenCalledWith({}, 'links__example-com-v1.bookmark.md');
+  });
+
+  it('skips folder cleanup when write access is denied', async () => {
+    const ensureWrite = vi.fn().mockResolvedValue(false);
+    const existsInFolder = vi.fn();
+    const removeFromFolder = vi.fn();
+
+    const result = await cleanupBookmarkFolderFile({
+      folderHandle: {},
+      card: {
+        type: 'bookmark',
+        pinnedVersion: 1,
+        versions: [{ version: 1, filename: 'links__example-com-v1.url' }],
+      },
+      ensureWrite,
+      existsInFolder,
+      removeFromFolder,
+    });
+
+    expect(result).toEqual({
+      attempted: true,
+      removed: [],
+      skipped: 'write_denied',
+      candidatesFound: false,
+    });
+    expect(removeFromFolder).not.toHaveBeenCalled();
+  });
+
+  it('removes nested bookmark sidecars using relativePath', async () => {
+    const ensureWrite = vi.fn().mockResolvedValue(true);
+    const existsAtPath = vi.fn(async (_handle, path) =>
+      path === 'refs/links__example-com-v1.bookmark.md');
+    const removeAtPath = vi.fn().mockResolvedValue(undefined);
+    const card = {
+      type: 'bookmark',
+      pinnedVersion: 1,
+      versions: [{
+        version: 1,
+        filename: 'links__example-com-v1.url',
+        relativePath: 'refs/links__example-com-v1.url',
+      }],
+    };
+
+    const result = await cleanupBookmarkFolderFile({
+      folderHandle: {},
+      card,
+      ensureWrite,
+      existsAtPath,
+      removeAtPath,
+    });
+
+    expect(result.removed).toEqual(['refs/links__example-com-v1.bookmark.md']);
+    expect(removeAtPath).toHaveBeenCalledWith({}, 'refs/links__example-com-v1.bookmark.md');
   });
 });

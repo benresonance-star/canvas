@@ -10,6 +10,8 @@ import { AudioPlayer } from './AudioPlayer.jsx';
 import { audioSkinUsesDarkText, resolveAudioSkinColor } from '../lib/audioSkin.js';
 import { NotePreviewFrame } from './NotePreviewFrame.jsx';
 import { CodePreviewFrame } from './CodePreviewFrame.jsx';
+import { AgentChatThreadView } from './AgentChatThreadView.jsx';
+import { parseAgentChatTranscript } from '../lib/agentChatArtifact.js';
 
 export function ModalContent({ card, version }) {
   const cardType = normalizeCardType(card?.type);
@@ -167,10 +169,12 @@ export function ModalContent({ card, version }) {
       );
     }
     return (
-      <div className="h-full overflow-y-auto px-12 py-10">
-        <div className="serif text-lg text-primary leading-relaxed max-w-2xl mx-auto whitespace-pre-wrap">
-          {body}
-        </div>
+      <div className="h-full overflow-y-auto px-8 py-8">
+        <AgentChatThreadView
+          messages={parseAgentChatTranscript(body)}
+          scrollOnUpdate={false}
+          className="max-w-2xl mx-auto"
+        />
       </div>
     );
   }

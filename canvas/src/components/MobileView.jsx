@@ -60,16 +60,16 @@ export function MobileView({ cards, onOpen, onPinVersion, onDeleteCard, folderKe
                         )}
                       </div>
                     </button>
-                    {missing && (
+                    {missing || card.type === 'bookmark' ? (
                       <button
                         type="button"
-                        title={strings.card.removeFromCanvas}
+                        title={card.type === 'bookmark' ? strings.bookmark.deleteConfirm : strings.card.removeFromCanvas}
                         onClick={() => onDeleteCard(card.id)}
                         className="self-stretch px-3 flex items-center justify-center bg-surface card-shadow rounded-lg text-danger hover:bg-danger-muted shrink-0"
                       >
                         <Trash2 size={18} strokeWidth={1.8} />
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 );
               })}

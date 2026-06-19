@@ -23,6 +23,9 @@ export const AGENT_CHAT_STORAGE_SOFT_BYTES = 3 * 1024 * 1024;
 export const THEME_STORAGE_KEY = 'canvas:theme';
 export const THEME_CYCLE = ['light', 'dark', 'green', 'blue'];
 export const ARTIFACT_SIDEBAR_STORAGE_KEY = 'canvas:artifact-sidebar-open';
+export function flowAgentUiStorageKey(projectId) {
+  return `canvas:flow-agent-ui:${projectId}`;
+}
 export const SPREADSHEET_VIEWER_STORAGE_KEY = 'canvas:spreadsheet-viewer';
 export const SPREADSHEET_VIEWER_MODES = ['simple', 'extend'];
 /** Max file size (bytes) to load fully as text or base64 dataUrl */

@@ -87,6 +87,7 @@ export function clearCommittedPayloadCache(projectId) {
  *   stagedSyncCards: object[],
  *   artifactPlacements?: Record<string, object> | null,
  *   suppressedSyncKeys?: string[],
+ *   suppressedBookmarkUrls?: string[],
  *   stripNoteContent?: boolean,
  *   reason?: string,
  *   pushRemote?: boolean,
@@ -99,6 +100,7 @@ export async function commitProjectDocument(projectId, options) {
     stagedSyncCards,
     artifactPlacements = null,
     suppressedSyncKeys = [],
+    suppressedBookmarkUrls = [],
     stripNoteContent = false,
     reason = 'commit',
     pushRemote = false,
@@ -161,6 +163,7 @@ export async function commitProjectDocument(projectId, options) {
     {
       stripNoteContent,
       authoritativePlacements,
+      suppressedBookmarkUrls,
     },
   );
   const { payload, serialised } = slimProjectPayloadForCache(builtPayload, {

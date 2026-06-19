@@ -23,7 +23,7 @@ import {
   patchPlacementsMapFromArrays,
   reconcileArtifactPlacements,
 } from './artifactPlacementsMap.js';
-import { suppressedKeysForSave } from './syncSuppressedKeys.js';
+import { suppressedKeysForSave, suppressedBookmarkUrlsForSave } from './syncSuppressedKeys.js';
 import { auditPlacementStep } from './placementAudit.js';
 import { loadProjectStructure } from './project/loadProjectStructure.js';
 
@@ -105,16 +105,20 @@ export function buildProjectSavePayload(
   state,
   stagedSyncCards = [],
   suppressedSyncKeys = [],
-  { stripNoteContent = false, authoritativePlacements = null } = {},
+  { stripNoteContent = false, authoritativePlacements = null, suppressedBookmarkUrls = [] } = {},
 ) {
   const keys = Array.isArray(suppressedSyncKeys)
     ? suppressedSyncKeys.filter((k) => typeof k === 'string' && k)
+    : [];
+  const urls = Array.isArray(suppressedBookmarkUrls)
+    ? suppressedBookmarkUrls.filter((u) => typeof u === 'string' && u)
     : [];
   const stripOpts = { stripNoteContent };
   const base = {
     ...stateForPersist(state, stripOpts),
     stagedSyncCards: sanitizeStagedForPersist(stagedSyncCards, stripOpts),
     suppressedSyncKeys: keys,
+    suppressedBookmarkUrls: urls,
   };
   if (
     authoritativePlacements
@@ -174,6 +178,7 @@ export async function saveProjectById(
       state,
       stagedSyncCards,
       suppressedSyncKeys: suppressedKeysForSave(projectId, state),
+      suppressedBookmarkUrls: suppressedBookmarkUrlsForSave(projectId, state),
       stripNoteContent,
       reason: 'saveProjectById',
       pushRemote,

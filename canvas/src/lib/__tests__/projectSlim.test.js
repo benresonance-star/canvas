@@ -1,8 +1,23 @@
 import { describe, it, expect } from 'vitest';
-import { slimProjectPayloadForCache } from '../projectSlim.js';
+import { slimProjectPayloadForCache, stripCardForPersist } from '../projectSlim.js';
 import { buildPlacementsFromArrays } from '../artifactPlacementsMap.js';
 
 describe('slimProjectPayloadForCache', () => {
+  it('preserves minimalPreview on slim media cards', () => {
+    const card = {
+      id: 'img1',
+      key: 'images__photo',
+      type: 'image',
+      x: 0,
+      y: 0,
+      pinnedVersion: 1,
+      minimalPreview: true,
+      versions: [{ version: 1, filename: 'photo.png' }],
+    };
+    const slim = stripCardForPersist(card, { slimCard: true });
+    expect(slim.minimalPreview).toBe(true);
+  });
+
   it('produces smaller serialised payload with v2 placements than duplicated records', () => {
     const cards = Array.from({ length: 20 }, (_, i) => ({
       id: `c${i}`,

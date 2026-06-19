@@ -9,7 +9,7 @@ import {
   ReactFlowProvider,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Plus, Redo2, Save, Search, Trash2, Undo2, Workflow, Eye, EyeOff, ArrowLeftRight, PanelRight, PanelRightClose, Map as MapIcon } from 'lucide-react';
+import { Plus, Redo2, Save, Search, Trash2, Undo2, Workflow, Eye, EyeOff, ArrowLeftRight, PanelRight, PanelRightClose, Map as MapIcon, Minimize2 } from 'lucide-react';
 import { strings } from '../../../content/strings.js';
 import { useFlowDocument } from '../hooks/useFlowDocument.js';
 import {
@@ -56,7 +56,7 @@ function FlowEditorInner({
   const [instance, setInstance] = useState(null);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
-  const [inspectorOpen, setInspectorOpen] = useState(() => !agentModeActive);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [minimapOpen, setMinimapOpen] = useState(false);
   const canvasRef = useRef(null);
   const undoRef = useRef([]);
@@ -65,7 +65,16 @@ function FlowEditorInner({
 
   useEffect(() => {
     viewportSyncedRef.current = false;
+    setInspectorOpen(false);
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
   }, [flowId]);
+
+  useEffect(() => {
+    if (agentModeActive) {
+      setInspectorOpen(false);
+    }
+  }, [agentModeActive]);
 
   useEffect(() => {
     if (!instance || document.status.loading || !document.flow) return undefined;
@@ -113,12 +122,6 @@ function FlowEditorInner({
     onRegisterContextSnapshot(getter);
     return () => onRegisterContextSnapshot(null);
   }, [document.flow, document.nodes, document.edges, onRegisterContextSnapshot]);
-
-  useEffect(() => {
-    if (agentModeActive) {
-      setInspectorOpen(false);
-    }
-  }, [agentModeActive]);
 
   const focusCanvas = useCallback(() => {
     canvasRef.current?.focus();
@@ -284,6 +287,22 @@ function FlowEditorInner({
     onSelectedNodeIdsChange?.(nodeIds);
   }, [onSelectedNodeIdsChange]);
 
+  const revealInspectorForNode = useCallback((node) => {
+    if (agentModeActive || !node?.id) return;
+    setSelectedNodeId(node.id);
+    setSelectedEdgeId(null);
+    setInspectorOpen(true);
+    onSelectedNodeIdsChange?.([node.id]);
+  }, [agentModeActive, onSelectedNodeIdsChange]);
+
+  const revealInspectorForEdge = useCallback((edge) => {
+    if (agentModeActive || !edge?.id) return;
+    setSelectedEdgeId(edge.id);
+    setSelectedNodeId(null);
+    setInspectorOpen(true);
+    onSelectedNodeIdsChange?.([]);
+  }, [agentModeActive, onSelectedNodeIdsChange]);
+
   const viewportCenter = useCallback(() => {
     if (!instance) return { x: 80, y: 80 };
     const rect = globalThis.document?.getElementById('flow-editor-canvas')?.getBoundingClientRect();
@@ -394,6 +413,8 @@ function FlowEditorInner({
             onEdgesDelete={handleEdgesDelete}
             onConnect={(connection) => { checkpoint(); document.onConnect(connection); }}
             onSelectionChange={handleSelectionChange}
+            onNodeDoubleClick={(_, node) => revealInspectorForNode(node)}
+            onEdgeDoubleClick={(_, edge) => revealInspectorForEdge(edge)}
             onMoveEnd={(_, viewport) => document.setViewport(viewport)}
             onDrop={(event) => {
               event.preventDefault();
@@ -415,23 +436,34 @@ function FlowEditorInner({
             <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-border)" />
             <Panel position="bottom-right" className="m-3 flex flex-col items-end gap-2">
               {minimapOpen && (
-                <MiniMap
-                  nodeColor={(node) => node.type === 'artifact' ? 'var(--color-accent)' : 'var(--color-muted)'}
-                  maskColor="var(--color-overlay-light)"
-                />
+                <div className="group flow-minimap-shell">
+                  <MiniMap
+                    nodeColor={(node) => node.type === 'artifact' ? 'var(--color-accent)' : 'var(--color-muted)'}
+                    maskColor="var(--color-overlay-light)"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMinimapOpen(false)}
+                    aria-label={strings.flow.hideMinimap}
+                    title={strings.flow.hideMinimap}
+                    className="flow-minimap-minimize flex h-6 w-6 items-center justify-center rounded-md border border-border bg-surface/95 text-muted opacity-0 shadow-sm transition hover:text-primary group-hover:opacity-100 focus-visible:opacity-100"
+                  >
+                    <Minimize2 size={12} strokeWidth={2} />
+                  </button>
+                </div>
               )}
-              <button
-                type="button"
-                onClick={() => setMinimapOpen((open) => !open)}
-                aria-pressed={minimapOpen}
-                aria-label={minimapOpen ? strings.flow.hideMinimap : strings.flow.showMinimap}
-                title={minimapOpen ? strings.flow.hideMinimap : strings.flow.showMinimap}
-                className={`flex h-[26px] w-[26px] items-center justify-center rounded-md border bg-surface text-muted shadow-[0_10px_24px_rgb(0_0_0_/_0.12)] transition hover:text-primary ${
-                  minimapOpen ? 'border-accent/60 text-accent' : 'border-border'
-                }`}
-              >
-                <MapIcon size={14} strokeWidth={1.75} />
-              </button>
+              {!minimapOpen && (
+                <button
+                  type="button"
+                  onClick={() => setMinimapOpen(true)}
+                  aria-pressed={false}
+                  aria-label={strings.flow.showMinimap}
+                  title={strings.flow.showMinimap}
+                  className="flex h-[26px] w-[26px] items-center justify-center rounded-md border border-border bg-surface text-muted shadow-[0_10px_24px_rgb(0_0_0_/_0.12)] transition hover:text-primary"
+                >
+                  <MapIcon size={14} strokeWidth={1.75} />
+                </button>
+              )}
             </Panel>
             <Controls showInteractive={false} />
           </ReactFlow>

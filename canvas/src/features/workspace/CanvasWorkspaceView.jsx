@@ -48,6 +48,7 @@ import { SyncConfirm } from '../../components/SyncConfirm.jsx';
 import { CanvasChrome } from '../../components/CanvasChrome.jsx';
 import { SystemArchitectureModal } from '../../components/SystemArchitectureModal.jsx';
 import { ProjectDeleteConfirm } from '../../components/ProjectDeleteConfirm.jsx';
+import { DeleteLinkConfirm } from '../../components/DeleteLinkConfirm.jsx';
 import { ProjectArchiveLastConfirm } from '../../components/ProjectArchiveLastConfirm.jsx';
 import { ProjectCreateNamePrompt } from '../../components/ProjectCreateNamePrompt.jsx';
 import { EmptyWorkspacePrompt } from '../../components/EmptyWorkspacePrompt.jsx';
@@ -140,7 +141,6 @@ export function CanvasWorkspaceView({
     versionStackOpen,
     setVersionStackOpen,
     stagingDragActive,
-    trayRevealActive,
     cardDockHover,
     trayDropRectRef,
     canvasElement,
@@ -168,6 +168,7 @@ export function CanvasWorkspaceView({
     handleUpdateVersion,
     handleNoteSaveStatus,
     handleInlineSaveUserNote,
+    handleInlineSaveMarkdown,
     handleInlineSaveBookmark,
     handleSaveNoteToProject,
     handleSaveNewNote,
@@ -405,6 +406,26 @@ export function CanvasWorkspaceView({
   } = dialogs;
   const isMobile = useIsMobile();
   const [createFlowOpen, setCreateFlowOpen] = useState(false);
+  const [deleteLinkTarget, setDeleteLinkTarget] = useState(null);
+
+  const requestDeleteCard = useCallback((id) => {
+    const card = state.cards.find((c) => c.id === id);
+    if (card?.type === 'bookmark') {
+      setDeleteLinkTarget({
+        id,
+        name: card.name?.trim() || strings.bookmark.untitled,
+      });
+      return;
+    }
+    void removeCard(id);
+  }, [removeCard, state.cards]);
+
+  const handleConfirmDeleteLink = useCallback(() => {
+    if (!deleteLinkTarget?.id) return;
+    const id = deleteLinkTarget.id;
+    setDeleteLinkTarget(null);
+    void removeCard(id);
+  }, [deleteLinkTarget, removeCard]);
 
   const closeRightDock = useCallback(() => {
     closeWorkspaceTree();
@@ -674,7 +695,7 @@ export function CanvasWorkspaceView({
           cards={filteredCards}
           onOpen={openCardOrExternalLink}
           onPinVersion={pinVersion}
-          onDeleteCard={removeCard}
+          onDeleteCard={requestDeleteCard}
           folderKeySet={folderKeySet}
           folderConnected={folderConnected}
         />
@@ -691,7 +712,7 @@ export function CanvasWorkspaceView({
           onPinVersion={pinVersion}
           onUpdateCard={updateCard}
           onBatchUpdateCardPositions={batchUpdateCardPositions}
-          onDeleteCard={removeCard}
+          onDeleteCard={requestDeleteCard}
           folderKeySet={folderKeySet}
           folderConnected={folderConnected}
           versionStackOpen={versionStackOpen}
@@ -707,6 +728,7 @@ export function CanvasWorkspaceView({
           projectName={state.projectName}
           onPatchCardVersion={handleUpdateVersion}
           onInlineSaveUserNote={handleInlineSaveUserNote}
+          onInlineSaveMarkdown={handleInlineSaveMarkdown}
           onInlineSaveBookmark={handleInlineSaveBookmark}
           savingCardId={savingCardId}
           onLinkDeleteStatus={handleNoteSaveStatus}
@@ -745,19 +767,14 @@ export function CanvasWorkspaceView({
         />
       )}
 
-      {!isMobile
-        && (stagedSyncCards.length > 0 || trayRevealActive || stagingDragActive) && (
+      {!isMobile && (
         <SyncHoldingTray
           stagedCards={stagedSyncCards}
           canvasView={state.canvasView}
           canvasElement={canvasElement}
           onPlace={placeStagedSyncCard}
           onDragActiveChange={handleStagingDragActiveChange}
-          visible={
-            trayRevealActive
-            || stagingDragActive
-            || stagedSyncCards.length > 0
-          }
+          visible
           dropZoneHighlight={cardDockHover}
           onDropZoneRectChange={(rect) => {
             trayDropRectRef.current = rect;
@@ -1000,6 +1017,15 @@ export function CanvasWorkspaceView({
         />
       )}
 
+      {deleteLinkTarget && (
+        <DeleteLinkConfirm
+          linkName={deleteLinkTarget.name}
+          folderConnected={folderConnected}
+          onConfirm={handleConfirmDeleteLink}
+          onCancel={() => setDeleteLinkTarget(null)}
+        />
+      )}
+
       {archiveLastTarget && (
         <ProjectArchiveLastConfirm
           projectName={archiveLastTarget.name}
@@ -1219,11 +1245,13 @@ export function CanvasWorkspaceView({
           cards={state.cards}
           clusterId={clusterId}
           folderHandle={folderHandle}
+          folderConnected={folderConnected}
+          folderKeySet={folderKeySet}
           projectId={effectiveProjectId}
           projectName={state.projectName}
           onClose={() => setOpenCardId(null)}
           onPinVersion={pinVersion}
-          onDeleteCard={removeCard}
+          onDeleteCard={requestDeleteCard}
           onUpdateVersion={(versionNum, updatedVersion) =>
             handleUpdateVersion(openCard.id, versionNum, updatedVersion)
           }
@@ -1330,6 +1358,7 @@ export function CanvasWorkspaceView({
             onRenameThread: handleRenameAgentThread,
             onSwitchThread: handleSwitchAgentThread,
             onDeleteThread: handleDeleteAgentThread,
+            onRefreshContextSession: handleRefreshContextSession,
             registerFlowContextLoader,
           }}
         />

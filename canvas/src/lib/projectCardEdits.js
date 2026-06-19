@@ -7,15 +7,11 @@ import { buildBookmarkPreviewState } from './ingest/createBookmarkArtifact.js';
 import { validateUserNoteName } from './ingest/saveUserNote.js';
 
 /**
- * Update note body/title in project JSON (no folder write).
+ * Update pinned version body in project JSON (no folder write, no rename).
  * @param {object} card
- * @param {{ body: string, name?: string, versionNum: number }} input
+ * @param {{ body: string, versionNum: number }} input
  */
-export function saveUserNoteToProject(card, { body, name, versionNum }) {
-  const nameValidation = validateUserNoteName(name ?? card.name);
-  if (!nameValidation.ok) {
-    return { ok: false, reason: nameValidation.reason };
-  }
+export function saveTextContentToProject(card, { body, versionNum }) {
   const ver = card.versions?.find((v) => v.version === versionNum);
   if (!ver) {
     return { ok: false, reason: 'no_version' };
@@ -26,9 +22,27 @@ export function saveUserNoteToProject(card, { body, name, versionNum }) {
   return {
     ok: true,
     projectOnly: true,
+    cardUpdates: { versions },
+  };
+}
+
+/**
+ * Update note body/title in project JSON (no folder write).
+ * @param {object} card
+ * @param {{ body: string, name?: string, versionNum: number }} input
+ */
+export function saveUserNoteToProject(card, { body, name, versionNum }) {
+  const nameValidation = validateUserNoteName(name ?? card.name);
+  if (!nameValidation.ok) {
+    return { ok: false, reason: nameValidation.reason };
+  }
+  const contentResult = saveTextContentToProject(card, { body, versionNum });
+  if (!contentResult.ok) return contentResult;
+  return {
+    ...contentResult,
     cardUpdates: {
+      ...contentResult.cardUpdates,
       name: nameValidation.name,
-      versions,
     },
   };
 }

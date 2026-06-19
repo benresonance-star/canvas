@@ -16,15 +16,17 @@ import {
   endCanvasInteraction,
 } from '../../lib/canvasInteraction.js';
 import { registerOptimisticCard } from '../../lib/optimisticCards.js';
-import { ensureWritePermission, writeBookmarkFile } from '../../lib/folderWrite.js';
+import { ensureWritePermission, writeBookmarkFile, fileExistsAtFolderPath, removeFileAtFolderPath, bookmarkMarkdownFilenameFromShortcut } from '../../lib/folderWrite.js';
 import { createUserNoteArtifact } from '../../lib/ingest/createUserNote.js';
 import { createBookmarkArtifact } from '../../lib/ingest/createBookmarkArtifact.js';
 import { saveUserNote } from '../../lib/ingest/saveUserNote.js';
-import { saveUserNoteToProject, saveBookmarkToProject } from '../../lib/projectCardEdits.js';
+import { saveMarkdownArtifact } from '../../lib/ingest/saveMarkdownArtifact.js';
+import { saveUserNoteToProject, saveBookmarkToProject, saveTextContentToProject } from '../../lib/projectCardEdits.js';
 import { fetchBookmarkPreview } from '../../lib/bookmarkPreviewApi.js';
 import {
   bookmarkLinkIdFromCardId,
   domainFromUrl,
+  normalizeBookmarkUrl,
   syntheticBookmarkFilename,
 } from '../../lib/bookmarkUrl.js';
 import { hydrateVersion } from '../../lib/previewHydrate.js';
@@ -35,6 +37,7 @@ import {
 } from '../../lib/canvasView.js';
 import {
   artifactRefFromSyncEntry,
+  bookmarkUrlForSyncEntry,
   buildStagedSyncCardFromChange,
   canonicalKeyForSyncEntry,
   mergeNewlyStaged,
@@ -57,8 +60,10 @@ import {
   buildPlacementsFromArrays,
   patchPlacementsMapFromArrays,
 } from '../../lib/artifactPlacementsMap.js';
-import { syncKeysMatch, noteRequiresProjectOnlySave } from '../../lib/filename.js';
-import { addSuppressedSyncKey } from '../../lib/syncSuppressedKeys.js';
+import { syncKeysMatch, noteRequiresProjectOnlySave, cardKeyFromFilename, toCanonicalSyncKey } from '../../lib/filename.js';
+import { addSuppressedSyncKey, addSuppressedBookmarkUrl } from '../../lib/syncSuppressedKeys.js';
+import { getCachedFolderHandle } from '../../lib/folderSessionCache.js';
+import { loadFolderHandle } from '../../lib/folderStore.js';
 import { removeStagedCardsByKey } from '../../lib/canvasCardMerge.js';
 import { requestActionSync } from '../../lib/actionSync.js';
 import { deleteProjectArtifactPrimitive } from '../../lib/primitivesApi.js';
@@ -87,6 +92,89 @@ function bookmarkFilenameForInlineSave(card, version, url) {
     return version.filename;
   }
   return syntheticBookmarkFilename(domainFromUrl(url), version?.version ?? 1, card.id);
+}
+
+export function bookmarkFolderFilenamesToRemove(filename) {
+  const name = String(filename ?? '').trim();
+  if (!name) return [];
+  const candidates = new Set([name]);
+  if (/\.url$/i.test(name)) {
+    candidates.add(bookmarkMarkdownFilenameFromShortcut(name));
+  } else if (/\.bookmark\.md$/i.test(name)) {
+    candidates.add(name.replace(/\.bookmark\.md$/i, '.url'));
+  }
+  return [...candidates];
+}
+
+export function bookmarkFolderPathsToRemove(card) {
+  const versions = card?.versions ?? [];
+  const pinned =
+    versions.find((v) => v.version === card.pinnedVersion) ?? versions[0];
+  const filename = pinned?.filename;
+  const relativePath = String(pinned?.relativePath ?? pinned?.path ?? '')
+    .replace(/\\/g, '/');
+  const paths = new Set();
+  const basenames = bookmarkFolderFilenamesToRemove(filename);
+  for (const base of basenames) {
+    paths.add(base);
+    if (relativePath.includes('/')) {
+      const dir = relativePath.slice(0, relativePath.lastIndexOf('/') + 1);
+      paths.add(`${dir}${base}`);
+    }
+  }
+  if (!basenames.length && relativePath) {
+    paths.add(relativePath);
+  }
+  return [...paths].filter(Boolean);
+}
+
+export async function resolveBookmarkFolderHandle(projectId, folderHandle) {
+  if (folderHandle) return folderHandle;
+  if (!projectId) return null;
+  const cached = getCachedFolderHandle(projectId);
+  if (cached) return cached;
+  return loadFolderHandle(projectId);
+}
+
+export async function cleanupBookmarkFolderFile({
+  folderHandle,
+  card,
+  ensureWrite = ensureWritePermission,
+  existsAtPath = fileExistsAtFolderPath,
+  removeAtPath = removeFileAtFolderPath,
+} = {}) {
+  if (!folderHandle || card?.type !== 'bookmark') {
+    return { attempted: false, removed: [], candidatesFound: false };
+  }
+  const paths = bookmarkFolderPathsToRemove(card);
+  if (!paths.length) {
+    return { attempted: false, removed: [], candidatesFound: false };
+  }
+  const writable = await ensureWrite(folderHandle);
+  if (!writable) {
+    return {
+      attempted: true,
+      removed: [],
+      skipped: 'write_denied',
+      candidatesFound: false,
+    };
+  }
+  const removed = [];
+  let candidatesFound = false;
+  for (const path of paths) {
+    try {
+      if (await existsAtPath(folderHandle, path)) {
+        candidatesFound = true;
+        await removeAtPath(folderHandle, path);
+        removed.push(path);
+      }
+    } catch (e) {
+      if (e?.name !== 'NotFoundError') {
+        console.warn('Bookmark folder file cleanup failed:', path, e);
+      }
+    }
+  }
+  return { attempted: true, removed, candidatesFound };
 }
 
 export async function cleanupProjectArtifactForSyncEntry({
@@ -166,6 +254,72 @@ export function updateCardVersionInStateRef(stateRef, cardId, versionNum, update
   };
   stateRef.current = nextState;
   return nextState;
+}
+
+/**
+ * @param {object} card
+ * @param {number} existingCardCount
+ */
+export function buildNewBookmarkCanvasCard(card, existingCardCount) {
+  return {
+    ...card,
+    x: 100 + (existingCardCount % 4) * 320,
+    y: 100 + Math.floor(existingCardCount / 4) * 240,
+  };
+}
+
+/**
+ * Persist a new bookmark card to canvas state, local cache, and structural sync.
+ * @internal Exported for tests.
+ */
+export async function finalizeNewBookmarkCanvasSave({
+  projectId,
+  result,
+  stateRef,
+  stagedSyncCardsRef,
+  setState,
+  registerOptimisticCard: registerOptimistic,
+  commitProjectDocument: commitDocument,
+  setFolderPresentKeys,
+  folderHandle = null,
+  refreshGraph: refreshGraphFn = async () => {},
+}) {
+  const newCard = buildNewBookmarkCanvasCard(
+    result.card,
+    stateRef.current.cards?.length ?? 0,
+  );
+  const nextState = {
+    ...stateRef.current,
+    cards: [...(stateRef.current.cards ?? []), newCard],
+  };
+  stateRef.current = nextState;
+  setState(nextState);
+  if (projectId && newCard.id) {
+    registerOptimistic(projectId, newCard.id);
+  }
+  const commitResult = await commitDocument(projectId, {
+    state: stateRef.current,
+    stagedSyncCards: stagedSyncCardsRef.current,
+    reason: 'bookmark:create',
+    pushRemote: false,
+  });
+  if (!commitResult?.ok) {
+    throw commitResult?.error ?? new Error('Could not save link to project');
+  }
+  if (folderHandle && result.card?.key) {
+    setFolderPresentKeys((keys) => {
+      const next = new Set(keys || []);
+      next.add(result.card.key);
+      const filename = result.card.versions?.[0]?.filename;
+      if (filename) {
+        next.add(cardKeyFromFilename(filename));
+        next.add(toCanonicalSyncKey(filename));
+      }
+      return [...next];
+    });
+  }
+  void refreshGraphFn();
+  return newCard;
 }
 
 /**
@@ -271,13 +425,7 @@ export function useCanvasDocument({ refs, deps }) {
 
   const resolveCanvasFitOptions = useCallback(() => {
     const viewport = canvasViewportSizeRef.current;
-    const trayVisible =
-      !isMobile
-      && (
-        stagedSyncCards.length > 0
-        || trayRevealActive
-        || stagingDragActive
-      );
+    const trayVisible = !isMobile;
     return {
       ...canvasFitInsets(viewport.height, {
         trayVisible,
@@ -287,9 +435,6 @@ export function useCanvasDocument({ refs, deps }) {
     };
   }, [
     isMobile,
-    stagedSyncCards.length,
-    trayRevealActive,
-    stagingDragActive,
     canvasViewportSizeRef,
   ]);
 
@@ -309,23 +454,13 @@ export function useCanvasDocument({ refs, deps }) {
       }));
     };
     applyFit();
-    const trayVisible =
-      !isMobile
-      && (
-        stagedSyncCards.length > 0
-        || trayRevealActive
-        || stagingDragActive
-      );
-    if (trayVisible) {
+    if (!isMobile) {
       requestAnimationFrame(applyFit);
     }
   }, [
     setCanvasView,
     resolveCanvasFitOptions,
     isMobile,
-    stagedSyncCards.length,
-    trayRevealActive,
-    stagingDragActive,
     canvasViewportSizeRef,
     pendingFitToExtentRef,
     pendingFitCardsRef,
@@ -823,7 +958,7 @@ export function useCanvasDocument({ refs, deps }) {
 
   const handleInlineSaveUserNote = useCallback(async (card, { body, name }) => {
     const projectId = activeProjectIdRef.current;
-    if (!projectId) return;
+    if (!projectId) return false;
 
     const projectOnly = noteRequiresProjectOnlySave({
       folderHandle,
@@ -842,19 +977,23 @@ export function useCanvasDocument({ refs, deps }) {
         });
         if (result.reason === 'name_required') {
           handleNoteSaveStatus({ error: strings.userNote.nameRequired });
-          return;
+          return false;
         }
         if (result.reason === 'name_invalid') {
           handleNoteSaveStatus({ error: strings.userNote.nameInvalid });
-          return;
+          return false;
         }
         if (!result.ok || !result.cardUpdates) {
           handleNoteSaveStatus({ error: strings.userNote.saveFailed });
-          return;
+          return false;
         }
         persistCardEdits(card.id, result.cardUpdates);
-        handleNoteSaveStatus({ toast: strings.userNote.savedProjectOnly });
-        return;
+        handleNoteSaveStatus({
+          toast: folderHandle && folderKeySet?.size
+            ? strings.userNote.savedProjectOnlyMissingFromFolder
+            : strings.userNote.savedProjectOnly,
+        });
+        return true;
       }
 
       const result = await saveUserNote({
@@ -870,27 +1009,27 @@ export function useCanvasDocument({ refs, deps }) {
       });
       if (result.reason === 'no_folder') {
         handleNoteSaveStatus({ error: strings.userNote.needFolder });
-        return;
+        return false;
       }
       if (result.reason === 'write_denied') {
         handleNoteSaveStatus({ error: strings.userNote.writeDenied });
-        return;
+        return false;
       }
       if (result.reason === 'name_required') {
         handleNoteSaveStatus({ error: strings.userNote.nameRequired });
-        return;
+        return false;
       }
       if (result.reason === 'name_invalid') {
         handleNoteSaveStatus({ error: strings.userNote.nameInvalid });
-        return;
+        return false;
       }
       if (result.reason === 'name_collision') {
         handleNoteSaveStatus({ error: strings.userNote.nameCollision });
-        return;
+        return false;
       }
       if (!result.ok) {
         handleNoteSaveStatus({ error: strings.userNote.saveFailed });
-        return;
+        return false;
       }
       if (result.cardUpdates) {
         persistCardEdits(card.id, result.cardUpdates);
@@ -900,10 +1039,98 @@ export function useCanvasDocument({ refs, deps }) {
       }
       if (result.apiUnavailable) {
         handleNoteSaveStatus({ toast: strings.sync.primitivesNotUpdated });
+      } else {
+        handleNoteSaveStatus({ toast: strings.userNote.savedToFolder });
       }
       await refreshGraph();
+      return true;
     } catch (e) {
       handleNoteSaveStatus({ error: e.message });
+      return false;
+    } finally {
+      setSavingCardId(null);
+    }
+  }, [
+    activeProjectIdRef,
+    stateRef,
+    folderHandle,
+    clusterId,
+    folderKeySet,
+    persistCardEdits,
+    handleUpdateVersion,
+    handleNoteSaveStatus,
+    refreshGraph,
+  ]);
+
+  const handleInlineSaveMarkdown = useCallback(async (card, { body }) => {
+    const projectId = activeProjectIdRef.current;
+    if (!projectId) return false;
+
+    const projectOnly = noteRequiresProjectOnlySave({
+      folderHandle,
+      folderConnected: Boolean(folderHandle),
+      folderKeySet,
+      card,
+    });
+
+    setSavingCardId(card.id);
+    try {
+      if (projectOnly || !folderHandle) {
+        const result = saveTextContentToProject(card, {
+          body,
+          versionNum: card.pinnedVersion,
+        });
+        if (!result.ok || !result.cardUpdates) {
+          handleNoteSaveStatus({ error: strings.userNote.saveFailed });
+          return false;
+        }
+        persistCardEdits(card.id, result.cardUpdates);
+        handleNoteSaveStatus({
+          toast: folderHandle && folderKeySet?.size
+            ? strings.userNote.savedProjectOnlyMissingFromFolder
+            : strings.userNote.savedProjectOnly,
+        });
+        return true;
+      }
+
+      const result = await saveMarkdownArtifact({
+        projectId,
+        projectName: stateRef.current.projectName,
+        folderHandle,
+        clusterId,
+        card,
+        versionNum: card.pinnedVersion,
+        body,
+        cards: stateRef.current.cards,
+      });
+      if (result.reason === 'no_folder') {
+        handleNoteSaveStatus({ error: strings.userNote.needFolder });
+        return false;
+      }
+      if (result.reason === 'write_denied') {
+        handleNoteSaveStatus({ error: strings.userNote.writeDenied });
+        return false;
+      }
+      if (!result.ok) {
+        handleNoteSaveStatus({ error: strings.userNote.saveFailed });
+        return false;
+      }
+      if (result.cardUpdates) {
+        persistCardEdits(card.id, result.cardUpdates);
+      } else {
+        handleUpdateVersion(card.id, result.versionNum, result.version);
+        void requestActionSync('structuralChange', { projectId });
+      }
+      if (result.apiUnavailable) {
+        handleNoteSaveStatus({ toast: strings.sync.primitivesNotUpdated });
+      } else {
+        handleNoteSaveStatus({ toast: strings.userNote.savedToFolder });
+      }
+      await refreshGraph();
+      return true;
+    } catch (e) {
+      handleNoteSaveStatus({ error: e.message });
+      return false;
     } finally {
       setSavingCardId(null);
     }
@@ -950,14 +1177,22 @@ export function useCanvasDocument({ refs, deps }) {
           handleNoteSaveStatus({ error: strings.userNote.writeDenied });
           return;
         }
+        const nextUrl = cardUpdates.versions?.[0]?.externalUrl ?? url;
+        const urlChanged =
+          normalizeBookmarkUrl(currentVersion?.externalUrl)
+          !== normalizeBookmarkUrl(nextUrl);
         const targetFilename = bookmarkFilenameForInlineSave(
           card,
           currentVersion,
-          cardUpdates.versions?.[0]?.externalUrl ?? url,
+          nextUrl,
         );
+        const filenameChanged = targetFilename !== currentVersion.filename;
+        if (urlChanged || filenameChanged) {
+          await cleanupBookmarkFolderFile({ folderHandle, card });
+        }
         const writtenFilename = await writeBookmarkFile(folderHandle, {
           filename: targetFilename,
-          url: cardUpdates.versions?.[0]?.externalUrl ?? url,
+          url: nextUrl,
           title: cardUpdates.name,
         });
         cardUpdates = {
@@ -991,9 +1226,13 @@ export function useCanvasDocument({ refs, deps }) {
       return result;
     }
     persistCardEdits(card.id, result.cardUpdates);
-    handleNoteSaveStatus({ toast: strings.userNote.savedProjectOnly });
+    handleNoteSaveStatus({
+      toast: folderHandle && folderKeySet?.size
+        ? strings.userNote.savedProjectOnlyMissingFromFolder
+        : strings.userNote.savedProjectOnly,
+    });
     return { ok: true };
-  }, [persistCardEdits, handleNoteSaveStatus]);
+  }, [persistCardEdits, handleNoteSaveStatus, folderHandle, folderKeySet]);
 
   const handleSaveNewNote = useCallback(async ({ prefix, name, body, linkTargetRefs = [] }) => {
     const projectId = activeProjectIdRef.current;
@@ -1088,7 +1327,11 @@ export function useCanvasDocument({ refs, deps }) {
     linkTargetRefs = [],
   }) => {
     const projectId = activeProjectIdRef.current;
-    if (!projectId) return;
+    if (!projectId) {
+      setSyncStatus({ error: strings.bookmark.needProject });
+      setTimeout(() => setSyncStatus(null), 4000);
+      return;
+    }
     setSavingLink(true);
     try {
       if (folderHandle) {
@@ -1113,37 +1356,26 @@ export function useCanvasDocument({ refs, deps }) {
       if (result.ingest.ok && result.ingest.clusterId) {
         clusterContextProjectIdRef.current = projectId;
         setClusterId(result.ingest.clusterId);
-        void refreshGraph({
-          clusterId: result.ingest.clusterId,
-          projectId,
-          force: true,
-        });
       } else if (!result.ingest.ok) {
         setSyncStatus({ toast: strings.bookmark.primitivesNotUpdated });
         setTimeout(() => setSyncStatus(null), 4000);
       }
-      const newCard = {
-        ...result.card,
-        x: 100 + (stateRef.current.cards.length % 4) * 320,
-        y: 100 + Math.floor(stateRef.current.cards.length / 4) * 240,
-      };
-      const nextState = {
-        ...stateRef.current,
-        cards: [...stateRef.current.cards, newCard],
-      };
-      stateRef.current = nextState;
-      setState(nextState);
-      if (projectId && newCard.id) {
-        registerOptimisticCard(projectId, newCard.id);
-      }
-      if (projectId) {
-        await saveProjectById(projectId, stateRef.current, stagedSyncCardsRef.current, {
-          pushRemote: false,
-        });
-      }
-      requestStructuralSync();
+      await finalizeNewBookmarkCanvasSave({
+        projectId,
+        result,
+        stateRef,
+        stagedSyncCardsRef,
+        setState,
+        registerOptimisticCard,
+        commitProjectDocument,
+        setFolderPresentKeys,
+        folderHandle,
+        refreshGraph,
+      });
+      await requestStructuralSync({ awaitLocal: true });
       setAddLinkOpen(false);
-      await refreshGraph();
+      setSyncStatus({ toast: strings.bookmark.savedToCanvas });
+      setTimeout(() => setSyncStatus(null), 4000);
     } catch (e) {
       setSyncStatus({ error: e.message });
       setTimeout(() => setSyncStatus(null), 4000);
@@ -1157,12 +1389,13 @@ export function useCanvasDocument({ refs, deps }) {
     folderHandle,
     clusterId,
     refreshGraph,
-    requestStructuralSync,
     setSyncStatus,
     setClusterId,
     clusterContextProjectIdRef,
     setAddLinkOpen,
+    setFolderPresentKeys,
     setState,
+    requestStructuralSync,
   ]);
 
   const handleSaveNewFlow = useCallback(async ({ title, description = '', position }) => {
@@ -1234,6 +1467,10 @@ export function useCanvasDocument({ refs, deps }) {
     if (card?.key && projectId) {
       addSuppressedSyncKey(projectId, card.key);
     }
+    if (card?.type === 'bookmark' && projectId) {
+      const bookmarkUrl = bookmarkUrlForSyncEntry(card);
+      if (bookmarkUrl) addSuppressedBookmarkUrl(projectId, bookmarkUrl);
+    }
     const stagedBefore = stagedSyncCardsRef.current;
     const nextStaged = removeStagedCardsByKey(stagedBefore, card?.key);
     if (nextStaged.length !== stagedBefore.length) {
@@ -1283,6 +1520,37 @@ export function useCanvasDocument({ refs, deps }) {
         allowCleanupOverwrite: true,
       });
     }
+    const effectiveFolderHandle = await resolveBookmarkFolderHandle(
+      projectId,
+      folderHandle,
+    );
+    const folderCleanup = await cleanupBookmarkFolderFile({
+      folderHandle: effectiveFolderHandle,
+      card,
+    });
+    if (folderCleanup.removed?.length) {
+      invalidateFolderScan();
+      setFolderPresentKeys((keys) => {
+        const keysToRemove = new Set();
+        for (const path of folderCleanup.removed) {
+          keysToRemove.add(toCanonicalSyncKey(cardKeyFromFilename(path)));
+        }
+        if (card?.key) keysToRemove.add(toCanonicalSyncKey(card.key));
+        return (keys || []).filter((k) => !keysToRemove.has(toCanonicalSyncKey(k)));
+      });
+    }
+    if (card?.type === 'bookmark' && folderCleanup.attempted) {
+      if (folderCleanup.skipped === 'write_denied') {
+        setSyncStatus({ toast: strings.bookmark.deleteFolderWriteDenied });
+        setTimeout(() => setSyncStatus(null), 6000);
+      } else if (
+        folderCleanup.removed.length === 0
+        && folderCleanup.candidatesFound
+      ) {
+        setSyncStatus({ toast: strings.bookmark.deleteFolderFileFailed });
+        setTimeout(() => setSyncStatus(null), 6000);
+      }
+    }
     await cleanupProjectArtifactForSyncEntry({
       projectId,
       entry: card,
@@ -1302,6 +1570,10 @@ export function useCanvasDocument({ refs, deps }) {
     activeThreadIdRef,
     agentChatArtifactMetaRef,
     refreshGraph,
+    folderHandle,
+    invalidateFolderScan,
+    setFolderPresentKeys,
+    setSyncStatus,
   ]);
 
   const rehydratePreview = useCallback(async (cardId, versionNum, { force = false } = {}) => {
@@ -1389,6 +1661,7 @@ export function useCanvasDocument({ refs, deps }) {
     handleNoteSaveStatus,
     persistCardEdits,
     handleInlineSaveUserNote,
+    handleInlineSaveMarkdown,
     handleInlineSaveBookmark,
     handleSaveNoteToProject,
     handleSaveNewNote,

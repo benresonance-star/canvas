@@ -122,6 +122,22 @@ function bookmarkUrlForFolderGroup(group) {
 }
 
 /**
+ * @param {{ type?: string, key?: string, group?: object }} change
+ * @param {Set<string>} suppressedBookmarkUrls
+ */
+export function isSuppressedBookmarkFolderChange(change, suppressedBookmarkUrls) {
+  if (!suppressedBookmarkUrls?.size) return false;
+  const cardType = cardTypeFromSync({
+    ext: change.group?.parsed?.ext,
+    prefix: change.group?.parsed?.prefix,
+    name: change.group?.parsed?.name,
+  });
+  if (cardType !== 'bookmark') return false;
+  const url = bookmarkUrlForFolderGroup(change.group);
+  return Boolean(url && suppressedBookmarkUrls.has(url));
+}
+
+/**
  * @param {{ key?: string, prefix?: string, name?: string, versions?: Array<{ filename?: string }> }} entry
  * @param {string} folderKey
  */
@@ -460,14 +476,21 @@ export function filterSyncChangesForConfirm(
   knownAgentChatKeys = null,
 ) {
   return (changes ?? []).filter((change) => {
+    const cardType = cardTypeFromSync({
+      ext: change.group?.parsed?.ext,
+      prefix: change.group?.parsed?.prefix,
+      name: change.group?.parsed?.name,
+    });
+    if (
+      cardType === 'bookmark'
+      && change.type === 'updated'
+      && (!change.newVersions || change.newVersions.length === 0)
+    ) {
+      return false;
+    }
     if (change.type !== 'new') return true;
     if (findSyncEntryForFolderGroup(canvasCards, change.key, change.group)) return false;
     if (findSyncEntryForFolderGroup(stagedCards, change.key, change.group)) return false;
-    const cardType = cardTypeFromSync({
-      ext: change.group.parsed.ext,
-      prefix: change.group.parsed.prefix,
-      name: change.group.parsed.name,
-    });
     if (cardType !== 'agent_chat') return true;
     const canonical = toCanonicalSyncKey(change.key);
     if (knownAgentChatKeys?.has(canonical)) return false;
@@ -482,19 +505,20 @@ export function filterSyncChangesForConfirm(
  * @param {Record<string, object>} grouped
  * @param {object[]} canvasCards
  * @param {object[]} stagedCards
- * @param {{ suppressedKeys?: Set<string>, knownAgentChatKeys?: Set<string> | null }} [opts]
+ * @param {{ suppressedKeys?: Set<string>, suppressedBookmarkUrls?: Set<string>, knownAgentChatKeys?: Set<string> | null }} [opts]
  */
 export function buildConfirmChangesForDialog(
   grouped,
   canvasCards,
   stagedCards,
-  { suppressedKeys = new Set(), knownAgentChatKeys = null } = {},
+  { suppressedKeys = new Set(), suppressedBookmarkUrls = new Set(), knownAgentChatKeys = null } = {},
 ) {
   const { changes } = buildSyncChangesFromFolder(grouped, canvasCards, stagedCards);
   const filtered = (changes ?? []).filter(
     (c) =>
       !suppressedKeys.has(c.key)
-      && !suppressedKeys.has(toCanonicalSyncKey(c.key)),
+      && !suppressedKeys.has(toCanonicalSyncKey(c.key))
+      && !isSuppressedBookmarkFolderChange(c, suppressedBookmarkUrls),
   );
   const { confirmChanges } = partitionSyncChanges(filtered);
   return filterSyncChangesForConfirm(
@@ -513,16 +537,17 @@ export function buildConfirmChangesForDialog(
  * @param {Record<string, object>} grouped
  * @param {object[]} canvasCards
  * @param {object[]} stagedCards
- * @param {{ suppressedKeys?: Set<string>, knownAgentChatKeys?: Set<string> | null }} [opts]
+ * @param {{ suppressedKeys?: Set<string>, suppressedBookmarkUrls?: Set<string>, knownAgentChatKeys?: Set<string> | null }} [opts]
  */
 export function buildFolderConnectConfirmChanges(
   grouped,
   canvasCards,
   stagedCards,
-  { suppressedKeys = new Set(), knownAgentChatKeys = null } = {},
+  { suppressedKeys = new Set(), suppressedBookmarkUrls = new Set(), knownAgentChatKeys = null } = {},
 ) {
   const primary = buildConfirmChangesForDialog(grouped, canvasCards, stagedCards, {
     suppressedKeys,
+    suppressedBookmarkUrls,
     knownAgentChatKeys,
   });
   if (primary.length > 0) return primary;
@@ -539,7 +564,8 @@ export function buildFolderConnectConfirmChanges(
     .filter(
       (p) =>
         !suppressedKeys.has(p.key)
-        && !suppressedKeys.has(toCanonicalSyncKey(p.key)),
+        && !suppressedKeys.has(toCanonicalSyncKey(p.key))
+        && !isSuppressedBookmarkFolderChange(p, suppressedBookmarkUrls),
     )
     .map(({ key, group }) => {
       const existing =
@@ -562,7 +588,9 @@ export function buildFolderConnectConfirmChanges(
 
   if (patchChanges.length > 0) {
     return filterSyncChangesForConfirm(
-      patchChanges,
+      patchChanges.filter(
+        (change) => !isSuppressedBookmarkFolderChange(change, suppressedBookmarkUrls),
+      ),
       canvasCards,
       stagedCards,
       knownAgentChatKeys,
@@ -594,7 +622,8 @@ export function buildFolderConnectConfirmChanges(
         existing,
         newVersions,
       };
-    });
+    })
+    .filter((change) => !isSuppressedBookmarkFolderChange(change, suppressedBookmarkUrls));
 
   return filterSyncChangesForConfirm(
     diskLinked,
@@ -634,6 +663,7 @@ export function stagedSyncCardToCanvasCard(staged, worldX, worldY) {
     x: worldX - w / 2,
     y: worldY - h / 2,
     ...(staged.audioSkinColor ? { audioSkinColor: staged.audioSkinColor } : {}),
+    ...(staged.minimalPreview ? { minimalPreview: true } : {}),
   };
 }
 
@@ -655,7 +685,7 @@ export function placeStagedCardOnCanvas(cards, staged, worldX, worldY) {
 }
 
 /**
- * @param {{ id: string, key?: string, prefix?: string, name?: string, type: string, versions?: unknown[], pinnedVersion?: number, audioSkinColor?: string }} card
+ * @param {{ id: string, key?: string, prefix?: string, name?: string, type: string, versions?: unknown[], pinnedVersion?: number, audioSkinColor?: string, minimalPreview?: boolean }} card
  */
 export function canvasCardToStaged(card) {
   const relativePath = card.relativePath ?? card.versions?.[0]?.relativePath ?? null;
@@ -669,6 +699,7 @@ export function canvasCardToStaged(card) {
     versions: card.versions ?? [],
     pinnedVersion: card.pinnedVersion ?? card.versions?.[0]?.version ?? 1,
     ...(card.audioSkinColor ? { audioSkinColor: card.audioSkinColor } : {}),
+    ...(card.minimalPreview ? { minimalPreview: true } : {}),
   };
 }
 

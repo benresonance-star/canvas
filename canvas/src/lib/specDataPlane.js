@@ -98,6 +98,7 @@ function stagedToPlacedCard(staged, placed) {
     height: placed.h ?? undefined,
     ...(placed.cluster_id ? { clusterId: placed.cluster_id } : {}),
     ...(staged.audioSkinColor ? { audioSkinColor: staged.audioSkinColor } : {}),
+    ...(staged.minimalPreview ? { minimalPreview: true } : {}),
   };
 }
 

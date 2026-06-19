@@ -227,7 +227,7 @@ export function isCardMissingFromFolder({
   folderKeySet = null,
   card = null,
 } = {}) {
-  if (!folderConnected || !folderKeySet || !card?.key) return false;
+  if (!folderConnected || !folderKeySet?.size || !card?.key) return false;
   if (!isFolderBackedCanvasCard(card)) return false;
   return !folderKeySetMatchesCard(folderKeySet, card);
 }
@@ -243,10 +243,9 @@ export function noteRequiresProjectOnlySave({
   card = null,
 } = {}) {
   if (!folderHandle) return true;
-  if (cardHasNestedFolderPath(card)) return true;
   if (
     folderConnected
-    && folderKeySet
+    && folderKeySet?.size
     && card?.key
     && !folderKeySetMatchesCard(folderKeySet, card)
     && isFolderBackedCanvasCard(card)

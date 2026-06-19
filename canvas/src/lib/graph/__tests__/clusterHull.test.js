@@ -106,4 +106,38 @@ describe('buildClusterHulls', () => {
     expect(atOrigin[0].pathD).not.toBe(offset[0].pathD);
     expect(offset[0].centerX).toBeGreaterThan(atOrigin[0].centerX);
   });
+
+  it('does not draw a hull for canvas cards that are not cluster members', () => {
+    const cards = [
+      {
+        id: 'clustered',
+        key: 'clustered',
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        type: 'user_note',
+        pinnedVersion: 1,
+        versions: [{ version: 1, artifactRef: { id: 'a1', type: 'artifact' } }],
+      },
+      {
+        id: 'unclustered',
+        key: 'unclustered',
+        x: 400,
+        y: 0,
+        width: 100,
+        height: 100,
+        type: 'user_note',
+        pinnedVersion: 1,
+        versions: [{ version: 1, artifactRef: { id: 'a2', type: 'artifact' } }],
+      },
+    ];
+    const hulls = buildClusterHulls({
+      clusters: [{ id: 'cl1', name: 'Selected' }],
+      membersByClusterId: new Map([['cl1', [{ id: 'a1', type: 'artifact' }]]]),
+      cards,
+    });
+    expect(hulls).toHaveLength(1);
+    expect(hulls[0].memberCardIds).toEqual(['clustered']);
+  });
 });
