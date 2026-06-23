@@ -50,6 +50,40 @@ function contentHash(text) {
   return createHash('sha256').update(String(text ?? '')).digest('hex');
 }
 
+function normalizeReferenceImages(inputImages, referenceArtifactIds) {
+  if (!Array.isArray(inputImages) || !inputImages.length) return new Map();
+  const allowed = new Set(referenceArtifactIds);
+  const byArtifactId = new Map();
+  for (const image of inputImages) {
+    const artifactId = String(image?.artifactId || '').trim();
+    const dataUrl = String(image?.dataUrl || '').trim();
+    if (!artifactId || !allowed.has(artifactId)) continue;
+    if (!dataUrl.startsWith('data:image/')) continue;
+    byArtifactId.set(artifactId, {
+      dataUrl,
+      filename: image?.filename ?? null,
+    });
+  }
+  return byArtifactId;
+}
+
+function applyTransientReferenceImages(references, transientImages) {
+  if (!transientImages.size) return references;
+  return references.map((artifact) => {
+    const transient = transientImages.get(artifact.id);
+    if (!transient) return artifact;
+    return {
+      ...artifact,
+      payload_text: transient.dataUrl,
+      metadata: {
+        ...(artifact.metadata ?? {}),
+        dataUrl: transient.dataUrl,
+        transientReferenceFilename: transient.filename,
+      },
+    };
+  });
+}
+
 async function relate(from, type, to, metadata = {}) {
   const existing = await query(
     `SELECT id FROM relationship
@@ -95,6 +129,14 @@ export async function executeAgent(agentId, input = {}) {
     const artifact = await getArtifactById(id);
     if (artifact) references.push(artifact);
   }
+  const transientReferenceImages = normalizeReferenceImages(
+    input.referenceImages,
+    referenceArtifactIds,
+  );
+  const transformerReferences = applyTransientReferenceImages(
+    references,
+    transientReferenceImages,
+  );
 
   const originalPromptSnapshot = promptArtifact.payload_text
     || promptArtifact.metadata?.body
@@ -155,7 +197,7 @@ export async function executeAgent(agentId, input = {}) {
     const transformed = await runImageTransformer({
       prompt: agentPromptSnapshot,
       referenceArtifactIds,
-      references,
+      references: transformerReferences,
       provider: settings.provider || 'local',
       model: settings.model,
       settings,

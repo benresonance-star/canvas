@@ -135,9 +135,11 @@ export async function createGeneratedImageArtifacts({
         width: image.width,
         height: image.height,
       };
-      await client.query(
+      const inserted = await client.query(
         `INSERT INTO artifact (id, type, uri, content_hash, version, source_authority, retrieved_at, payload_text, metadata)
-         VALUES ($1, 'image', $2, $3, $4, 'canvas.agent', NOW(), $5, $6)`,
+         VALUES ($1, 'image', $2, $3, $4, 'canvas.agent', NOW(), $5, $6)
+         ON CONFLICT (content_hash) DO UPDATE SET content_hash = EXCLUDED.content_hash
+         RETURNING *`,
         [
           id,
           `generated:${execution.id}:${image.version}`,
@@ -147,13 +149,14 @@ export async function createGeneratedImageArtifacts({
           JSON.stringify(artifactMetadata),
         ],
       );
+      const row = inserted.rows[0];
       artifacts.push({
-        id,
-        type: 'image',
-        uri: `generated:${execution.id}:${image.version}`,
-        content_hash: image.contentHash,
-        payload_text: image.dataUrl,
-        metadata: artifactMetadata,
+        id: row.id,
+        type: row.type,
+        uri: row.uri,
+        content_hash: row.content_hash,
+        payload_text: row.payload_text,
+        metadata: row.metadata,
       });
     }
     await client.query('COMMIT');

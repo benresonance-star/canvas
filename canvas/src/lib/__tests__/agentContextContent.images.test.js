@@ -77,6 +77,23 @@ describe('loadContextDocumentForCard (image)', () => {
     expect(folderHandle.getFileHandle).toHaveBeenCalledWith('photo.jpg', undefined);
   });
 
+  it('prefers the linked source file over the cached preview blob', async () => {
+    getPreview.mockResolvedValue(new Blob(['preview-bytes'], { type: 'image/png' }));
+    readFileEntry.mockResolvedValue({
+      dataUrl: 'data:image/png;base64,c291cmNlLWZpbGU=',
+    });
+    const folderHandle = {
+      getFileHandle: vi.fn().mockResolvedValue({}),
+    };
+
+    const doc = await loadContextDocumentForCard(imageCard(), { folderHandle });
+
+    expect(doc.status).toBe('included');
+    expect(doc.imageDataUrl).toBe('data:image/png;base64,c291cmNlLWZpbGU=');
+    expect(readFileEntry).toHaveBeenCalled();
+    expect(getPreview).not.toHaveBeenCalled();
+  });
+
   it('returns needs_folder when no preview, inline data, artifact, or folder', async () => {
     const card = imageCard({
       versions: [{ version: 1, filename: 'photo.png', content_hash: 'h3' }],

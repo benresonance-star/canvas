@@ -166,7 +166,10 @@ async function runOpenAiImageTransformer(request) {
     output_format: outputFormat,
   };
 
-  const referenceImages = (request.references ?? [])
+  const imageReferenceArtifacts = (request.references ?? [])
+    .filter((artifact) => artifact?.type === 'image' || artifactDataUrl(artifact));
+
+  const referenceImages = imageReferenceArtifacts
     .map((artifact) => {
       const dataUrl = artifactDataUrl(artifact);
       const parsed = imageBytesFromDataUrl(dataUrl);
@@ -174,8 +177,8 @@ async function runOpenAiImageTransformer(request) {
     })
     .filter(Boolean);
 
-  if ((request.references?.length ?? 0) > 0 && referenceImages.length === 0) {
-    throw new Error('Connected reference images are not available to the server yet. Use an inline image artifact or run with the local placeholder provider.');
+  if (imageReferenceArtifacts.length > 0 && referenceImages.length === 0) {
+    throw new Error('Connected reference images are not available to the server yet. Reconnect the project folder or rehydrate the image preview, then run the agent again.');
   }
 
   let parsed;
@@ -188,7 +191,7 @@ async function runOpenAiImageTransformer(request) {
     referenceImages.forEach((reference, index) => {
       const ext = reference.mimeType.split('/')[1] || 'png';
       const blob = new Blob([reference.bytes], { type: reference.mimeType });
-      form.append('image', blob, `reference-${index + 1}.${ext}`);
+      form.append('image[]', blob, `reference-${index + 1}.${ext}`);
     });
     const res = await fetchOpenAI(OPENAI_IMAGES_EDIT_URL, {
       method: 'POST',

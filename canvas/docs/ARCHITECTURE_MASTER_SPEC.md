@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.06.24.1
-**Version label:** gemma-multimodal-agent-v5-slice
+**Version:** 2026.06.24.2
+**Version label:** agent-reference-image-bytes
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -1100,6 +1100,14 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-06-24 — Agent reference image bytes for execution (implemented)
+
+- Bumped the active spec to `2026.06.24.2`.
+- Image-generation agent runs resolve reference image bytes on the client (`resolveAgentReferenceImages`) from linked folder files, preview cache, inline `dataUrl`, or artifact `payload_text`, then pass transient `referenceImages` on `POST /api/agents/:id/execute` (not persisted to project state).
+- Server merges transient reference payloads into transformer inputs (`agentExecutionRunner.js`); OpenAI edits use `image[]` multipart field for multiple references.
+- `loadImageDataUrlForPinned` prefers linked folder files before preview cache so on-disk originals win for both chat context and agent execution.
+- Generated image artifact insert uses `ON CONFLICT (content_hash)` upsert to avoid duplicate-key failures on re-run.
 
 ### 2026-06-24 — Gemma multimodal chat + Agent Artifact v5 slice (implemented)
 

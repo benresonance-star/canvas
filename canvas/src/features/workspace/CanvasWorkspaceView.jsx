@@ -61,6 +61,7 @@ import { CreateAgentDialog } from '../agents/components/CreateAgentDialog.jsx';
 import { AgentControlRoom } from '../agents/components/AgentControlRoom.jsx';
 import { executeAgent } from '../agents/api/agentsApi.js';
 import { generatedImageCardFromOutput } from '../agents/domain/agentArtifact.js';
+import { resolveAgentReferenceImages } from '../agents/domain/referenceImages.js';
 
 const ARTIFACT_AUDIT_RETRY_MS = 500;
 const ARTIFACT_AUDIT_MAX_RETRIES = 10;
@@ -265,9 +266,15 @@ export function CanvasWorkspaceView({
     setGeneratingAgentCardId(card.id);
     setSyncStatus({ toast: 'Generating image...' });
     try {
+      const referenceImages = await resolveAgentReferenceImages({
+        cards: state.cards,
+        referenceArtifactIds,
+        folderHandle,
+      });
       const result = await executeAgent(agentId, {
         promptNoteArtifactId: promptEdge.fromId,
         referenceArtifactIds,
+        referenceImages,
       });
       const outputs = result.execution?.outputs?.artifacts ?? [];
       if (outputs.length) {
@@ -295,8 +302,10 @@ export function CanvasWorkspaceView({
     canvasEdges,
     clusterId,
     effectiveProjectId,
+    folderHandle,
     refreshGraph,
     setSyncStatus,
+    state.cards,
   ]);
 
   const {
@@ -1403,6 +1412,7 @@ export function CanvasWorkspaceView({
         <AgentControlRoom
           card={openCard}
           cards={state.cards}
+          folderHandle={folderHandle}
           onClose={closeOpenCard}
           onDeleteCard={requestDeleteCard}
           onUpdateCard={(updates) => updateCard(openCard.id, updates)}

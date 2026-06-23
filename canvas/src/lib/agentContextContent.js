@@ -161,8 +161,22 @@ export function dataUrlByteLength(dataUrl) {
  * @param {FileSystemDirectoryHandle | null} folderHandle
  * @param {{ fetchArtifact?: typeof getArtifact }} [options]
  */
-async function loadImageDataUrlForPinned(pinned, folderHandle, options = {}) {
+export async function loadImageDataUrlForPinned(pinned, folderHandle, options = {}) {
   const { fetchArtifact = getArtifact } = options;
+  if (folderHandle && pinned.filename) {
+    const relativePath = folderRelativePathFromVersion(pinned);
+    const entry = await getFileHandleAtPath(folderHandle, relativePath);
+    const file = await readFileEntry(entry, {
+      cacheKey: pinned.previewCacheKey ?? undefined,
+      relativePath,
+    });
+    if (file.dataUrl) return file.dataUrl;
+    if (file.objectUrl) {
+      const res = await fetch(file.objectUrl);
+      const blob = await res.blob();
+      return blobToDataUrl(blob);
+    }
+  }
   if (pinned.previewCacheKey) {
     const blob = await getPreview(pinned.previewCacheKey);
     if (blob) return blobToDataUrl(blob);
@@ -177,20 +191,6 @@ async function loadImageDataUrlForPinned(pinned, folderHandle, options = {}) {
       if (payload?.startsWith('data:image/')) return payload;
     } catch {
       /* fall through */
-    }
-  }
-  if (folderHandle && pinned.filename) {
-    const relativePath = folderRelativePathFromVersion(pinned);
-    const entry = await getFileHandleAtPath(folderHandle, relativePath);
-    const file = await readFileEntry(entry, {
-      cacheKey: pinned.previewCacheKey ?? undefined,
-      relativePath,
-    });
-    if (file.dataUrl) return file.dataUrl;
-    if (file.objectUrl) {
-      const res = await fetch(file.objectUrl);
-      const blob = await res.blob();
-      return blobToDataUrl(blob);
     }
   }
   return null;

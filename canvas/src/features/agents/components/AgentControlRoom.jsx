@@ -14,6 +14,7 @@ import {
   summarizeAgentStatus,
 } from '../domain/agentArtifact.js';
 import { fetchArtifactEdges } from '../../../lib/primitivesApi.js';
+import { resolveAgentReferenceImages } from '../domain/referenceImages.js';
 
 function artifactIdForCard(card) {
   const pinned = card?.versions?.find((v) => v.version === card.pinnedVersion) ?? card?.versions?.[0];
@@ -32,6 +33,7 @@ function Section({ title, children, className = '' }) {
 export function AgentControlRoom({
   card,
   cards = [],
+  folderHandle = null,
   onClose,
   onDeleteCard,
   onUpdateCard,
@@ -123,9 +125,15 @@ export function AgentControlRoom({
     setRunning(true);
     setError('');
     try {
+      const referenceImages = await resolveAgentReferenceImages({
+        cards,
+        referenceArtifactIds,
+        folderHandle,
+      });
       const result = await executeAgent(agent.id, {
         promptNoteArtifactId: promptArtifactId,
         referenceArtifactIds,
+        referenceImages,
         settings,
       });
       const execution = result.execution;

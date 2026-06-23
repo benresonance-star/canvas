@@ -382,6 +382,18 @@ Examples:
 
 No special reference artifact type.
 
+**Execution-time image bytes:** For image-generation runs, the client resolves reference image `dataUrl` payloads before execute (`resolveAgentReferenceImages` in `src/features/agents/domain/referenceImages.js`). Sources are tried in order: linked folder file → preview cache → inline `pinned.dataUrl` → artifact `payload_text`. These bytes are sent as transient `referenceImages` on the execute request and are **not** persisted into project document state. The server merges them into transformer inputs when Postgres artifacts lack inline image data.
+
+```ts
+interface TransientReferenceImage {
+  artifactId: string;
+  dataUrl: string; // data:image/...;base64,...
+  filename?: string | null;
+}
+```
+
+If a selected reference cannot be resolved, execute fails with a clear error (folder reconnect / preview rehydrate) rather than silently running without references.
+
 ---
 
 # Output
@@ -677,6 +689,13 @@ Request:
   "referenceArtifactIds": [
     "artifact_image_456"
   ],
+  "referenceImages": [
+    {
+      "artifactId": "artifact_image_456",
+      "dataUrl": "data:image/png;base64,...",
+      "filename": "facade.png"
+    }
+  ],
   "settings": {
     "provider": "openai",
     "aspectRatio": "16:9",
@@ -686,6 +705,8 @@ Request:
   }
 }
 ```
+
+`referenceImages` is optional but recommended when reference artifacts are folder-backed without inline `payload_text`. The server only accepts entries whose `artifactId` is listed in `referenceArtifactIds`.
 
 Response:
 
@@ -789,12 +810,12 @@ When image cards are added to agent context, the client builds OpenAI-style `ima
 }
 ```
 
-**Image load sources** (client `loadContextDocumentForCard`):
+**Image load sources** (client `loadContextDocumentForCard` / `loadImageDataUrlForPinned`):
 
+- Linked project folder file (preferred when folder is connected)
 - Preview cache (`previewCacheKey`)
 - Inline `pinned.dataUrl` (generated image cards)
 - Artifact `payload_text` when `data:image/...` (Postgres-backed generated images)
-- Linked project folder file
 
 **Guardrails:**
 
@@ -816,7 +837,7 @@ The test `diagnostic: sends stripped base64 images in the Ollama request body` a
 |------|--------|
 | Agent Type CRUD (`agent_type`) | Shipped — builtin Image Generation type seeded in `0016_agent_system.sql` |
 | Agent Artifact CRUD | Shipped — `agent_artifact` + canvas `type: 'agent'` cards |
-| Execute + Image Transformer | Shipped — `POST /api/agents/:id/execute`, OpenAI + local placeholder |
+| Execute + Image Transformer | Shipped — `POST /api/agents/:id/execute`, OpenAI + local placeholder; client sends transient `referenceImages` |
 | Generated Image Artifacts | Shipped — `payload_text` data URLs + project folder paths |
 | Reference inputs | Shipped — `reference_input_to` edges, Control Room checkboxes |
 | Execution history | Shipped — `execution` table + Control Room recent runs |
