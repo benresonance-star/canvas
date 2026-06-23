@@ -148,6 +148,18 @@ export function chatMessageToApiPayload(msg) {
 }
 
 /**
+ * @param {Array<{ content?: string | object[] }>} messages
+ */
+export function apiMessagesIncludeImages(messages) {
+  return (messages ?? []).some((msg) => {
+    if (!Array.isArray(msg.content)) return false;
+    return msg.content.some(
+      (part) => part?.type === 'image_url' && typeof part.image_url?.url === 'string',
+    );
+  });
+}
+
+/**
  * @param {object} msg
  * @param {{
  *   cards?: object[],

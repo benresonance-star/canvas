@@ -130,6 +130,7 @@ export function CanvasChrome({
   onAddLink,
   onAddFlow,
   onAddLive,
+  onAddAgent,
   onOpenLiveArtifact,
   onImportFiles,
   onSync,
@@ -442,6 +443,15 @@ export function CanvasChrome({
           </div>
         )}
         <div className="pointer-events-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onAddAgent}
+            disabled={syncLock !== 'live' || !activeProjectId}
+            className="sans flex items-center gap-2 bg-surface border border-border hover:bg-surface-muted text-primary text-xs px-4 py-2.5 rounded-full transition shadow-lg disabled:opacity-50"
+          >
+            <Bot size={13} strokeWidth={1.8} />
+            Add Agent
+          </button>
           <button
             type="button"
             onClick={onAddLive}

@@ -10,6 +10,7 @@ import {
   getCardContentHash,
   buildApiMessageHistory,
   buildApiMessageHistoryAsync,
+  apiMessagesIncludeImages,
   stripApiContentForStorage,
   hydrateContextAddMessage,
 } from '../agentContextSession.js';
@@ -102,6 +103,13 @@ describe('agentContextSession', () => {
       { role: 'user', apiContent: parts, content: 'display only' },
     ]);
     expect(api[0].content).toEqual(parts);
+    expect(apiMessagesIncludeImages(api)).toBe(true);
+  });
+
+  it('apiMessagesIncludeImages is false for text-only API history', () => {
+    expect(apiMessagesIncludeImages([
+      { role: 'user', content: 'hello' },
+    ])).toBe(false);
   });
 
   it('stripApiContentForStorage removes apiContent', () => {

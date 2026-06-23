@@ -1,5 +1,23 @@
 export const AGENT_PANEL_MODES = ['multi', 'single'];
 
+const VISION_CAPABILITIES = Object.freeze({
+  canReadImages: true,
+  canReadText: true,
+  canUseTools: false,
+});
+
+const TEXT_CHAT_CAPABILITIES = Object.freeze({
+  canReadImages: true,
+  canReadText: true,
+  canUseTools: true,
+});
+
+const DEFAULT_CAPABILITIES = Object.freeze({
+  canReadImages: false,
+  canReadText: true,
+  canUseTools: false,
+});
+
 export const CONNECTORS = [
   {
     id: 'openai',
@@ -7,6 +25,7 @@ export const CONNECTORS = [
     provider: 'openai',
     model: 'gpt-4o-mini',
     requiresCredential: true,
+    capabilities: TEXT_CHAT_CAPABILITIES,
   },
   {
     id: 'ollama-gemma-12b',
@@ -15,6 +34,7 @@ export const CONNECTORS = [
     model: 'gemma4:12b',
     baseUrl: 'http://localhost:11434',
     requiresCredential: false,
+    capabilities: VISION_CAPABILITIES,
   },
   {
     id: 'ollama-gemma-26b',
@@ -23,6 +43,7 @@ export const CONNECTORS = [
     model: 'gemma4:26b',
     baseUrl: 'http://localhost:11434',
     requiresCredential: false,
+    capabilities: VISION_CAPABILITIES,
   },
 ];
 
@@ -112,4 +133,36 @@ export function agentCanChat({ panelMode, secretsConfigured, activeConnector }) 
     && Boolean(activeConnector?.usable)
     && (activeConnector?.requiresCredential === false || secretsConfigured)
   );
+}
+
+/**
+ * @param {string | null | undefined} connectorId
+ */
+export function getConnectorCapabilities(connectorId) {
+  const connector = getConnectorById(connectorId);
+  return connector?.capabilities ?? DEFAULT_CAPABILITIES;
+}
+
+/**
+ * @param {Array<{ type?: string, id?: string }>} cards
+ * @param {Record<string, string>} [statusByCardId]
+ */
+export function contextCardsIncludeImages(cards, statusByCardId = {}) {
+  return (cards ?? []).some((card) => {
+    const type = String(card?.type ?? '').toLowerCase();
+    if (type !== 'image') return false;
+    const status = statusByCardId[card.id];
+    return !status || status === 'included';
+  });
+}
+
+/**
+ * @param {string | null | undefined} connectorId
+ * @param {boolean} hasImages
+ * @param {{ capabilities?: { canReadImages?: boolean } } | null} [connector]
+ */
+export function imagesUnsupportedForConnector(connectorId, hasImages, connector = null) {
+  if (!hasImages) return false;
+  const capabilities = connector?.capabilities ?? getConnectorCapabilities(connectorId);
+  return capabilities.canReadImages !== true;
 }

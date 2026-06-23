@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.06.23.1
-**Version label:** flow-save-persistence-close-guard
+**Version:** 2026.06.24.1
+**Version label:** gemma-multimodal-agent-v5-slice
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -608,7 +608,11 @@ Connectors (`server/lib/agentConnectors.js`, mirrored client-side):
 | `ollama-gemma-12b` | Gemma 12B Local | ollama | gemma4:12b |
 | `ollama-gemma-26b` | Gemma 26B Local | ollama | gemma4:26b |
 
-Ollama availability is probed at runtime via `GET /agent/connectors` (`needsPull` when reachable but model missing). Selecting a Gemma connector in Agent mode triggers `POST /agent/ollama/pull` (streamed NDJSON progress) to download the model on demand. `start canvas` mounts the persistent Docker volume `ollama` at `/root/.ollama` but does not pre-pull weights. Canvas context messages are folded into the latest user turn for Ollama text-only chat.
+Ollama availability is probed at runtime via `GET /agent/connectors` (`needsPull` when reachable but model missing). Selecting a Gemma connector in Agent mode triggers `POST /agent/ollama/pull` (streamed NDJSON progress) to download the model on demand. `start canvas` mounts the persistent Docker volume `ollama` at `/root/.ollama` but does not pre-pull weights.
+
+Each connector exposes `capabilities: { canReadImages, canReadText, canUseTools }` on `/agent/connectors`. Gemma and ChatGPT connectors set `canReadImages: true`. Image context cards are converted to Ollama `messages[].images` (base64 without `data:` prefix) in `ollamaChat.js`. Canvas context messages are folded into the latest user turn, including merged `images` arrays. If images are attached but the selected connector lacks `canReadImages`, the Agent panel warns and blocks send (no silent text-only drop).
+
+Generated image artifacts load into chat context via inline `pinned.dataUrl` or artifact `payload_text` without requiring a linked folder.
 
 ### Code file previews (shipped)
 
@@ -1096,6 +1100,12 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-06-24 — Gemma multimodal chat + Agent Artifact v5 slice (implemented)
+
+- Bumped the active spec to `2026.06.24.1`.
+- **Gemma multimodal:** `ollamaChat.js` preserves image context as Ollama `messages[].images` (stripped base64); connector `capabilities` flags (`canReadImages`, `canReadText`, `canUseTools`); UI warning + send guard when images unsupported; generated/artifact image load paths in `agentContextContent.js`.
+- **Agent Artifact v5:** Image Generation Agent Type, Agent Artifact CRUD, `POST /api/agents/:id/execute`, Image Transformer (OpenAI + local placeholder), execution history, generated image artifacts, canvas agent cards with prompt/reference edges (`0016_agent_system.sql`).
 
 ### 2026-06-23 — Flow save persistence and close guard (implemented)
 

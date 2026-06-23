@@ -1,3 +1,15 @@
+const VISION_CAPABILITIES = Object.freeze({
+  canReadImages: true,
+  canReadText: true,
+  canUseTools: false,
+});
+
+const TEXT_CHAT_CAPABILITIES = Object.freeze({
+  canReadImages: true,
+  canReadText: true,
+  canUseTools: true,
+});
+
 export const AGENT_CONNECTORS = [
   {
     id: 'openai',
@@ -5,6 +17,7 @@ export const AGENT_CONNECTORS = [
     provider: 'openai',
     model: 'gpt-4o-mini',
     requiresCredential: true,
+    capabilities: TEXT_CHAT_CAPABILITIES,
   },
   {
     id: 'ollama-gemma-12b',
@@ -13,6 +26,7 @@ export const AGENT_CONNECTORS = [
     model: 'gemma4:12b',
     baseUrl: 'http://localhost:11434',
     requiresCredential: false,
+    capabilities: VISION_CAPABILITIES,
   },
   {
     id: 'ollama-gemma-26b',
@@ -21,6 +35,7 @@ export const AGENT_CONNECTORS = [
     model: 'gemma4:26b',
     baseUrl: 'http://localhost:11434',
     requiresCredential: false,
+    capabilities: VISION_CAPABILITIES,
   },
 ];
 

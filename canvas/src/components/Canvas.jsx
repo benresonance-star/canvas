@@ -14,6 +14,7 @@ import {
   createRelationship,
   deleteRelationship,
   deleteNote,
+  ensureClusterForProject,
 } from '../lib/primitivesApi.js';
 import { cardDragIgnoresTarget } from '../lib/canvasLinkDrag.js';
 import { computeUserNoteDisabled } from '../lib/filename.js';
@@ -30,6 +31,29 @@ import {
   isCanvasPanModifier,
 } from '../lib/canvasPanModifier.js';
 
+const PROMPT_INPUT_CARD_TYPES = new Set(['user_note', 'markdown', 'note']);
+const REFERENCE_INPUT_CARD_TYPES = new Set(['image', 'file', 'pdf', 'doc', 'other']);
+const LINKABLE_CARD_TYPES = new Set([
+  ...PROMPT_INPUT_CARD_TYPES,
+  ...REFERENCE_INPUT_CARD_TYPES,
+  'agent',
+]);
+
+function agentRelationshipForDrop(sourceCard, targetCard) {
+  if (targetCard?.type === 'agent') {
+    if (PROMPT_INPUT_CARD_TYPES.has(sourceCard?.type)) return 'prompt_input_to';
+    if (REFERENCE_INPUT_CARD_TYPES.has(sourceCard?.type)) return 'reference_input_to';
+  }
+  if (sourceCard?.type === 'agent' && targetCard?.type === 'image') {
+    return 'created_by_agent';
+  }
+  return null;
+}
+
+function isLinkableCard(card) {
+  return LINKABLE_CARD_TYPES.has(card?.type);
+}
+
 export function Canvas({
   state,
   setState,
@@ -41,6 +65,8 @@ export function Canvas({
   onPinVersion,
   onUpdateCard,
   onDeleteCard,
+  onGenerateAgent,
+  agentGeneratingCardId = null,
   folderKeySet,
   folderConnected,
   versionStackOpen,
@@ -512,10 +538,18 @@ export function Canvas({
       }
 
       if (sourceRef?.artifactRef?.id && targetRef?.artifactRef?.id) {
+        const agentRelType = agentRelationshipForDrop(sourceCard, target);
         setLinkDropTarget({
           sourceRef: sourceRef.artifactRef,
           targetRef: targetRef.artifactRef,
+          sourceName: sourceCard.name,
           targetName: target.name,
+          defaultRelType: agentRelType || 'references',
+          relationTypes: agentRelType ? [agentRelType] : undefined,
+          lockedRelType: Boolean(agentRelType),
+          prompt: agentRelType
+            ? `Connect ${sourceCard.name} to ${target.name} as ${agentRelType}?`
+            : null,
         });
       } else {
         reportLinkStatus({ error: strings.graph.linkNeedsRefs });
@@ -964,14 +998,24 @@ export function Canvas({
     if (!linkDropTarget) {
       return;
     }
-    if (!clusterId) {
+    let effectiveClusterId = clusterId;
+    if (!effectiveClusterId && projectId) {
+      try {
+        const { cluster } = await ensureClusterForProject(projectId, projectName || 'Project');
+        effectiveClusterId = cluster?.id ?? null;
+      } catch {
+        effectiveClusterId = null;
+      }
+    }
+
+    if (!effectiveClusterId) {
       reportLinkStatus({ error: strings.graph.linkNeedsCluster });
       setLinkDropTarget(null);
       return;
     }
     try {
       await createRelationship(
-        clusterId,
+        effectiveClusterId,
         {
           from_ref: linkDropTarget.sourceRef,
           to_ref: linkDropTarget.targetRef,
@@ -981,7 +1025,11 @@ export function Canvas({
         },
         { idempotent: true },
       );
-      onGraphRefresh?.();
+      await onGraphRefresh?.({
+        clusterId: effectiveClusterId,
+        projectId,
+        force: true,
+      });
     } catch {
       reportLinkStatus({ error: strings.graph.linkCreateFailed });
     }
@@ -1038,7 +1086,7 @@ export function Canvas({
             })}
             linkCount={linkCountByCardId?.get(card.id) || 0}
             isLinkDropHighlight={linkDrag?.hoverCardId === card.id}
-            canLinkFrom={card.type === 'user_note'}
+            canLinkFrom={isLinkableCard(card)}
             isMultiSelected={selectedCardIds?.has(card.id)}
             agentSelectionMode={agentSelectionMode}
             isBeingDragged={draggingCard?.id === card.id}
@@ -1094,6 +1142,8 @@ export function Canvas({
             onStartResize={startResize}
             onPinVersion={(v) => onPinVersion(card.id, v)}
             onDeleteCard={() => onDeleteCard(card.id)}
+            onGenerateAgent={onGenerateAgent}
+            agentGenerating={agentGeneratingCardId === card.id}
             versionStackOpen={versionStackOpen === card.id}
             toggleVersionStack={() => setVersionStackOpen(s => s === card.id ? null : card.id)}
             onRehydratePreview={onRehydratePreview}
@@ -1156,6 +1206,11 @@ export function Canvas({
       {linkDropTarget && (
         <LinkDropConfirm
           targetName={linkDropTarget.targetName}
+          sourceName={linkDropTarget.sourceName}
+          relationTypes={linkDropTarget.relationTypes}
+          defaultRelType={linkDropTarget.defaultRelType}
+          lockedRelType={linkDropTarget.lockedRelType}
+          prompt={linkDropTarget.prompt}
           onConfirm={(t) => void handleLinkConfirm(t)}
           onCancel={() => setLinkDropTarget(null)}
         />

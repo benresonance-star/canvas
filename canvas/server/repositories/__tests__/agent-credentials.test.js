@@ -44,6 +44,11 @@ describe('agent credential connector status', () => {
       model: 'gemma4:12b',
       usable: true,
       healthError: null,
+      capabilities: {
+        canReadImages: true,
+        canReadText: true,
+        canUseTools: false,
+      },
     });
     expect(gemma26b).toMatchObject({
       model: 'gemma4:26b',

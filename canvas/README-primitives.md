@@ -122,6 +122,7 @@ With **Selected items** or **Visible canvas**, the agent receives **file content
 
 - **Markdown / text / HTML / notes** — from synced `payload_text` in Postgres, or read from the connected folder
 - **PDF** — text extracted in the browser when you send a message (folder must be connected)
+- **Images** — sent as vision input when the selected agent supports images (`canReadImages: true` for ChatGPT and Gemma 12B/26B). Sources: preview cache, linked folder, inline `dataUrl` on generated image cards, or artifact `payload_text`. Unsupported connectors show a warning and block send rather than silently dropping images.
 
 **Session cache:** Each file is sent to the API **once per chat session** (until you clear the API key or use **Resend all selected files to AI**). Follow-up messages reuse the conversation history instead of re-uploading file bodies. Deselecting a file adds a short “removed from context” notice on the next send. The context list shows **Sent to AI** vs **Sends on next message** badges.
 
@@ -134,7 +135,7 @@ If you see a yellow sync warning in the chat area:
 - The app also retries sync when the API comes back or when you open Agent mode again.
 - Without the button: send another chat message to trigger a debounced sync.
 
-Images, video, audio, and spreadsheets are listed but not sent. Reconnect the project folder if files moved. Context is truncated automatically to stay within model limits.
+Images, video, audio, and spreadsheets other than the image case above are listed but not sent. Reconnect the project folder if files moved. Context is truncated automatically to stay within model limits.
 
 | Mode | Per file | Total context | PDF pages |
 |------|----------|---------------|-----------|

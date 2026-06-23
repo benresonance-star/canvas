@@ -50,6 +50,12 @@
   --color-agent-chat-outline: #50c878;
   --color-agent-chat-outline-width: 2px;
   --color-agent-chat-icon-hover: #6dd99a;
+  --color-agent-artifact-bg: #1a0f2e;
+  --color-agent-artifact-border: rgb(109 40 217 / 0.42);
+  --color-agent-artifact-text: #ede9fe;
+  --color-agent-artifact-muted: #a78bfa;
+  --color-agent-artifact-icon-bg: rgb(139 92 246 / 0.2);
+  --color-agent-artifact-icon-border: rgb(167 139 250 / 0.38);
 }
 
 [data-theme='dark'] {
@@ -99,6 +105,12 @@
   --color-agent-chat-outline: #39ff14;
   --color-agent-chat-outline-width: 1px;
   --color-agent-chat-icon-hover: #7cff5a;
+  --color-agent-artifact-bg: #12081f;
+  --color-agent-artifact-border: rgb(91 33 182 / 0.55);
+  --color-agent-artifact-text: #ede9fe;
+  --color-agent-artifact-muted: #c4b5fd;
+  --color-agent-artifact-icon-bg: rgb(139 92 246 / 0.22);
+  --color-agent-artifact-icon-border: rgb(167 139 250 / 0.42);
 }
 
 [data-theme='green'] {
@@ -244,6 +256,12 @@
   --color-link-hover: var(--color-link-hover);
   --color-agent-chat: var(--color-agent-chat-outline, #39ff14);
   --color-agent-chat-hover: var(--color-agent-chat-icon-hover, #7cff5a);
+  --color-agent-artifact: var(--color-agent-artifact-bg);
+  --color-agent-artifact-border: var(--color-agent-artifact-border);
+  --color-agent-artifact-text: var(--color-agent-artifact-text);
+  --color-agent-artifact-muted: var(--color-agent-artifact-muted);
+  --color-agent-artifact-icon-bg: var(--color-agent-artifact-icon-bg);
+  --color-agent-artifact-icon-border: var(--color-agent-artifact-icon-border);
 }
 
 html,
@@ -463,6 +481,25 @@ html[data-theme='blue'] {
 
 .canvas-card-agent-chat {
   outline: var(--color-agent-chat-outline-width, 1px) solid var(--color-agent-chat-outline, #39ff14);
+}
+
+.canvas-card-agent-artifact {
+  background-color: var(--color-agent-artifact-bg);
+  border: 1px solid var(--color-agent-artifact-border);
+}
+
+.canvas-card-agent-artifact .canvas-card-agent-artifact-header {
+  border-bottom-color: var(--color-agent-artifact-border);
+  background: color-mix(in srgb, var(--color-agent-artifact-bg) 88%, white 12%);
+}
+
+.canvas-card-agent-artifact .canvas-card-agent-artifact-header .text-primary,
+.canvas-card-agent-artifact .canvas-card-agent-artifact-header .serif {
+  color: var(--color-agent-artifact-text);
+}
+
+.canvas-card-agent-artifact .canvas-card-agent-artifact-header .text-muted {
+  color: var(--color-agent-artifact-muted);
 }
 
 .canvas-card-media-minimal {

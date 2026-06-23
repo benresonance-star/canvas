@@ -148,6 +148,7 @@ export function isFolderBackedCanvasCard(card) {
   if (type === 'bookmark') return false;
   if (type === 'flow') return false;
   if (type === 'live') return false;
+  if (type === 'agent') return false;
   if (card?.prefix === 'links') return false;
   return true;
 }
@@ -338,5 +339,6 @@ export function cardTypeLabel(type) {
   if (t === 'bookmark') return 'LINK';
   if (t === 'flow') return 'FLOW';
   if (t === 'live') return 'AGENT FEED';
+  if (t === 'agent') return 'AGENT';
   return 'FILE';
 }

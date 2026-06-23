@@ -11,7 +11,7 @@ describe('ollamaChat', () => {
     vi.unstubAllGlobals();
   });
 
-  it('converts multimodal OpenAI-style parts to text-only Ollama messages', () => {
+  it('converts multimodal OpenAI-style parts to Ollama messages with images', () => {
     const messages = buildOllamaMessages({
       systemContext: 'System',
       messages: [
@@ -27,8 +27,48 @@ describe('ollamaChat', () => {
 
     expect(messages).toEqual([
       { role: 'system', content: 'System' },
-      { role: 'user', content: 'Describe this' },
+      { role: 'user', content: 'Describe this', images: ['abc'] },
     ]);
+  });
+
+  it('keeps text-only messages without an images field', () => {
+    const messages = buildOllamaMessages({
+      systemContext: 'System',
+      messages: [{ role: 'user', content: 'Hello' }],
+    });
+
+    expect(messages).toEqual([
+      { role: 'system', content: 'System' },
+      { role: 'user', content: 'Hello' },
+    ]);
+    expect(messages[1]).not.toHaveProperty('images');
+  });
+
+  it('folds Canvas context images into the latest user request for local models', () => {
+    const messages = buildOllamaMessages({
+      systemContext: 'System',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: '[Canvas context — the following file content is now available]\n\n## Facade (image)\n[Image attached]',
+            },
+            {
+              type: 'image_url',
+              image_url: { url: 'data:image/png;base64,ctximg' },
+            },
+          ],
+        },
+        { role: 'assistant', content: 'Ready.' },
+        { role: 'user', content: 'Describe the shapes and text.' },
+      ],
+    });
+
+    expect(messages).toHaveLength(3);
+    expect(messages[2].images).toEqual(['ctximg']);
+    expect(messages[2].content).toContain('Current user request:\n\nDescribe the shapes and text.');
   });
 
   it('folds Canvas context into the latest user request for local models', () => {
@@ -81,6 +121,45 @@ describe('ollamaChat', () => {
       stream: false,
     });
     expect(body.messages.at(-1)).toEqual({ role: 'user', content: 'Hi' });
+    expect(body.messages.at(-1)).not.toHaveProperty('images');
+  });
+
+  it('diagnostic: sends stripped base64 images in the Ollama request body', async () => {
+    const diagnosticPngBase64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        model: 'gemma4:12b',
+        message: { content: 'A red pixel.' },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await completeOllamaChat({
+      provider: 'ollama',
+      connectorId: 'ollama-gemma-12b',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Describe the shapes and text in this image.' },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/png;base64,${diagnosticPngBase64}`,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const userMessage = body.messages.at(-1);
+    expect(userMessage.images).toEqual([diagnosticPngBase64]);
+    expect(userMessage.content).toContain('Describe the shapes and text');
+    expect(userMessage.images[0]).not.toMatch(/^data:image\//);
   });
 
   it('uses connectorId to select the Gemma 26B model', async () => {

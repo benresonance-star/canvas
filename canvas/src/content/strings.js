@@ -558,6 +558,8 @@ export const strings = {
     contextRemoveItem: 'Remove from context',
     contextIncluded: 'included',
     contextSentAsImage: 'sends as image',
+    contextImagesUnsupported: (connectorLabel) =>
+      `${connectorLabel} cannot read images. Remove image files from context or switch to a vision-capable agent before sending.`,
     contextImageTooLarge: 'image too large',
     contextPending: 'on send',
     contextSentToAi: 'Sent to AI',

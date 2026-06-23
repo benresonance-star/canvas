@@ -10,6 +10,9 @@ import {
   getConnectorById,
   getConnectorByProvider,
   getConnectorProvider,
+  getConnectorCapabilities,
+  contextCardsIncludeImages,
+  imagesUnsupportedForConnector,
   mergeConnectorMeta,
 } from '../agentConnectors.js';
 
@@ -196,5 +199,30 @@ describe('agentConnectors', () => {
         'ollama-gemma-26b',
       ),
     ).toBe(false);
+  });
+
+  it('exposes vision capabilities on Gemma connectors', () => {
+    expect(getConnectorCapabilities('ollama-gemma-12b')).toEqual({
+      canReadImages: true,
+      canReadText: true,
+      canUseTools: false,
+    });
+    expect(getConnectorCapabilities('ollama-gemma-26b').canReadImages).toBe(true);
+    expect(getConnectorCapabilities('openai').canUseTools).toBe(true);
+  });
+
+  it('detects image context cards and unsupported connectors', () => {
+    const cards = [{ id: 'img-1', type: 'image' }, { id: 'note-1', type: 'markdown' }];
+    expect(contextCardsIncludeImages(cards, { 'img-1': 'included' })).toBe(true);
+    expect(contextCardsIncludeImages(cards, { 'img-1': 'error' })).toBe(false);
+    expect(
+      imagesUnsupportedForConnector('ollama-gemma-12b', true),
+    ).toBe(false);
+    expect(
+      imagesUnsupportedForConnector('openai', true, {
+        capabilities: { canReadImages: false, canReadText: true, canUseTools: false },
+      }),
+    ).toBe(true);
+    expect(imagesUnsupportedForConnector('openai', false)).toBe(false);
   });
 });

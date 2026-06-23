@@ -15,6 +15,8 @@ import {
   getConnectorById,
   getConnectorByProvider,
   getConnectorProvider,
+  imagesUnsupportedForConnector,
+  mergeConnectorMeta,
 } from '../../lib/agentConnectors.js';
 import {
   loadAgentChatSession,
@@ -92,6 +94,7 @@ import {
   computeContextDeliveryState,
   getContextDeliveryStatus,
   buildApiMessageHistoryAsync,
+  apiMessagesIncludeImages,
 } from '../../lib/agentContextSession.js';
 import { isApiAvailable } from '../../lib/primitivesApi.js';
 import { fetchLiveFeedContext, hydrateLiveContextCards } from '../../lib/liveAgentContext.js';
@@ -2259,6 +2262,24 @@ export function useAgentChatShell({
           hydrateOpts,
         );
 
+        const activeConnector = mergeConnectorMeta(
+          getConnectorById(connectorId),
+          agentConnectors.find((entry) => entry.id === connectorId),
+        );
+        if (
+          imagesUnsupportedForConnector(
+            connectorId,
+            apiMessagesIncludeImages(historyForApi),
+            activeConnector,
+          )
+        ) {
+          setAgentChatError(
+            strings.agent.contextImagesUnsupported(activeConnector?.label || 'This agent'),
+          );
+          rollbackOptimisticMessages();
+          return;
+        }
+
         try {
           const estimate = await estimateAgentChat({
             provider,
@@ -2357,6 +2378,7 @@ export function useAgentChatShell({
       threadAgentTemplate,
       agentPanelMode,
       singleConnectorId,
+      agentConnectors,
       selectedConnectorProvider,
       agentChatMessages,
       folderHandle,

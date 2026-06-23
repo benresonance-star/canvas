@@ -26,6 +26,18 @@ export const STRUCTURAL_RELATION_TYPES = [
   'derived_from',
   'supersedes',
   'part_of',
+  'prompt_input_to',
+  'reference_input_to',
+  'input_to',
+  'output_of',
+  'generated_from',
+  'created_by_agent',
+  'created_by_transformer',
+  'version_of',
+  'uses_tool',
+  'has_skill',
+  'has_rule',
+  'has_instruction',
 ];
 
 export const CLAIM_RELATION_TYPES = [

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bot, Box, Layers, Trash2, Link2 } from 'lucide-react';
+import { Bot, Box, Layers, Trash2, Link2, Sparkles } from 'lucide-react';
 import { getCardPixelSize } from '../lib/cards.js';
 import { cardHeaderLabel, cardDisplayFilename } from '../lib/filename.js';
 import { strings } from '../content/strings.js';
@@ -26,6 +26,8 @@ export function CanvasCard({
   onStartResize,
   onPinVersion,
   onDeleteCard,
+  onGenerateAgent,
+  agentGenerating = false,
   versionStackOpen,
   toggleVersionStack,
   onRehydratePreview,
@@ -111,7 +113,13 @@ export function CanvasCard({
   const agentChatHighlight = card.type === 'agent_chat'
     ? 'canvas-card-agent-chat'
     : '';
-  const missingHeaderTint = missingFromFolder ? 'bg-danger-muted border-danger-border' : 'border-border';
+  const isAgentArtifact = card.type === 'agent';
+  const cardShellShape = isAgentArtifact ? 'canvas-card-agent-artifact rounded-lg' : 'rounded-lg bg-surface';
+  const missingHeaderTint = missingFromFolder
+    ? 'bg-danger-muted border-danger-border'
+    : isAgentArtifact
+      ? 'canvas-card-agent-artifact-header border-b'
+      : 'border-border';
   const canDeleteFromCanvas =
     isActive
     && !bookmarkEditDisabled
@@ -124,7 +132,7 @@ export function CanvasCard({
 
   const shellClassName = minimalChrome
     ? `canvas-card canvas-card-media-minimal relative h-full flex flex-col overflow-hidden transition-[box-shadow,opacity] ${missingRing} ${agentSelectedRing}`
-    : `canvas-card bg-surface rounded-lg overflow-hidden h-full flex flex-col transition-[box-shadow,opacity] ${missingRing} ${linkHighlight} ${multiSelectRing} ${agentSelectedRing} ${agentChatHighlight} ${isActive && !agentSelectedRing ? 'card-shadow-active' : 'card-shadow'}`;
+    : `canvas-card ${cardShellShape} overflow-hidden h-full flex flex-col transition-[box-shadow,opacity] ${missingRing} ${linkHighlight} ${multiSelectRing} ${agentSelectedRing} ${agentChatHighlight} ${isActive && !agentSelectedRing ? 'card-shadow-active' : 'card-shadow'}`;
 
   return (
     <div
@@ -224,6 +232,22 @@ export function CanvasCard({
                   }}
                 >
                   <Bot size={14} strokeWidth={1.8} />
+                </button>
+              )}
+              {card.type === 'agent' && onGenerateAgent && (
+                <button
+                  type="button"
+                  title={agentGenerating ? 'Generating image' : 'Generate image'}
+                  aria-label={agentGenerating ? 'Generating image' : 'Generate image'}
+                  disabled={agentGenerating}
+                  className="p-1 text-accent hover:text-secondary transition pointer-events-auto disabled:opacity-50"
+                  onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void onGenerateAgent(card);
+                  }}
+                >
+                  <Sparkles size={14} strokeWidth={1.8} />
                 </button>
               )}
               {pinned?.artifactRef && onInspectArtifact && (

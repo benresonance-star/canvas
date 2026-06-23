@@ -73,6 +73,8 @@ import { createFlowArtifact } from '../flow/api/flowApi.js';
 import { flowCardFromDocument } from '../flow/domain/flowDocument.js';
 import { createLiveArtifact } from '../live/api/liveApi.js';
 import { liveArtifactCardFromRecord } from '../live/domain/liveArtifact.js';
+import { createAgent } from '../agents/api/agentsApi.js';
+import { agentCardFromRecord } from '../agents/domain/agentArtifact.js';
 import {
   loadAgentChatSession,
   saveAgentChatSession,
@@ -405,6 +407,7 @@ export function useCanvasDocument({ refs, deps }) {
   const [savingLink, setSavingLink] = useState(false);
   const [savingFlow, setSavingFlow] = useState(false);
   const [savingLive, setSavingLive] = useState(false);
+  const [savingAgent, setSavingAgent] = useState(false);
   const [savingCardId, setSavingCardId] = useState(null);
 
   useEffect(() => {
@@ -1526,6 +1529,60 @@ export function useCanvasDocument({ refs, deps }) {
     }
   }, [activeProjectIdRef, setState, setSyncStatus, stagedSyncCardsRef, stateRef]);
 
+  const handleSaveNewAgent = useCallback(async ({ position, ...input }) => {
+    const projectId = activeProjectIdRef.current;
+    if (!projectId) return null;
+    setSavingAgent(true);
+    try {
+      const agent = await createAgent(projectId, input);
+      const fallbackPosition = {
+        x: 100 + (stateRef.current.cards.length % 4) * 300,
+        y: 100 + Math.floor(stateRef.current.cards.length / 4) * 260,
+      };
+      const newCard = agentCardFromRecord(agent, position ?? fallbackPosition);
+      const nextState = { ...stateRef.current, cards: [...stateRef.current.cards, newCard] };
+      stateRef.current = nextState;
+      setState(nextState);
+      registerOptimisticCard(projectId, newCard.id);
+      await commitProjectDocument(projectId, {
+        state: nextState,
+        stagedSyncCards: stagedSyncCardsRef.current,
+        reason: 'agent:create',
+        pushRemote: true,
+      });
+      setOpenCardId(newCard.id);
+      return newCard;
+    } catch (error) {
+      setSyncStatus({ error: error.message });
+      setTimeout(() => setSyncStatus(null), 5000);
+      return null;
+    } finally {
+      setSavingAgent(false);
+    }
+  }, [activeProjectIdRef, setState, setSyncStatus, stagedSyncCardsRef, stateRef]);
+
+  const appendGeneratedCards = useCallback(async (cardsToAdd = []) => {
+    const projectId = activeProjectIdRef.current;
+    const cleanCards = cardsToAdd.filter(Boolean);
+    if (!projectId || !cleanCards.length) return [];
+    const nextState = {
+      ...stateRef.current,
+      cards: [...stateRef.current.cards, ...cleanCards],
+    };
+    stateRef.current = nextState;
+    setState(nextState);
+    for (const newCard of cleanCards) {
+      registerOptimisticCard(projectId, newCard.id);
+    }
+    await commitProjectDocument(projectId, {
+      state: nextState,
+      stagedSyncCards: stagedSyncCardsRef.current,
+      reason: 'agent:outputs',
+      pushRemote: true,
+    });
+    return cleanCards;
+  }, [activeProjectIdRef, setState, stagedSyncCardsRef, stateRef]);
+
   const flowCardRefreshQueueRef = useRef(Promise.resolve());
 
   const handleFlowCardRefresh = useCallback(async (cardId, updates) => {
@@ -1735,6 +1792,7 @@ export function useCanvasDocument({ refs, deps }) {
     savingLink,
     savingFlow,
     savingLive,
+    savingAgent,
     savingCardId,
     setCanvasView,
     resolveCanvasFitOptions,
@@ -1768,6 +1826,8 @@ export function useCanvasDocument({ refs, deps }) {
     handleSaveNewLink,
     handleSaveNewFlow,
     handleSaveNewLive,
+    handleSaveNewAgent,
+    appendGeneratedCards,
     handleFlowCardRefresh,
     removeCard,
     rehydratePreview,

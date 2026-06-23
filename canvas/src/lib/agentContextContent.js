@@ -159,11 +159,25 @@ export function dataUrlByteLength(dataUrl) {
 /**
  * @param {object} pinned
  * @param {FileSystemDirectoryHandle | null} folderHandle
+ * @param {{ fetchArtifact?: typeof getArtifact }} [options]
  */
-async function loadImageDataUrlForPinned(pinned, folderHandle) {
+async function loadImageDataUrlForPinned(pinned, folderHandle, options = {}) {
+  const { fetchArtifact = getArtifact } = options;
   if (pinned.previewCacheKey) {
     const blob = await getPreview(pinned.previewCacheKey);
     if (blob) return blobToDataUrl(blob);
+  }
+  if (typeof pinned.dataUrl === 'string' && pinned.dataUrl.startsWith('data:image/')) {
+    return pinned.dataUrl;
+  }
+  if (pinned.artifactRef?.id) {
+    try {
+      const { artifact } = await fetchArtifact(pinned.artifactRef.id);
+      const payload = artifact?.payload_text?.trim();
+      if (payload?.startsWith('data:image/')) return payload;
+    } catch {
+      /* fall through */
+    }
   }
   if (folderHandle && pinned.filename) {
     const relativePath = folderRelativePathFromVersion(pinned);
@@ -242,7 +256,7 @@ export function contextCardNeedsFolderLink(card, folderLinked) {
   const pinned = getPinnedVersion(card);
   if (!pinned) return false;
   if (type === 'pdf') return true;
-  if (type === 'image' && !pinned.previewCacheKey) return true;
+  if (type === 'image' && !pinned.previewCacheKey && !pinned.dataUrl && !pinned.artifactRef?.id) return true;
   if (TEXT_TYPES.has(type) && pinned.filename && !pinned.artifactRef?.id) return true;
   return false;
 }
@@ -430,7 +444,7 @@ export async function loadContextDocumentForCard(card, options = {}) {
   }
 
   if (type === 'image') {
-    if (!folderHandle && !pinned.previewCacheKey) {
+    if (!folderHandle && !pinned.previewCacheKey && !pinned.dataUrl && !pinned.artifactRef?.id) {
       return {
         cardId: card.id,
         label,
@@ -440,7 +454,7 @@ export async function loadContextDocumentForCard(card, options = {}) {
       };
     }
     try {
-      const imageDataUrl = await loadImageDataUrlForPinned(pinned, folderHandle);
+      const imageDataUrl = await loadImageDataUrlForPinned(pinned, folderHandle, { fetchArtifact });
       if (!imageDataUrl) {
         return {
           cardId: card.id,

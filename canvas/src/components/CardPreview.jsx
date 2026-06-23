@@ -20,6 +20,7 @@ import { audioSkinUsesDarkText, resolveAudioSkinColor } from '../lib/audioSkin.j
 import { buildHtmlPreviewSrcDoc } from '../lib/htmlPreviewDocument.js';
 import { FlowPreview } from '../features/flow/components/FlowPreview.jsx';
 import { LiveArtifactView } from '../features/live/components/LiveArtifactView.jsx';
+import { Bot } from 'lucide-react';
 
 export function CardPreview({
   card,
@@ -116,6 +117,17 @@ export function CardPreview({
         folderHandle={folderHandle}
         compact={compact}
       />
+    );
+  }
+  if (cardType === 'agent') {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center text-center px-4">
+        <div className="w-14 h-14 rounded-sm border border-agent-artifact-icon-border bg-agent-artifact-icon-bg flex items-center justify-center text-agent-artifact-muted mb-3">
+          <Bot size={24} strokeWidth={1.7} />
+        </div>
+        <div className="sans text-xs text-agent-artifact-text line-clamp-2">{card.name}</div>
+        <div className="sans text-[10px] uppercase tracking-wider text-agent-artifact-muted mt-1">Agent Artifact</div>
+      </div>
     );
   }
   if (cardType === 'flow') {

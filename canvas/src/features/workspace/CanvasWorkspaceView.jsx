@@ -57,11 +57,20 @@ import { CreateClusterDialog } from '../../components/CreateClusterDialog.jsx';
 import { CreateFlowDialog } from '../flow/components/CreateFlowDialog.jsx';
 import { patchFlowCard } from '../flow/domain/flowDocument.js';
 import { CreateLiveArtifactDialog } from '../live/components/CreateLiveArtifactDialog.jsx';
+import { CreateAgentDialog } from '../agents/components/CreateAgentDialog.jsx';
+import { AgentControlRoom } from '../agents/components/AgentControlRoom.jsx';
+import { executeAgent } from '../agents/api/agentsApi.js';
+import { generatedImageCardFromOutput } from '../agents/domain/agentArtifact.js';
 
 const ARTIFACT_AUDIT_RETRY_MS = 500;
 const ARTIFACT_AUDIT_MAX_RETRIES = 10;
 const RIGHT_DOCK_RESERVED_WIDTH_PX = 448;
 const ARTIFACT_ZOOM_PADDING_PX = 220;
+
+function artifactIdForCanvasCard(card) {
+  const pinned = card?.versions?.find((v) => v.version === card.pinnedVersion) ?? card?.versions?.[0];
+  return pinned?.artifactRef?.id ?? null;
+}
 
 /**
  * Loaded-state workspace UI extracted from App.jsx (Phase 1c).
@@ -154,6 +163,7 @@ export function CanvasWorkspaceView({
     savingLink,
     savingFlow,
     savingLive,
+    savingAgent,
     savingCardId,
     setCanvasView,
     fitCanvasViewToCards,
@@ -179,6 +189,8 @@ export function CanvasWorkspaceView({
     handleSaveNewLink,
     handleSaveNewFlow,
     handleSaveNewLive,
+    handleSaveNewAgent,
+    appendGeneratedCards,
     handleFlowCardRefresh,
     removeCard,
     rehydratePreview,
@@ -213,6 +225,79 @@ export function CanvasWorkspaceView({
     inspectorSelection,
     clusterMemberOptions,
   } = cluster;
+
+  const [generatingAgentCardId, setGeneratingAgentCardId] = useState(null);
+
+  const handleGenerateAgentFromCanvas = useCallback(async (card) => {
+    const agentId =
+      card?.agentArtifactId ||
+      card?.versions?.[0]?.agentArtifactId ||
+      artifactIdForCanvasCard(card);
+    if (!agentId) {
+      setSyncStatus({ error: 'Agent artifact is missing its database reference.' });
+      setTimeout(() => setSyncStatus(null), 5000);
+      return;
+    }
+
+    const agentArtifactId = artifactIdForCanvasCard(card);
+    const promptEdge = canvasEdges.find(
+      (edge) =>
+        edge.kind === 'relationship'
+        && edge.type === 'prompt_input_to'
+        && edge.toId === agentArtifactId,
+    );
+    const referenceArtifactIds = canvasEdges
+      .filter(
+        (edge) =>
+          edge.kind === 'relationship'
+          && edge.type === 'reference_input_to'
+          && edge.toId === agentArtifactId,
+      )
+      .map((edge) => edge.fromId)
+      .filter(Boolean);
+
+    if (!promptEdge?.fromId) {
+      setSyncStatus({ error: 'Connect a Note card to this Agent as the prompt before generating.' });
+      setTimeout(() => setSyncStatus(null), 6000);
+      return;
+    }
+
+    setGeneratingAgentCardId(card.id);
+    setSyncStatus({ toast: 'Generating image...' });
+    try {
+      const result = await executeAgent(agentId, {
+        promptNoteArtifactId: promptEdge.fromId,
+        referenceArtifactIds,
+      });
+      const outputs = result.execution?.outputs?.artifacts ?? [];
+      if (outputs.length) {
+        const baseX = (card?.x ?? 100) + (card?.w ?? card?.width ?? 240) + 60;
+        const baseY = card?.y ?? 100;
+        const outputCards = outputs.map((output, index) =>
+          generatedImageCardFromOutput(output, {
+            x: baseX + (index % 2) * 300,
+            y: baseY + Math.floor(index / 2) * 250,
+          }),
+        );
+        await appendGeneratedCards(outputCards);
+      }
+      await refreshGraph?.({ clusterId, projectId: effectiveProjectId, force: true });
+      setSyncStatus({ toast: `Generated ${outputs.length || 0} image${outputs.length === 1 ? '' : 's'}.` });
+      setTimeout(() => setSyncStatus(null), 5000);
+    } catch (error) {
+      setSyncStatus({ error: error.message || 'Agent image generation failed.' });
+      setTimeout(() => setSyncStatus(null), 7000);
+    } finally {
+      setGeneratingAgentCardId(null);
+    }
+  }, [
+    appendGeneratedCards,
+    canvasEdges,
+    clusterId,
+    effectiveProjectId,
+    refreshGraph,
+    setSyncStatus,
+  ]);
 
   const {
     agentPanelOpen,
@@ -416,6 +501,7 @@ export function CanvasWorkspaceView({
   } = dialogs;
 
   const [createLiveOpen, setCreateLiveOpen] = useState(false);
+  const [createAgentOpen, setCreateAgentOpen] = useState(false);
   const isMobile = useIsMobile();
   const [createFlowOpen, setCreateFlowOpen] = useState(false);
   const [deleteLinkTarget, setDeleteLinkTarget] = useState(null);
@@ -740,6 +826,8 @@ export function CanvasWorkspaceView({
           onUpdateCard={updateCard}
           onBatchUpdateCardPositions={batchUpdateCardPositions}
           onDeleteCard={requestDeleteCard}
+          onGenerateAgent={handleGenerateAgentFromCanvas}
+          agentGeneratingCardId={generatingAgentCardId}
           folderKeySet={folderKeySet}
           folderConnected={folderConnected}
           versionStackOpen={versionStackOpen}
@@ -832,6 +920,7 @@ export function CanvasWorkspaceView({
             setAgentPanelOpen(true);
           }}
           onAddLive={() => setCreateLiveOpen(true)}
+          onAddAgent={() => setCreateAgentOpen(true)}
           onOpenLiveArtifact={(liveArtifactId) => {
             const card = state.cards.find((item) =>
               item.liveArtifactId === liveArtifactId
@@ -1138,7 +1227,6 @@ export function CanvasWorkspaceView({
             connectorsOffline: agentConnectorsOffline,
             openaiReachable: agentOpenaiReachable,
             openaiReachabilityError: agentOpenaiReachabilityError,
-            onRetryConnectors: refreshAgentConnectors,
             ollamaPullState,
             onRetryOllamaPull: retryOllamaPull,
             onSaveApiKey: handleSaveAgentApiKey,
@@ -1277,6 +1365,22 @@ export function CanvasWorkspaceView({
         />
       )}
 
+      {createAgentOpen && (
+        <CreateAgentDialog
+          saving={savingAgent}
+          onClose={() => setCreateAgentOpen(false)}
+          onSave={async (values) => {
+            const view = state.canvasView ?? { x: 0, y: 0, zoom: 1 };
+            const position = {
+              x: (canvasViewportSize.width / 2 - view.x) / view.zoom - 120,
+              y: (canvasViewportSize.height / 2 - view.y) / view.zoom - 120,
+            };
+            const card = await handleSaveNewAgent({ ...values, position });
+            if (card) setCreateAgentOpen(false);
+          }}
+        />
+      )}
+
       {createClusterOpen && (
         <CreateClusterDialog
           onClose={() => setCreateClusterOpen(false)}
@@ -1295,7 +1399,18 @@ export function CanvasWorkspaceView({
         />
       )}
 
-      {openCardId && openCard && (
+      {openCardId && openCard?.type === 'agent' && (
+        <AgentControlRoom
+          card={openCard}
+          cards={state.cards}
+          onClose={closeOpenCard}
+          onDeleteCard={requestDeleteCard}
+          onUpdateCard={(updates) => updateCard(openCard.id, updates)}
+          onAddOutputCards={appendGeneratedCards}
+        />
+      )}
+
+      {openCardId && openCard && openCard.type !== 'agent' && (
         <CardModal
           card={openCard}
           cards={state.cards}
@@ -1356,7 +1471,6 @@ export function CanvasWorkspaceView({
             connectorsOffline: agentConnectorsOffline,
             openaiReachable: agentOpenaiReachable,
             openaiReachabilityError: agentOpenaiReachabilityError,
-            onRetryConnectors: refreshAgentConnectors,
             ollamaPullState,
             onRetryOllamaPull: retryOllamaPull,
             onSaveApiKey: handleSaveAgentApiKey,

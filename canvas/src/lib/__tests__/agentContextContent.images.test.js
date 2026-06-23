@@ -74,14 +74,46 @@ describe('loadContextDocumentForCard (image)', () => {
 
     expect(doc.status).toBe('included');
     expect(doc.imageDataUrl).toBe('data:image/jpeg;base64,/9j/abc');
-    expect(folderHandle.getFileHandle).toHaveBeenCalledWith('photo.jpg');
+    expect(folderHandle.getFileHandle).toHaveBeenCalledWith('photo.jpg', undefined);
   });
 
-  it('returns needs_folder when no preview and no folder', async () => {
+  it('returns needs_folder when no preview, inline data, artifact, or folder', async () => {
     const card = imageCard({
       versions: [{ version: 1, filename: 'photo.png', content_hash: 'h3' }],
     });
     const doc = await loadContextDocumentForCard(card, { folderHandle: null });
     expect(doc.status).toBe('needs_folder');
+  });
+
+  it('loads image from inline dataUrl on pinned version', async () => {
+    const card = imageCard({
+      versions: [{
+        version: 1,
+        dataUrl: 'data:image/png;base64,Z2VuZXJhdGVk',
+        artifactRef: { id: 'artifact-1', type: 'artifact' },
+        content_hash: 'h4',
+      }],
+    });
+    const doc = await loadContextDocumentForCard(card, { folderHandle: null });
+    expect(doc.status).toBe('included');
+    expect(doc.imageDataUrl).toBe('data:image/png;base64,Z2VuZXJhdGVk');
+  });
+
+  it('loads generated image from artifact payload_text', async () => {
+    const card = imageCard({
+      versions: [{
+        version: 1,
+        artifactRef: { id: 'artifact-generated', type: 'artifact' },
+        content_hash: 'h5',
+      }],
+    });
+    const doc = await loadContextDocumentForCard(card, {
+      folderHandle: null,
+      fetchArtifact: async () => ({
+        artifact: { payload_text: 'data:image/png;base64,Z2VuZXJhdGVkQXJ0aWZhY3Q=' },
+      }),
+    });
+    expect(doc.status).toBe('included');
+    expect(doc.imageDataUrl).toBe('data:image/png;base64,Z2VuZXJhdGVkQXJ0aWZhY3Q=');
   });
 });

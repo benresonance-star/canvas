@@ -22,13 +22,45 @@ function resolveConnector({ provider = 'ollama', connectorId = null } = {}) {
   return connector;
 }
 
-function textOnlyContent(content) {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter((part) => part?.type === 'text' && typeof part.text === 'string')
-    .map((part) => part.text)
-    .join('\n\n');
+function dataUrlToBase64(url) {
+  const value = String(url ?? '').trim();
+  if (!value) return null;
+  const comma = value.indexOf(',');
+  if (value.startsWith('data:') && comma >= 0) {
+    return value.slice(comma + 1).replace(/\s/g, '');
+  }
+  return value.replace(/\s/g, '');
+}
+
+/**
+ * @param {string | object[]} content
+ * @returns {{ content: string, images: string[] }}
+ */
+function ollamaMessageFromContent(content) {
+  if (typeof content === 'string') {
+    return { content, images: [] };
+  }
+  if (!Array.isArray(content)) {
+    return { content: '', images: [] };
+  }
+
+  const textParts = [];
+  const images = [];
+  for (const part of content) {
+    if (part?.type === 'text' && typeof part.text === 'string') {
+      textParts.push(part.text);
+      continue;
+    }
+    if (part?.type === 'image_url' && typeof part.image_url?.url === 'string') {
+      const base64 = dataUrlToBase64(part.image_url.url);
+      if (base64) images.push(base64);
+    }
+  }
+
+  return {
+    content: textParts.join('\n\n'),
+    images,
+  };
 }
 
 function isCanvasContextMessage(message) {
@@ -47,12 +79,14 @@ function foldCanvasContextIntoLatestUserTurn(messages) {
   const contextBlock = contextMessages
     .map((message) => message.content.trim())
     .join('\n\n---\n\n');
+  const contextImages = contextMessages.flatMap((message) => message.images ?? []);
 
   return messages
     .map((message, index) => ({ message, index }))
     .filter(({ message }) => !isCanvasContextMessage(message))
     .map(({ message, index }) => {
       if (index !== latestUserIndex) return message;
+      const mergedImages = [...(message.images ?? []), ...contextImages];
       return {
         ...message,
         content: [
@@ -61,19 +95,31 @@ function foldCanvasContextIntoLatestUserTurn(messages) {
           'Current user request:',
           message.content,
         ].join('\n\n'),
+        ...(mergedImages.length ? { images: mergedImages } : {}),
       };
     });
+}
+
+function toOllamaApiMessage(message) {
+  const apiMessage = {
+    role: message.role,
+    content: message.content,
+  };
+  if (message.images?.length) {
+    apiMessage.images = message.images;
+  }
+  return apiMessage;
 }
 
 export function buildOllamaMessages({ systemContext, messages }) {
   const normalizedMessages = buildChatMessages({ systemContext, messages })
     .map((message) => ({
       role: message.role,
-      content: textOnlyContent(message.content),
+      ...ollamaMessageFromContent(message.content),
     }))
-    .filter((message) => message.content.trim());
+    .filter((message) => message.content.trim() || message.images.length);
 
-  return foldCanvasContextIntoLatestUserTurn(normalizedMessages);
+  return foldCanvasContextIntoLatestUserTurn(normalizedMessages).map(toOllamaApiMessage);
 }
 
 /**

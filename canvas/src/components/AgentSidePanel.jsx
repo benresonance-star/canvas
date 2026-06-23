@@ -19,6 +19,7 @@ import {
   defaultAgentTypeLabelForProvider,
   getConnectorById,
   mergeConnectorMeta,
+  contextCardsIncludeImages,
 } from '../lib/agentConnectors.js';
 import { AgentThreadSection } from './AgentThreadSection.jsx';
 import { AgentChatThreadView } from './AgentChatThreadView.jsx';
@@ -912,6 +913,13 @@ export function AgentSidePanel({
   const activeOllamaPullError =
     ollamaPullState?.status === 'error' && ollamaPullState.connectorId === singleConnectorId;
   const activeConnectorNeedsPull = connectorNeedsOllamaPull(connectorMeta, singleConnectorId);
+  const contextHasIncludedImages = contextCardsIncludeImages(contextCards, contextStatusByCardId);
+  const contextImagesUnsupported = Boolean(
+    isSingle
+    && activeConnector
+    && contextHasIncludedImages
+    && activeConnector.capabilities?.canReadImages !== true,
+  );
   const ollamaPullProgressLabel = (() => {
     const model = activeConnector?.model || 'model';
     const progress = ollamaPullState?.progress;
@@ -1418,6 +1426,11 @@ export function AgentSidePanel({
                   .join(' ')}
               </p>
             )}
+          {contextImagesUnsupported && (
+            <p className="sans text-[10px] text-warning mb-1 leading-snug" role="status">
+              {strings.agent.contextImagesUnsupported(activeConnector?.label || 'This agent')}
+            </p>
+          )}
           {isSingle && lastTokenEstimate && (
             <p className="sans text-[10px] text-muted mb-1 leading-snug" role="status">
               {strings.agent.contextTokenEstimate(
