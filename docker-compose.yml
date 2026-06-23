@@ -16,5 +16,20 @@ services:
       timeout: 5s
       retries: 5
 
+  live-worker:
+    image: node:22-alpine
+    working_dir: /app
+    command: ["node", "--use-system-ca", "server/liveWorker.js"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://canvas:canvas@postgres:5432/canvas
+      AGENT_SECRETS_KEY: ${AGENT_SECRETS_KEY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+    volumes:
+      - ./canvas:/app
+
 volumes:
   canvas_pg_data:

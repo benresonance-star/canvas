@@ -23,6 +23,7 @@ import { saveUserNote } from '../../lib/ingest/saveUserNote.js';
 import { saveMarkdownArtifact } from '../../lib/ingest/saveMarkdownArtifact.js';
 import { saveUserNoteToProject, saveBookmarkToProject, saveTextContentToProject } from '../../lib/projectCardEdits.js';
 import { fetchBookmarkPreview } from '../../lib/bookmarkPreviewApi.js';
+import { enrichBookmarkCardsInProject } from '../../lib/bookmarkPreviewEnrich.js';
 import {
   bookmarkLinkIdFromCardId,
   domainFromUrl,
@@ -70,6 +71,8 @@ import { deleteProjectArtifactPrimitive } from '../../lib/primitivesApi.js';
 import { commitProjectDocument } from '../../lib/projectDocumentCommit.js';
 import { createFlowArtifact } from '../flow/api/flowApi.js';
 import { flowCardFromDocument } from '../flow/domain/flowDocument.js';
+import { createLiveArtifact } from '../live/api/liveApi.js';
+import { liveArtifactCardFromRecord } from '../live/domain/liveArtifact.js';
 import {
   loadAgentChatSession,
   saveAgentChatSession,
@@ -386,6 +389,8 @@ export function useCanvasDocument({ refs, deps }) {
 
   const [activeCardId, setActiveCardId] = useState(null);
   const [openCardId, setOpenCardId] = useState(null);
+  const openCardIdRef = useRef(null);
+  const flowFlushRef = useRef(null);
   const [confirmChanges, setConfirmChanges] = useState(null);
   const [stagedSyncCards, setStagedSyncCards] = useState([]);
   const [stagingDragActive, setStagingDragActive] = useState(false);
@@ -399,11 +404,41 @@ export function useCanvasDocument({ refs, deps }) {
   const [savingNote, setSavingNote] = useState(false);
   const [savingLink, setSavingLink] = useState(false);
   const [savingFlow, setSavingFlow] = useState(false);
+  const [savingLive, setSavingLive] = useState(false);
   const [savingCardId, setSavingCardId] = useState(null);
 
   useEffect(() => {
     stagedSyncCardsRef.current = stagedSyncCards;
   }, [stagedSyncCards, stagedSyncCardsRef]);
+
+  useEffect(() => {
+    openCardIdRef.current = openCardId;
+  }, [openCardId]);
+
+  const registerFlowFlush = useCallback((getter) => {
+    flowFlushRef.current = getter;
+  }, []);
+
+  const closeOpenCard = useCallback(async ({ force = false } = {}) => {
+    const openId = openCardIdRef.current;
+    if (!openId) return true;
+    const card = stateRef.current.cards.find((entry) => entry.id === openId);
+    if (card?.type === 'flow') {
+      const flushState = flowFlushRef.current?.();
+      if (flushState?.isDirty?.()) {
+        const result = await flushState.flushSave?.();
+        if (!result?.ok) {
+          if (!force && !window.confirm(strings.flow.discardUnsavedClose)) {
+            return false;
+          }
+        }
+      }
+    }
+    setOpenCardId(null);
+    setActiveCardId((active) => (active === openId ? null : active));
+    setVersionStackOpen((version) => (version === openId ? null : version));
+    return true;
+  }, [stateRef]);
 
   useEffect(() => {
     stagingDragActiveRef.current = stagingDragActive;
@@ -522,7 +557,11 @@ export function useCanvasDocument({ refs, deps }) {
     prevBlobUrlsRef.current = next;
   }, [state.cards]);
 
-  const resetCanvasUi = useCallback(() => {
+  const resetCanvasUi = useCallback(async () => {
+    const flushState = flowFlushRef.current?.();
+    if (flushState?.isDirty?.()) {
+      await flushState.flushSave?.();
+    }
     setActiveCardId(null);
     setOpenCardId(null);
     setVersionStackOpen(null);
@@ -647,6 +686,21 @@ export function useCanvasDocument({ refs, deps }) {
       invalidateFolderScan();
       requestStructuralSync({ awaitLocal: true });
       void refreshGraph();
+      void (async () => {
+        const projectId = activeProjectIdRef.current;
+        if (!projectId) return;
+        const enriched = await enrichBookmarkCardsInProject(
+          projectId,
+          stateRef.current.cards ?? [],
+          stagedSyncCardsRef.current ?? [],
+        );
+        if (!enriched.changed || projectId !== activeProjectIdRef.current) return;
+        stateRef.current = { ...stateRef.current, cards: enriched.cards };
+        stagedSyncCardsRef.current = enriched.stagedSyncCards;
+        setState((prev) => ({ ...prev, cards: enriched.cards }));
+        setStagedSyncCards(enriched.stagedSyncCards);
+        await requestStructuralSync({ awaitLocal: true });
+      })();
       return { applied: true, stagedCount, newlyStagedCount: newlyStaged.length };
     },
     [
@@ -657,6 +711,7 @@ export function useCanvasDocument({ refs, deps }) {
       stateRef,
       stagedSyncCardsRef,
       agentChatThreadIndexRef,
+      activeProjectIdRef,
     ],
   );
 
@@ -1439,17 +1494,59 @@ export function useCanvasDocument({ refs, deps }) {
     stateRef,
   ]);
 
-  const handleFlowCardRefresh = useCallback(async (cardId, updates) => {
-    updateCard(cardId, updates);
+  const handleSaveNewLive = useCallback(async ({ position, ...input }) => {
     const projectId = activeProjectIdRef.current;
-    if (!projectId) return;
-    await commitProjectDocument(projectId, {
-      state: stateRef.current,
-      stagedSyncCards: stagedSyncCardsRef.current,
-      reason: 'flow:card-refresh',
-      pushRemote: true,
-    });
-  }, [activeProjectIdRef, stagedSyncCardsRef, stateRef, updateCard]);
+    if (!projectId) return null;
+    setSavingLive(true);
+    try {
+      const live = await createLiveArtifact(projectId, input);
+      const fallbackPosition = {
+        x: 100 + (stateRef.current.cards.length % 4) * 360,
+        y: 100 + Math.floor(stateRef.current.cards.length / 4) * 280,
+      };
+      const newCard = liveArtifactCardFromRecord(live, position ?? fallbackPosition);
+      const nextState = { ...stateRef.current, cards: [...stateRef.current.cards, newCard] };
+      stateRef.current = nextState;
+      setState(nextState);
+      registerOptimisticCard(projectId, newCard.id);
+      await commitProjectDocument(projectId, {
+        state: nextState,
+        stagedSyncCards: stagedSyncCardsRef.current,
+        reason: 'live:create',
+        pushRemote: true,
+      });
+      setOpenCardId(newCard.id);
+      return newCard;
+    } catch (error) {
+      setSyncStatus({ error: error.message });
+      setTimeout(() => setSyncStatus(null), 5000);
+      return null;
+    } finally {
+      setSavingLive(false);
+    }
+  }, [activeProjectIdRef, setState, setSyncStatus, stagedSyncCardsRef, stateRef]);
+
+  const flowCardRefreshQueueRef = useRef(Promise.resolve());
+
+  const handleFlowCardRefresh = useCallback(async (cardId, updates) => {
+    const run = async () => {
+      updateCard(cardId, updates);
+      const projectId = activeProjectIdRef.current;
+      if (!projectId) return;
+      const result = await commitProjectDocument(projectId, {
+        state: stateRef.current,
+        stagedSyncCards: stagedSyncCardsRef.current,
+        reason: 'flow:card-refresh',
+        pushRemote: true,
+      });
+      if (!result?.ok && !result?.localCacheWritten) {
+        setSyncStatus({ error: 'Flow preview could not be saved to the canvas.' });
+        setTimeout(() => setSyncStatus(null), 4000);
+      }
+    };
+    flowCardRefreshQueueRef.current = flowCardRefreshQueueRef.current.then(run, run);
+    await flowCardRefreshQueueRef.current;
+  }, [activeProjectIdRef, setSyncStatus, stagedSyncCardsRef, stateRef, updateCard]);
 
   const removeCard = useCallback(async (id) => {
     const projectId = activeProjectIdRef.current;
@@ -1616,6 +1713,8 @@ export function useCanvasDocument({ refs, deps }) {
     setActiveCardId,
     openCardId,
     setOpenCardId,
+    closeOpenCard,
+    registerFlowFlush,
     versionStackOpen,
     setVersionStackOpen,
     confirmChanges,
@@ -1635,6 +1734,7 @@ export function useCanvasDocument({ refs, deps }) {
     savingNote,
     savingLink,
     savingFlow,
+    savingLive,
     savingCardId,
     setCanvasView,
     resolveCanvasFitOptions,
@@ -1667,6 +1767,7 @@ export function useCanvasDocument({ refs, deps }) {
     handleSaveNewNote,
     handleSaveNewLink,
     handleSaveNewFlow,
+    handleSaveNewLive,
     handleFlowCardRefresh,
     removeCard,
     rehydratePreview,

@@ -277,6 +277,42 @@ describe('buildSyncChangesFromFolder', () => {
     expect(changes.filter((c) => c.type === 'new')).toHaveLength(0);
   });
 
+  it('does not stage a bookmark shortcut whose URL is already on canvas', () => {
+    const grouped = {
+      'links__amazon-com-au-f609aeaf': {
+        parsed: { name: 'amazon-com-au-f609aeaf', prefix: 'links', ext: 'url' },
+        versions: [{
+          version: 1,
+          filename: 'links__amazon-com-au-f609aeaf-v1.url',
+          externalUrl: 'https://www.amazon.com.au/dp/example',
+        }],
+      },
+      'links__ebay-com-au-62c18cac': {
+        parsed: { name: 'ebay-com-au-62c18cac', prefix: 'links', ext: 'url' },
+        versions: [{
+          version: 1,
+          filename: 'links__ebay-com-au-62c18cac-v1.url',
+          externalUrl: 'https://www.ebay.com.au/itm/123',
+        }],
+      },
+    };
+    const canvas = [{
+      id: 'f609aeaf-38a2-4f9c-8f8c-19aa1451bb92',
+      key: 'links__amazon-com-au-7b81c096',
+      type: 'bookmark',
+      versions: [{
+        version: 1,
+        filename: 'links__amazon-com-au-7b81c096-v1.url',
+        externalUrl: 'https://www.amazon.com.au/dp/example',
+      }],
+    }];
+
+    const confirm = buildConfirmChangesForDialog(grouped, canvas, []);
+
+    expect(confirm).toHaveLength(1);
+    expect(confirm[0].key).toBe('links__ebay-com-au-62c18cac');
+  });
+
   it('does not stage a bookmark sidecar whose URL is already on canvas', () => {
     const grouped = {
       'links__youtu-be-d626e7f3': {

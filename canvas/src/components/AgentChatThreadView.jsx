@@ -125,18 +125,33 @@ export function AgentChatThreadView({
   compact = false,
   className = '',
   scrollOnUpdate = true,
+  scrollResetKey = null,
   defaultAgentTypeLabel = '',
 }) {
   const bottomRef = useRef(null);
+  const initialScrollDoneRef = useRef(false);
+  const prevMessageLengthRef = useRef(0);
   const [formattedView, setFormattedView] = useState(true);
   const textSize = compact ? 'text-[10px]' : 'text-xs';
   const padX = compact ? 'px-2 py-1' : 'px-3 py-2';
   const sidePad = compact ? 'pl-3 pr-3' : 'pl-6 pr-6';
 
   useEffect(() => {
+    initialScrollDoneRef.current = false;
+    prevMessageLengthRef.current = 0;
+  }, [scrollResetKey]);
+
+  useEffect(() => {
     if (!scrollOnUpdate) return;
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, loading, error, scrollOnUpdate]);
+    const len = messages.length;
+    const grew = len > prevMessageLengthRef.current;
+    const behavior = !initialScrollDoneRef.current ? 'auto' : (grew ? 'smooth' : 'auto');
+    if (len > 0 || loading || error) {
+      bottomRef.current?.scrollIntoView({ behavior, block: 'end' });
+      initialScrollDoneRef.current = true;
+    }
+    prevMessageLengthRef.current = len;
+  }, [messages.length, loading, error, scrollOnUpdate, scrollResetKey]);
 
   const showEmpty =
     !hasConversationMessages(messages) && !loading && !error;

@@ -56,6 +56,7 @@ import { RightDock } from '../../components/RightDock.jsx';
 import { CreateClusterDialog } from '../../components/CreateClusterDialog.jsx';
 import { CreateFlowDialog } from '../flow/components/CreateFlowDialog.jsx';
 import { patchFlowCard } from '../flow/domain/flowDocument.js';
+import { CreateLiveArtifactDialog } from '../live/components/CreateLiveArtifactDialog.jsx';
 
 const ARTIFACT_AUDIT_RETRY_MS = 500;
 const ARTIFACT_AUDIT_MAX_RETRIES = 10;
@@ -138,6 +139,8 @@ export function CanvasWorkspaceView({
     setActiveCardId,
     openCardId,
     setOpenCardId,
+    closeOpenCard,
+    registerFlowFlush,
     versionStackOpen,
     setVersionStackOpen,
     stagingDragActive,
@@ -150,6 +153,7 @@ export function CanvasWorkspaceView({
     savingNote,
     savingLink,
     savingFlow,
+    savingLive,
     savingCardId,
     setCanvasView,
     fitCanvasViewToCards,
@@ -174,6 +178,7 @@ export function CanvasWorkspaceView({
     handleSaveNewNote,
     handleSaveNewLink,
     handleSaveNewFlow,
+    handleSaveNewLive,
     handleFlowCardRefresh,
     removeCard,
     rehydratePreview,
@@ -236,6 +241,8 @@ export function CanvasWorkspaceView({
     agentConnectorsOffline,
     agentOpenaiReachable,
     agentOpenaiReachabilityError,
+    ollamaPullState,
+    retryOllamaPull,
     handleSaveAgentApiKey,
     apiKeySaving,
     handleClearAgentApiKey,
@@ -279,6 +286,9 @@ export function CanvasWorkspaceView({
     agentChatLiveCardId,
     agentChatTranscriptRevision,
     registerFlowContextLoader,
+    agentPanelCollapsedSections,
+    handleAgentPanelCollapsedSectionsChange,
+    chatScrollResetKey,
   } = agent;
 
   const primitiveSelectionIndex = useMemo(() =>
@@ -404,6 +414,8 @@ export function CanvasWorkspaceView({
     createTaskOpen,
     setCreateTaskOpen,
   } = dialogs;
+
+  const [createLiveOpen, setCreateLiveOpen] = useState(false);
   const isMobile = useIsMobile();
   const [createFlowOpen, setCreateFlowOpen] = useState(false);
   const [deleteLinkTarget, setDeleteLinkTarget] = useState(null);
@@ -519,6 +531,21 @@ export function CanvasWorkspaceView({
   }, [state.cards, setOpenCardId]);
 
   const openCard = openCardId ? state.cards.find(c => c.id === openCardId) : null;
+  const cardsRef = useRef(state.cards);
+  const openCardIdRef = useRef(openCardId);
+  const handleFlowCardRefreshRef = useRef(handleFlowCardRefresh);
+  cardsRef.current = state.cards;
+  openCardIdRef.current = openCardId;
+  handleFlowCardRefreshRef.current = handleFlowCardRefresh;
+
+  const onFlowCardRefresh = useCallback((flow, nodes, edges) => {
+    const cardId = openCardIdRef.current;
+    if (!cardId) return undefined;
+    const card = cardsRef.current.find((entry) => entry.id === cardId);
+    if (!card) return undefined;
+    const updates = patchFlowCard(card, flow, nodes, edges);
+    return handleFlowCardRefreshRef.current(cardId, updates);
+  }, []);
   const openCardMissingFromFolder = Boolean(
     openCard
       && isCardMissingFromFolder({
@@ -803,6 +830,14 @@ export function CanvasWorkspaceView({
           onCreateTask={() => setCreateTaskOpen(true)}
           onOpenAgentMode={() => {
             setAgentPanelOpen(true);
+          }}
+          onAddLive={() => setCreateLiveOpen(true)}
+          onOpenLiveArtifact={(liveArtifactId) => {
+            const card = state.cards.find((item) =>
+              item.liveArtifactId === liveArtifactId
+              || item.versions?.some((version) => version.liveArtifactId === liveArtifactId),
+            );
+            if (card) setOpenCardId(card.id);
           }}
           workspaceTreeOpen={workspaceTreeOpen}
           onToggleWorkspaceTree={toggleWorkspaceTree}
@@ -1104,6 +1139,8 @@ export function CanvasWorkspaceView({
             openaiReachable: agentOpenaiReachable,
             openaiReachabilityError: agentOpenaiReachabilityError,
             onRetryConnectors: refreshAgentConnectors,
+            ollamaPullState,
+            onRetryOllamaPull: retryOllamaPull,
             onSaveApiKey: handleSaveAgentApiKey,
             apiKeySaving,
             onClearApiKey: handleClearAgentApiKey,
@@ -1161,6 +1198,9 @@ export function CanvasWorkspaceView({
             onRenameThread: handleRenameAgentThread,
             onSwitchThread: handleSwitchAgentThread,
             onDeleteThread: handleDeleteAgentThread,
+            initialCollapsedSections: agentPanelCollapsedSections,
+            onCollapsedSectionsChange: handleAgentPanelCollapsedSectionsChange,
+            chatScrollResetKey,
           }}
           inspectorOpen={inspectorOpen}
           inspectorProps={{
@@ -1221,6 +1261,22 @@ export function CanvasWorkspaceView({
         />
       )}
 
+      {createLiveOpen && (
+        <CreateLiveArtifactDialog
+          saving={savingLive}
+          onClose={() => setCreateLiveOpen(false)}
+          onSave={async (values) => {
+            const view = state.canvasView ?? { x: 0, y: 0, zoom: 1 };
+            const position = {
+              x: (canvasViewportSize.width / 2 - view.x) / view.zoom - 190,
+              y: (canvasViewportSize.height / 2 - view.y) / view.zoom - 140,
+            };
+            const card = await handleSaveNewLive({ ...values, position });
+            if (card) setCreateLiveOpen(false);
+          }}
+        />
+      )}
+
       {createClusterOpen && (
         <CreateClusterDialog
           onClose={() => setCreateClusterOpen(false)}
@@ -1249,7 +1305,8 @@ export function CanvasWorkspaceView({
           folderKeySet={folderKeySet}
           projectId={effectiveProjectId}
           projectName={state.projectName}
-          onClose={() => setOpenCardId(null)}
+          onClose={closeOpenCard}
+          registerFlowFlush={registerFlowFlush}
           onPinVersion={pinVersion}
           onDeleteCard={requestDeleteCard}
           onUpdateVersion={(versionNum, updatedVersion) =>
@@ -1270,10 +1327,7 @@ export function CanvasWorkspaceView({
           onGraphRefresh={refreshGraph}
           onSaveStatus={handleNoteSaveStatus}
           flowArtifactCandidates={state.cards}
-          onFlowCardRefresh={(flow, nodes, edges) => {
-            const updates = patchFlowCard(openCard, flow, nodes, edges);
-            void handleFlowCardRefresh(openCard.id, updates);
-          }}
+          onFlowCardRefresh={onFlowCardRefresh}
           onRehydratePreview={rehydratePreview}
           agentPanelProps={{
             panelMode: 'single',
@@ -1303,6 +1357,8 @@ export function CanvasWorkspaceView({
             openaiReachable: agentOpenaiReachable,
             openaiReachabilityError: agentOpenaiReachabilityError,
             onRetryConnectors: refreshAgentConnectors,
+            ollamaPullState,
+            onRetryOllamaPull: retryOllamaPull,
             onSaveApiKey: handleSaveAgentApiKey,
             apiKeySaving,
             onClearApiKey: handleClearAgentApiKey,

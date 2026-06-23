@@ -4,6 +4,8 @@ Instructions for Cursor Composer and other coding agents working on this app.
 
 **Architecture reference:** [docs/ARCHITECTURE_MASTER_SPEC.md](docs/ARCHITECTURE_MASTER_SPEC.md) (load/commit authority §4, debugging §9).
 
+**Local dev stack:** [docs/DEV_STACK.md](docs/DEV_STACK.md) — agent prompts **start canvas** / **restart canvas** / **stop canvas**.
+
 ## Mental model
 
 | Layer | Role |
@@ -32,7 +34,7 @@ Do not bypass these from UI or new features:
 
 Use the **cursor-ide-browser** MCP. Do not claim projection bugs fixed without a browser pass.
 
-**Prerequisites:** Postgres + API (`http://localhost:3001`) + Vite (`http://localhost:5173`).
+**Prerequisites:** Postgres + API (`http://localhost:3001`) + Vite (`http://localhost:5173`). Boot with `npm run dev:stack` from `canvas/` (see [docs/DEV_STACK.md](docs/DEV_STACK.md)).
 
 | Step | Action |
 |------|--------|

@@ -99,7 +99,9 @@ export function useWorkspaceIndexSync({
     applyDuplicateNameBanner(index);
     const currentActiveId = activeProjectIdRef.current;
     if (currentActiveId && loaded) {
-      void attemptRestoreRef.current(currentActiveId, lastLoadedCardsRef.current);
+      void attemptRestoreRef.current(currentActiveId, lastLoadedCardsRef.current, {
+        scan: false,
+      });
     }
     return index;
   }, [

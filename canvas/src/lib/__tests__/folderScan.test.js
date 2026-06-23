@@ -110,11 +110,44 @@ describe('scanFolderFiles', () => {
     expect(found[1].cardKey).toBe('notes__real');
   });
 
+  it('parses links__ shortcut .url files as bookmark artifacts', async () => {
+    const root = directoryHandle('project', [
+      fileHandle(
+        'links__amazon-com-au-f609aeaf-v1.url',
+        '[InternetShortcut]\r\nURL=https://www.amazon.com.au/dp/example\r\n',
+      ),
+    ]);
+
+    const { found } = await scanFolderFiles(root, { projectId: 'p1' });
+
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      cardKey: 'links__amazon-com-au-f609aeaf',
+      cardType: 'bookmark',
+      externalUrl: 'https://www.amazon.com.au/dp/example',
+      prefix: 'links',
+      name: 'amazon-com-au-f609aeaf',
+      version: 1,
+      ext: 'url',
+    });
+  });
+
   it('ignores generated flow snapshots', async () => {
     const root = directoryHandle('project', [
       directoryHandle('flows', [
         fileHandle('customer-onboarding--flow-1.flow.json', '{"schemaVersion":1}'),
       ]),
+      fileHandle('notes__real-v1.md', 'real note'),
+    ]);
+
+    const { found } = await scanFolderFiles(root, { projectId: 'p1' });
+
+    expect(found.map((entry) => entry.relativePath)).toEqual(['notes__real-v1.md']);
+  });
+
+  it('ignores generated live Markdown mirrors', async () => {
+    const root = directoryHandle('project', [
+      fileHandle('live__melbourne-development-feed-abcd1234-v1.md', '---\ncanvas_kind: live\n---'),
       fileHandle('notes__real-v1.md', 'real note'),
     ]);
 

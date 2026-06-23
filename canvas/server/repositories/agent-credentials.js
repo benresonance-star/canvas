@@ -61,6 +61,7 @@ export async function listConnectorStatus() {
         requiresCredential: false,
         configured: true,
         usable: Boolean(health.reachable && health.modelAvailable),
+        needsPull: Boolean(health.reachable && !health.modelAvailable),
         keyHint: null,
         healthError: health.error ?? null,
       };

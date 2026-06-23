@@ -291,7 +291,7 @@ export function useWorkspaceProjection({
         setProjectSwitchLoading(true);
       }
       setPendingSwitchProjectId(targetId);
-      resetProjectUi();
+      await resetProjectUi();
       projectHydratedRef.current.delete(targetId);
       projectNameDirtyRef.current = false;
       setState((prev) => ({

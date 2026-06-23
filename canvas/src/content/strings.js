@@ -397,6 +397,13 @@ export const strings = {
     hideContent: 'Hide content',
     previewUnavailable: 'Source artifact is no longer on the canvas.',
     localPreviewEmpty: 'No description to preview.',
+    saveFailed: 'Could not save flow. Check that the API is running (npm run dev:stack).',
+    saveFailedNetwork: 'Could not reach the flow API. Start the dev stack with npm run dev:stack.',
+    artifactNotInProject: 'This artifact is not synced to the project yet. Sync the card to the folder or pick a different artifact.',
+    artifactNodeMissingRef: 'This artifact card has no synced primitive reference yet.',
+    unsavedChanges: 'Unsaved flow changes could not be saved.',
+    discardUnsavedClose: 'Close without saving? Unsaved changes will be lost.',
+    closeWithoutSaving: 'Close without saving',
   },
   graph: {
     linked: 'Linked',
@@ -438,9 +445,9 @@ export const strings = {
     createApiUnavailable:
       'Clusters need Postgres. Start Docker Desktop, then run npm run db:up && npm run db:migrate and npm run server.',
     apiUnreachableBanner:
-      'Clusters unavailable — cannot reach the API server. Run npm run server (port 3001).',
+      'Clusters unavailable — cannot reach the API server. Run npm run dev:stack or say restart canvas (API on port 3001).',
     dbUnavailableBanner:
-      'Clusters unavailable — database not ready. Run npm run db:up && npm run db:migrate, then restart npm run server.',
+      'Clusters unavailable — database not ready. Run npm run dev:stack or npm run db:up && npm run db:migrate, then restart canvas.',
     hullsLoadFailed: 'Could not load clusters from the server.',
     workspaceClusterFailed:
       'Could not create or load the workspace cluster for this project.',
@@ -498,6 +505,10 @@ export const strings = {
     localAgentReady: 'Local Ollama agent is ready.',
     localAgentUnavailable:
       'Start Ollama on localhost:11434 and pull the selected model before chatting.',
+    ollamaPulling: (model) => `Downloading ${model}…`,
+    ollamaPullingPct: (model, pct) => `Downloading ${model}… ${pct}%`,
+    ollamaPullFailed: 'Model download failed.',
+    ollamaPullRetry: 'Retry download',
     retryConnectors: 'Retry connection',
     threadAgentTypeIncompatible: (label) =>
       `Change this thread to ${label} before chatting with the selected agent.`,

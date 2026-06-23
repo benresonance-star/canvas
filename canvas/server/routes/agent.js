@@ -12,7 +12,7 @@ import {
 } from '../services/agentChatProvider.js';
 import { estimateChatInputTokens } from '../lib/agentTokenEstimate.js';
 import { checkOpenaiReachable } from '../lib/openaiFetch.js';
-import { checkOllamaReachable } from '../services/ollamaChat.js';
+import { checkOllamaReachable, pullOllamaModel } from '../services/ollamaChat.js';
 import { getAgentTemplate } from '../repositories/agent-templates.js';
 import { compileAgentTemplateSystemContext } from '../../src/lib/agentTemplates.js';
 
@@ -83,6 +83,50 @@ export function registerAgentRoutes(app) {
       res.json({ connectors, secretsConfigured: secretsAvailable() });
     } catch (e) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/agent/ollama/pull', async (req, res) => {
+    try {
+      const { connectorId } = req.body ?? {};
+      const connector = getConnectorById(connectorId);
+      if (!connector || connector.provider !== 'ollama') {
+        return res.status(400).json({ error: 'Unknown or non-Ollama connector' });
+      }
+
+      const health = await checkOllamaReachable({
+        provider: 'ollama',
+        connectorId,
+      });
+      if (!health.reachable) {
+        return res.status(503).json({ error: health.error || 'Ollama is not reachable.' });
+      }
+      if (health.modelAvailable) {
+        return res.json({ ok: true, alreadyPresent: true, model: connector.model });
+      }
+
+      res.setHeader('Content-Type', 'application/x-ndjson');
+      res.flushHeaders?.();
+
+      try {
+        const result = await pullOllamaModel({
+          baseUrl: connector.baseUrl ?? 'http://localhost:11434',
+          model: connector.model,
+          signal: req.signal,
+          onProgress: (event) => {
+            res.write(`${JSON.stringify(event)}\n`);
+          },
+        });
+        res.write(`${JSON.stringify({ ok: true, model: result.model })}\n`);
+        res.end();
+      } catch (e) {
+        res.write(`${JSON.stringify({ ok: false, error: e.message })}\n`);
+        res.end();
+      }
+    } catch (e) {
+      if (!res.headersSent) {
+        res.status(e.status || 500).json({ error: e.message });
+      }
     }
   });
 

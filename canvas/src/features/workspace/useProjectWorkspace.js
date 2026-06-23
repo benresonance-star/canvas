@@ -74,7 +74,7 @@ export function useProjectWorkspace({
     return prev;
   }, []);
 
-  const resetProjectUi = useCallback(() => {
+  const resetProjectUi = useCallback(async () => {
     folderRestoreHandledSeqRef.current = null;
     setFolderLinkInProgress(false);
     setFolderLinkProbeComplete(false);
@@ -90,7 +90,7 @@ export function useProjectWorkspace({
     setActiveThreadId(null);
     setAgentChatThreadIndex({ version: 1, activeThreadId: null, threads: [] });
     setThreadPickerOpen(false);
-    resetCanvasUi?.();
+    await resetCanvasUi?.();
     resetClusterUi?.();
     resetAgentUi?.();
   }, [

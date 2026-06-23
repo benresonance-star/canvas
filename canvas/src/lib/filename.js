@@ -147,6 +147,7 @@ export function isFolderBackedCanvasCard(card) {
   const type = normalizeCardType(card?.type);
   if (type === 'bookmark') return false;
   if (type === 'flow') return false;
+  if (type === 'live') return false;
   if (card?.prefix === 'links') return false;
   return true;
 }
@@ -278,6 +279,7 @@ export function isCodePreviewType(type) {
 export function cardHeaderPrefix(card) {
   if (!card) return '';
   if (normalizeCardType(card.type) === 'agent_chat') return 'thread';
+  if (normalizeCardType(card.type) === 'live') return 'live';
   return card.prefix ?? '';
 }
 
@@ -335,5 +337,6 @@ export function cardTypeLabel(type) {
   if (t === 'spreadsheet') return 'EXCEL';
   if (t === 'bookmark') return 'LINK';
   if (t === 'flow') return 'FLOW';
+  if (t === 'live') return 'AGENT FEED';
   return 'FILE';
 }

@@ -76,7 +76,7 @@ function ExpandedNodeBody({ nodeType, data, selected }) {
   return (
     <>
       <div className="flex-1 min-h-0 border-t border-border overflow-hidden">
-        <FlowNodePreview nodeType={nodeType} data={data} />
+        <FlowNodePreview nodeType={nodeType} data={data} selected={selected} />
       </div>
       {selected && (
         <NodeResizer

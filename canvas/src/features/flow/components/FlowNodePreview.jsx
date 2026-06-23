@@ -6,7 +6,14 @@ import { NotePreviewFrame } from '../../../components/NotePreviewFrame.jsx';
 import { useFlowEditorContext } from './FlowEditorContext.jsx';
 import { useFlowAgentChatPreviewContext } from '../hooks/useFlowAgentChatPreviewContext.js';
 
-function ArtifactFlowNodePreview({ data }) {
+function flowPreviewScrollClass(selected) {
+  return [
+    'h-full w-full min-h-0 overflow-auto px-4 pb-2',
+    selected ? 'nowheel nodrag' : '',
+  ].filter(Boolean).join(' ');
+}
+
+function ArtifactFlowNodePreview({ data, selected }) {
   const { cardsById, folderHandle, onRehydratePreview, projectId } = useFlowEditorContext();
   const card = cardsById.get(data.cardId);
   const pinned = card ? getPinnedVersion(card) : null;
@@ -21,11 +28,11 @@ function ArtifactFlowNodePreview({ data }) {
   }
 
   return (
-    <div className="h-full w-full min-h-0 overflow-auto">
+    <div className={flowPreviewScrollClass(selected)}>
       <CardPreview
         card={card}
         pinned={pinned}
-        isActive={false}
+        isActive={selected}
         compact={false}
         folderHandle={folderHandle}
         onRehydratePreview={onRehydratePreview}
@@ -38,7 +45,7 @@ function ArtifactFlowNodePreview({ data }) {
   );
 }
 
-function LocalFlowNodePreview({ data }) {
+function LocalFlowNodePreview({ data, selected }) {
   if (!data.description?.trim()) {
     return (
       <div className="h-full flex items-center justify-center px-3 text-center">
@@ -48,19 +55,19 @@ function LocalFlowNodePreview({ data }) {
   }
 
   return (
-    <div className="h-full w-full min-h-0 overflow-auto">
+    <div className={flowPreviewScrollClass(selected)}>
       <NotePreviewFrame
         content={data.description}
         contentKey={`flow-local-${data.title ?? 'node'}`}
-        isActive={false}
+        isActive={selected}
       />
     </div>
   );
 }
 
-export function FlowNodePreview({ nodeType, data }) {
+export function FlowNodePreview({ nodeType, data, selected = false }) {
   if (nodeType === 'artifact') {
-    return <ArtifactFlowNodePreview data={data} />;
+    return <ArtifactFlowNodePreview data={data} selected={selected} />;
   }
-  return <LocalFlowNodePreview data={data} />;
+  return <LocalFlowNodePreview data={data} selected={selected} />;
 }

@@ -397,11 +397,12 @@ describe('agentContextContent', () => {
     expect(hint.status).toBe('needs_folder');
   });
 
-  it('isContextTypeSupported for text, pdf, image, flow, and code', () => {
+  it('isContextTypeSupported for text, pdf, image, flow, live, and code', () => {
     expect(isContextTypeSupported('markdown')).toBe(true);
     expect(isContextTypeSupported('pdf')).toBe(true);
     expect(isContextTypeSupported('image')).toBe(true);
     expect(isContextTypeSupported('flow')).toBe(true);
+    expect(isContextTypeSupported('live')).toBe(true);
     expect(isContextTypeSupported('code')).toBe(true);
   });
 
@@ -469,6 +470,57 @@ describe('agentContextContent', () => {
     );
     expect(doc.status).toBe('included');
     expect(doc.text).toContain('Flow: Onboarding');
+  });
+
+  it('contextStatusHint marks live cards as pending when liveArtifactId exists', () => {
+    const hint = contextStatusHint(
+      {
+        id: 'live-1',
+        name: 'Project feed',
+        type: 'live',
+        liveArtifactId: 'artifact-live-1',
+        pinnedVersion: 1,
+        versions: [{ version: 1, liveArtifactId: 'artifact-live-1' }],
+      },
+      { folderLinked: false },
+    );
+    expect(hint.status).toBe('pending');
+  });
+
+  it('loadContextDocumentForCard loads live feed via injected loader', async () => {
+    const doc = await loadContextDocumentForCard(
+      {
+        id: 'live-card',
+        name: 'Weekly update',
+        type: 'live',
+        liveArtifactId: 'live-artifact-1',
+        pinnedVersion: 1,
+        versions: [{ version: 1, liveArtifactId: 'live-artifact-1' }],
+      },
+      {
+        loadLiveContextText: async () => '# Live Agent Feed: Weekly update\n\nBody text',
+      },
+    );
+    expect(doc.status).toBe('included');
+    expect(doc.text).toContain('Weekly update');
+    expect(doc.text).toContain('Body text');
+  });
+
+  it('loadContextDocumentForCard returns empty when live loader has no report', async () => {
+    const doc = await loadContextDocumentForCard(
+      {
+        id: 'live-card',
+        name: 'Weekly update',
+        type: 'live',
+        liveArtifactId: 'live-artifact-1',
+        pinnedVersion: 1,
+        versions: [{ version: 1, liveArtifactId: 'live-artifact-1' }],
+      },
+      {
+        loadLiveContextText: async () => null,
+      },
+    );
+    expect(doc.status).toBe('empty');
   });
 
   it('dataUrlByteLength estimates base64 payload size', () => {

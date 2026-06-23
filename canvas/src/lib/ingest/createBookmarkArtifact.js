@@ -6,7 +6,7 @@ import {
   bookmarkCardKeyFromUrl,
 } from '../bookmarkUrl.js';
 import { parseFilename } from '../filename.js';
-import { previewCacheKey, putPreview } from '../previewStore.js';
+import { cacheBookmarkThumbnail } from '../bookmarkPreviewEnrich.js';
 import { writeBookmarkFile } from '../folderWrite.js';
 import { enqueueArtifactSyncRetry } from '../artifactSyncOutbox.js';
 import {
@@ -15,24 +15,6 @@ import {
   isApiAvailable,
 } from '../primitivesApi.js';
 import { createLinksFromSource } from './linkIngest.js';
-
-/**
- * @param {string | null | undefined} imageUrl
- */
-async function cacheBookmarkThumbnail(projectId, cardKey, version, imageUrl) {
-  if (!imageUrl) return null;
-  try {
-    const res = await fetch(imageUrl);
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    if (!blob.type.startsWith('image/')) return null;
-    const key = previewCacheKey(projectId, cardKey, version);
-    await putPreview(key, blob);
-    return key;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * @param {object} preview

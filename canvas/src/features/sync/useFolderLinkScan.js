@@ -1094,6 +1094,7 @@ export function useFolderLinkScan({
       void attemptRestoreRef.current(
         activeProjectIdRef.current,
         lastLoadedCardsRef.current,
+        { scan: false },
       );
     };
     document.addEventListener('visibilitychange', onVisibility);

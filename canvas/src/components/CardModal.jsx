@@ -23,6 +23,7 @@ import {
 } from '../lib/flowAgentUiPersistence.js';
 import {
   planFlowAgentUiRestore,
+  shouldAutoPersistFlowAgentThread,
   buildFlowAgentUiFlushPayload,
 } from '../lib/flowAgentUiRestore.js';
 import { FlowEditor } from '../features/flow/components/FlowEditor.jsx';
@@ -75,6 +76,7 @@ export function CardModal({
   flowArtifactCandidates = [],
   onFlowCardRefresh,
   onRehydratePreview,
+  registerFlowFlush,
 }) {
   const [currentVersion, setCurrentVersion] = useState(card?.pinnedVersion ?? 1);
   const [sidebarOpen, setSidebarOpen] = useState(readStoredSidebarOpen);
@@ -84,6 +86,8 @@ export function CardModal({
     context: false,
   });
   const [editName, setEditName] = useState(card?.name ?? '');
+  const [flowClosing, setFlowClosing] = useState(false);
+  const [flowCloseError, setFlowCloseError] = useState(null);
   const noteEditorRef = useRef(null);
   const flowSnapshotGetterRef = useRef(null);
   const restoredFlowAgentUiRef = useRef(false);
@@ -105,6 +109,21 @@ export function CardModal({
     () => flowSnapshotGetterRef.current?.() ?? null,
     [],
   );
+
+  const handleClose = useCallback(async () => {
+    if (flowClosing) return;
+    setFlowCloseError(null);
+    setFlowClosing(true);
+    try {
+      const closed = await onClose();
+      if (closed === false) {
+        setFlowCloseError(strings.flow.unsavedChanges);
+        return;
+      }
+    } finally {
+      setFlowClosing(false);
+    }
+  }, [flowClosing, onClose]);
 
   const flowAgent = useFlowAgentContext({
     flowCard: card,
@@ -190,7 +209,7 @@ export function CardModal({
 
   useEffect(() => {
     if (!isFlow || !agentOpen || !projectId || !card?.id || !agentPanelProps) return;
-    if (!restoredFlowAgentUiRef.current) return;
+    if (!shouldAutoPersistFlowAgentThread(restoredFlowAgentUiRef.current)) return;
     const threadId = agentPanelProps.activeThreadId ?? null;
     if (!threadId) return;
     persistFlowAgentUi({
@@ -348,6 +367,11 @@ export function CardModal({
       onCreateThread: async () => {
         await agentPanelProps.onCreateThread?.();
         queueMicrotask(() => flushFlowAgentUiSnapshot());
+      },
+      onDeleteThread: async () => {
+        await agentPanelProps.onDeleteThread?.();
+        persistFlowAgentUi({ activeThreadId: null });
+        lastFlowAgentThreadRef.current = null;
       },
     };
   }, [
@@ -558,12 +582,34 @@ export function CardModal({
               <Pin size={12} strokeWidth={1.8} /> {strings.card.pinThisVersion}
             </button>
           )}
-          <button aria-label="Close" onClick={onClose} className="text-on-overlay/70 hover:text-on-overlay transition p-1">
+          <button
+            aria-label="Close"
+            onClick={() => { void handleClose(); }}
+            disabled={flowClosing}
+            className="text-on-overlay/70 hover:text-on-overlay transition p-1 disabled:opacity-40"
+          >
             <X size={20} strokeWidth={1.5} />
           </button>
         </div>
       </div>
       <div className="flex-1 mx-6 mb-6 min-h-0 flex flex-col">
+        {flowCloseError && isFlow && (
+          <div className="sans shrink-0 mb-3 px-4 py-2 rounded-md bg-danger-muted text-danger text-xs border border-danger-border flex items-center justify-between gap-3">
+            <span>{flowCloseError}</span>
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm(strings.flow.discardUnsavedClose)) {
+                  setFlowCloseError(null);
+                  void onClose({ force: true });
+                }
+              }}
+              className="underline shrink-0"
+            >
+              {strings.flow.closeWithoutSaving}
+            </button>
+          </div>
+        )}
         {isFlow ? (
           <div className="flex-1 bg-canvas rounded-lg overflow-hidden min-h-0 flex flex-col md:flex-row">
             <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
@@ -577,9 +623,13 @@ export function CardModal({
                 onRegisterContextSnapshot={(getter) => {
                   flowSnapshotGetterRef.current = getter;
                 }}
+                onRegisterFlush={(getter) => {
+                  registerFlowFlush?.(getter);
+                }}
                 onSelectedNodeIdsChange={flowAgent.setSelectedNodeIds}
                 flowAgentScopeNodeIds={agentOpen ? flowAgent.scopeNodeIds : null}
                 agentModeActive={agentOpen}
+                flowClosing={flowClosing}
               />
             </div>
             {agentOpen && flowAgentPanelProps && (
@@ -634,7 +684,7 @@ export function CardModal({
           <div className="flex-1 bg-canvas rounded-lg overflow-hidden min-h-0 flex flex-col md:flex-row relative">
             <div className="relative flex-1 min-w-0 min-h-[40vh] md:min-h-0 flex flex-col">
               <div className="flex-1 min-h-0 overflow-hidden">
-                <ModalContent card={card} version={version} />
+                <ModalContent card={card} version={version} folderHandle={folderHandle} projectId={projectId} />
               </div>
             </div>
             <aside

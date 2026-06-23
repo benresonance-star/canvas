@@ -154,3 +154,98 @@ export async function sendAgentChat({
     body: JSON.stringify({ provider, connectorId, messages, systemContext, templateId }),
   });
 }
+
+function parseNdjsonLine(line) {
+  const trimmed = String(line).trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pull an Ollama model for a connector. Streams progress via onProgress when the server
+ * returns NDJSON; short-circuits with JSON when the model is already present.
+ */
+export async function pullOllamaModel(connectorId, { onProgress, signal } = {}) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/agent/ollama/pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connectorId }),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === 'AbortError') throw e;
+    throw new AgentApiError(
+      'Cannot reach the Canvas API. Is npm run server running?',
+      { kind: 'network' },
+    );
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new AgentApiError(data.error || res.statusText || 'API error', {
+        status: res.status,
+        kind: 'api',
+        details: data,
+      });
+    }
+    return data;
+  }
+
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => ({}));
+    throw new AgentApiError(data.error || res.statusText || 'API error', {
+      status: res.status,
+      kind: 'api',
+      details: data,
+    });
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalResult = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      const event = parseNdjsonLine(line);
+      if (!event) continue;
+      if (event.ok === true) {
+        finalResult = event;
+        continue;
+      }
+      if (event.ok === false) {
+        throw new AgentApiError(event.error || 'Ollama pull failed', { kind: 'backend' });
+      }
+      onProgress?.(event);
+    }
+  }
+
+  const trailing = parseNdjsonLine(buffer);
+  if (trailing) {
+    if (trailing.ok === true) {
+      finalResult = trailing;
+    } else if (trailing.ok === false) {
+      throw new AgentApiError(trailing.error || 'Ollama pull failed', { kind: 'backend' });
+    } else {
+      onProgress?.(trailing);
+    }
+  }
+
+  if (!finalResult?.ok) {
+    throw new AgentApiError('Ollama pull ended without success', { kind: 'backend' });
+  }
+  return finalResult;
+}

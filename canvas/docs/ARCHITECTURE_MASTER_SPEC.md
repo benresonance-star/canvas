@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.06.19.7
-**Version label:** folder-save-agent-context-freshness
+**Version:** 2026.06.23.1
+**Version label:** flow-save-persistence-close-guard
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -554,14 +554,19 @@ Client (`src/features/flow/`):
 
 - `FlowEditor.jsx` — `@xyflow/react` editor; artifact nodes embed live `CardPreview`
 - `FlowPreview.jsx` — compact canvas-card preview from `flowPreview` snapshot on pinned version
-- `useFlowDocument.js` — load, dirty tracking, debounced save, SSE apply with `clientId` skip
+- `useFlowDocument.js` — load, dirty tracking, debounced autosave (`flowAutosave.js`), manual `flushSave`, SSE apply with `clientId` skip; `save()` clears pending timers and skips when clean unless forced
 - `flowSnapshot.js` — optional linked-folder snapshot file at `flows/<flowId>.json`
 - Flow cards on the main canvas use the `flow` card type; opening the modal launches the flow editor
+- `closeOpenCard` in `useCanvasDocument.js` — central flush-before-close for X, Escape, and project-switch reset; blocks close when flush fails unless user discards
+- `formatFlowSaveError` — maps validation vs network errors in the flow editor toolbar
 
 Rules:
 
 - Flow layout authority is `flow_document` + nodes/edges tables, not `canvas_project_document` cards layout
 - Artifact nodes reference existing primitive `artifact_id`; local nodes are flow-local only
+- On `PUT /flows/:flowId`, `replaceFlow` auto-registers referenced artifact IDs into the project workspace `cluster_member` when the artifact row exists (canvas cards may carry `artifactRef` before cluster membership)
+- Flow editor artifact palette lists only canvas cards with a synced `artifactRef` (`artifactRefIdForClusterCard`)
+- Save failures surface in the flow toolbar; close does not silently discard dirty edits when flush returns `ok: false`
 - Edge connection types and custom labels live in edge `presentation` JSON (`flowConnectionTypes.js`)
 - Agent context can include selected flow nodes via `useFlowAgentContext`
 - Flow agent mode UI (`flowAgentUiPersistence.js`) persists per-flow-card last thread and panel section layout; restored when agent mode is re-enabled on that flow card
@@ -603,7 +608,7 @@ Connectors (`server/lib/agentConnectors.js`, mirrored client-side):
 | `ollama-gemma-12b` | Gemma 12B Local | ollama | gemma4:12b |
 | `ollama-gemma-26b` | Gemma 26B Local | ollama | gemma4:26b |
 
-Ollama availability is probed at runtime; 26B remains disabled until the model is pulled. Canvas context messages are folded into the latest user turn for Ollama text-only chat.
+Ollama availability is probed at runtime via `GET /agent/connectors` (`needsPull` when reachable but model missing). Selecting a Gemma connector in Agent mode triggers `POST /agent/ollama/pull` (streamed NDJSON progress) to download the model on demand. `start canvas` mounts the persistent Docker volume `ollama` at `/root/.ollama` but does not pre-pull weights. Canvas context messages are folded into the latest user turn for Ollama text-only chat.
 
 ### Code file previews (shipped)
 
@@ -785,7 +790,7 @@ Until layout is fully authoritative in `spec_canvas_state`, the client keeps `ca
 | `routes/clusters.js` | `/clusters/*`, `DELETE /projects/:projectId/artifacts/:artifactId` |
 | `routes/artifacts.js` | `/artifacts/*`, `/bookmarks/preview`, `/bookmarks/embed` |
 | `routes/primitives.js` | `/primitives/*`, `/relationships/*`, `/notes/*`, `/assertions/*`, `/tasks/*`, `/workspace/primitives`, `/workspace/events` |
-| `routes/agent.js` | `/agent/chat`, provider-aware completion |
+| `routes/agent.js` | `/agent/chat`, `/agent/ollama/pull`, provider-aware completion |
 | `routes/agentTemplates.js` | `/agent/templates/*` |
 | `routes/flows.js` | `/projects/:projectId/flows`, `/flows/:flowId`, `/flows/:flowId/stream` |
 
@@ -810,6 +815,29 @@ Run validation via `lib/schemas/validate.js` helpers.
 ## 9. Debugging
 
 See **[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)** for the full system map, per-flow trace stages, and symptom tables.
+
+### Local dev stack
+
+One-command local development is owned by `scripts/dev-stack.mjs` (config: `dev-stack.config.json`, env overrides: `.env.example`). Full runbook: **[DEV_STACK.md](DEV_STACK.md)**.
+
+| Agent prompt | npm script | Behavior |
+|--------------|------------|----------|
+| **start canvas** | `npm run dev:stack` | Launch Docker Desktop when needed (Windows/macOS), `docker compose up` Postgres, migrate, Ollama (`canvas-ollama` + `ollama` volume), API on `:3001`, Vite on `:5173` |
+| **restart canvas** | `npm run dev:stack:restart` | `dev-stack-stop` then `dev-stack --no-docker-boot` — API/Vite only; assumes Docker already running |
+| **stop canvas** | `npm run dev:stack:stop` | Stop API/Vite background processes; leave Postgres/Ollama containers up |
+
+**Services:**
+
+| Service | Port | Container / process |
+|---------|------|---------------------|
+| Postgres | 5432 | `canvas-postgres` (`../docker-compose.yml`) |
+| API | 3001 | `npm run server` → `GET /health` |
+| Vite | 5173 | `npm run dev` (proxies `/api` → API) |
+| Ollama | 11434 | `canvas-ollama` (volume `ollama` → `/root/.ollama`; legacy container `ollama` supported) |
+
+**Ollama models:** not pulled at boot — select **Gemma 12B/26B Local** in Agent mode to download on demand.
+
+**Browser debugging prerequisite:** after **start canvas**, verify at `http://localhost:5173` with API health at `http://localhost:3001/health`. See [`AGENTS.md`](../AGENTS.md) Cursor browser checklist (I1 menu/header alignment).
 
 ### Sync trace
 
@@ -1059,6 +1087,7 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 
 | Document | Purpose |
 |----------|---------|
+| [DEV_STACK.md](./DEV_STACK.md) | Local dev stack — **start canvas**, **restart canvas**, **stop canvas** |
 | [PROJECT_SYNC_API.md](./PROJECT_SYNC_API.md) | Frozen `projectSync.js` barrel exports |
 | [placement-persistence-qa.md](./placement-persistence-qa.md) | Placement QA scenarios |
 | [P0_MANUAL_CHECKLIST.md](./P0_MANUAL_CHECKLIST.md) | Manual release checklist |
@@ -1067,6 +1096,31 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-06-23 — Flow save persistence and close guard (implemented)
+
+- Bumped the active spec to `2026.06.23.1`.
+- Hardened flow save: `save()` clears autosave timers and skips clean PUTs; Save uses `flushSave()`; server `replaceFlow` registers artifact node refs into project `cluster_member` before validation.
+- Centralized `closeOpenCard` with flush on X, Escape, and project UI reset; modal blocks close when flush fails (discard confirm).
+- Flow editor shows mapped save errors (artifact not synced vs API unreachable); artifact palette filters to cards with `artifactRef`.
+
+### 2026-06-19 — Ollama pull stale-API hardening (implemented)
+
+- Bumped the active spec to `2026.06.19.10`.
+- Client `connectorNeedsOllamaPull` fallback triggers download when API omits `needsPull` but reports "not pulled".
+- `start canvas` detects stale API (missing `POST /agent/ollama/pull`) and restarts the server; `ensureOllama` migrates `canvas-ollama` without a volume to mount `ollama:/root/.ollama`.
+
+### 2026-06-19 — On-demand Ollama model pull (implemented)
+
+- Bumped the active spec to `2026.06.19.9`.
+- `POST /agent/ollama/pull` streams Ollama download progress; selecting a Gemma connector in Agent mode pulls missing models (`needsPull` on `/agent/connectors`).
+- `start canvas` mounts Docker volume `ollama` for persistent model storage; recreates `canvas-ollama` without a volume automatically. Models are no longer pre-pulled at boot.
+
+### 2026-06-19 — Dev stack agent commands (implemented)
+
+- Bumped the active spec to `2026.06.19.8`.
+- Added one-command local dev stack: `npm run dev:stack` / `dev:stack:restart` / `dev:stack:stop` via `scripts/dev-stack.mjs`.
+- Agent prompts **start canvas** (auto-starts Docker Desktop when needed), **restart canvas**, and **stop canvas** documented in `README.md`, `DEV_STACK.md`, `AGENTS.md`, and §9.
 
 ### 2026-06-19 — Folder saves and fresh agent context (implemented)
 

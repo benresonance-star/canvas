@@ -199,3 +199,89 @@ export async function checkOllamaReachable({
     error: modelAvailable ? null : `Ollama is running, but ${resolvedModel} is not pulled.`,
   };
 }
+
+/**
+ * @param {string} line
+ */
+function parseOllamaNdjsonLine(line) {
+  const trimmed = String(line).trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {{ baseUrl?: string, model: string, signal?: AbortSignal, onProgress?: (event: object) => void }} params
+ */
+export async function pullOllamaModel({
+  baseUrl = 'http://localhost:11434',
+  model,
+  signal,
+  onProgress,
+} = {}) {
+  const normalizedBaseUrl = String(baseUrl || 'http://localhost:11434').replace(/\/+$/, '');
+  const resolvedModel = String(model || '').trim();
+  if (!resolvedModel) {
+    throw new Error('Model name is required.');
+  }
+
+  let res;
+  try {
+    res = await fetch(`${normalizedBaseUrl}/api/pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: resolvedModel, stream: true }),
+      signal,
+    });
+  } catch (e) {
+    throw new Error(`Cannot reach Ollama at ${normalizedBaseUrl}. ${e.message}`);
+  }
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.error || `Ollama pull failed (${res.status})`);
+  }
+
+  if (!res.body) {
+    throw new Error('Ollama pull returned no response body.');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      const event = parseOllamaNdjsonLine(line);
+      if (!event) continue;
+      onProgress?.(event);
+      if (event.status === 'success') {
+        return { model: event.model || resolvedModel };
+      }
+      if (event.status === 'error') {
+        throw new Error(event.error || 'Ollama pull failed');
+      }
+    }
+  }
+
+  const trailing = parseOllamaNdjsonLine(buffer);
+  if (trailing) {
+    onProgress?.(trailing);
+    if (trailing.status === 'success') {
+      return { model: trailing.model || resolvedModel };
+    }
+    if (trailing.status === 'error') {
+      throw new Error(trailing.error || 'Ollama pull failed');
+    }
+  }
+
+  throw new Error('Ollama pull ended without success');
+}

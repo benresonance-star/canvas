@@ -4,6 +4,30 @@ Local-first infinite canvas with revision-authoritative project sync, folder ing
 
 ## Quick start
 
+### Dev stack commands
+
+From `canvas/` (or tell Cursor):
+
+
+| Say                | npm script                  | What it does                                                                               |
+| ------------------ | --------------------------- | ------------------------------------------------------------------------------------------ |
+| **start canvas**   | `npm run dev:stack`         | Starts Docker Desktop if needed, then Postgres, migrate, Ollama, API (:3001), Vite (:5173) |
+| **restart canvas** | `npm run dev:stack:restart` | Stops API/Vite, starts them again (Docker assumed already running)                         |
+| **stop canvas**    | `npm run dev:stack:stop`    | Stops API/Vite only (Postgres + Ollama containers keep running)                            |
+
+
+```bash
+cd canvas
+npm install
+npm run dev:stack       # → http://localhost:5173
+```
+
+Full reference: **[docs/DEV_STACK.md](docs/DEV_STACK.md)** (config in `dev-stack.config.json`, logs in `.dev-stack/logs/`).
+
+**AI agents:** follow **[AGENTS.md](AGENTS.md)** — use **start canvas** / **restart canvas** / **stop canvas** for local boot.
+
+Manual steps (same result):
+
 ```bash
 cd canvas
 npm install
@@ -15,20 +39,18 @@ npm run dev            # Vite on :5173
 
 ### Optional local Gemma agent
 
-Canvas can also use Ollama as a local agent provider. Run Ollama separately from
-the app's Postgres compose service:
+`start canvas` starts Ollama with the persistent Docker volume `ollama`. Gemma models are **downloaded on demand** when you select them in the app:
+
+1. Open **Agent mode** → **Single agent**
+2. Click **Gemma 12B Local** or **Gemma 26B Local** — Canvas pulls the model if missing (progress shown in the panel)
+
+Manual Ollama setup (same volume):
 
 ```bash
-docker run -d --name canvas-ollama -p 11434:11434 ollama/ollama
-docker exec canvas-ollama ollama pull gemma4:12b
-docker exec canvas-ollama ollama pull gemma4:26b  # optional 26B model
+docker run -d --name canvas-ollama -p 11434:11434 -v ollama:/root/.ollama ollama/ollama
 ```
 
-Then start Canvas normally and open **Agent mode** -> **Single agent**. The
-existing agent selector will show **Gemma 12B Local** and **Gemma 26B Local**
-alongside **ChatGPT**. Gemma uses `http://localhost:11434/api/chat` and does
-not need an API key. Gemma 26B remains unavailable until `/api/tags` reports
-`gemma4:26b` after the pull completes.
+Gemma uses `http://localhost:11434/api/chat` and does not need an API key.
 
 ## Architecture
 
@@ -36,10 +58,13 @@ See **[docs/ARCHITECTURE_MASTER_SPEC.md](docs/ARCHITECTURE_MASTER_SPEC.md)** —
 
 **AI agents:** follow **[AGENTS.md](AGENTS.md)** for sync trace protocol and menu/canvas invariant rules.
 
-| Document | Topic |
-|----------|-------|
-| [PROJECT_SYNC_API.md](docs/PROJECT_SYNC_API.md) | Frozen `projectSync.js` exports |
-| [placement-persistence-qa.md](docs/placement-persistence-qa.md) | Placement QA |
+
+| Document                                                        | Topic                                                                   |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| [DEV_STACK.md](docs/DEV_STACK.md)                               | Local dev stack — **start canvas**, **restart canvas**, **stop canvas** |
+| [PROJECT_SYNC_API.md](docs/PROJECT_SYNC_API.md)                 | Frozen `projectSync.js` exports                                         |
+| [placement-persistence-qa.md](docs/placement-persistence-qa.md) | Placement QA                                                            |
+
 
 ### Layer map
 

@@ -21,6 +21,10 @@ function isTableStart(lines, index) {
   );
 }
 
+function isThematicBreak(line) {
+  return /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(String(line ?? ''));
+}
+
 function parseParagraph(lines, start) {
   const text = [];
   let index = start;
@@ -264,6 +268,11 @@ export function parseMarkdownMessage(source) {
     const heading = parseHeading(lines[index]);
     if (heading) {
       blocks.push(heading);
+      index += 1;
+      continue;
+    }
+    if (isThematicBreak(lines[index])) {
+      blocks.push({ type: 'hr' });
       index += 1;
       continue;
     }

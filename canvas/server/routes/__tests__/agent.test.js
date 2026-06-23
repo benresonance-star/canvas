@@ -28,6 +28,7 @@ vi.mock('../../services/ollamaChat.js', () => ({
     error: null,
   })),
   completeOllamaChat: vi.fn(),
+  pullOllamaModel: vi.fn(),
 }));
 
 vi.mock('../../lib/agentTokenEstimate.js', () => ({
@@ -72,6 +73,18 @@ async function jsonRequest(server, path, init = {}) {
     },
   });
   const body = await res.json();
+  return { res, body };
+}
+
+async function textRequest(server, path, init = {}) {
+  const res = await fetch(`${baseUrl(server)}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init.headers ?? {}),
+    },
+  });
+  const body = await res.text();
   return { res, body };
 }
 
@@ -249,5 +262,61 @@ describe('agent routes', () => {
     expect(res.status).toBe(400);
     expect(body.error).toContain('provider');
     expect(tokenEstimate.estimateChatInputTokens).not.toHaveBeenCalled();
+  });
+
+  it('short-circuits Ollama pull when model is already present', async () => {
+    ollama.checkOllamaReachable.mockResolvedValue({
+      reachable: true,
+      modelAvailable: true,
+      error: null,
+    });
+
+    const { res, body } = await jsonRequest(server, '/agent/ollama/pull', {
+      method: 'POST',
+      body: JSON.stringify({ connectorId: 'ollama-gemma-26b' }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      alreadyPresent: true,
+      model: 'gemma4:26b',
+    });
+    expect(ollama.pullOllamaModel).not.toHaveBeenCalled();
+  });
+
+  it('streams Ollama pull progress for missing models', async () => {
+    ollama.checkOllamaReachable.mockResolvedValue({
+      reachable: true,
+      modelAvailable: false,
+      error: 'Ollama is running, but gemma4:26b is not pulled.',
+    });
+    ollama.pullOllamaModel.mockImplementation(async ({ onProgress }) => {
+      onProgress?.({ status: 'downloading', completed: 1, total: 2 });
+      return { model: 'gemma4:26b' };
+    });
+
+    const { res, body } = await textRequest(server, '/agent/ollama/pull', {
+      method: 'POST',
+      body: JSON.stringify({ connectorId: 'ollama-gemma-26b' }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/x-ndjson');
+    expect(body).toContain('"status":"downloading"');
+    expect(body).toContain('"ok":true');
+    expect(ollama.pullOllamaModel).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'gemma4:26b',
+    }));
+  });
+
+  it('rejects Ollama pull for unknown connectors', async () => {
+    const { res, body } = await jsonRequest(server, '/agent/ollama/pull', {
+      method: 'POST',
+      body: JSON.stringify({ connectorId: 'openai' }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(body.error).toContain('Unknown');
   });
 });

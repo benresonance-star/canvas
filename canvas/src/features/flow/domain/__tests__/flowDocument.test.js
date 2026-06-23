@@ -24,6 +24,7 @@ import {
   patchFlowCard,
   patchFlowNodePresentation,
   previewFromFlow,
+  formatFlowSaveError,
   removeFlowEdgesById,
   removeFlowNodesById,
   snapshotForSave,
@@ -322,6 +323,25 @@ describe('flow document isolation', () => {
         title: 'Start',
       }],
       edges: [],
+    });
+  });
+
+  it('patchFlowCard includes every node passed from the editor save snapshot', () => {
+    const card = {
+      pinnedVersion: 1,
+      versions: [{ version: 1, flowId: 'flow-1', flowPreview: { description: '', nodes: [], edges: [] } }],
+    };
+    const nodes = [
+      { id: 'n1', type: 'local', position: { x: 0, y: 0 }, data: { title: 'Start' } },
+      { id: 'n2', type: 'local', position: { x: 120, y: 40 }, data: { title: 'Next' } },
+    ];
+    const updates = patchFlowCard(card, { id: 'flow-1', title: 'Plan', description: '' }, nodes, []);
+    expect(updates.versions[0].flowPreview.nodes).toHaveLength(2);
+    expect(updates.versions[0].flowPreview.nodes[1]).toMatchObject({
+      id: 'n2',
+      x: 120,
+      y: 40,
+      title: 'Next',
     });
   });
 
@@ -786,6 +806,19 @@ describe('flow document isolation', () => {
       data: { connectionTypeId: 'custom', connectionTypeCustom: '' },
     })).toThrow(/custom flow edge connection requires/);
     expect(normalizeFlowEdgeProperties({ ok: 'yes', bad: 2 })).toEqual({ ok: 'yes' });
+  });
+});
+
+describe('formatFlowSaveError', () => {
+  it('maps artifact project validation to a friendly message', () => {
+    expect(formatFlowSaveError(
+      'artifact nodes must reference artifacts in the same project',
+      { artifactNotInProject: 'Sync the card first.' },
+    )).toBe('Sync the card first.');
+  });
+
+  it('maps network failures separately from validation errors', () => {
+    expect(formatFlowSaveError('Failed to fetch', { saveFailedNetwork: 'API down.' })).toBe('API down.');
   });
 });
 

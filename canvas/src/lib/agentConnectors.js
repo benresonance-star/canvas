@@ -85,9 +85,22 @@ export function mergeConnectorMeta(connectorDef, connectorMeta) {
     ...connectorDef,
     configured: connectorMeta?.configured ?? false,
     usable: connectorMeta?.usable ?? false,
+    needsPull: connectorMeta?.needsPull ?? false,
     keyHint: connectorMeta?.keyHint ?? null,
     healthError: connectorMeta?.healthError ?? null,
   };
+}
+
+/**
+ * @param {{ needsPull?: boolean, usable?: boolean, healthError?: string | null } | null | undefined} meta
+ * @param {string | null | undefined} connectorId
+ */
+export function connectorNeedsOllamaPull(meta, connectorId) {
+  if (meta?.needsPull) return true;
+  const def = getConnectorById(connectorId);
+  return def?.provider === 'ollama'
+    && meta?.usable === false
+    && /not pulled/i.test(meta?.healthError || '');
 }
 
 /**

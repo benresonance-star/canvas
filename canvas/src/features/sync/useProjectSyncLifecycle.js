@@ -84,6 +84,7 @@ import {
   hydrateCardsPreviews,
   PREVIEW_HYDRATE_CHUNK_SIZE,
 } from '../../lib/previewHydrate.js';
+import { enrichBookmarkCardsInProject } from '../../lib/bookmarkPreviewEnrich.js';
 import { shouldAutoFitCanvasOnLoad } from '../../lib/canvasView.js';
 import { fetchCanvasProjectMeta } from '../../lib/canvasProjectsApi.js';
 import { perfMark, perfMeasure } from '../../lib/loadPerfMarks.js';
@@ -346,6 +347,26 @@ export function useProjectSyncLifecycle({
       stagedCount: stagedHydrated.length,
       switchSeq: seqAtStart,
     });
+    if (hydratePreviews && projectId === activeProjectIdRef.current) {
+      void (async () => {
+        const enriched = await enrichBookmarkCardsInProject(
+          projectId,
+          cards,
+          stagedHydrated,
+        );
+        if (!enriched.changed || projectId !== activeProjectIdRef.current) return;
+        stateRef.current = { ...stateRef.current, cards: enriched.cards };
+        stagedSyncCardsRef.current = enriched.stagedSyncCards;
+        setState((prev) => ({ ...prev, cards: enriched.cards }));
+        setStagedSyncCards(enriched.stagedSyncCards);
+        await saveProjectById(
+          projectId,
+          { ...stateRef.current, cards: enriched.cards },
+          enriched.stagedSyncCards,
+          { pushRemote: true },
+        );
+      })();
+    }
     return cards;
   }, [folderHandle, syncActiveProjectNameFromIndex]);
 

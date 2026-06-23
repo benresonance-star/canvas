@@ -1,0 +1,23 @@
+{
+  "postgres": {
+    "composeFile": "../docker-compose.yml",
+    "containerName": "canvas-postgres",
+    "databaseUrl": "postgresql://canvas:canvas@localhost:5432/canvas"
+  },
+  "api": {
+    "port": 3001,
+    "url": "http://localhost:3001"
+  },
+  "vite": {
+    "port": 5173,
+    "url": "http://localhost:5173"
+  },
+  "ollama": {
+    "containerName": "canvas-ollama",
+    "legacyContainerName": "ollama",
+    "port": 11434,
+    "baseUrl": "http://localhost:11434",
+    "image": "ollama/ollama",
+    "volumeName": "ollama"
+  }
+}

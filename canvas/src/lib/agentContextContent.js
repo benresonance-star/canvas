@@ -1,4 +1,5 @@
 import { cardLabel } from './agentContext.js';
+import { resolveLiveArtifactId } from './liveAgentContext.js';
 import { folderRelativePathFromVersion, normalizeCardType } from './filename.js';
 import { readFileEntry } from './readFile.js';
 import { extractPdfText, getPdfPageCount } from './extractPdfText.js';
@@ -130,7 +131,7 @@ export function getPinnedVersion(card) {
  */
 export function isContextTypeSupported(type) {
   const t = normalizeCardType(type);
-  return TEXT_TYPES.has(t) || t === 'pdf' || t === 'image' || t === 'flow';
+  return TEXT_TYPES.has(t) || t === 'pdf' || t === 'image' || t === 'flow' || t === 'live';
 }
 
 /**
@@ -205,6 +206,14 @@ export function contextStatusHint(card, options = {}) {
       cardId: card.id,
       label,
       status: hasPreview ? 'pending' : 'empty',
+    };
+  }
+
+  if (type === 'live') {
+    return {
+      cardId: card.id,
+      label,
+      status: resolveLiveArtifactId(card) ? 'pending' : 'empty',
     };
   }
 
@@ -283,6 +292,7 @@ export function truncateText(text, max) {
  *   fetchArtifact?: typeof getArtifact,
  *   loadAgentChatText?: (card: object) => Promise<string | null>,
  *   loadFlowContextText?: (card: object) => Promise<string | null>,
+ *   loadLiveContextText?: (card: object) => Promise<string | null>,
  *   profile?: ContextProfileName,
  * }} options
  * @returns {Promise<ContextDocument>}
@@ -294,6 +304,7 @@ export async function loadContextDocumentForCard(card, options = {}) {
     profile = 'standard',
     loadAgentChatText = null,
     loadFlowContextText = null,
+    loadLiveContextText = null,
   } = options;
   const limits = getContextLimits(profile);
   const label = cardLabel(card);
@@ -371,6 +382,49 @@ export async function loadContextDocumentForCard(card, options = {}) {
         type,
         status: 'error',
         note: error?.message || 'Could not load flow diagram.',
+      };
+    }
+  }
+
+  if (type === 'live') {
+    if (!loadLiveContextText) {
+      return {
+        cardId: card.id,
+        label,
+        type,
+        status: 'unsupported',
+        note: 'Live agent feed context is not available.',
+      };
+    }
+    try {
+      const text = await loadLiveContextText(card);
+      if (!text?.trim()) {
+        return {
+          cardId: card.id,
+          label,
+          type,
+          status: 'empty',
+          note: 'No feed report yet. Run the live agent feed first.',
+        };
+      }
+      const { text: trimmed, truncated } = truncateText(text.trim(), limits.maxFileChars);
+      return {
+        cardId: card.id,
+        label,
+        type,
+        status: 'included',
+        text: trimmed,
+        truncated,
+        originalChars: text.length,
+        includedChars: trimmed.length,
+      };
+    } catch (error) {
+      return {
+        cardId: card.id,
+        label,
+        type,
+        status: 'error',
+        note: error?.message || 'Could not load live agent feed.',
       };
     }
   }
@@ -511,6 +565,7 @@ export async function loadContextDocumentForCard(card, options = {}) {
  *   fetchArtifact?: typeof getArtifact,
  *   loadAgentChatText?: (card: object) => Promise<string | null>,
  *   loadFlowContextText?: (card: object) => Promise<string | null>,
+ *   loadLiveContextText?: (card: object) => Promise<string | null>,
  *   profile?: ContextProfileName,
  * }} options
  */
@@ -521,6 +576,7 @@ export async function estimateContextDocument(card, options = {}) {
     profile = 'standard',
     loadAgentChatText = null,
     loadFlowContextText = null,
+    loadLiveContextText = null,
   } = options;
   const limits = getContextLimits(profile);
   const standardLimits = getContextLimits('standard');
@@ -538,6 +594,23 @@ export async function estimateContextDocument(card, options = {}) {
   if (type === 'flow' && loadFlowContextText) {
     try {
       const text = await loadFlowContextText(card);
+      const estimatedChars = text?.length ?? 0;
+      return {
+        cardId: card.id,
+        label,
+        type,
+        estimatedChars,
+        wouldTruncate: estimatedChars > limits.maxFileChars,
+        wouldTruncateUnlessExtended: estimatedChars > standardLimits.maxFileChars,
+      };
+    } catch {
+      return { cardId: card.id, label, type, wouldTruncate: false, estimatedChars: 0 };
+    }
+  }
+
+  if (type === 'live' && loadLiveContextText) {
+    try {
+      const text = await loadLiveContextText(card);
       const estimatedChars = text?.length ?? 0;
       return {
         cardId: card.id,

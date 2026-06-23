@@ -100,6 +100,29 @@ export async function createFlow(projectId, { title, description = '' }) {
   }
 }
 
+/**
+ * Canvas cards can carry artifactRef ids before cluster membership is created.
+ * Register referenced artifacts into the project workspace cluster (same as createFlow).
+ */
+async function ensureFlowArtifactClusterMembers(client, projectId, artifactIds) {
+  const uniqueIds = [...new Set(artifactIds.filter(Boolean))];
+  if (!uniqueIds.length) return;
+
+  const existing = await client.query(
+    'SELECT id FROM artifact WHERE id = ANY($1::text[])',
+    [uniqueIds],
+  );
+  for (const row of existing.rows) {
+    await client.query(
+      `INSERT INTO cluster_member (cluster_id, primitive_id, primitive_type, added_at)
+       SELECT cluster_id, $2, 'artifact', NOW()
+       FROM project_cluster WHERE project_id = $1
+       ON CONFLICT DO NOTHING`,
+      [projectId, row.id],
+    );
+  }
+}
+
 export async function getFlow(id) {
   const client = await pool.connect();
   try {
@@ -146,14 +169,16 @@ export async function replaceFlow(id, expectedRevision, snapshot) {
     const artifactIds = [...new Set(snapshot.nodes
       .filter((node) => node.type === 'artifact')
       .map((node) => node.artifactId))];
+    const projectId = documentRow.rows[0].project_id;
     if (artifactIds.length) {
+      await ensureFlowArtifactClusterMembers(client, projectId, artifactIds);
       const allowed = await client.query(
         `SELECT DISTINCT cm.primitive_id
          FROM cluster_member cm
          JOIN project_cluster pc ON pc.cluster_id = cm.cluster_id
          WHERE pc.project_id = $1 AND cm.primitive_type = 'artifact'
            AND cm.primitive_id = ANY($2::text[])`,
-        [documentRow.rows[0].project_id, artifactIds],
+        [projectId, artifactIds],
       );
       if (allowed.rows.length !== artifactIds.length) {
         throw new Error('artifact nodes must reference artifacts in the same project');

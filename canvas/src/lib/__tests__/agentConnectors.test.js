@@ -5,6 +5,7 @@ import {
   AGENT_API_OFFLINE_MESSAGE,
   agentInputDisabledMessage,
   agentCanChat,
+  connectorNeedsOllamaPull,
   defaultAgentTypeLabelForProvider,
   getConnectorById,
   getConnectorByProvider,
@@ -175,5 +176,25 @@ describe('agentConnectors', () => {
         connectorsOffline: true,
       }),
     ).toBe(AGENT_API_OFFLINE_MESSAGE);
+  });
+
+  it('detects Ollama pull need from needsPull or stale healthError', () => {
+    expect(connectorNeedsOllamaPull({ needsPull: true, usable: false }, 'ollama-gemma-26b')).toBe(true);
+    expect(
+      connectorNeedsOllamaPull(
+        {
+          usable: false,
+          healthError: 'Ollama is running, but gemma4:26b is not pulled.',
+        },
+        'ollama-gemma-26b',
+      ),
+    ).toBe(true);
+    expect(connectorNeedsOllamaPull({ usable: true }, 'ollama-gemma-26b')).toBe(false);
+    expect(
+      connectorNeedsOllamaPull(
+        { usable: false, healthError: 'Cannot reach Ollama at http://localhost:11434.' },
+        'ollama-gemma-26b',
+      ),
+    ).toBe(false);
   });
 });

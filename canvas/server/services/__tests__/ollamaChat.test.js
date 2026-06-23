@@ -3,6 +3,7 @@ import {
   buildOllamaMessages,
   checkOllamaReachable,
   completeOllamaChat,
+  pullOllamaModel,
 } from '../ollamaChat.js';
 
 describe('ollamaChat', () => {
@@ -131,5 +132,59 @@ describe('ollamaChat', () => {
         messages: [{ role: 'user', content: 'Hi' }],
       }),
     ).rejects.toThrow('model not found');
+  });
+
+  it('streams Ollama pull progress and returns on success', async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"status":"pulling manifest"}\n'));
+        controller.enqueue(encoder.encode('{"status":"downloading","completed":5,"total":10}\n'));
+        controller.enqueue(encoder.encode('{"status":"success","model":"gemma4:26b"}\n'));
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        body: stream,
+      }),
+    );
+
+    const progress = [];
+    const result = await pullOllamaModel({
+      baseUrl: 'http://localhost:11434',
+      model: 'gemma4:26b',
+      onProgress: (event) => progress.push(event),
+    });
+
+    expect(result.model).toBe('gemma4:26b');
+    expect(progress).toEqual([
+      { status: 'pulling manifest' },
+      { status: 'downloading', completed: 5, total: 10 },
+      { status: 'success', model: 'gemma4:26b' },
+    ]);
+  });
+
+  it('throws when Ollama pull reports error status', async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"status":"error","error":"pull denied"}\n'));
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        body: stream,
+      }),
+    );
+
+    await expect(
+      pullOllamaModel({ model: 'gemma4:26b' }),
+    ).rejects.toThrow('pull denied');
   });
 });

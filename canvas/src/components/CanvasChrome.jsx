@@ -11,12 +11,14 @@ import {
   CircuitBoard,
   Upload,
   Workflow,
+  RadioTower,
 } from 'lucide-react';
 import { strings } from '../content/strings.js';
 import { resolveSyncBanner, shouldShowRefreshFromServer } from '../lib/syncUi.js';
 import { clampZoomPercent, parseZoomPercentInput } from '../lib/canvasView.js';
 import { ThemeToggle } from './ThemeToggle.jsx';
 import { ProjectSwitcher } from './ProjectSwitcher.jsx';
+import { ProjectUpdateFlag } from '../features/live/components/ProjectUpdateFlag.jsx';
 
 function ZoomPercentInput({ canvasView, onZoomPercentCommit }) {
   const inputRef = useRef(null);
@@ -127,6 +129,8 @@ export function CanvasChrome({
   onNewNote,
   onAddLink,
   onAddFlow,
+  onAddLive,
+  onOpenLiveArtifact,
   onImportFiles,
   onSync,
   onReconnectFolder,
@@ -178,6 +182,7 @@ export function CanvasChrome({
             onCreateTask={onCreateTask}
             onOpenAgentMode={onOpenAgentMode}
           />
+          <ProjectUpdateFlag projectId={activeProjectId} onOpenLiveArtifact={onOpenLiveArtifact} />
           <input
             value={projectName}
             disabled={!activeProjectId}
@@ -437,6 +442,15 @@ export function CanvasChrome({
           </div>
         )}
         <div className="pointer-events-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onAddLive}
+            disabled={syncLock !== 'live' || !activeProjectId}
+            className="sans flex items-center gap-2 bg-surface border border-border hover:bg-surface-muted text-primary text-xs px-4 py-2.5 rounded-full transition shadow-lg disabled:opacity-50"
+          >
+            <RadioTower size={13} strokeWidth={1.8} />
+            Add Live
+          </button>
           <button
             type="button"
             onClick={onAddFlow}

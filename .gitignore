@@ -24,3 +24,6 @@ npm-debug.log*
 
 # Local folder-link test data (user-specific)
 test folder/
+
+# Dev stack runtime (pids, logs)
+.dev-stack/

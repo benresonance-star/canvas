@@ -26,6 +26,9 @@ export const ARTIFACT_SIDEBAR_STORAGE_KEY = 'canvas:artifact-sidebar-open';
 export function flowAgentUiStorageKey(projectId) {
   return `canvas:flow-agent-ui:${projectId}`;
 }
+export function agentPanelUiStorageKey(projectId) {
+  return `canvas:agent-panel-ui:${projectId}`;
+}
 export const SPREADSHEET_VIEWER_STORAGE_KEY = 'canvas:spreadsheet-viewer';
 export const SPREADSHEET_VIEWER_MODES = ['simple', 'extend'];
 /** Max file size (bytes) to load fully as text or base64 dataUrl */

@@ -7,11 +7,15 @@ import {
   getPinnedVersion,
   storedContextAddHasIncludedContent,
 } from './agentContextContent.js';
+import { normalizeCardType } from './filename.js';
 
 /**
  * @param {object} card
  */
 export function getCardContentHash(card) {
+  if (normalizeCardType(card?.type) === 'live' && card.liveCurrentVersionId) {
+    return String(card.liveCurrentVersionId);
+  }
   const pinned = getPinnedVersion(card);
   if (!pinned) return '';
   if (pinned.content_hash) return String(pinned.content_hash);
@@ -153,6 +157,7 @@ export function chatMessageToApiPayload(msg) {
  *   fetchArtifact?: typeof import('./agentApi.js').getArtifact,
  *   loadAgentChatText?: (card: object) => Promise<string | null>,
  *   loadFlowContextText?: (card: object) => Promise<string | null>,
+ *   loadLiveContextText?: (card: object) => Promise<string | null>,
  * }} hydrate
  */
 export async function hydrateContextAddMessage(msg, hydrate = {}) {
@@ -169,6 +174,7 @@ export async function hydrateContextAddMessage(msg, hydrate = {}) {
     fetchArtifact: hydrate.fetchArtifact,
     loadAgentChatText: hydrate.loadAgentChatText ?? null,
     loadFlowContextText: hydrate.loadFlowContextText ?? null,
+    loadLiveContextText: hydrate.loadLiveContextText ?? null,
   });
   const mode = msg.contextMode ?? hydrate.contextMode ?? 'selected';
   if (
@@ -196,6 +202,7 @@ export async function hydrateContextAddMessage(msg, hydrate = {}) {
  *   fetchArtifact?: typeof import('./agentApi.js').getArtifact,
  *   loadAgentChatText?: (card: object) => Promise<string | null>,
  *   loadFlowContextText?: (card: object) => Promise<string | null>,
+ *   loadLiveContextText?: (card: object) => Promise<string | null>,
  * }} [hydrate]
  */
 export async function buildApiMessageHistoryAsync(messages, hydrate = {}) {

@@ -48,6 +48,7 @@ describe('agent credential connector status', () => {
     expect(gemma26b).toMatchObject({
       model: 'gemma4:26b',
       usable: false,
+      needsPull: true,
       healthError: 'Ollama is running, but gemma4:26b is not pulled.',
     });
     expect(ollama.fetchOllamaTags).toHaveBeenCalledTimes(1);

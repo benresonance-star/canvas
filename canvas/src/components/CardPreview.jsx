@@ -19,6 +19,7 @@ import { BookmarkInlineEditor } from './BookmarkInlineEditor.jsx';
 import { audioSkinUsesDarkText, resolveAudioSkinColor } from '../lib/audioSkin.js';
 import { buildHtmlPreviewSrcDoc } from '../lib/htmlPreviewDocument.js';
 import { FlowPreview } from '../features/flow/components/FlowPreview.jsx';
+import { LiveArtifactView } from '../features/live/components/LiveArtifactView.jsx';
 
 export function CardPreview({
   card,
@@ -107,6 +108,16 @@ export function CardPreview({
   if (!pinned) return <div className="serif italic text-muted text-sm">{strings.preview.noData}</div>;
 
   const cardType = normalizeCardType(card.type);
+  if (cardType === 'live') {
+    return (
+      <LiveArtifactView
+        liveArtifactId={card.liveArtifactId || pinned.liveArtifactId || pinned.artifactRef?.id}
+        projectId={card.projectId}
+        folderHandle={folderHandle}
+        compact={compact}
+      />
+    );
+  }
   if (cardType === 'flow') {
     const description = pinned?.flowPreview?.description?.trim() ?? '';
     return (

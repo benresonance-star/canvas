@@ -14,8 +14,12 @@
     "test:e2e": "node scripts/placement-switch-e2e.mjs",
     "baseline": "node scripts/capture-architecture-baseline.mjs",
     "server": "node --use-system-ca server/index.js",
+    "live:worker": "node --use-system-ca server/liveWorker.js",
     "db:migrate": "node server/migrate.js",
-    "db:up": "docker compose -f ../docker-compose.yml up -d"
+    "db:up": "docker compose -f ../docker-compose.yml up -d",
+    "dev:stack": "node scripts/dev-stack.mjs",
+    "dev:stack:stop": "node scripts/dev-stack-stop.mjs",
+    "dev:stack:restart": "node scripts/dev-stack-stop.mjs && node scripts/dev-stack.mjs --no-docker-boot"
   },
   "dependencies": {
     "@extend-ai/react-xlsx": "^0.11.0",

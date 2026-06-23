@@ -10,6 +10,7 @@ import { DEFAULT_ENABLED_AGENT_IDS } from '../../lib/agentProfiles.js';
 import {
   CONNECTORS,
   DEFAULT_SINGLE_CONNECTOR_ID,
+  connectorNeedsOllamaPull,
   defaultAgentTypeLabelForProvider,
   getConnectorById,
   getConnectorByProvider,
@@ -66,6 +67,7 @@ import {
   deleteAgentCredential,
   estimateAgentChat,
   sendAgentChat,
+  pullOllamaModel,
 } from '../../lib/agentApi.js';
 import {
   resolveEffectiveAgentContextCards,
@@ -92,6 +94,16 @@ import {
   buildApiMessageHistoryAsync,
 } from '../../lib/agentContextSession.js';
 import { isApiAvailable } from '../../lib/primitivesApi.js';
+import { fetchLiveFeedContext, hydrateLiveContextCards } from '../../lib/liveAgentContext.js';
+import {
+  collapsedSectionsToFlowAgentPanelLayout,
+  readAgentPanelUiState,
+  writeAgentPanelUiState,
+} from '../../lib/agentPanelUiPersistence.js';
+import {
+  buildAgentPanelUiFlushPayload,
+  planAgentPanelUiRestore,
+} from '../../lib/agentPanelUiRestore.js';
 import { upsertAgentTemplateList } from '../../lib/agentTemplates.js';
 import { usePageHideFlush } from '../sync/usePageHideFlush.js';
 import { fetchFlow } from '../flow/api/flowApi.js';
@@ -212,6 +224,7 @@ export function useAgentChatShell({
   const [activeAgentTemplateId, setActiveAgentTemplateId] = useState(null);
   const [agentSecretsConfigured, setAgentSecretsConfigured] = useState(true);
   const [agentConnectorsOffline, setAgentConnectorsOffline] = useState(false);
+  const [ollamaPullState, setOllamaPullState] = useState(null);
   const [embeddedAgentPanelOpen, setEmbeddedAgentPanelOpen] = useState(false);
   const [agentOpenaiReachable, setAgentOpenaiReachable] = useState(null);
   const [agentOpenaiReachabilityError, setAgentOpenaiReachabilityError] = useState(null);
@@ -247,6 +260,11 @@ export function useAgentChatShell({
     threads: [],
   });
   const [threadPickerOpen, setThreadPickerOpen] = useState(false);
+  const [agentPanelCollapsedSections, setAgentPanelCollapsedSections] = useState({
+    setup: false,
+    context: false,
+  });
+  const [chatScrollResetKey, setChatScrollResetKey] = useState(0);
   const agentChatMessagesRef = useRef(agentChatMessages);
   const transcriptSyncInFlightRef = useRef(false);
   const transcriptSyncPendingRef = useRef(null);
@@ -254,6 +272,41 @@ export function useAgentChatShell({
   const prevAgentConnectorsOfflineRef = useRef(false);
   const agentPanelOpenSyncRetryRef = useRef(false);
   const agentPanelThreadSelectionSyncKeyRef = useRef(null);
+  const prevAgentPanelOpenRef = useRef(false);
+  const embeddedAgentPanelOpenRef = useRef(false);
+  const pendingWorkspaceThreadRestoreRef = useRef(null);
+  const restoredWorkspaceAgentUiRef = useRef(false);
+  const activeAgentTemplateIdRef = useRef(activeAgentTemplateId);
+  const agentPanelCollapsedSectionsRef = useRef(agentPanelCollapsedSections);
+  const ollamaPullAbortRef = useRef(null);
+
+  const persistAgentPanelUi = useCallback((partial) => {
+    const projectId = activeProjectIdRef.current;
+    if (!projectId) return;
+    writeAgentPanelUiState(projectId, partial);
+  }, [activeProjectIdRef]);
+
+  const persistWorkspaceAgentUiThread = useCallback((threadId, connectorId) => {
+    if (embeddedAgentPanelOpenRef.current) return;
+    persistAgentPanelUi({
+      activeThreadId: threadId,
+      connectorId: connectorId ?? singleConnectorIdRef.current,
+    });
+  }, [persistAgentPanelUi, singleConnectorIdRef]);
+
+  const flushAgentPanelUiSnapshot = useCallback(() => {
+    const projectId = activeProjectIdRef.current;
+    if (!projectId || embeddedAgentPanelOpenRef.current) return;
+    writeAgentPanelUiState(
+      projectId,
+      buildAgentPanelUiFlushPayload({
+        collapsedSections: agentPanelCollapsedSectionsRef.current,
+        activeThreadId: activeThreadIdRef.current,
+        connectorId: singleConnectorIdRef.current,
+        activeAgentTemplateId: activeAgentTemplateIdRef.current,
+      }),
+    );
+  }, [activeProjectIdRef, singleConnectorIdRef, activeThreadIdRef]);
 
   useEffect(() => {
     agentChatMessagesRef.current = agentChatMessages;
@@ -271,13 +324,73 @@ export function useAgentChatShell({
     singleConnectorIdRef.current = singleConnectorId;
   }, [singleConnectorId]);
 
+  useEffect(() => {
+    activeAgentTemplateIdRef.current = activeAgentTemplateId;
+  }, [activeAgentTemplateId]);
+
+  useEffect(() => {
+    agentPanelCollapsedSectionsRef.current = agentPanelCollapsedSections;
+  }, [agentPanelCollapsedSections]);
+
+  useEffect(() => {
+    embeddedAgentPanelOpenRef.current = embeddedAgentPanelOpen;
+  }, [embeddedAgentPanelOpen]);
+
+  useEffect(() => {
+    if (!activeProjectId) return;
+    const ui = readAgentPanelUiState(activeProjectId);
+    const plan = planAgentPanelUiRestore(ui, null);
+    if (plan.collapsedSections) {
+      setAgentPanelCollapsedSections(plan.collapsedSections);
+    }
+    if (plan.connectorIdToSwitch && getConnectorById(plan.connectorIdToSwitch)) {
+      setSingleConnectorId(plan.connectorIdToSwitch);
+    } else if (ui.connectorId && getConnectorById(ui.connectorId)) {
+      setSingleConnectorId(ui.connectorId);
+    }
+    if (ui.activeAgentTemplateId) {
+      setActiveAgentTemplateId(ui.activeAgentTemplateId);
+    }
+    pendingWorkspaceThreadRestoreRef.current = plan.pendingThreadRestore;
+    restoredWorkspaceAgentUiRef.current = plan.restoreComplete;
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!prevAgentPanelOpenRef.current && agentPanelOpen) {
+      setChatScrollResetKey((key) => key + 1);
+    }
+    prevAgentPanelOpenRef.current = agentPanelOpen;
+  }, [agentPanelOpen]);
+
+  useEffect(() => {
+    const flush = () => flushAgentPanelUiSnapshot();
+    window.addEventListener('pagehide', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+    };
+  }, [flushAgentPanelUiSnapshot]);
+
+  useEffect(() => {
+    if (!agentPanelOpen && !embeddedAgentPanelOpen) {
+      restoredWorkspaceAgentUiRef.current = false;
+      if (!activeProjectId) return;
+      const ui = readAgentPanelUiState(activeProjectId);
+      const plan = planAgentPanelUiRestore(ui, singleConnectorId);
+      pendingWorkspaceThreadRestoreRef.current = plan.pendingThreadRestore;
+    }
+  }, [agentPanelOpen, embeddedAgentPanelOpen, activeProjectId, singleConnectorId]);
+
   const closeAgentPanel = useCallback(() => {
+    flushAgentPanelUiSnapshot();
     setAgentPanelOpen(false);
-  }, []);
+  }, [flushAgentPanelUiSnapshot]);
 
   const toggleAgentPanel = useCallback(() => {
-    setAgentPanelOpen((open) => !open);
-  }, []);
+    setAgentPanelOpen((open) => {
+      if (open) flushAgentPanelUiSnapshot();
+      return !open;
+    });
+  }, [flushAgentPanelUiSnapshot]);
 
   const toggleEnabledAgent = useCallback((agentId) => {
     setEnabledAgentIds((prev) => {
@@ -363,15 +476,72 @@ export function useAgentChatShell({
     ? activeAgentTemplate
     : null;
 
+  const maybePullOllamaModel = useCallback(async (connectorId, { force = false } = {}) => {
+    const connector = getConnectorById(connectorId);
+    if (!connector || connector.provider !== 'ollama') return;
+
+    const meta = agentConnectors.find((entry) => entry.id === connectorId);
+    if (!force && !connectorNeedsOllamaPull(meta, connectorId)) return;
+
+    ollamaPullAbortRef.current?.abort();
+    const controller = new AbortController();
+    ollamaPullAbortRef.current = controller;
+
+    setOllamaPullState({
+      connectorId,
+      status: 'pulling',
+      progress: null,
+      error: null,
+    });
+
+    try {
+      await pullOllamaModel(connectorId, {
+        signal: controller.signal,
+        onProgress: (event) => {
+          setOllamaPullState({
+            connectorId,
+            status: 'pulling',
+            progress: event,
+            error: null,
+          });
+        },
+      });
+      await refreshAgentConnectors();
+      setOllamaPullState(null);
+    } catch (e) {
+      if (e?.name === 'AbortError') {
+        setOllamaPullState(null);
+        return;
+      }
+      setOllamaPullState({
+        connectorId,
+        status: 'error',
+        progress: null,
+        error: e?.message || 'Ollama pull failed',
+      });
+    } finally {
+      if (ollamaPullAbortRef.current === controller) {
+        ollamaPullAbortRef.current = null;
+      }
+    }
+  }, [agentConnectors, refreshAgentConnectors]);
+
+  const retryOllamaPull = useCallback(() => {
+    const connectorId = ollamaPullState?.connectorId ?? singleConnectorId;
+    void maybePullOllamaModel(connectorId, { force: true });
+  }, [maybePullOllamaModel, ollamaPullState?.connectorId, singleConnectorId]);
+
   const handleSingleConnectorIdChange = useCallback((connectorId) => {
     const nextProvider = getConnectorProvider(connectorId);
     setSingleConnectorId(connectorId);
+    persistAgentPanelUi({ connectorId });
     setActiveAgentTemplateId((current) => {
       const template = agentTemplates.find((entry) => entry.id === current);
       if (template && nextProvider && template.provider !== nextProvider) return null;
       return current;
     });
-  }, [agentTemplates]);
+    void maybePullOllamaModel(connectorId);
+  }, [agentTemplates, maybePullOllamaModel, persistAgentPanelUi]);
 
   const resolveThreadConnectorId = useCallback(
     (thread) => {
@@ -480,10 +650,20 @@ export function useAgentChatShell({
     const template = agentTemplates.find((entry) => entry.id === templateId);
     if (template?.provider && selectedConnectorProvider && template.provider !== selectedConnectorProvider) {
       setActiveAgentTemplateId(null);
+      persistAgentPanelUi({ activeAgentTemplateId: null });
       return;
     }
-    setActiveAgentTemplateId(templateId || null);
-  }, [agentTemplates, selectedConnectorProvider]);
+    const nextId = templateId || null;
+    setActiveAgentTemplateId(nextId);
+    persistAgentPanelUi({ activeAgentTemplateId: nextId });
+  }, [agentTemplates, persistAgentPanelUi, selectedConnectorProvider]);
+
+  const handleAgentPanelCollapsedSectionsChange = useCallback((sections) => {
+    setAgentPanelCollapsedSections(sections);
+    persistAgentPanelUi({
+      panelLayout: collapsedSectionsToFlowAgentPanelLayout(sections),
+    });
+  }, [persistAgentPanelUi]);
 
   const handleSaveAgentTemplate = useCallback(
     async (template, expectedRevision = 0) => {
@@ -1063,6 +1243,7 @@ export function useAgentChatShell({
     setAgentChatThreadIndex(index);
     setActiveThreadId(meta.threadId);
     if (meta.agentTemplateId) setActiveAgentTemplateId(meta.agentTemplateId);
+    persistWorkspaceAgentUiThread(meta.threadId, connectorId);
     setThreadPickerOpen(false);
 
     setAgentChatMessages([]);
@@ -1107,6 +1288,7 @@ export function useAgentChatShell({
     stagedSyncCardsRef,
     setActiveCardId,
     setTrayRevealActive,
+    persistWorkspaceAgentUiThread,
   ]);
 
   const handleSelectAgentThread = useCallback(
@@ -1142,6 +1324,7 @@ export function useAgentChatShell({
       setAgentChatThreadIndex(index);
       setActiveThreadId(threadId);
       setThreadPickerOpen(false);
+      persistWorkspaceAgentUiThread(threadId, connectorId);
       await loadThreadSessionIntoState(projectId, connectorId, threadId);
     },
     [
@@ -1150,8 +1333,60 @@ export function useAgentChatShell({
       requestThreadTranscriptSync,
       activeProjectIdRef,
       agentTemplates,
+      persistWorkspaceAgentUiThread,
     ],
   );
+
+  useEffect(() => {
+    if (!activeProjectId) return undefined;
+    if (!agentPanelOpen || embeddedAgentPanelOpen) return undefined;
+    if (restoredWorkspaceAgentUiRef.current) return undefined;
+
+    const pending = pendingWorkspaceThreadRestoreRef.current;
+    if (!pending?.threadId) {
+      restoredWorkspaceAgentUiRef.current = true;
+      return undefined;
+    }
+
+    if (pending.connectorId && pending.connectorId !== singleConnectorId) {
+      return undefined;
+    }
+
+    const threads = agentChatThreadIndex.threads;
+    if (threads.length === 0) {
+      if (threadPickerOpen) {
+        restoredWorkspaceAgentUiRef.current = true;
+        pendingWorkspaceThreadRestoreRef.current = null;
+      }
+      return undefined;
+    }
+
+    if (!threads.some((thread) => thread.threadId === pending.threadId)) {
+      restoredWorkspaceAgentUiRef.current = true;
+      pendingWorkspaceThreadRestoreRef.current = null;
+      return undefined;
+    }
+
+    if (activeThreadId === pending.threadId) {
+      restoredWorkspaceAgentUiRef.current = true;
+      pendingWorkspaceThreadRestoreRef.current = null;
+      return undefined;
+    }
+
+    restoredWorkspaceAgentUiRef.current = true;
+    pendingWorkspaceThreadRestoreRef.current = null;
+    void handleSelectAgentThread(pending.threadId);
+    return undefined;
+  }, [
+    activeProjectId,
+    agentPanelOpen,
+    embeddedAgentPanelOpen,
+    singleConnectorId,
+    agentChatThreadIndex.threads,
+    activeThreadId,
+    threadPickerOpen,
+    handleSelectAgentThread,
+  ]);
 
   const handleRenameAgentThread = useCallback(
     async (threadId, title) => {
@@ -1271,6 +1506,7 @@ export function useAgentChatShell({
     saveThreadIndexLocal(projectId, connectorId, index);
     setAgentChatThreadIndex(index);
     setActiveThreadId(null);
+    persistWorkspaceAgentUiThread(null, connectorId);
     setAgentChatMessages([]);
     setThreadPickerOpen(true);
     agentChatArtifactMetaRef.current = {
@@ -1280,7 +1516,7 @@ export function useAgentChatShell({
       cardId: null,
     };
     setAgentChatArtifactRef(null);
-  }, [singleConnectorId, activeProjectIdRef, stateRef, setState]);
+  }, [singleConnectorId, activeProjectIdRef, stateRef, setState, persistWorkspaceAgentUiThread]);
 
   const handleRetryChatSync = useCallback(async () => {
     if (!agentChatMessages.length || chatSyncRetrying) return;
@@ -1324,7 +1560,17 @@ export function useAgentChatShell({
         requestStructuralSync();
       }
 
-      if (!index?.activeThreadId) {
+      const ui = readAgentPanelUiState(activeProjectId);
+      let preferredThreadId = index?.activeThreadId ?? null;
+      if (
+        ui.activeThreadId
+        && ui.connectorId === singleConnectorId
+        && index?.threads?.some((thread) => thread.threadId === ui.activeThreadId)
+      ) {
+        preferredThreadId = ui.activeThreadId;
+      }
+
+      if (!preferredThreadId) {
         setActiveThreadId(null);
         setThreadPickerOpen(true);
         setAgentChatMessages([]);
@@ -1341,12 +1587,19 @@ export function useAgentChatShell({
         return;
       }
 
-      setActiveThreadId(index.activeThreadId);
+      if (preferredThreadId !== index.activeThreadId) {
+        const nextIndex = setActiveThreadInIndex(index, preferredThreadId);
+        saveThreadIndexLocal(activeProjectId, singleConnectorId, nextIndex);
+        agentChatThreadIndexRef.current = nextIndex;
+        setAgentChatThreadIndex(nextIndex);
+      }
+
+      setActiveThreadId(preferredThreadId);
       setThreadPickerOpen(false);
       await loadThreadSessionIntoState(
         activeProjectId,
         singleConnectorId,
-        index.activeThreadId,
+        preferredThreadId,
       );
     })();
     return () => {
@@ -1592,16 +1845,40 @@ export function useAgentChatShell({
     return defaultLoadFlowContextText(card);
   }, [defaultLoadFlowContextText]);
 
+  const loadLiveContextText = useCallback(async (card) => {
+    const { text } = await fetchLiveFeedContext(card);
+    return text;
+  }, []);
+
   const registerFlowContextLoader = useCallback((loader) => {
     flowContextLoaderRef.current = loader;
   }, []);
+
+  const [hydratedAgentContextCards, setHydratedAgentContextCards] = useState([]);
+
+  useEffect(() => {
+    if (!agentPanelOpen || agentPanelMode !== 'single' || !agentContextCards.length) {
+      setHydratedAgentContextCards(agentContextCards);
+      return undefined;
+    }
+    setHydratedAgentContextCards(agentContextCards);
+    let cancelled = false;
+    void hydrateLiveContextCards(agentContextCards).then((hydrated) => {
+      if (!cancelled) setHydratedAgentContextCards(hydrated);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentPanelOpen, agentPanelMode, agentContextCards]);
+
+  const effectiveAgentContextCards = hydratedAgentContextCards;
 
   useEffect(() => {
     if (!agentPanelOpen || agentPanelMode !== 'single') {
       setAgentContextEstimates([]);
       return undefined;
     }
-    const cards = agentContextCards;
+    const cards = effectiveAgentContextCards;
     let cancelled = false;
     const timer = setTimeout(async () => {
       const profile = agentExtendedContext ? 'extended' : 'standard';
@@ -1610,6 +1887,7 @@ export function useAgentChatShell({
           folderHandle,
           loadAgentChatText: loadAgentChatContextText,
           loadFlowContextText,
+          loadLiveContextText,
           profile,
         });
         if (!cancelled) setAgentContextEstimates(estimates);
@@ -1626,29 +1904,30 @@ export function useAgentChatShell({
     agentPanelMode,
     agentContextMode,
     agentExtendedContext,
-    agentContextCards,
+    effectiveAgentContextCards,
     folderHandle,
     loadAgentChatContextText,
     loadFlowContextText,
+    loadLiveContextText,
   ]);
 
   const contextDeliveryState = useMemo(() => {
     if (!agentPanelOpen || agentPanelMode !== 'single') {
       return { sentKeys: new Set(), pendingAdd: [], pendingRemove: [], stable: [] };
     }
-    return computeContextDeliveryState(agentContextRegistryRef.current, agentContextCards);
-  }, [agentPanelOpen, agentPanelMode, agentContextCards, agentChatMessages.length]);
+    return computeContextDeliveryState(agentContextRegistryRef.current, effectiveAgentContextCards);
+  }, [agentPanelOpen, agentPanelMode, effectiveAgentContextCards, agentChatMessages.length]);
 
   const agentContextDeliveryByCardId = useMemo(() => {
     const folderLinked = Boolean(folderHandle);
     const registry = agentContextRegistryRef.current;
     return Object.fromEntries(
-      agentContextCards.map((c) => [
+      effectiveAgentContextCards.map((c) => [
         c.id,
         getContextDeliveryStatus(c, registry, { folderLinked }),
       ]),
     );
-  }, [agentContextCards, folderHandle, contextDeliveryState]);
+  }, [effectiveAgentContextCards, folderHandle, contextDeliveryState]);
 
   const handleRefreshContextSession = useCallback(() => {
     if (!window.confirm(strings.agent.contextRefreshConfirm)) return;
@@ -1841,7 +2120,8 @@ export function useAgentChatShell({
       if (!provider) return;
 
       const registry = agentContextRegistryRef.current;
-      const diff = diffContextRegistry(registry, contextCards);
+      const hydratedContextCards = await hydrateLiveContextCards(contextCards);
+      const diff = diffContextRegistry(registry, hydratedContextCards);
       const profile = agentExtendedContext ? 'extended' : 'standard';
       const systemContext = MINIMAL_AGENT_SYSTEM_CONTEXT;
 
@@ -1915,6 +2195,7 @@ export function useAgentChatShell({
             folderHandle,
             loadAgentChatText: loadAgentChatContextText,
             loadFlowContextText,
+            loadLiveContextText,
             profile,
           });
           addDocuments = applyContextAddBudget(rawDocuments, profile);
@@ -1971,6 +2252,7 @@ export function useAgentChatShell({
           profile,
           loadAgentChatText: loadAgentChatContextText,
           loadFlowContextText,
+          loadLiveContextText,
         };
         const historyForApi = await buildApiMessageHistoryAsync(
           optimisticMessages,
@@ -2080,6 +2362,7 @@ export function useAgentChatShell({
       folderHandle,
       loadAgentChatContextText,
       loadFlowContextText,
+      loadLiveContextText,
       agentExtendedContext,
       requestThreadTranscriptSync,
       stateRef,
@@ -2196,7 +2479,9 @@ export function useAgentChatShell({
     agentConnectorsOffline,
     agentOpenaiReachable,
     agentOpenaiReachabilityError,
+    ollamaPullState,
     refreshAgentConnectors,
+    retryOllamaPull,
     registerEmbeddedAgentPanelOpen,
     handleSaveAgentApiKey,
     apiKeySaving,
@@ -2247,7 +2532,7 @@ export function useAgentChatShell({
     handleAgentSendMessage,
     handleAgentChatCardActivate,
     showAgentComingSoon,
-    agentContextCards,
+    agentContextCards: effectiveAgentContextCards,
     contextDeliveryState,
     agentContextDeliveryByCardId,
     agentChatLiveCardId,
@@ -2256,5 +2541,8 @@ export function useAgentChatShell({
     getContextLimits,
     registerFlowContextLoader,
     loadFlowContextText,
+    agentPanelCollapsedSections,
+    handleAgentPanelCollapsedSectionsChange,
+    chatScrollResetKey,
   };
 }

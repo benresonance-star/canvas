@@ -7,6 +7,7 @@ import {
   diffContextRegistry,
   computeContextDeliveryState,
   getContextDeliveryStatus,
+  getCardContentHash,
   buildApiMessageHistory,
   buildApiMessageHistoryAsync,
   stripApiContentForStorage,
@@ -211,5 +212,37 @@ describe('agentContextSession', () => {
     unregisterContextCard(registry, 'a');
     expect(registry.byCardId.size).toBe(0);
     expect(registry.keys.size).toBe(0);
+  });
+
+  it('getCardContentHash uses liveCurrentVersionId for live cards', () => {
+    const liveCard = {
+      id: 'live-1',
+      name: 'Feed',
+      type: 'live',
+      liveCurrentVersionId: 'version-42',
+      pinnedVersion: 1,
+      versions: [{ version: 1, artifactRef: { id: 'live-artifact-1' } }],
+    };
+    expect(getCardContentHash(liveCard)).toBe('version-42');
+    expect(buildCardContextKey(liveCard)).toBe('live-1:version-42');
+  });
+
+  it('diffContextRegistry re-adds live card when liveCurrentVersionId changes', () => {
+    const registry = createContextRegistry();
+    const v1 = {
+      id: 'live-1',
+      name: 'Feed',
+      type: 'live',
+      liveCurrentVersionId: 'version-1',
+      pinnedVersion: 1,
+      versions: [{ version: 1, artifactRef: { id: 'live-artifact-1' } }],
+    };
+    registerContextCard(registry, v1);
+
+    const v2 = { ...v1, liveCurrentVersionId: 'version-2' };
+    const diff = diffContextRegistry(registry, [v2]);
+    expect(diff.removed).toHaveLength(1);
+    expect(diff.added.map((c) => c.id)).toEqual(['live-1']);
+    expect(diff.stable).toHaveLength(0);
   });
 });

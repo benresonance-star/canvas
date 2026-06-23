@@ -224,6 +224,8 @@
   --color-muted: var(--color-muted);
   --color-border: var(--color-border);
   --color-border-subtle: var(--color-border-subtle);
+  --color-border-markdown: color-mix(in srgb, var(--color-border-subtle) 50%, var(--color-border));
+  --color-border-markdown-faint: color-mix(in srgb, var(--color-border-markdown) 72%, transparent);
   --color-accent: var(--color-accent);
   --color-accent-hover: var(--color-accent-hover);
   --color-on-accent: var(--color-on-accent);
@@ -554,4 +556,22 @@ html[data-theme='blue'] {
 
 .editable-markdown-message [contenteditable] li + li {
   margin-top: 0.125rem;
+}
+
+.agent-markdown-message table th {
+  border-bottom: 1px solid var(--color-border-markdown);
+}
+
+.agent-markdown-message table tbody tr {
+  border-bottom: 1px solid var(--color-border-markdown-faint);
+}
+
+.agent-markdown-message table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.agent-markdown-message hr {
+  border: 0;
+  border-top: 1px solid var(--color-border-markdown);
+  margin: 0.75rem 0;
 }

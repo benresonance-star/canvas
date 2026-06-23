@@ -15,6 +15,7 @@ import {
   CONNECTORS,
   agentInputDisabledMessage,
   agentCanChat,
+  connectorNeedsOllamaPull,
   defaultAgentTypeLabelForProvider,
   getConnectorById,
   mergeConnectorMeta,
@@ -806,6 +807,8 @@ export function AgentSidePanel({
   secretsConfigured = true,
   connectorsOffline = false,
   onRetryConnectors,
+  ollamaPullState = null,
+  onRetryOllamaPull,
   openaiReachable = null,
   openaiReachabilityError = null,
   onSaveApiKey,
@@ -862,6 +865,7 @@ export function AgentSidePanel({
   flowSelectionSummary = null,
   initialCollapsedSections = null,
   onCollapsedSectionsChange = null,
+  chatScrollResetKey = 0,
 }) {
   const [draft, setDraft] = useState('');
   const [apiKeyDraft, setApiKeyDraft] = useState('');
@@ -902,6 +906,25 @@ export function AgentSidePanel({
   const connectorConfigured = Boolean(activeConnector?.configured);
   const connectorUsable = Boolean(activeConnector?.usable);
   const connectorRequiresCredential = activeConnector?.requiresCredential !== false;
+  const ollamaPullInProgress = ollamaPullState?.status === 'pulling';
+  const activeOllamaPulling =
+    ollamaPullInProgress && ollamaPullState.connectorId === singleConnectorId;
+  const activeOllamaPullError =
+    ollamaPullState?.status === 'error' && ollamaPullState.connectorId === singleConnectorId;
+  const activeConnectorNeedsPull = connectorNeedsOllamaPull(connectorMeta, singleConnectorId);
+  const ollamaPullProgressLabel = (() => {
+    const model = activeConnector?.model || 'model';
+    const progress = ollamaPullState?.progress;
+    if (
+      progress?.status === 'downloading'
+      && Number(progress.total) > 0
+      && Number.isFinite(progress.completed)
+    ) {
+      const pct = Math.round((progress.completed / progress.total) * 100);
+      return strings.agent.ollamaPullingPct(model, pct);
+    }
+    return strings.agent.ollamaPulling(model);
+  })();
   const activeSetupTemplate =
     agentTemplates.find(
       (template) =>
@@ -1078,6 +1101,7 @@ export function AgentSidePanel({
                     <li key={connector.id}>
                       <button
                         type="button"
+                        disabled={ollamaPullInProgress}
                         onClick={() => onSingleConnectorChange?.(connector.id)}
                         className={`w-full text-left rounded border px-2 py-1.5 transition ${
                           selected
@@ -1224,25 +1248,45 @@ export function AgentSidePanel({
                     {strings.agent.apiOffline}
                   </p>
                 )}
-                <p
-                  className={`sans text-[10px] leading-snug ${
-                    connectorUsable ? 'text-muted' : 'text-warning'
-                  }`}
-                  role="status"
-                >
-                  {connectorUsable
-                    ? strings.agent.localAgentReady
-                    : connectorsOffline
-                      ? strings.agent.apiOffline
-                      : activeConnector?.healthError || strings.agent.localAgentUnavailable}
-                </p>
-                {!connectorUsable && onRetryConnectors && (
+                {activeOllamaPulling ? (
+                  <p className="sans text-[10px] text-muted leading-snug" role="status">
+                    {ollamaPullProgressLabel}
+                  </p>
+                ) : (
+                  <p
+                    className={`sans text-[10px] leading-snug ${
+                      connectorUsable ? 'text-muted' : 'text-warning'
+                    }`}
+                    role="status"
+                  >
+                    {connectorUsable
+                      ? strings.agent.localAgentReady
+                      : connectorsOffline
+                        ? strings.agent.apiOffline
+                        : activeConnector?.healthError || strings.agent.localAgentUnavailable}
+                  </p>
+                )}
+                {activeOllamaPullError && (
+                  <p className="sans text-[10px] text-warning leading-snug" role="status">
+                    {ollamaPullState.error || strings.agent.ollamaPullFailed}
+                  </p>
+                )}
+                {!connectorUsable && onRetryConnectors && !activeOllamaPulling && !activeConnectorNeedsPull && (
                   <button
                     type="button"
                     className="sans text-[10px] text-link hover:text-link-hover hover:underline"
                     onClick={() => void onRetryConnectors()}
                   >
                     {strings.agent.retryConnectors}
+                  </button>
+                )}
+                {(activeOllamaPullError || (activeConnectorNeedsPull && !connectorUsable)) && onRetryOllamaPull && (
+                  <button
+                    type="button"
+                    className="sans text-[10px] text-link hover:text-link-hover hover:underline"
+                    onClick={() => void onRetryOllamaPull()}
+                  >
+                    {strings.agent.ollamaPullRetry}
                   </button>
                 )}
               </section>
@@ -1657,10 +1701,12 @@ export function AgentSidePanel({
             onFocusCard={onFocusContextCard}
           />
           <AgentChatThreadView
+            key={activeThreadId ?? 'no-thread'}
             messages={chatMessages}
             loading={chatLoading}
             error={chatError}
             className="flex-1"
+            scrollResetKey={`${chatScrollResetKey}:${activeThreadId ?? ''}`}
             defaultAgentTypeLabel={
               activeAgentThread?.agentTypeLabel
               || threadAgentTemplate?.label

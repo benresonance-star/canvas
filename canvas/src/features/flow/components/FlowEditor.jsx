@@ -11,11 +11,13 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Plus, Redo2, Save, Search, Trash2, Undo2, Workflow, Eye, EyeOff, ArrowLeftRight, PanelRight, PanelRightClose, Map as MapIcon, Minimize2 } from 'lucide-react';
 import { strings } from '../../../content/strings.js';
+import { artifactRefIdForClusterCard } from '../../../lib/clusterMembers.js';
 import { useFlowDocument } from '../hooks/useFlowDocument.js';
 import {
   defaultFlowNodePreviewSize,
   flowNodeDisplayTitle,
   flowArtifactNodeDisplayTitle,
+  formatFlowSaveError,
   newArtifactFlowNode,
   newLocalFlowNode,
   flowEdgeIsFlowing,
@@ -45,9 +47,11 @@ function FlowEditorInner({
   onRehydratePreview,
   projectId,
   onRegisterContextSnapshot,
+  onRegisterFlush,
   onSelectedNodeIdsChange,
   flowAgentScopeNodeIds = null,
   agentModeActive = false,
+  flowClosing = false,
 }) {
   const flowId = card?.versions?.find((version) => version.version === card.pinnedVersion)?.flowId
     ?? card?.versions?.[0]?.artifactRef?.id;
@@ -62,6 +66,10 @@ function FlowEditorInner({
   const undoRef = useRef([]);
   const redoRef = useRef([]);
   const viewportSyncedRef = useRef(false);
+
+  const handleSave = useCallback(async () => {
+    await document.flushSave();
+  }, [document]);
 
   useEffect(() => {
     viewportSyncedRef.current = false;
@@ -90,6 +98,7 @@ function FlowEditorInner({
 
   const candidates = useMemo(() => (artifactCandidates ?? [])
     .filter((candidate) => candidate.type !== 'flow')
+    .filter((candidate) => artifactRefIdForClusterCard(candidate))
     .filter((candidate) => `${candidate.name} ${candidate.type}`.toLowerCase().includes(query.toLowerCase())),
   [artifactCandidates, query]);
   const cardsById = useMemo(
@@ -122,6 +131,16 @@ function FlowEditorInner({
     onRegisterContextSnapshot(getter);
     return () => onRegisterContextSnapshot(null);
   }, [document.flow, document.nodes, document.edges, onRegisterContextSnapshot]);
+
+  useEffect(() => {
+    if (!onRegisterFlush) return undefined;
+    const getter = () => ({
+      isDirty: document.isDirty,
+      flushSave: document.flushSave,
+    });
+    onRegisterFlush(getter);
+    return () => onRegisterFlush(null);
+  }, [document.flushSave, document.isDirty, onRegisterFlush]);
 
   const focusCanvas = useCallback(() => {
     canvasRef.current?.focus();
@@ -390,8 +409,21 @@ function FlowEditorInner({
           >
             {inspectorOpen ? <PanelRightClose size={15} /> : <PanelRight size={15} />}
           </button>
-          <button type="button" onClick={() => void document.save()} disabled={!document.dirty || document.status.saving} className="sans flex items-center gap-1.5 rounded-full bg-accent text-on-accent px-3 py-1.5 text-xs disabled:opacity-40"><Save size={13} />{document.status.saving ? 'Saving…' : 'Save'}</button>
+          <button
+            type="button"
+            onClick={() => { void handleSave(); }}
+            disabled={!document.dirty || document.status.saving || flowClosing}
+            className="sans flex items-center gap-1.5 rounded-full bg-accent text-on-accent px-3 py-1.5 text-xs disabled:opacity-40"
+          >
+            <Save size={13} />
+            {document.status.saving ? 'Saving…' : 'Save'}
+          </button>
         </div>
+        {document.status.error && !document.status.conflict && (
+          <div className="sans text-xs bg-danger-muted text-danger px-3 py-2 border-b border-danger-border">
+            {formatFlowSaveError(document.status.error, strings.flow)}
+          </div>
+        )}
         {document.status.conflict && <div className="sans text-xs bg-warning-muted text-warning px-3 py-2 border-b border-warning">This flow changed elsewhere. <button type="button" className="underline" onClick={() => void document.reload()}>Reload server copy</button></div>}
         {document.status.snapshotWarning && <div className="sans text-xs bg-warning-muted text-warning px-3 py-2 border-b border-warning">Flow saved to the database; the folder snapshot will retry later.</div>}
         <div

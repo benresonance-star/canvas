@@ -255,6 +255,8 @@ export function useAppShell() {
     setActiveCardId,
     openCardId,
     setOpenCardId,
+    closeOpenCard,
+    registerFlowFlush,
     versionStackOpen,
     setVersionStackOpen,
     confirmChanges,
@@ -274,6 +276,7 @@ export function useAppShell() {
     savingNote,
     savingLink,
     savingFlow,
+    savingLive,
     savingCardId,
     setCanvasView,
     fitCanvasViewToCards,
@@ -302,6 +305,7 @@ export function useAppShell() {
     handleSaveNewNote,
     handleSaveNewLink,
     handleSaveNewFlow,
+    handleSaveNewLive,
     handleFlowCardRefresh,
     removeCard,
     rehydratePreview,
@@ -503,7 +507,9 @@ export function useAppShell() {
     agentConnectorsOffline,
     agentOpenaiReachable,
     agentOpenaiReachabilityError,
+    ollamaPullState,
     refreshAgentConnectors,
+    retryOllamaPull,
     registerEmbeddedAgentPanelOpen,
     handleSaveAgentApiKey,
     apiKeySaving,
@@ -558,6 +564,9 @@ export function useAppShell() {
     closeAgentPanel,
     toggleAgentPanel,
     registerFlowContextLoader,
+    agentPanelCollapsedSections,
+    handleAgentPanelCollapsedSectionsChange,
+    chatScrollResetKey,
   } = useAgentChatShell({
     refs: {
       activeProjectIdRef,
@@ -702,7 +711,7 @@ export function useAppShell() {
     return prev;
   }, []);
 
-  const resetProjectUiForProjection = useCallback(() => {
+  const resetProjectUiForProjection = useCallback(async () => {
     folderRestoreHandledSeqRef.current = null;
     setFolderLinkInProgress(false);
     setFolderLinkProbeComplete(false);
@@ -718,7 +727,7 @@ export function useAppShell() {
     setActiveThreadId(null);
     setAgentChatThreadIndex({ version: 1, activeThreadId: null, threads: [] });
     setThreadPickerOpen(false);
-    resetCanvasUi?.();
+    await resetCanvasUi?.();
     resetClusterUi?.();
   }, [
     setFolderLinkInProgress,
@@ -1056,14 +1065,18 @@ export function useAppShell() {
       }
       if (e.key === 'Escape') {
         setShowSearch(false);
-        setOpenCardId(null);
-        setActiveCardId(null);
+        if (openCardId) {
+          void closeOpenCard();
+        } else {
+          setOpenCardId(null);
+          setActiveCardId(null);
+        }
         setChangeFolderDialog(false);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, []);
+  }, [closeOpenCard, openCardId, setActiveCardId, setOpenCardId]);
 
   useEffect(() => {
     if (!folderHandle) setFolderPresentKeys(null);
@@ -1094,6 +1107,8 @@ export function useAppShell() {
     setActiveCardId,
     openCardId,
     setOpenCardId,
+    closeOpenCard,
+    registerFlowFlush,
     versionStackOpen,
     setVersionStackOpen,
     confirmChanges,
@@ -1109,6 +1124,7 @@ export function useAppShell() {
     savingNote,
     savingLink,
     savingFlow,
+    savingLive,
     savingCardId,
     setCanvasView,
     fitCanvasViewToCards,
@@ -1134,6 +1150,7 @@ export function useAppShell() {
     handleSaveNewNote,
     handleSaveNewLink,
     handleSaveNewFlow,
+    handleSaveNewLive,
     handleFlowCardRefresh,
     removeCard,
     rehydratePreview,
@@ -1191,6 +1208,7 @@ export function useAppShell() {
     agentConnectorsOffline,
     agentOpenaiReachable,
     agentOpenaiReachabilityError,
+    ollamaPullState,
     handleSaveAgentApiKey,
     apiKeySaving,
     handleClearAgentApiKey,
@@ -1217,6 +1235,8 @@ export function useAppShell() {
     handleRetryChatSync,
     handleClearAgentChat,
     refreshAgentConnectors,
+    retryOllamaPull,
+    ollamaPullState,
     registerEmbeddedAgentPanelOpen,
     handleRemoveContextCard,
     activeThreadId,
@@ -1235,6 +1255,9 @@ export function useAppShell() {
     agentChatTranscriptRevision,
     clusterMemberOptions,
     registerFlowContextLoader,
+    agentPanelCollapsedSections,
+    handleAgentPanelCollapsedSectionsChange,
+    chatScrollResetKey,
     inspectorOpen,
     inspectorSelection,
     showSearch,

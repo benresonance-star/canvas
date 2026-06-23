@@ -20,10 +20,12 @@ export function BookmarkPreview({
     isAmazonBookmark
     && (!preview.imageUrl || isGenericAmazonBookmarkImage(preview.imageUrl));
   const [thumbSrc, setThumbSrc] = useState(null);
+  const [thumbLoadFailed, setThumbLoadFailed] = useState(false);
 
   useEffect(() => {
     let objectUrl = null;
     let cancelled = false;
+    setThumbLoadFailed(false);
     (async () => {
       if (suppressGenericAmazonImage) {
         if (!cancelled) setThumbSrc(null);
@@ -49,6 +51,8 @@ export function BookmarkPreview({
     };
   }, [pinned?.objectUrl, pinned?.previewCacheKey, preview.imageUrl, suppressGenericAmazonImage]);
 
+  const showThumb = thumbSrc && !thumbLoadFailed;
+
   const title = preview.title || card.name || preview.domain || strings.bookmark.untitled;
   const domain = preview.domain || '';
   const description = preview.description || '';
@@ -61,10 +65,10 @@ export function BookmarkPreview({
   const titleClass = compact ? 'text-xs' : 'text-sm';
   const domainClass = compact ? 'text-[9px]' : 'text-[10px]';
   const descClass = compact ? 'text-[9px]' : 'text-[10px]';
-  const mediaClass = thumbSrc
+  const mediaClass = showThumb
     ? 'flex-1 min-h-0'
     : `shrink-0 ${compact ? 'h-16' : 'h-28'}`;
-  const detailsClass = thumbSrc
+  const detailsClass = showThumb
     ? 'shrink-0'
     : 'flex-1 min-h-0';
 
@@ -73,12 +77,13 @@ export function BookmarkPreview({
       <div
         className={`w-full bg-surface-muted overflow-hidden ${mediaClass}`}
       >
-        {thumbSrc ? (
+        {showThumb ? (
           <img
             src={thumbSrc}
             alt=""
             className="w-full h-full object-cover"
             draggable={false}
+            onError={() => setThumbLoadFailed(true)}
           />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center gap-1 px-4 text-center">

@@ -31,6 +31,22 @@ export function isBookmarkSidecarFilename(filename) {
   return /\.bookmark\.md$/i.test(String(filename ?? ''));
 }
 
+export function isBookmarkShortcutFilename(filename) {
+  return /^links__.+-v\d+\.url$/i.test(String(filename ?? ''));
+}
+
+export function parseBookmarkShortcutContent(content) {
+  const text = String(content ?? '');
+  const rawUrl = text.match(/^URL=(.+)$/mi)?.[1]?.trim() ?? '';
+  const url = normalizeBookmarkUrl(rawUrl);
+  if (!url) return null;
+  return {
+    title: '',
+    url,
+    domain: domainFromUrl(url),
+  };
+}
+
 export function parseBookmarkSidecarFilename(filename) {
   const withoutSidecar = String(filename ?? '').replace(/\.bookmark\.md$/i, '');
   const parsed = parseFilename(`${withoutSidecar}.url`);
@@ -63,6 +79,56 @@ function buildBookmarkPreviewState(bookmark, preview) {
     faviconUrl: preview?.faviconUrl ?? null,
     domain,
     fetchedAt: new Date().toISOString(),
+  };
+}
+
+async function readBookmarkShortcutEntry(entry, { relativePath, fetchBookmarkPreview } = {}) {
+  const file =
+    typeof entry?.getFile === 'function'
+      ? await entry.getFile()
+      : entry;
+  if (!file) throw new Error('Bookmark shortcut entry unavailable');
+  const filename = entry.name ?? file.name;
+  const content = await file.text();
+  const bookmark = parseBookmarkShortcutContent(content);
+  if (!bookmark) return null;
+  const parsed = parseFilename(filename);
+  const normalizedPath = String(relativePath ?? filename).replace(/\\/g, '/');
+  const dir = normalizedPath.includes('/')
+    ? normalizedPath.slice(0, normalizedPath.lastIndexOf('/'))
+    : '';
+  const cardKey = dir ? `${dir}/${parsed.fullBase}` : parsed.fullBase;
+  let preview = null;
+  if (typeof fetchBookmarkPreview === 'function') {
+    try {
+      preview = await fetchBookmarkPreview(bookmark.url);
+    } catch {
+      preview = null;
+    }
+  }
+  const bookmarkPreview = buildBookmarkPreviewState(bookmark, preview);
+  return {
+    filename,
+    relativePath,
+    cardKey,
+    content,
+    content_hash: await sha256HexFromString(bookmark.url),
+    size: file.size,
+    lastModified: file.lastModified,
+    dataUrl: null,
+    objectUrl: null,
+    inline: true,
+    previewStripped: false,
+    previewCacheKey: null,
+    prefix: parsed.prefix,
+    name: parsed.name,
+    fullBase: parsed.fullBase,
+    version: parsed.version,
+    ext: parsed.ext,
+    cardType: 'bookmark',
+    externalUrl: bookmark.url,
+    bookmarkPreview,
+    artifactSyncState: 'pending',
   };
 }
 
@@ -159,12 +225,23 @@ export async function scanFolderFiles(handle, options = {}) {
       // Generated flow snapshots mirror database state and must never be
       // re-ingested as ordinary file artifacts.
       if (/\.flow\.json$/i.test(filename)) continue;
+      // Generated live Markdown files are materialized database mirrors.
+      // The reserved live__ prefix prevents them becoming duplicate cards.
+      if (/^live__.*-v\d+\.md$/i.test(filename)) continue;
       const relativePath =
         entry.webkitRelativePath && typeof entry.webkitRelativePath === 'string'
           ? entry.webkitRelativePath
           : joinRelativePath(parentPath, filename);
       if (isBookmarkSidecarFilename(filename)) {
         const bookmark = await readBookmarkSidecarEntry(entry, {
+          relativePath,
+          fetchBookmarkPreview,
+        });
+        if (bookmark) found.push(bookmark);
+        continue;
+      }
+      if (isBookmarkShortcutFilename(filename)) {
+        const bookmark = await readBookmarkShortcutEntry(entry, {
           relativePath,
           fetchBookmarkPreview,
         });

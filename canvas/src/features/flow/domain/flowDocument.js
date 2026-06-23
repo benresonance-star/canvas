@@ -716,3 +716,22 @@ export function patchFlowCard(card, flow, nodes, edges) {
   };
 }
 
+/**
+ * @param {string | null | undefined} message
+ * @param {{ saveFailed?: string, saveFailedNetwork?: string, artifactNotInProject?: string }} copy
+ */
+export function formatFlowSaveError(message, copy = {}) {
+  const fallback = copy.saveFailed ?? 'Could not save flow.';
+  if (!message) return fallback;
+  if (message.includes('artifact nodes must reference artifacts in the same project')) {
+    return copy.artifactNotInProject ?? fallback;
+  }
+  if (/failed to fetch|network|ECONNREFUSED/i.test(message)) {
+    return copy.saveFailedNetwork ?? fallback;
+  }
+  if (message.includes('artifact node requires artifactId')) {
+    return copy.artifactNodeMissingRef ?? fallback;
+  }
+  return `${fallback} (${message})`;
+}
+

@@ -12,8 +12,9 @@ import { NotePreviewFrame } from './NotePreviewFrame.jsx';
 import { CodePreviewFrame } from './CodePreviewFrame.jsx';
 import { AgentChatThreadView } from './AgentChatThreadView.jsx';
 import { parseAgentChatTranscript } from '../lib/agentChatArtifact.js';
+import { LiveArtifactView } from '../features/live/components/LiveArtifactView.jsx';
 
-export function ModalContent({ card, version }) {
+export function ModalContent({ card, version, folderHandle = null, projectId = null }) {
   const cardType = normalizeCardType(card?.type);
   const localTranscript = version?.content?.trim() || '';
   const artifactRefId =
@@ -23,6 +24,18 @@ export function ModalContent({ card, version }) {
   const artifactPayload = useArtifactPayloadText(artifactRefId, Boolean(artifactRefId));
 
   if (!version) return null;
+
+  if (cardType === 'live') {
+    return (
+      <div className="h-full p-6 bg-surface">
+        <LiveArtifactView
+          liveArtifactId={card.liveArtifactId || version.liveArtifactId || version.artifactRef?.id}
+          projectId={projectId || card.projectId}
+          folderHandle={folderHandle}
+        />
+      </div>
+    );
+  }
 
   const mediaSrc = version.objectUrl || version.dataUrl || null;
 

@@ -98,7 +98,7 @@ export function MarkdownMessage({ content, compact = false }) {
                     {block.headers.map((header, headerIndex) => (
                       <th
                         key={`${header}-${headerIndex}`}
-                        className="border-b border-border-subtle px-2 py-1 font-semibold text-primary"
+                        className="px-2 py-1 font-semibold text-primary"
                       >
                         <InlineText text={header} compact={compact} />
                       </th>
@@ -107,7 +107,7 @@ export function MarkdownMessage({ content, compact = false }) {
                 </thead>
                 <tbody>
                   {block.rows.map((row, rowIndex) => (
-                    <tr key={`row-${rowIndex}`} className="border-b border-border-subtle/60 last:border-0">
+                    <tr key={`row-${rowIndex}`}>
                       {row.map((cell, cellIndex) => (
                         <td key={`${rowIndex}-${cellIndex}`} className="px-2 py-1 align-top">
                           <InlineText text={cell} compact={compact} />
@@ -146,6 +146,9 @@ export function MarkdownMessage({ content, compact = false }) {
               <InlineText text={block.text} compact={compact} />
             </HeadingTag>
           );
+        }
+        if (block.type === 'hr') {
+          return <hr key={`hr-${index}`} />;
         }
         return (
           <p key={`paragraph-${index}`} className="whitespace-pre-wrap">

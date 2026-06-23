@@ -129,6 +129,8 @@ describe('useWorkspaceIndexSync behavior', () => {
     expect(params.setProjectList).toHaveBeenCalledWith([
       { id: 'p1', name: 'Local Dirty', updatedAt: 1, archived: false },
     ]);
-    expect(params.attemptRestoreRef.current).toHaveBeenCalledWith('p1', [{ id: 'c1' }]);
+    expect(params.attemptRestoreRef.current).toHaveBeenCalledWith('p1', [{ id: 'c1' }], {
+      scan: false,
+    });
   });
 });

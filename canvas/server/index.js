@@ -15,6 +15,7 @@ import { registerPrimitiveRoutes } from './routes/primitives.js';
 import { registerAgentRoutes } from './routes/agent.js';
 import { registerAgentTemplateRoutes } from './routes/agentTemplates.js';
 import { registerFlowRoutes } from './routes/flows.js';
+import { registerLiveArtifactRoutes } from './routes/liveArtifacts.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -37,6 +38,7 @@ registerClusterRoutes(app, routeDeps);
 registerArtifactRoutes(app);
 registerPrimitiveRoutes(app, routeDeps);
 registerFlowRoutes(app, routeDeps);
+registerLiveArtifactRoutes(app, routeDeps);
 registerAgentTemplateRoutes(app);
 registerAgentRoutes(app);
 
