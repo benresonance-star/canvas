@@ -2,7 +2,6 @@ import { useCallback, useEffect } from 'react';
 import {
   buildProjectSavePayload,
   commitProjectDocument,
-  saveProjectById,
 } from '../../lib/persistence.js';
 import {
   registerActionSyncHandlers,
@@ -370,7 +369,18 @@ export function useActionSync({
           saveThreadIndexLocal(projectId, chatRetry.connectorId, nextIndex);
         }
       }
-      await saveProjectById(projectId, stateRef.current, nextStaged, { pushRemote: true });
+      await commitProjectDocument(projectId, {
+        state: stateRef.current,
+        stagedSyncCards: nextStaged,
+        suppressedSyncKeys: suppressedKeysForSave(projectId, stateRef.current),
+        suppressedBookmarkUrls: suppressedBookmarkUrlsForSave(projectId, stateRef.current),
+        stripNoteContent:
+          Boolean(folderHandle)
+          && Boolean(folderPresentKeysRef.current?.length)
+          && isServerSyncEnabled(),
+        reason: 'artifact-sync-retry',
+        pushRemote: true,
+      });
     }
 
     return result;
@@ -502,15 +512,19 @@ export function useActionSync({
           stateRef.current,
           stagedSyncCardsRef.current,
         );
-        await saveProjectById(
-          projectId,
-          sanitized.state,
-          sanitized.stagedSyncCards,
-          {
-            pushRemote: true,
-            allowEmptyRemoteOverwrite: options.allowEmptyRemoteOverwrite === true,
-          },
-        );
+        await commitProjectDocument(projectId, {
+          state: sanitized.state,
+          stagedSyncCards: sanitized.stagedSyncCards,
+          suppressedSyncKeys: suppressedKeysForSave(projectId, sanitized.state),
+          suppressedBookmarkUrls: suppressedBookmarkUrlsForSave(projectId, sanitized.state),
+          stripNoteContent:
+            Boolean(folderHandle)
+            && Boolean(folderPresentKeysRef.current?.length)
+            && isServerSyncEnabled(),
+          reason: 'action-sync:flush-active',
+          pushRemote: true,
+          allowEmptyRemoteOverwrite: options.allowEmptyRemoteOverwrite === true,
+        });
       },
       flushAll: async () => {
         const projectId = activeProjectIdRef.current;
@@ -526,12 +540,18 @@ export function useActionSync({
             stateRef.current,
             stagedSyncCardsRef.current,
           );
-          await saveProjectById(
-            projectId,
-            sanitized.state,
-            sanitized.stagedSyncCards,
-            { pushRemote: true },
-          );
+          await commitProjectDocument(projectId, {
+            state: sanitized.state,
+            stagedSyncCards: sanitized.stagedSyncCards,
+            suppressedSyncKeys: suppressedKeysForSave(projectId, sanitized.state),
+            suppressedBookmarkUrls: suppressedBookmarkUrlsForSave(projectId, sanitized.state),
+            stripNoteContent:
+              Boolean(folderHandle)
+              && Boolean(folderPresentKeysRef.current?.length)
+              && isServerSyncEnabled(),
+            reason: 'action-sync:flush-all',
+            pushRemote: true,
+          });
         }
         await flushProjectSync();
       },

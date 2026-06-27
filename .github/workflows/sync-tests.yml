@@ -31,6 +31,21 @@ jobs:
       - name: Verify projectSync barrel exports
         run: node scripts/verify-project-sync-exports.mjs
 
+      - name: Check import boundaries
+        run: npm run audit:imports
+
+      - name: Report deprecated sync API usage
+        run: npm run audit:deprecated-sync
+
+      - name: Check migrations
+        run: npm run audit:migrations
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
       - name: Run sync-critical tests
         run: npm run test:sync
 

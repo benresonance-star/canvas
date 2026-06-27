@@ -44,8 +44,6 @@ export function FlowPathHullLayer({
               className={`flow-path-hull-path${isActive ? ' flow-path-hull-path--active' : ''}${
                 onHullSelect ? ' pointer-events-auto cursor-pointer' : ''
               }`}
-              strokeWidth={isActive ? 2 : 1.5}
-              vectorEffect="non-scaling-stroke"
               onPointerDown={
                 onHullSelect
                   ? (e) => {

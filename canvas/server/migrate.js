@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { pool } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MIGRATION_LOCK_ID = 573126018;
 
 /**
  * Apply pending SQL migrations (tracked in schema_migrations).
@@ -17,7 +18,11 @@ export async function runMigrations({ endPool = false } = {}) {
     .sort();
 
   const client = await pool.connect();
+  let lockHeld = false;
   try {
+    await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_ID]);
+    lockHeld = true;
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         name TEXT PRIMARY KEY,
@@ -55,11 +60,27 @@ export async function runMigrations({ endPool = false } = {}) {
       if (applied.rows.length > 0) continue;
 
       const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
-      await client.query(sql);
-      await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
-      console.log(`Migration ${file} applied.`);
+      try {
+        await client.query('BEGIN');
+        const appliedInTxn = await client.query(
+          'SELECT 1 FROM schema_migrations WHERE name = $1',
+          [file],
+        );
+        if (appliedInTxn.rows.length === 0) {
+          await client.query(sql);
+          await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
+          console.log(`Migration ${file} applied.`);
+        }
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      }
     }
   } finally {
+    if (lockHeld) {
+      await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_ID]);
+    }
     client.release();
     if (endPool) await pool.end();
   }

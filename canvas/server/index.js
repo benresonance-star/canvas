@@ -22,7 +22,7 @@ import { registerMusicRoutes } from './routes/music.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const JSON_BODY_LIMIT = '52mb';
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '52mb';
 
 let dbReady = false;
 const isDbReady = () => dbReady;

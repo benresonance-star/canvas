@@ -46,6 +46,11 @@ export const FLOW_CONNECTION_TYPE_SCHEMA = Object.freeze({
       description: 'Source produces output for the target step.',
     }),
     Object.freeze({
+      id: 'evaluated_by',
+      label: 'Evaluated by',
+      description: 'Target step is evaluated by the source.',
+    }),
+    Object.freeze({
       id: 'approves',
       label: 'Approves',
       description: 'Approval transition to the next step.',

@@ -136,7 +136,7 @@ describe('FlowPreview', () => {
         compact: false,
       }),
     );
-    expect(html).toContain('DECISION');
+    expect(html).toContain('EVALUATION');
     expect(html).toContain('Approve');
     expect(html).toContain('scope');
     expect(html).toContain('fill="#059669"');

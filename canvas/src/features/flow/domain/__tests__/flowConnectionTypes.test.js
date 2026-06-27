@@ -26,6 +26,7 @@ describe('flowConnectionTypes', () => {
     expect(ids).toEqual([
       'depends_on',
       'produces',
+      'evaluated_by',
       'approves',
       'revises',
       'rejects',
@@ -48,6 +49,10 @@ describe('flowConnectionTypes', () => {
     };
     expect(resolveFlowConnectionLabel(edge)).toBe('Depends on');
     expect(getFlowConnectionType('produces')?.label).toBe('Produces');
+    expect(getFlowConnectionType('evaluated_by')?.label).toBe('Evaluated by');
+    expect(resolveFlowConnectionLabel({
+      data: { connectionTypeId: 'evaluated_by' },
+    })).toBe('Evaluated by');
   });
 
   it('appends optional decision condition suffix to labels', () => {
@@ -104,6 +109,7 @@ describe('flowConnectionTypes', () => {
     expect(isKnownFlowConnectionTypeId('')).toBe(true);
     expect(isKnownFlowConnectionTypeId('driven_by')).toBe(true);
     expect(isKnownFlowConnectionTypeId('approves')).toBe(true);
+    expect(isKnownFlowConnectionTypeId('evaluated_by')).toBe(true);
     expect(isKnownFlowConnectionTypeId('unknown')).toBe(false);
   });
 

@@ -43,6 +43,19 @@ describe('flow edge metadata validation', () => {
     })).not.toThrow();
   });
 
+  it('accepts evaluated_by connection type', () => {
+    expect(() => validateFlowEdgeMetadata({
+      id: 'e1',
+      source: 'n1',
+      target: 'n2',
+      label: 'Evaluated by',
+      data: {
+        connectionTypeId: 'evaluated_by',
+        connectionTypeCustom: '',
+      },
+    })).not.toThrow();
+  });
+
   it('accepts optional decision conditions', () => {
     expect(() => validateFlowEdgeMetadata({
       id: 'e1',

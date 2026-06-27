@@ -390,12 +390,14 @@ html[data-theme='blue'] {
 
 .flow-path-hull-path {
   fill: var(--color-cluster-hull-fill);
-  stroke: var(--color-cluster-hull-stroke);
+  stroke: none;
+  fill-opacity: 0.5;
 }
 
 .flow-path-hull-path--active {
   fill: var(--color-cluster-hull-fill-active);
-  stroke: var(--color-cluster-hull-stroke-active);
+  stroke: none;
+  fill-opacity: 0.5;
 }
 
 .flow-path-hull-path.pointer-events-auto {

@@ -18,7 +18,7 @@ describe('flowPreviewNodes', () => {
       { decision: '#123456' },
     );
     expect(presentation.headerColor).toBe('#123456');
-    expect(presentation.typeLabel).toBe('DECISION');
+    expect(presentation.typeLabel).toBe('EVALUATION');
   });
 
   it('flowPreviewColors falls back to defaults', () => {

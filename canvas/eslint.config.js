@@ -34,6 +34,19 @@ export default defineConfig([
     },
   },
   {
+    files: ['public/audio-worklets/**/*.js'],
+    languageOptions: {
+      globals: {
+        AudioWorkletProcessor: 'readonly',
+        registerProcessor: 'readonly',
+        sampleRate: 'readonly',
+      },
+    },
+    rules: {
+      'no-redeclare': 'off',
+    },
+  },
+  {
     files: ['src/**/*.{js,jsx}'],
     extends: [reactRefresh.configs.vite],
     languageOptions: {
@@ -44,6 +57,23 @@ export default defineConfig([
     files: ['server/**/*.js'],
     languageOptions: {
       globals: globals.node,
+    },
+  },
+  {
+    files: ['src/lib/image/**/*.js'],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
+  {
+    files: [
+      'src/components/AddMenu.jsx',
+      'src/features/flow/components/FlowEditorContext.jsx',
+      'src/features/flow/components/FlowPreview.jsx',
+      'src/features/music/kernel/MusicKernelProvider.jsx',
+    ],
+    rules: {
+      'react-refresh/only-export-components': 'off',
     },
   },
   {

@@ -21,6 +21,26 @@ import {
 } from '../lib/workspaceIndexSyncHub.js';
 import { deletePreviewBlobsForProject } from '../repositories/canvas-previews.js';
 
+function isPlainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function parseExpectedRevision(value) {
+  if (value === undefined || value === null) {
+    return { ok: false, error: 'expectedRevision required' };
+  }
+  const revision = Number(value);
+  if (!Number.isInteger(revision) || revision < 0) {
+    return { ok: false, error: 'expectedRevision must be a non-negative integer' };
+  }
+  return { ok: true, revision };
+}
+
+function rejectBadTraceValue(value) {
+  if (value === undefined || value === null) return null;
+  return typeof value === 'string' ? null : 'traceId must be a string';
+}
+
 /** @param {import('express').Express} app @param {{ requireDb: (res: import('express').Response) => boolean }} deps */
 export function registerCanvasProjectRoutes(app, { requireDb }) {
   app.get('/canvas/index', async (_req, res) => {
@@ -42,10 +62,9 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
       if (!index || !Array.isArray(index.projects)) {
         return res.status(400).json({ error: 'index with projects array required' });
       }
-      if (expectedRevision === undefined || expectedRevision === null) {
-        return res.status(400).json({ error: 'expectedRevision required' });
-      }
-      const result = await putCanvasIndex(index, expectedRevision, {
+      const expected = parseExpectedRevision(expectedRevision);
+      if (!expected.ok) return res.status(400).json({ error: expected.error });
+      const result = await putCanvasIndex(index, expected.revision, {
         deletedProjectIds: Array.isArray(deletedProjectIds) ? deletedProjectIds : [],
         enforceDocumentIntegrity: true,
       });
@@ -150,16 +169,15 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
         allowEmptyRemoteOverwrite,
         allowDockOnlyRemoteOverwrite,
       } = req.body;
-      if (!payload || typeof payload !== 'object') {
+      if (!isPlainObject(payload)) {
         return res.status(400).json({ error: 'payload required' });
       }
-      if (expectedRevision === undefined || expectedRevision === null) {
-        return res.status(400).json({ error: 'expectedRevision required' });
-      }
+      const expected = parseExpectedRevision(expectedRevision);
+      if (!expected.ok) return res.status(400).json({ error: expected.error });
       const result = await putCanvasProject(
         req.params.projectId,
         payload,
-        expectedRevision,
+        expected.revision,
         {
           allowEmptyRemoteOverwrite: allowEmptyRemoteOverwrite === true,
           allowDockOnlyRemoteOverwrite: allowDockOnlyRemoteOverwrite === true,
@@ -197,17 +215,18 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
       if (!Array.isArray(ops) || ops.length === 0) {
         return res.status(400).json({ error: 'ops required' });
       }
-      if (expectedRevision === undefined || expectedRevision === null) {
-        return res.status(400).json({ error: 'expectedRevision required' });
-      }
+      const expected = parseExpectedRevision(expectedRevision);
+      if (!expected.ok) return res.status(400).json({ error: expected.error });
+      const traceError = rejectBadTraceValue(traceId);
+      if (traceError) return res.status(400).json({ error: traceError });
       const projectId = req.params.projectId;
       syncTraceLog(traceId, 'api:patch-received', {
         projectId,
-        expectedRevision,
+        expectedRevision: expected.revision,
         ...summarizePatchOps(ops),
       });
       const result = await patchCanvasProject(projectId, {
-        expectedRevision,
+        expectedRevision: expected.revision,
         ops,
         traceId,
         allowEmptyRemoteOverwrite: allowEmptyRemoteOverwrite === true,

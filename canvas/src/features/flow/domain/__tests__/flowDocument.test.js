@@ -328,6 +328,7 @@ describe('flow document isolation', () => {
     expect(preview.description).toBe('Onboarding overview');
     expect(preview.localNodeTypeColors).toEqual({
       artifact: '#2563eb',
+      action: '#d97706',
       decision: '#059669',
       external_resource: '#dc2626',
     });
@@ -376,6 +377,7 @@ describe('flow document isolation', () => {
       description: 'High-level steps',
       localNodeTypeColors: {
         artifact: '#2563eb',
+        action: '#d97706',
         decision: '#059669',
         external_resource: '#dc2626',
       },

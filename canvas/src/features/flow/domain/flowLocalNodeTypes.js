@@ -2,15 +2,17 @@ import {
   ExternalLink,
   FileText,
   GitBranch,
+  Zap,
 } from 'lucide-react';
 
 export const FLOW_LOCAL_NODE_TYPE_ARTIFACT = 'artifact';
+export const FLOW_LOCAL_NODE_TYPE_ACTION = 'action';
 export const FLOW_LOCAL_NODE_TYPE_DECISION = 'decision';
 
 /** @deprecated Stored as `step` in older documents; migrates to decision. */
 export const FLOW_LOCAL_NODE_TYPE_STEP = 'step';
 
-/** @typedef {'artifact' | 'decision' | 'external_resource'} FlowLocalNodeTypeId */
+/** @typedef {'artifact' | 'action' | 'decision' | 'external_resource'} FlowLocalNodeTypeId */
 
 /** @type {ReadonlySet<string>} */
 export const LEGACY_FLOW_LOCAL_NODE_TYPE_IDS = new Set([
@@ -33,10 +35,17 @@ export const FLOW_LOCAL_NODE_TYPES = Object.freeze([
     iconClassName: 'text-accent',
   },
   {
+    id: 'action',
+    label: 'Action',
+    icon: Zap,
+    defaultTitle: 'Action',
+    iconClassName: 'text-secondary',
+  },
+  {
     id: 'decision',
-    label: 'Decision',
+    label: 'Evaluation',
     icon: GitBranch,
-    defaultTitle: 'Decision',
+    defaultTitle: 'Evaluation',
     iconClassName: 'text-secondary',
   },
   {
@@ -51,7 +60,7 @@ export const FLOW_LOCAL_NODE_TYPES = Object.freeze([
 const FLOW_LOCAL_NODE_TYPE_IDS = new Set(FLOW_LOCAL_NODE_TYPES.map((entry) => entry.id));
 
 /**
- * Maps legacy/unknown node types to Artifact; migrates retired `step` to Decision.
+ * Maps legacy/unknown node types to Artifact; migrates retired `step` to Evaluation.
  * @param {unknown} value
  * @returns {FlowLocalNodeTypeId}
  */

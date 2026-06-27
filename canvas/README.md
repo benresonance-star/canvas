@@ -62,6 +62,7 @@ See **[docs/ARCHITECTURE_MASTER_SPEC.md](docs/ARCHITECTURE_MASTER_SPEC.md)** —
 | Document                                                        | Topic                                                                   |
 | --------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | [DEV_STACK.md](docs/DEV_STACK.md)                               | Local dev stack — **start canvas**, **restart canvas**, **stop canvas** |
+| [PRODUCTION_READINESS_CHECKLIST.md](docs/PRODUCTION_READINESS_CHECKLIST.md) | Pre-deploy configuration, migration, and security checks |
 | [PROJECT_SYNC_API.md](docs/PROJECT_SYNC_API.md)                 | Frozen `projectSync.js` exports                                         |
 | [placement-persistence-qa.md](docs/placement-persistence-qa.md) | Placement QA                                                            |
 
@@ -85,7 +86,10 @@ server/repositories/ → Postgres access
 npm run test:sync      # CI gate — patch, merge, placement
 npm run test:features  # extracted feature hooks
 npm test               # full suite
+npm run audit:imports  # UI import-boundary guard
+npm run audit:migrations
 npm run lint
+npm run build
 node scripts/capture-architecture-baseline.mjs
 ```
 

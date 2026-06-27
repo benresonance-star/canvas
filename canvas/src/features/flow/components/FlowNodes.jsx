@@ -30,6 +30,27 @@ function useCollapsedNodeInternals(nodeId, showContent, syncKey) {
   }, [nodeId, showContent, syncKey, updateNodeInternals]);
 }
 
+function FlowNodeWrapper({ nodeId, children }) {
+  const { pathRunStateByStepId } = useFlowEditorContext();
+  const isCurrent = pathRunStateByStepId?.get(nodeId) === 'current';
+
+  return (
+    <div className="relative">
+      {isCurrent ? (
+        <div
+          className="absolute right-full top-1/2 -translate-y-1/2 mr-1.5 pointer-events-none z-10"
+          aria-hidden
+        >
+          <svg width="14" height="18" viewBox="0 0 14 18" aria-hidden>
+            <path d="M14 9 L1 1 L1 17 Z" fill="white" />
+          </svg>
+        </div>
+      ) : null}
+      {children}
+    </div>
+  );
+}
+
 function NodeShell({ children, selected = false, agentScoped = false, expanded = false }) {
   let borderClass = 'border-2 border-border';
   if (selected) {
@@ -229,6 +250,7 @@ export function ArtifactFlowNode({ id, data, selected }) {
   useCollapsedNodeInternals(id, showContent, internalsKey);
 
   return (
+    <FlowNodeWrapper nodeId={id}>
     <NodeShell selected={selected} agentScoped={agentScoped} expanded={showContent}>
       <ColoredNodeHeader headerColor={headerColor}>
         <div className="flex-1">
@@ -248,6 +270,7 @@ export function ArtifactFlowNode({ id, data, selected }) {
       </ColoredNodeHeader>
       <ExpandedNodeBody nodeId={id} nodeType="artifact" data={data} selected={selected} />
     </NodeShell>
+    </FlowNodeWrapper>
   );
 }
 
@@ -263,6 +286,7 @@ export function LocalFlowNode({ id, data, selected }) {
   useCollapsedNodeInternals(id, showContent, internalsKey);
 
   return (
+    <FlowNodeWrapper nodeId={id}>
     <NodeShell selected={selected} agentScoped={agentScoped} expanded={showContent}>
       <ColoredNodeHeader headerColor={headerColor}>
         <div className="flex-1">
@@ -294,5 +318,6 @@ export function LocalFlowNode({ id, data, selected }) {
       </ColoredNodeHeader>
       <ExpandedNodeBody nodeId={id} nodeType="local" data={data} selected={selected} />
     </NodeShell>
+    </FlowNodeWrapper>
   );
 }

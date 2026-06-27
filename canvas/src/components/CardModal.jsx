@@ -103,6 +103,7 @@ export function CardModal({
   const flowAgentCollapsedSectionsRef = useRef(flowAgentCollapsedSections);
   const agentPanelPropsRef = useRef(agentPanelProps);
   const version = card?.versions.find(v => v.version === currentVersion);
+  const cardId = card?.id;
   const isUserNote = card?.type === 'user_note';
   const isUserTask = card?.type === 'user_task';
   const isBookmark = card?.type === 'bookmark';
@@ -169,18 +170,18 @@ export function CardModal({
   }, [agentPanelProps]);
 
   const persistFlowAgentUi = useCallback((partial) => {
-    if (!projectId || !card?.id) return;
-    writeFlowAgentUiState(projectId, card.id, partial);
+    if (!projectId || !cardId) return;
+    writeFlowAgentUiState(projectId, cardId, partial);
     if (partial?.activeThreadId) {
       lastFlowAgentThreadRef.current = {
         threadId: partial.activeThreadId,
         connectorId: partial.connectorId ?? agentPanelPropsRef.current?.singleConnectorId ?? null,
       };
     }
-  }, [projectId, card?.id]);
+  }, [projectId, cardId]);
 
   const flushFlowAgentUiSnapshot = useCallback(() => {
-    if (!isFlow || !projectId || !card?.id) return;
+    if (!isFlow || !projectId || !cardId) return;
     const panel = agentPanelPropsRef.current;
     const threadId = panel?.activeThreadId ?? lastFlowAgentThreadRef.current?.threadId ?? null;
     const connectorId = panel?.singleConnectorId
@@ -188,7 +189,7 @@ export function CardModal({
       ?? null;
     writeFlowAgentUiState(
       projectId,
-      card.id,
+      cardId,
       buildFlowAgentUiFlushPayload({
         collapsedSections: flowAgentCollapsedSectionsRef.current,
         activeThreadId: threadId,
@@ -198,7 +199,7 @@ export function CardModal({
     if (threadId) {
       lastFlowAgentThreadRef.current = { threadId, connectorId };
     }
-  }, [isFlow, projectId, card?.id]);
+  }, [isFlow, projectId, cardId]);
 
   const handleCloseFlowAgent = useCallback(() => {
     flushFlowAgentUiSnapshot();
@@ -207,14 +208,14 @@ export function CardModal({
 
   const handleFlowCollapsedSectionsChange = useCallback((sections) => {
     setFlowAgentCollapsedSections(sections);
-    if (!isFlow || !agentOpen || !projectId || !card?.id) return;
+    if (!isFlow || !agentOpen || !projectId || !cardId) return;
     persistFlowAgentUi({
       panelLayout: collapsedSectionsToFlowAgentPanelLayout(sections),
     });
-  }, [isFlow, agentOpen, projectId, card?.id, persistFlowAgentUi]);
+  }, [isFlow, agentOpen, projectId, cardId, persistFlowAgentUi]);
 
   useEffect(() => {
-    if (!isFlow || !agentOpen || !projectId || !card?.id || !agentPanelProps) return;
+    if (!isFlow || !agentOpen || !projectId || !cardId || !agentPanelProps) return;
     if (!shouldAutoPersistFlowAgentThread(restoredFlowAgentUiRef.current)) return;
     const threadId = agentPanelProps.activeThreadId ?? null;
     if (!threadId) return;
@@ -226,7 +227,7 @@ export function CardModal({
     isFlow,
     agentOpen,
     projectId,
-    card?.id,
+    cardId,
     agentPanelProps?.activeThreadId,
     agentPanelProps?.singleConnectorId,
     persistFlowAgentUi,
@@ -241,7 +242,7 @@ export function CardModal({
   }, [agentOpen, isFlow, flushFlowAgentUiSnapshot]);
 
   useEffect(() => {
-    if (!isFlow || !projectId || !card?.id) return undefined;
+    if (!isFlow || !projectId || !cardId) return undefined;
     const flushFlowAgentUi = () => {
       flushFlowAgentUiSnapshot();
     };
@@ -250,14 +251,14 @@ export function CardModal({
       window.removeEventListener('pagehide', flushFlowAgentUi);
       flushFlowAgentUiSnapshot();
     };
-  }, [isFlow, projectId, card?.id, flushFlowAgentUiSnapshot]);
+  }, [isFlow, projectId, cardId, flushFlowAgentUiSnapshot]);
 
   useEffect(() => {
-    if (!isFlow || !agentOpen || !projectId || !card?.id || !agentPanelProps) return;
+    if (!isFlow || !agentOpen || !projectId || !cardId || !agentPanelProps) return;
     if (restoredFlowAgentUiRef.current || pendingFlowThreadRestoreRef.current) return;
 
     const plan = planFlowAgentUiRestore(
-      readFlowAgentUiState(projectId, card.id),
+      readFlowAgentUiState(projectId, cardId),
       agentPanelProps.singleConnectorId ?? null,
     );
 
@@ -286,7 +287,7 @@ export function CardModal({
     isFlow,
     agentOpen,
     projectId,
-    card?.id,
+    cardId,
     agentPanelProps,
   ]);
 

@@ -1,7 +1,7 @@
 /** Bump when architecture or shipped load behavior changes. */
 import { getArchitectureGraphManifest } from './architecture/index.js';
 
-export const ARCHITECTURE_SPEC_VERSION = '2026-06-27-diagnostics-graph';
+export const ARCHITECTURE_SPEC_VERSION = '2026-06-28-production-readiness';
 
 export const ARCHITECTURE_LAYERS = [
   {
@@ -187,7 +187,7 @@ export const ARCHITECTURE_FEATURES = [
     id: 'flow-artifacts',
     title: 'Explorations',
     shortDescription:
-      'Revisioned node/edge exploration documents (`flow_document`, `flow_node`, `flow_edge`) separate from canvas layout. REST + per-document SSE; `@xyflow/react` editor; `flow` cards show `FlowPreview` on canvas.',
+      'Revisioned node/edge exploration documents (`flow_document`, `flow_node`, `flow_edge`) separate from canvas layout. Local node types: Artifact, Action, Evaluation (`decision`), External Resource; path groups with run-state tags and hull chrome. REST + per-document SSE; `@xyflow/react` editor; `flow` cards show `FlowPreview` on canvas.',
     layerIds: ['client', 'api', 'data'],
     tags: ['flow', 'features'],
     status: 'current',

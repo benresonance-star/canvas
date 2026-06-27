@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.06.27.2
-**Version label:** exploration-path-groups
+**Version:** 2026.06.28.1
+**Version label:** production-readiness-gates
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -110,7 +110,7 @@ Extracted from `App.jsx` to reduce the god-component. Each hook owns effects + c
 | Sync lock | `features/sync/useSyncLockListener.js` | `setSyncLockListener`, banner side-effects |
 | SSE streams | `features/sync/useSyncStreams.js` | Project + workspace index SSE |
 | Workspace index | `features/sync/useWorkspaceIndexSync.js` | Index refresh, poll, name sync |
-| Action sync | `features/sync/useActionSync.js` | `registerActionSyncHandlers`, placement commit |
+| Action sync | `features/sync/useActionSync.js` | `registerActionSyncHandlers`, placement commit; flush/retry paths route through `commitProjectDocument` (not `saveProjectById`) |
 | Visibility | `features/sync/useVisibilitySync.js` | Tab visible → index refresh + reconcile |
 | Page hide | `features/sync/usePageHideFlush.js` | Unload flush coordinator |
 | Cache eviction | `features/sync/useProjectCacheEviction.js` | LRU context from index ids |
@@ -597,8 +597,9 @@ Rules:
 - On `PUT /flows/:flowId`, `replaceFlow` auto-registers referenced artifact IDs into the project workspace `cluster_member` when the artifact row exists (canvas cards may carry `artifactRef` before cluster membership)
 - Exploration editor artifact palette lists only canvas cards with a synced `artifactRef` (`artifactRefIdForClusterCard`); artifact titles use the same `sans` label style as the New step button
 - Save failures surface in the exploration toolbar; close does not silently discard dirty edits when flush returns `ok: false`
-- Edge connection types (schema v2: `depends_on`, `produces`, `approves`, `revises`, `rejects`, `loops_to`, plus `custom`), optional decision `condition` (`{ type: "decision", value: "approved" | "revise" | "reject" }`), and custom labels live in edge `presentation` JSON (`flowConnectionTypes.js`); legacy ids `driven_by` / `output_type` migrate on load/save
-- Local node types (Artifact, Step, Decision, External Resource), per-type header colors (`local_node_type_colors` JSONB, migration `0019`), and multi-actor tags (`human`, `agent`, `process`, `tool`) persist in node `presentation`
+- Edge connection types (schema v2: `depends_on`, `produces`, `evaluated_by`, `approves`, `revises`, `rejects`, `loops_to`, plus `custom`), optional decision `condition` (`{ type: "decision", value: "approved" | "revise" | "reject" }`), and custom labels live in edge `presentation` JSON (`flowConnectionTypes.js`); legacy ids `driven_by` / `output_type` migrate on load/save
+- Local node types (Artifact, Action, Evaluation, External Resource), per-type header colors (`local_node_type_colors` JSONB, migration `0019`), and multi-actor tags (`human`, `agent`, `process`, `tool`) persist in node `presentation`; stored ids are `artifact`, `action`, `decision` (UI label **Evaluation**), and `external_resource`; legacy `step` migrates to `decision`
+- Current path step shows a white left-pointing indicator on the node (`FlowNodeWrapper` in `FlowNodes.jsx`); path hull fills use 50% opacity with no stroke
 - Agent context can include selected exploration nodes via `useFlowAgentContext`
 - Exploration agent mode UI (`flowAgentUiPersistence.js`) persists per-card last thread and panel section layout; restored when agent mode is re-enabled on that exploration card
 
@@ -794,8 +795,11 @@ Current invariant: `canvas_project_document` remains the rendered-canvas authori
 
 ```bash
 cd canvas
+npm run audit:migrations   # prefix/order guard before deploy
 npm run db:migrate
 ```
+
+`server/migrate.js` holds a Postgres advisory lock for the migration run, wraps each file in a transaction, and re-checks `schema_migrations` inside the transaction so concurrent boots do not double-apply.
 
 ### Interim document revision sync
 
@@ -1028,7 +1032,11 @@ npm test                    # full suite (may need memory tuning)
 npm run test:sync           # sync-critical subset — CI gate
 npm run test:features       # feature hook tests
 npm test -- --run src/lib/architecture   # diagnostics graph drift guards
+npm run audit:imports       # UI import-boundary guard
+npm run audit:deprecated-sync  # report deprecated sync API callers
+npm run audit:migrations    # migration filename/order guard
 npm run lint
+npm run build
 node scripts/capture-architecture-baseline.mjs
 node scripts/verify-project-sync-exports.mjs
 npx vitest run src/lib/__tests__/markdownMessage.test.js src/lib/__tests__/canvasPointerGeometry.test.js src/lib/__tests__/bookmarkUrl.test.js src/lib/__tests__/bookmarkPreviewApi.test.js src/lib/__tests__/folderScan.test.js
@@ -1036,7 +1044,11 @@ npx vitest run src/lib/__tests__/markdownMessage.test.js src/lib/__tests__/canva
 
 ### CI
 
-`.github/workflows/sync-tests.yml` runs `npm run test:sync` on every push/PR.
+`.github/workflows/sync-tests.yml` runs import-boundary audit, deprecated-sync report, migration check, lint, build, and `npm run test:sync` on every push/PR.
+
+### Production readiness
+
+`docs/PRODUCTION_READINESS_CHECKLIST.md` — configuration, migration safety, security, and release verification before running outside the local dev stack.
 
 ### Test tags (Phase 6)
 
@@ -1150,6 +1162,18 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-06-28 — Production readiness gates + exploration node polish (implemented)
+
+- Bumped the active spec to `2026.06.28.1`.
+- Added `docs/PRODUCTION_READINESS_CHECKLIST.md` and audit scripts: `audit:imports`, `audit:deprecated-sync`, `audit:migrations`.
+- CI now runs import-boundary audit, deprecated-sync report, migration check, lint, and build before `test:sync`.
+- `useActionSync` flush/retry paths route through `commitProjectDocument` instead of deprecated `saveProjectById`.
+- API routes validate `expectedRevision` as a non-negative integer and reject non-string `traceId` on PATCH.
+- `server/migrate.js` uses a Postgres advisory lock and per-file transactions for idempotent concurrent boots.
+- `JSON_BODY_LIMIT` env var overrides the default 52mb Express body limit.
+- Exploration editor: **Action** local node type, **Evaluation** label (stored id `decision`), `evaluated_by` edge type, current-step node indicator, softer path-hull fill.
+- `CardModal` flow agent UI persistence uses stable `cardId` deps to avoid stale thread writes on card swap.
 
 ### 2026-06-27 — Exploration path groups + sidebar chrome (implemented)
 

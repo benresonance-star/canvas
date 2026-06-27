@@ -14,6 +14,11 @@ import { PROJECT_SYNC_INDEX_POLL_INTERVAL_MS } from '../../lib/projectSyncCoordi
 import { isBootSyncCompleted, runExclusive } from '../../lib/projectSyncCoordinator.js';
 import { strings } from '../../content/strings.js';
 
+function isDocumentVisible() {
+  if (typeof document === 'undefined') return true;
+  return document.visibilityState === 'visible';
+}
+
 /**
  * Workspace index refresh, poll, and active project name sync.
  */
@@ -128,7 +133,7 @@ export function useWorkspaceIndexSync({
     }
     let cancelled = false;
     const indexPollTimer = setInterval(() => {
-      if (cancelled || document.visibilityState !== 'visible') return;
+      if (cancelled || !isDocumentVisible()) return;
       void runExclusive('poll-index', async () => {
         await refreshProjectListFromServer({ reconcileScope: 'none' });
       }, { mode: 'skip' });

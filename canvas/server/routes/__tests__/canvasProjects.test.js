@@ -91,6 +91,33 @@ describe('canvas project routes', () => {
     expect(indexHub.publishWorkspaceIndexSync).not.toHaveBeenCalled();
   });
 
+  it('PUT /canvas/projects/:id rejects non-object payloads before persistence', async () => {
+    const { res, body } = await jsonRequest(server, '/canvas/projects/p1', {
+      method: 'PUT',
+      body: JSON.stringify({ payload: [], expectedRevision: 1 }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe('payload required');
+    expect(repo.putCanvasProject).not.toHaveBeenCalled();
+  });
+
+  it('PATCH /canvas/projects/:id validates revision and trace shape before persistence', async () => {
+    const { res, body } = await jsonRequest(server, '/canvas/projects/p1', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        expectedRevision: 'nope',
+        traceId: 123,
+        ops: [{ op: 'replaceDocument', payload: {} }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe('expectedRevision must be a non-negative integer');
+    expect(repo.patchCanvasProject).not.toHaveBeenCalled();
+    expect(projectHub.publishProjectSync).not.toHaveBeenCalled();
+  });
+
   it('PUT /canvas/index returns conflict payload and does not publish SSE', async () => {
     repo.putCanvasIndex.mockResolvedValue({
       ok: false,

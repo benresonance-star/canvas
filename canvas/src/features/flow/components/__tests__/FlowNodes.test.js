@@ -20,6 +20,7 @@ const baseContext = {
   readOnly: false,
   localNodeTypeColors: { decision: '#4a5568', artifact: '#2563eb' },
   setLocalNodeTypeColor: vi.fn(),
+  pathRunStateByStepId: new Map(),
 };
 
 function renderLocalNode(props, context = baseContext) {
@@ -108,7 +109,7 @@ describe('LocalFlowNode', () => {
       data: { title: 'Review', localNodeType: 'decision', actors: ['human', 'agent'] },
     });
     expect(html).toContain('aria-label="Node actors"');
-    expect(html).toContain('Decision');
+    expect(html).toContain('Evaluation');
     expect(html).toContain('Human');
     expect(html).toContain('Agent');
     expect(html.match(/lucide-user-round/g)?.length).toBeGreaterThan(0);
@@ -127,6 +128,25 @@ describe('LocalFlowNode', () => {
     expect(html).toContain('w-max');
     expect(html).not.toContain('max-w-64');
     expect(html).not.toContain('truncate');
+  });
+
+  it('renders action step type in the header', () => {
+    const html = renderLocalNode({
+      data: { title: 'Draft brief', localNodeType: 'action' },
+    });
+    expect(html).toContain('Action');
+  });
+
+  it('renders a white arrow beside the current path step', () => {
+    const html = renderLocalNode(
+      { data: { title: 'IDEA', localNodeType: 'decision' } },
+      {
+        ...baseContext,
+        pathRunStateByStepId: new Map([['node-1', 'current']]),
+      },
+    );
+    expect(html).toContain('fill="white"');
+    expect(html).toContain('M14 9 L1 1 L1 17 Z');
   });
 });
 

@@ -10,6 +10,7 @@ export const FLOW_LOCAL_NODE_TYPE_DEFAULT_COLORS = Object.freeze(
   Object.fromEntries(FLOW_LOCAL_NODE_TYPES.map((type) => {
     switch (type.id) {
       case 'artifact': return [type.id, '#2563eb'];
+      case 'action': return [type.id, '#d97706'];
       case 'decision': return [type.id, '#059669'];
       case 'external_resource': return [type.id, '#dc2626'];
       default: return [type.id, '#2563eb'];
