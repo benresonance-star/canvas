@@ -10,6 +10,11 @@ import {
 } from '../FlowPreview.jsx';
 
 describe('FlowPreview', () => {
+  it('shows empty exploration copy when there are no nodes', () => {
+    const html = renderToStaticMarkup(React.createElement(FlowPreview, { preview: { nodes: [], edges: [] } }));
+    expect(html).toContain('Empty exploration');
+  });
+
   it('wrapLabelWordsOnly splits only between words', () => {
     const lines = wrapLabelWordsOnly('alpha beta gamma', 120, 8);
     expect(lines).toEqual(['alpha beta', 'gamma']);

@@ -18,10 +18,12 @@ import {
 import { registerOptimisticCard } from '../../lib/optimisticCards.js';
 import { ensureWritePermission, writeBookmarkFile, fileExistsAtFolderPath, removeFileAtFolderPath, bookmarkMarkdownFilenameFromShortcut } from '../../lib/folderWrite.js';
 import { createUserNoteArtifact } from '../../lib/ingest/createUserNote.js';
+import { createUserTaskArtifact } from '../../lib/ingest/createUserTask.js';
 import { createBookmarkArtifact } from '../../lib/ingest/createBookmarkArtifact.js';
 import { saveUserNote } from '../../lib/ingest/saveUserNote.js';
+import { saveUserTask } from '../../lib/ingest/saveUserTask.js';
 import { saveMarkdownArtifact } from '../../lib/ingest/saveMarkdownArtifact.js';
-import { saveUserNoteToProject, saveBookmarkToProject, saveTextContentToProject } from '../../lib/projectCardEdits.js';
+import { saveUserNoteToProject, saveUserTaskToProject, saveBookmarkToProject, saveTextContentToProject } from '../../lib/projectCardEdits.js';
 import { fetchBookmarkPreview } from '../../lib/bookmarkPreviewApi.js';
 import { enrichBookmarkCardsInProject } from '../../lib/bookmarkPreviewEnrich.js';
 import {
@@ -75,6 +77,13 @@ import { createLiveArtifact } from '../live/api/liveApi.js';
 import { liveArtifactCardFromRecord } from '../live/domain/liveArtifact.js';
 import { createAgent } from '../agents/api/agentsApi.js';
 import { agentCardFromRecord } from '../agents/domain/agentArtifact.js';
+import { createMusicAgent } from '../music/api/musicApi.js';
+import { createDefaultBeatAgentState } from '../music/agents/beat/domain/beatAgentState.js';
+import { beatAgentCardFromRecord } from '../music/agents/beat/domain/beatAgentCard.js';
+import {
+  createSonicStudioRecord,
+  sonicStudioCardFromRecord,
+} from '../sonicStudio/domain/sonicStudioCard.js';
 import {
   loadAgentChatSession,
   saveAgentChatSession,
@@ -265,11 +274,15 @@ export function updateCardVersionInStateRef(stateRef, cardId, versionNum, update
  * @param {object} card
  * @param {number} existingCardCount
  */
-export function buildNewBookmarkCanvasCard(card, existingCardCount) {
-  return {
-    ...card,
+export function buildNewBookmarkCanvasCard(card, existingCardCount, position = null) {
+  const fallback = {
     x: 100 + (existingCardCount % 4) * 320,
     y: 100 + Math.floor(existingCardCount / 4) * 240,
+  };
+  return {
+    ...card,
+    x: Number.isFinite(position?.x) ? position.x : fallback.x,
+    y: Number.isFinite(position?.y) ? position.y : fallback.y,
   };
 }
 
@@ -288,10 +301,12 @@ export async function finalizeNewBookmarkCanvasSave({
   setFolderPresentKeys,
   folderHandle = null,
   refreshGraph: refreshGraphFn = async () => {},
+  position = null,
 }) {
   const newCard = buildNewBookmarkCanvasCard(
     result.card,
     stateRef.current.cards?.length ?? 0,
+    position,
   );
   const nextState = {
     ...stateRef.current,
@@ -385,6 +400,7 @@ export function useCanvasDocument({ refs, deps }) {
     setFolderPresentKeys,
     setClusterId,
     setNewNoteOpen,
+    setNewTaskOpen,
     setAddLinkOpen,
   } = deps;
   const isMobile = useIsMobile();
@@ -404,10 +420,12 @@ export function useCanvasDocument({ refs, deps }) {
   const [versionStackOpen, setVersionStackOpen] = useState(null);
   const [canvasViewportSize, setCanvasViewportSize] = useState({ width: 0, height: 0 });
   const [savingNote, setSavingNote] = useState(false);
+  const [savingTask, setSavingTask] = useState(false);
   const [savingLink, setSavingLink] = useState(false);
   const [savingFlow, setSavingFlow] = useState(false);
   const [savingLive, setSavingLive] = useState(false);
   const [savingAgent, setSavingAgent] = useState(false);
+  const [savingSonicStudio, setSavingSonicStudio] = useState(false);
   const [savingCardId, setSavingCardId] = useState(null);
 
   useEffect(() => {
@@ -1120,6 +1138,114 @@ export function useCanvasDocument({ refs, deps }) {
     refreshGraph,
   ]);
 
+  const handleInlineSaveUserTask = useCallback(async (card, { body, name, taskStatus }) => {
+    const projectId = activeProjectIdRef.current;
+    if (!projectId) return false;
+
+    const projectOnly = noteRequiresProjectOnlySave({
+      folderHandle,
+      folderConnected: Boolean(folderHandle),
+      folderKeySet,
+      card,
+    });
+
+    setSavingCardId(card.id);
+    try {
+      if (projectOnly || !folderHandle) {
+        const result = saveUserTaskToProject(card, {
+          body,
+          name,
+          taskStatus,
+          versionNum: card.pinnedVersion,
+        });
+        if (result.reason === 'name_required') {
+          handleNoteSaveStatus({ error: strings.userTask.nameRequired });
+          return false;
+        }
+        if (result.reason === 'name_invalid') {
+          handleNoteSaveStatus({ error: strings.userTask.nameInvalid });
+          return false;
+        }
+        if (!result.ok || !result.cardUpdates) {
+          handleNoteSaveStatus({ error: strings.userTask.saveFailed });
+          return false;
+        }
+        persistCardEdits(card.id, result.cardUpdates);
+        handleNoteSaveStatus({
+          toast: folderHandle && folderKeySet?.size
+            ? strings.userTask.savedProjectOnlyMissingFromFolder
+            : strings.userTask.savedProjectOnly,
+        });
+        return true;
+      }
+
+      const result = await saveUserTask({
+        projectId,
+        projectName: stateRef.current.projectName,
+        folderHandle,
+        clusterId,
+        card,
+        versionNum: card.pinnedVersion,
+        body,
+        name,
+        taskStatus,
+        cards: stateRef.current.cards,
+      });
+      if (result.reason === 'no_folder') {
+        handleNoteSaveStatus({ error: strings.userTask.needFolder });
+        return false;
+      }
+      if (result.reason === 'write_denied') {
+        handleNoteSaveStatus({ error: strings.userTask.writeDenied });
+        return false;
+      }
+      if (result.reason === 'name_required') {
+        handleNoteSaveStatus({ error: strings.userTask.nameRequired });
+        return false;
+      }
+      if (result.reason === 'name_invalid') {
+        handleNoteSaveStatus({ error: strings.userTask.nameInvalid });
+        return false;
+      }
+      if (result.reason === 'name_collision') {
+        handleNoteSaveStatus({ error: strings.userTask.nameCollision });
+        return false;
+      }
+      if (!result.ok) {
+        handleNoteSaveStatus({ error: strings.userTask.saveFailed });
+        return false;
+      }
+      if (result.cardUpdates) {
+        persistCardEdits(card.id, result.cardUpdates);
+      } else {
+        handleUpdateVersion(card.id, result.versionNum, result.version);
+        void requestActionSync('structuralChange', { projectId });
+      }
+      if (result.apiUnavailable) {
+        handleNoteSaveStatus({ toast: strings.sync.primitivesNotUpdated });
+      } else {
+        handleNoteSaveStatus({ toast: strings.userTask.savedToFolder });
+      }
+      await refreshGraph();
+      return true;
+    } catch (e) {
+      handleNoteSaveStatus({ error: e.message });
+      return false;
+    } finally {
+      setSavingCardId(null);
+    }
+  }, [
+    activeProjectIdRef,
+    stateRef,
+    folderHandle,
+    clusterId,
+    folderKeySet,
+    persistCardEdits,
+    handleUpdateVersion,
+    handleNoteSaveStatus,
+    refreshGraph,
+  ]);
+
   const handleInlineSaveMarkdown = useCallback(async (card, { body }) => {
     const projectId = activeProjectIdRef.current;
     if (!projectId) return false;
@@ -1292,7 +1418,13 @@ export function useCanvasDocument({ refs, deps }) {
     return { ok: true };
   }, [persistCardEdits, handleNoteSaveStatus, folderHandle, folderKeySet]);
 
-  const handleSaveNewNote = useCallback(async ({ prefix, name, body, linkTargetRefs = [] }) => {
+  const handleSaveNewNote = useCallback(async ({
+    prefix,
+    name,
+    body,
+    linkTargetRefs = [],
+    position = null,
+  }) => {
     const projectId = activeProjectIdRef.current;
     if (!projectId) return;
     if (!folderHandle) {
@@ -1331,10 +1463,14 @@ export function useCanvasDocument({ refs, deps }) {
         setSyncStatus({ toast: strings.sync.primitivesNotUpdated });
         setTimeout(() => setSyncStatus(null), 4000);
       }
-      const newCard = {
-        ...result.card,
+      const fallback = {
         x: 100 + (stateRef.current.cards.length % 4) * 320,
         y: 100 + Math.floor(stateRef.current.cards.length / 4) * 240,
+      };
+      const newCard = {
+        ...result.card,
+        x: Number.isFinite(position?.x) ? position.x : fallback.x,
+        y: Number.isFinite(position?.y) ? position.y : fallback.y,
       };
       const nextState = {
         ...stateRef.current,
@@ -1378,11 +1514,129 @@ export function useCanvasDocument({ refs, deps }) {
     setState,
   ]);
 
+  const handleSaveTaskToProject = useCallback(async (card, {
+    body,
+    name,
+    taskStatus,
+    versionNum,
+  }) => {
+    const result = saveUserTaskToProject(card, { body, name, taskStatus, versionNum });
+    if (!result.ok) {
+      return result;
+    }
+    persistCardEdits(card.id, result.cardUpdates);
+    handleNoteSaveStatus({
+      toast: folderHandle && folderKeySet?.size
+        ? strings.userTask.savedProjectOnlyMissingFromFolder
+        : strings.userTask.savedProjectOnly,
+    });
+    return { ok: true };
+  }, [persistCardEdits, handleNoteSaveStatus, folderHandle, folderKeySet]);
+
+  const handleSaveNewTask = useCallback(async ({
+    prefix,
+    name,
+    body,
+    taskStatus = 'general',
+    linkTargetRefs = [],
+    position = null,
+  }) => {
+    const projectId = activeProjectIdRef.current;
+    if (!projectId) return;
+    if (!folderHandle) {
+      setSyncStatus({ error: strings.userTask.needFolder });
+      setTimeout(() => setSyncStatus(null), 4000);
+      return;
+    }
+    const canWrite = await ensureWritePermission(folderHandle);
+    if (!canWrite) {
+      setSyncStatus({ error: strings.userTask.writeDenied });
+      setTimeout(() => setSyncStatus(null), 4000);
+      return;
+    }
+    setSavingTask(true);
+    try {
+      const result = await createUserTaskArtifact({
+        projectId,
+        projectName: stateRef.current.projectName,
+        folderHandle,
+        prefix,
+        name,
+        body,
+        taskStatus,
+        linkTargetRefs,
+        clusterId,
+        cards: stateRef.current.cards,
+      });
+      if (result.ingest.ok && result.ingest.clusterId) {
+        clusterContextProjectIdRef.current = projectId;
+        setClusterId(result.ingest.clusterId);
+        void refreshGraph({
+          clusterId: result.ingest.clusterId,
+          projectId,
+          force: true,
+        });
+      } else if (!result.ingest.ok) {
+        setSyncStatus({ toast: strings.sync.primitivesNotUpdated });
+        setTimeout(() => setSyncStatus(null), 4000);
+      }
+      const fallback = {
+        x: 100 + (stateRef.current.cards.length % 4) * 320,
+        y: 100 + Math.floor(stateRef.current.cards.length / 4) * 240,
+      };
+      const newCard = {
+        ...result.card,
+        x: Number.isFinite(position?.x) ? position.x : fallback.x,
+        y: Number.isFinite(position?.y) ? position.y : fallback.y,
+      };
+      const nextState = {
+        ...stateRef.current,
+        cards: [...stateRef.current.cards, newCard],
+      };
+      stateRef.current = nextState;
+      setState(nextState);
+      if (projectId && newCard.id) {
+        registerOptimisticCard(projectId, newCard.id);
+      }
+      await saveProjectById(projectId, stateRef.current, stagedSyncCardsRef.current, {
+        pushRemote: false,
+      });
+      await requestStructuralSync({ awaitLocal: true });
+      setFolderPresentKeys((keys) => {
+        const next = new Set(keys || []);
+        next.add(result.card.key);
+        return [...next];
+      });
+      setNewTaskOpen(false);
+      await refreshGraph();
+    } catch (e) {
+      setSyncStatus({ error: e.message });
+      setTimeout(() => setSyncStatus(null), 4000);
+    } finally {
+      setSavingTask(false);
+    }
+  }, [
+    activeProjectIdRef,
+    stateRef,
+    stagedSyncCardsRef,
+    folderHandle,
+    clusterId,
+    refreshGraph,
+    requestStructuralSync,
+    setSyncStatus,
+    setFolderPresentKeys,
+    setClusterId,
+    clusterContextProjectIdRef,
+    setNewTaskOpen,
+    setState,
+  ]);
+
   const handleSaveNewLink = useCallback(async ({
     url,
     preview,
     titleOverride,
     linkTargetRefs = [],
+    position = null,
   }) => {
     const projectId = activeProjectIdRef.current;
     if (!projectId) {
@@ -1429,6 +1683,7 @@ export function useCanvasDocument({ refs, deps }) {
         setFolderPresentKeys,
         folderHandle,
         refreshGraph,
+        position,
       });
       await requestStructuralSync({ awaitLocal: true });
       setAddLinkOpen(false);
@@ -1458,7 +1713,11 @@ export function useCanvasDocument({ refs, deps }) {
 
   const handleSaveNewFlow = useCallback(async ({ title, description = '', position }) => {
     const projectId = activeProjectIdRef.current;
-    if (!projectId) return null;
+    if (!projectId) {
+      setSyncStatus({ error: 'Select a project before creating a Beat Agent.' });
+      setTimeout(() => setSyncStatus(null), 5000);
+      return null;
+    }
     setSavingFlow(true);
     try {
       const flow = await createFlowArtifact(projectId, { title, description });
@@ -1561,6 +1820,93 @@ export function useCanvasDocument({ refs, deps }) {
     }
   }, [activeProjectIdRef, setState, setSyncStatus, stagedSyncCardsRef, stateRef]);
 
+  const handleSaveNewBeatAgent = useCallback(async ({ position, name = 'Beat Agent' }) => {
+    const projectId = activeProjectIdRef.current;
+    if (!projectId) return null;
+    setSavingAgent(true);
+    try {
+      const state = createDefaultBeatAgentState({ name });
+      const agent = await createMusicAgent(projectId, {
+        agentType: 'beat',
+        name,
+        status: 'draft',
+        state,
+      });
+      const fallbackPosition = {
+        x: 100 + (stateRef.current.cards.length % 4) * 380,
+        y: 100 + Math.floor(stateRef.current.cards.length / 4) * 280,
+      };
+      const newCard = beatAgentCardFromRecord(agent, position ?? fallbackPosition);
+      const nextState = { ...stateRef.current, cards: [...stateRef.current.cards, newCard] };
+      stateRef.current = nextState;
+      setState(nextState);
+      registerOptimisticCard(projectId, newCard.id);
+      await commitProjectDocument(projectId, {
+        state: nextState,
+        stagedSyncCards: stagedSyncCardsRef.current,
+        reason: 'music-agent:create',
+        pushRemote: true,
+      });
+      setOpenCardId(newCard.id);
+      return newCard;
+    } catch (error) {
+      setSyncStatus({ error: error.message });
+      setTimeout(() => setSyncStatus(null), 5000);
+      return null;
+    } finally {
+      setSavingAgent(false);
+    }
+  }, [activeProjectIdRef, setState, setSyncStatus, stagedSyncCardsRef, stateRef]);
+
+  const handleSaveNewSonicStudio = useCallback(async ({ position, name = 'Sonic Studio' }) => {
+    const projectId = activeProjectIdRef.current;
+    if (!projectId) return null;
+    setSavingSonicStudio(true);
+    try {
+      const sonic = createSonicStudioRecord({ projectId, name });
+      const fallbackPosition = {
+        x: 100 + (stateRef.current.cards.length % 4) * 400,
+        y: 100 + Math.floor(stateRef.current.cards.length / 4) * 300,
+      };
+      const newCard = sonicStudioCardFromRecord(sonic, position ?? fallbackPosition);
+      const nextState = { ...stateRef.current, cards: [...stateRef.current.cards, newCard] };
+      stateRef.current = nextState;
+      setState(nextState);
+      registerOptimisticCard(projectId, newCard.id);
+      await commitProjectDocument(projectId, {
+        state: nextState,
+        stagedSyncCards: stagedSyncCardsRef.current,
+        reason: 'sonic-studio:create',
+        pushRemote: true,
+      });
+      setOpenCardId(newCard.id);
+      return newCard;
+    } catch (error) {
+      setSyncStatus({ error: error.message });
+      setTimeout(() => setSyncStatus(null), 5000);
+      return null;
+    } finally {
+      setSavingSonicStudio(false);
+    }
+  }, [activeProjectIdRef, setState, setSyncStatus, stagedSyncCardsRef, stateRef]);
+
+  const handleUpdateSonicStudioCard = useCallback(async (cardId, updates) => {
+    updateCard(cardId, updates);
+    const projectId = activeProjectIdRef.current;
+    if (!projectId) return;
+    const nextState = stateRef.current;
+    const result = await commitProjectDocument(projectId, {
+      state: nextState,
+      stagedSyncCards: stagedSyncCardsRef.current,
+      reason: 'sonic-studio:update',
+      pushRemote: true,
+    });
+    if (!result?.ok && !result?.localCacheWritten) {
+      setSyncStatus({ error: 'Sonic Studio state could not be saved.' });
+      setTimeout(() => setSyncStatus(null), 5000);
+    }
+  }, [activeProjectIdRef, setSyncStatus, stagedSyncCardsRef, stateRef, updateCard]);
+
   const appendGeneratedCards = useCallback(async (cardsToAdd = []) => {
     const projectId = activeProjectIdRef.current;
     const cleanCards = cardsToAdd.filter(Boolean);
@@ -1597,7 +1943,7 @@ export function useCanvasDocument({ refs, deps }) {
         pushRemote: true,
       });
       if (!result?.ok && !result?.localCacheWritten) {
-        setSyncStatus({ error: 'Flow preview could not be saved to the canvas.' });
+        setSyncStatus({ error: strings.flow.previewSaveFailed });
         setTimeout(() => setSyncStatus(null), 4000);
       }
     };
@@ -1789,10 +2135,12 @@ export function useCanvasDocument({ refs, deps }) {
     canvasViewportSize,
     setCanvasViewportSize,
     savingNote,
+    savingTask,
     savingLink,
     savingFlow,
     savingLive,
     savingAgent,
+    savingSonicStudio,
     savingCardId,
     setCanvasView,
     resolveCanvasFitOptions,
@@ -1819,14 +2167,20 @@ export function useCanvasDocument({ refs, deps }) {
     handleNoteSaveStatus,
     persistCardEdits,
     handleInlineSaveUserNote,
+    handleInlineSaveUserTask,
     handleInlineSaveMarkdown,
     handleInlineSaveBookmark,
     handleSaveNoteToProject,
+    handleSaveTaskToProject,
     handleSaveNewNote,
+    handleSaveNewTask,
     handleSaveNewLink,
     handleSaveNewFlow,
     handleSaveNewLive,
     handleSaveNewAgent,
+    handleSaveNewBeatAgent,
+    handleSaveNewSonicStudio,
+    handleUpdateSonicStudioCard,
     appendGeneratedCards,
     handleFlowCardRefresh,
     removeCard,

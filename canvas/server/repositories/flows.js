@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { pool } from '../db.js';
 import { newUlid } from '../../src/primitives/shared/ulid.js';
 import { validateFlowEdgeMetadata } from '../../src/features/flow/domain/flowDocument.js';
+import { validateFlowLocalNodeTypeColors } from '../../src/features/flow/domain/flowLocalNodeTypeColors.js';
 
 function flowHash(id) {
   return crypto.createHash('sha256').update(`canvas-flow:${id}`).digest('hex');
@@ -40,7 +41,7 @@ function mapEdge(row) {
 async function loadFlowWith(client, id) {
   const document = await client.query(
     `SELECT id, project_id, title, description, viewport, revision, snapshot_path,
-            created_at, updated_at
+            local_node_type_colors, created_at, updated_at
      FROM flow_document WHERE id = $1`,
     [id],
   );
@@ -58,6 +59,7 @@ async function loadFlowWith(client, id) {
     viewport: row.viewport,
     revision: Number(row.revision),
     snapshotPath: row.snapshot_path,
+    localNodeTypeColors: row.local_node_type_colors ?? {},
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     nodes: nodes.rows.map(mapNode),
@@ -136,6 +138,7 @@ function validateSnapshot(snapshot) {
   if (!snapshot || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.edges)) {
     throw new Error('nodes and edges are required');
   }
+  validateFlowLocalNodeTypeColors(snapshot.localNodeTypeColors);
   const ids = new Set();
   for (const node of snapshot.nodes) {
     if (!node?.id || ids.has(node.id)) throw new Error('flow node ids must be unique');
@@ -187,7 +190,8 @@ export async function replaceFlow(id, expectedRevision, snapshot) {
     const updated = await client.query(
       `UPDATE flow_document
        SET title = $3, description = $4, viewport = $5::jsonb,
-           snapshot_path = $6, revision = revision + 1, updated_at = NOW()
+           snapshot_path = $6, local_node_type_colors = $7::jsonb,
+           revision = revision + 1, updated_at = NOW()
        WHERE id = $1 AND revision = $2
        RETURNING revision`,
       [
@@ -197,6 +201,7 @@ export async function replaceFlow(id, expectedRevision, snapshot) {
         String(snapshot.description ?? ''),
         JSON.stringify(snapshot.viewport ?? { x: 0, y: 0, zoom: 1 }),
         snapshot.snapshotPath ?? null,
+        JSON.stringify(snapshot.localNodeTypeColors ?? {}),
       ],
     );
     if (!updated.rows[0]) {

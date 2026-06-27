@@ -80,14 +80,15 @@ export function syncKeysMatch(a, b) {
 }
 
 export function fileTypeFromExt(ext) {
-  if (['md', 'txt'].includes(ext)) return 'markdown';
-  if (['ts', 'tsx', 'js', 'jsx'].includes(ext)) return 'code';
-  if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext)) return 'image';
-  if (['html', 'htm'].includes(ext)) return 'html';
-  if (ext === 'pdf') return 'pdf';
-  if (['mp4', 'webm', 'mov'].includes(ext)) return 'video';
-  if (['mp3', 'm4a', 'aac', 'wav', 'ogg', 'flac'].includes(ext)) return 'audio';
-  if (['xlsx', 'xls', 'csv'].includes(ext)) return 'spreadsheet';
+  const normalizedExt = String(ext ?? '').toLowerCase();
+  if (['md', 'txt'].includes(normalizedExt)) return 'markdown';
+  if (['ts', 'tsx', 'js', 'jsx', 'json', 'py'].includes(normalizedExt)) return 'code';
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(normalizedExt)) return 'image';
+  if (['html', 'htm'].includes(normalizedExt)) return 'html';
+  if (normalizedExt === 'pdf') return 'pdf';
+  if (['mp4', 'webm', 'mov'].includes(normalizedExt)) return 'video';
+  if (['mp3', 'm4a', 'aac', 'wav', 'ogg', 'flac'].includes(normalizedExt)) return 'audio';
+  if (['xlsx', 'xls', 'csv'].includes(normalizedExt)) return 'spreadsheet';
   return 'file';
 }
 
@@ -95,6 +96,7 @@ export function fileTypeFromExt(ext) {
 export function normalizeCardType(type) {
   if (type === 'note') return 'markdown';
   if (type === 'bookmark') return 'bookmark';
+  if (type === 'sonic-studio') return 'sonic_studio';
   return type;
 }
 
@@ -128,6 +130,7 @@ export function resolveLoadedCardType(card) {
   if (!card) return 'markdown';
   const normalized = normalizeCardType(card.type);
   if (normalized === 'user_note') return 'user_note';
+  if (normalized === 'user_task') return 'user_task';
   if (normalized === 'file') {
     const extType = fileTypeFromExt(cardExtFromRow(card));
     if (extType !== 'file') return extType;
@@ -135,6 +138,9 @@ export function resolveLoadedCardType(card) {
   const prefix = cardPrefixFromRow(card);
   if (prefix === 'notes' && (normalized === 'markdown' || card.type === 'note')) {
     return 'user_note';
+  }
+  if (prefix === 'tasks' && (normalized === 'markdown' || card.type === 'note')) {
+    return 'user_task';
   }
   return normalized;
 }
@@ -149,6 +155,8 @@ export function isFolderBackedCanvasCard(card) {
   if (type === 'flow') return false;
   if (type === 'live') return false;
   if (type === 'agent') return false;
+  if (type === 'music-agent') return false;
+  if (type === 'sonic_studio') return false;
   if (card?.prefix === 'links') return false;
   return true;
 }
@@ -281,6 +289,7 @@ export function cardHeaderPrefix(card) {
   if (!card) return '';
   if (normalizeCardType(card.type) === 'agent_chat') return 'thread';
   if (normalizeCardType(card.type) === 'live') return 'live';
+  if (normalizeCardType(card.type) === 'sonic_studio') return 'music';
   return card.prefix ?? '';
 }
 
@@ -327,6 +336,7 @@ export function cardHeaderLabel(card) {
 export function cardTypeLabel(type) {
   const t = normalizeCardType(type);
   if (t === 'user_note') return 'NOTE';
+  if (t === 'user_task') return 'TASK';
   if (t === 'agent_chat') return 'CHAT';
   if (t === 'code') return 'CODE';
   if (t === 'markdown') return 'MARKDOWN';
@@ -337,8 +347,10 @@ export function cardTypeLabel(type) {
   if (t === 'audio') return 'AUDIO';
   if (t === 'spreadsheet') return 'EXCEL';
   if (t === 'bookmark') return 'LINK';
-  if (t === 'flow') return 'FLOW';
+  if (t === 'flow') return 'EXPLORATION';
   if (t === 'live') return 'AGENT FEED';
   if (t === 'agent') return 'AGENT';
+  if (t === 'music-agent') return 'BEAT';
+  if (t === 'sonic_studio') return 'SONIC STUDIO';
   return 'FILE';
 }

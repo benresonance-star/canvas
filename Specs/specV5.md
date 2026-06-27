@@ -400,7 +400,11 @@ If a selected reference cannot be resolved, execute fails with a clear error (fo
 
 Generated images become new Image Artifacts.
 
-They are automatically saved into the current project folder.
+They are automatically saved into the current project folder by the client after execute (`persistGeneratedImageOutputs` in `src/features/agents/domain/saveGeneratedImageToFolder.js`), using the linked folder handle when write permission is granted.
+
+Canvas cards for generated images use the folder canonical key (`cardKeyFromFilename(relativePath)`), `content_hash`, and `artifactRef` so a later folder refresh matches the existing canvas row instead of staging a duplicate dock entry. When folder write fails, the card keeps an inline `dataUrl` fallback until scan backfill or a later save succeeds.
+
+After generation, the client also auto-creates `created_by_agent` wires (agent → each output image) via `wireAgentOutputImages`, matching manual agent→image drag on the canvas.
 
 ---
 
@@ -431,6 +435,16 @@ Example:
 Each generated Image Artifact stores:
 
 ```ts
+interface ImageArtifactMetadata {
+  mimeType: string;
+  ext: string;
+  fileSizeBytes: number;
+  width: number;
+  height: number;
+  bitDepth: number;
+  colorType?: string;
+}
+
 interface GeneratedImageMetadata {
   executionId: string;
   agentArtifactId: string;
@@ -448,10 +462,15 @@ interface GeneratedImageMetadata {
 
   version: number;
   filePath: string;
+  image: ImageArtifactMetadata;
 
   createdAt: string;
 }
 ```
+
+Folder-synced image artifacts use `canvas_kind: 'image'` with the same `image` block (no prompt fields).
+
+The primitive inspector and card modal artifact sidebar show file type, file size, image dimensions, bit depth, and — for generated images — both **Original prompt** (`originalPromptSnapshot`) and collapsible **Agent prompt** (`agentPromptSnapshot`).
 
 ---
 
@@ -838,8 +857,9 @@ The test `diagnostic: sends stripped base64 images in the Ollama request body` a
 | Agent Type CRUD (`agent_type`) | Shipped — builtin Image Generation type seeded in `0016_agent_system.sql` |
 | Agent Artifact CRUD | Shipped — `agent_artifact` + canvas `type: 'agent'` cards |
 | Execute + Image Transformer | Shipped — `POST /api/agents/:id/execute`, OpenAI + local placeholder; client sends transient `referenceImages` |
-| Generated Image Artifacts | Shipped — `payload_text` data URLs + project folder paths |
+| Generated Image Artifacts | Shipped — folder write, `metadata.image`, prompts in inspector, auto `created_by_agent` wires |
 | Reference inputs | Shipped — `reference_input_to` edges, Control Room checkboxes |
 | Execution history | Shipped — `execution` table + Control Room recent runs |
+| Explorations (`type: 'flow'`) | Shipped — user-facing name **Exploration**; revisioned `flow_document` editor, agent node context; internal API/storage still `flow` |
 | Real-time WebSockets | **Not shipped** — polling / refresh only (non-goal deferral) |
 | Agent Type user CRUD UI | **Partial** — read catalog; create/update/delete API exists, minimal UI |

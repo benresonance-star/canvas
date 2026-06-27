@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.06.24.2
-**Version label:** agent-reference-image-bytes
+**Version:** 2026.06.27.1
+**Version label:** exploration-display-name
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -530,9 +530,9 @@ Cleanup rules:
 - `GET /bookmarks/embed` can serve same-origin proxied HTML for editor preview surfaces that need embeddable page content.
 - Canvas bookmark/link open behavior is external: double-clicking a bookmark card opens the pinned `externalUrl` in a new browser tab/window and does not open `CardModal` full-screen preview.
 
-### Flow artifacts (shipped)
+### Explorations (shipped)
 
-Flow cards are a separate artifact type (`flow`) with their own revisioned Postgres document, distinct from the project canvas layout JSON.
+Exploration cards are a separate artifact type (`flow`) with their own revisioned Postgres document, distinct from the project canvas layout JSON.
 
 Tables (`server/migrations/0014_flow_artifacts.sql`):
 
@@ -544,10 +544,10 @@ API (`server/routes/flows.js`):
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/projects/:projectId/flows` | Create flow artifact + document |
-| GET | `/flows/:flowId` | Fetch full flow snapshot |
+| POST | `/projects/:projectId/flows` | Create exploration artifact + document |
+| GET | `/flows/:flowId` | Fetch full exploration snapshot |
 | PUT | `/flows/:flowId` | Replace snapshot with `expectedRevision` CAS (409 on conflict) |
-| DELETE | `/flows/:flowId` | Delete flow |
+| DELETE | `/flows/:flowId` | Delete exploration |
 | GET | `/flows/:flowId/stream` | SSE `flow_created` / `flow_updated` / `flow_deleted` |
 
 Client (`src/features/flow/`):
@@ -555,21 +555,23 @@ Client (`src/features/flow/`):
 - `FlowEditor.jsx` — `@xyflow/react` editor; artifact nodes embed live `CardPreview`
 - `FlowPreview.jsx` — compact canvas-card preview from `flowPreview` snapshot on pinned version
 - `useFlowDocument.js` — load, dirty tracking, debounced autosave (`flowAutosave.js`), manual `flushSave`, SSE apply with `clientId` skip; `save()` clears pending timers and skips when clean unless forced
-- `flowSnapshot.js` — optional linked-folder snapshot file at `flows/<flowId>.json`
-- Flow cards on the main canvas use the `flow` card type; opening the modal launches the flow editor
+- `flowSnapshot.js` — optional linked-folder snapshot file at `flows/<slug>--<id>.flow.json`
+- Exploration cards on the main canvas use the internal `flow` card type; opening the modal launches the exploration editor
 - `closeOpenCard` in `useCanvasDocument.js` — central flush-before-close for X, Escape, and project-switch reset; blocks close when flush fails unless user discards
-- `formatFlowSaveError` — maps validation vs network errors in the flow editor toolbar
+- `formatFlowSaveError` / `formatFlowLoadError` — maps validation, not-found, and network errors in the exploration editor toolbar
+- User-facing product name is **Exploration** (Add menu, editor chrome, agent context markdown `# Exploration:`); internal storage/API identifiers remain `flow` (`flow_document`, `/flows/`, `card.type === 'flow'`)
 
 Rules:
 
-- Flow layout authority is `flow_document` + nodes/edges tables, not `canvas_project_document` cards layout
-- Artifact nodes reference existing primitive `artifact_id`; local nodes are flow-local only
+- Exploration layout authority is `flow_document` + nodes/edges tables, not `canvas_project_document` cards layout
+- Artifact nodes reference existing primitive `artifact_id`; local nodes are exploration-local only
 - On `PUT /flows/:flowId`, `replaceFlow` auto-registers referenced artifact IDs into the project workspace `cluster_member` when the artifact row exists (canvas cards may carry `artifactRef` before cluster membership)
-- Flow editor artifact palette lists only canvas cards with a synced `artifactRef` (`artifactRefIdForClusterCard`)
-- Save failures surface in the flow toolbar; close does not silently discard dirty edits when flush returns `ok: false`
+- Exploration editor artifact palette lists only canvas cards with a synced `artifactRef` (`artifactRefIdForClusterCard`)
+- Save failures surface in the exploration toolbar; close does not silently discard dirty edits when flush returns `ok: false`
 - Edge connection types and custom labels live in edge `presentation` JSON (`flowConnectionTypes.js`)
-- Agent context can include selected flow nodes via `useFlowAgentContext`
-- Flow agent mode UI (`flowAgentUiPersistence.js`) persists per-flow-card last thread and panel section layout; restored when agent mode is re-enabled on that flow card
+- Local node types (Artifact, Step, Decision, External Resource), per-type header colors (`local_node_type_colors` JSONB, migration `0019`), and multi-actor tags (`human`, `agent`, `process`, `tool`) persist in node `presentation`
+- Agent context can include selected exploration nodes via `useFlowAgentContext`
+- Exploration agent mode UI (`flowAgentUiPersistence.js`) persists per-card last thread and panel section layout; restored when agent mode is re-enabled on that exploration card
 
 ### Agent templates (shipped)
 
@@ -967,6 +969,24 @@ node scripts/list-db-projects.mjs
 node scripts/reset-workspace-db.mjs
 ```
 
+### Diagnostics canvas
+
+Fullscreen interactive architecture graph for humans and agents. Source: `src/lib/architecture/*`; UI: `src/features/diagnostics/*`.
+
+| Entry | Path |
+|-------|------|
+| Open | System architecture modal → **Open diagnostics canvas** |
+| Graph data | `lib/architecture/architectureGraphData.js` |
+| Actions | `lib/architecture/architectureActions.js` (7 user-flow simulations) |
+| Tests | `npm test -- --run src/lib/architecture` |
+
+**Graph maintenance checklist (PR):**
+
+1. New API route → add graph node + `architectureRouteManifest.js` entry.
+2. New cross-module call → add pipe with `dataFlow`, `pipeLabel`, `trigger`, `why`.
+3. New user action path → add or extend action steps in `architectureActions.js`.
+4. Run architecture tests; bump `ARCHITECTURE_SPEC_VERSION` when behavior changes.
+
 ---
 
 ## 10. Testing
@@ -978,6 +998,7 @@ cd canvas
 npm test                    # full suite (may need memory tuning)
 npm run test:sync           # sync-critical subset — CI gate
 npm run test:features       # feature hook tests
+npm test -- --run src/lib/architecture   # diagnostics graph drift guards
 npm run lint
 node scripts/capture-architecture-baseline.mjs
 node scripts/verify-project-sync-exports.mjs
@@ -1100,6 +1121,27 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-06-27 — Explorations display name + flow editor polish (implemented)
+
+- Bumped the active spec to `2026.06.27.1`.
+- Renamed user-facing **Flow** artifacts to **Exploration** across UI strings, card badge (`EXPLORATION`), create dialog, editor chrome, agent panel copy, and agent context markdown (`# Exploration:` / `# Exploration selection:`).
+- Internal identifiers unchanged: Postgres `flow_document` / `flow_node` / `flow_edge`, REST `/flows/`, canvas `type: 'flow'`, folder snapshots `flows/*.flow.json`.
+- Added local node types (Artifact, Step, Decision, External Resource), per-type header colors (`0019_flow_local_node_type_colors.sql`), multi-actor tags, inline title/description editing, and friendly load/save error mapping (`formatFlowLoadError`).
+
+### 2026-06-24 — Image artifact metadata (implemented)
+
+- Bumped the active spec to `2026.06.24.4`.
+- Shared `imageArtifactMetadata.js` parses PNG/JPEG/WebP headers for file type, size, dimensions, and bit depth; used by image generation (`imageTransformer.js`), Postgres artifact `metadata.image`, folder scan (`readFileEntry`), and generated card versions (`imageMetadata`).
+- Inspector and card modal artifact sidebar show image technical fields plus **Original prompt** and collapsible **Agent prompt** for generated images.
+
+### 2026-06-24 — Agent output wires, folder save, and scan dedup (implemented)
+
+- Bumped the active spec to `2026.06.24.3`.
+- After image generation, the client auto-creates `created_by_agent` wires (agent artifact → image artifact) via `wireAgentOutputImages`, matching manual canvas drag.
+- Generated PNGs are written to the linked project folder at `generated/{agentSlug}/…` (`writeBinaryFileAtPath` + `persistGeneratedImageOutputs`); canvas cards use folder canonical keys (`cardKeyFromFilename(relativePath)`) with `content_hash` and `artifactRef` so folder scan does not stage duplicate dock rows.
+- `generatedImageFolderBackfill` re-exports missing generated cards during folder scan (same pattern as agent-chat backfill).
+- Server `created_by_agent` relationship direction aligned to agent → image; execute response includes output `metadata`.
 
 ### 2026-06-24 — Agent reference image bytes for execution (implemented)
 
@@ -1243,6 +1285,12 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 - `loadProjectById` deprecated; `useProjectSyncLifecycle` uses `loadProjectStructure`
 - `@deprecated` on `loadSyncedProjectDocument`, `saveProjectById`
 - `buildWorkspaceViewBundles.js` groups CanvasWorkspaceView props by feature
+
+### 2026-06-27 — Diagnostics canvas (implemented)
+
+- Added `src/lib/architecture/*` — schema, graph data, actions, simulation, route manifest
+- Added `src/features/diagnostics/*` — fullscreen React Flow canvas with play/step simulation and inspector
+- System architecture modal links to diagnostics canvas; spec version `2026-06-27-diagnostics-graph`
 
 ### 2026-06-03 — Phase 2 thin composition root (implemented)
 

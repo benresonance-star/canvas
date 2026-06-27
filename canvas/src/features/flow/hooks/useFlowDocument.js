@@ -7,8 +7,15 @@ import {
   useNodesState,
 } from '@xyflow/react';
 import { fetchFlow, flowStreamUrl, saveFlow } from '../api/flowApi.js';
+import { strings } from '../../../content/strings.js';
 import { flowSnapshotPath, writeFlowSnapshot } from '../api/flowSnapshot.js';
-import { previewFromFlow, snapshotForSave, normalizeFlowNodeForEditor, normalizeFlowEdgeForEditor } from '../domain/flowDocument.js';
+import {
+  formatFlowLoadError,
+  previewFromFlow,
+  snapshotForSave,
+  normalizeFlowNodeForEditor,
+  normalizeFlowEdgeForEditor,
+} from '../domain/flowDocument.js';
 import {
   clearAutosaveTimer,
   FLOW_AUTOSAVE_DELAY_MS,
@@ -158,7 +165,7 @@ export function useFlowDocument({ flowId, folderHandle, onCardRefresh }) {
       setDirty(false);
       patchStatus({ loading: false });
     } catch (error) {
-      patchStatus({ loading: false, error: error.message });
+      patchStatus({ loading: false, error: formatFlowLoadError(error.message, strings.flow) });
     }
   }, [clearSaveTimer, flowId, patchStatus, setEdges, setNodes]);
 
@@ -172,7 +179,7 @@ export function useFlowDocument({ flowId, folderHandle, onCardRefresh }) {
         const message = JSON.parse(event.data);
         if (message.clientId === clientIdRef.current) return;
         if (message.type === 'flow_deleted') {
-          patchStatus({ loading: false, error: 'This flow was deleted in another session.' });
+          patchStatus({ loading: false, error: strings.flow.deletedElsewhere });
           return;
         }
         if (Number(message.revision) <= revisionRef.current) return;

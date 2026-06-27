@@ -12,6 +12,7 @@ import { cardHeaderLabel, cardDisplayFilename } from '../lib/filename.js';
 import { strings } from '../content/strings.js';
 import { ModalContent } from './ModalContent.jsx';
 import { UserNoteEditor } from './UserNoteEditor.jsx';
+import { UserTaskEditor } from './UserTaskEditor.jsx';
 import { BookmarkCardEditor } from './BookmarkCardEditor.jsx';
 import { AgentSidePanel } from './AgentSidePanel.jsx';
 import { ARTIFACT_SIDEBAR_STORAGE_KEY } from '../lib/constants.js';
@@ -67,16 +68,19 @@ export function CardModal({
   onGraphRefresh,
   onSaveStatus,
   userNoteDisabled = false,
+  userTaskDisabled = false,
   bookmarkEditDisabled = false,
   onSaveBookmark,
   bookmarkSaving = false,
   onSaveNoteToProject,
+  onSaveTaskToProject,
   onUpdateCard,
   agentPanelProps = null,
   flowArtifactCandidates = [],
   onFlowCardRefresh,
   onRehydratePreview,
   registerFlowFlush,
+  customContent = null,
 }) {
   const [currentVersion, setCurrentVersion] = useState(card?.pinnedVersion ?? 1);
   const [sidebarOpen, setSidebarOpen] = useState(readStoredSidebarOpen);
@@ -89,6 +93,7 @@ export function CardModal({
   const [flowClosing, setFlowClosing] = useState(false);
   const [flowCloseError, setFlowCloseError] = useState(null);
   const noteEditorRef = useRef(null);
+  const taskEditorRef = useRef(null);
   const flowSnapshotGetterRef = useRef(null);
   const restoredFlowAgentUiRef = useRef(false);
   const pendingFlowThreadRestoreRef = useRef(null);
@@ -99,10 +104,11 @@ export function CardModal({
   const agentPanelPropsRef = useRef(agentPanelProps);
   const version = card?.versions.find(v => v.version === currentVersion);
   const isUserNote = card?.type === 'user_note';
+  const isUserTask = card?.type === 'user_task';
   const isBookmark = card?.type === 'bookmark';
   const isFlow = card?.type === 'flow';
   const isSpreadsheet = card?.type === 'spreadsheet';
-  const noteEditBlocked = missingFromFolder && userNoteDisabled;
+  const noteEditBlocked = missingFromFolder && (userNoteDisabled || userTaskDisabled);
   const { viewer: spreadsheetViewer, setViewer: setSpreadsheetViewer } = useSpreadsheetViewerPreference();
 
   const getFlowSnapshot = useCallback(
@@ -470,6 +476,23 @@ export function CardModal({
               }`}
               aria-label={strings.userNote.name}
             />
+          ) : isUserTask && !noteEditBlocked ? (
+            <input
+              type="text"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onBlur={() => taskEditorRef.current?.saveIfDirty()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                }
+              }}
+              className={`w-full min-w-0 serif text-xl bg-transparent border-0 border-b border-on-overlay/30 focus:border-on-overlay/60 focus:outline-none px-0 py-0.5 ${
+                missingFromFolder ? 'text-danger' : 'text-on-overlay'
+              }`}
+              aria-label={strings.userTask.name}
+            />
           ) : (
             <div className={`serif text-xl truncate ${missingFromFolder ? 'text-danger' : ''}`}>
               {cardDisplayFilename(card)}
@@ -477,6 +500,9 @@ export function CardModal({
           )}
           {isUserNote && (
             <p className="sans text-[10px] text-on-overlay/60 mt-1">{strings.userNote.editHint}</p>
+          )}
+          {isUserTask && (
+            <p className="sans text-[10px] text-on-overlay/60 mt-1">{strings.userTask.editHint}</p>
           )}
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
@@ -490,7 +516,7 @@ export function CardModal({
               <File size={14} strokeWidth={1.5} aria-hidden />
             </button>
           )}
-          {agentPanelProps && !isBookmark && !isUserNote && (
+          {agentPanelProps && !isBookmark && !isUserNote && !isUserTask && (
             <button
               type="button"
               title={isFlow ? strings.agent.askAboutFlow : strings.agent.askAboutArtifact}
@@ -610,7 +636,11 @@ export function CardModal({
             </button>
           </div>
         )}
-        {isFlow ? (
+        {customContent ? (
+          <div className="flex-1 bg-canvas rounded-lg overflow-hidden min-h-0">
+            {customContent}
+          </div>
+        ) : isFlow ? (
           <div className="flex-1 bg-canvas rounded-lg overflow-hidden min-h-0 flex flex-col md:flex-row">
             <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
               <FlowEditor
@@ -680,11 +710,42 @@ export function CardModal({
               onSaveToProject={onSaveNoteToProject}
             />
           </div>
+        ) : isUserTask ? (
+          <div className="flex-1 bg-canvas rounded-lg overflow-hidden min-h-0 flex flex-col">
+            <UserTaskEditor
+              ref={taskEditorRef}
+              card={card}
+              version={version}
+              versionNum={currentVersion}
+              title={editName}
+              folderHandle={folderHandle}
+              folderConnected={Boolean(folderHandle)}
+              folderKeySet={folderKeySet}
+              projectId={projectId}
+              projectName={projectName}
+              clusterId={clusterId}
+              cards={cards}
+              missingFromFolder={missingFromFolder}
+              userTaskDisabled={userTaskDisabled}
+              onUpdateVersion={onUpdateVersion}
+              onUpdateCard={onUpdateCard}
+              onGraphRefresh={onGraphRefresh}
+              onSaveStatus={onSaveStatus}
+              onCancelEdit={() => setEditName(card.name)}
+              onSaveToProject={onSaveTaskToProject}
+            />
+          </div>
         ) : (
           <div className="flex-1 bg-canvas rounded-lg overflow-hidden min-h-0 flex flex-col md:flex-row relative">
             <div className="relative flex-1 min-w-0 min-h-[40vh] md:min-h-0 flex flex-col">
               <div className="flex-1 min-h-0 overflow-hidden">
-                <ModalContent card={card} version={version} folderHandle={folderHandle} projectId={projectId} />
+                <ModalContent
+                  card={card}
+                  version={version}
+                  folderHandle={folderHandle}
+                  projectId={projectId}
+                  onUpdateCard={onUpdateCard}
+                />
               </div>
             </div>
             <aside
@@ -702,6 +763,7 @@ export function CardModal({
                     <ArtifactPrimitiveSection
                       variant="sidebar"
                       artifactRef={version?.artifactRef}
+                      version={version}
                     />
                     <AddAssertionForm
                       variant="sidebar"

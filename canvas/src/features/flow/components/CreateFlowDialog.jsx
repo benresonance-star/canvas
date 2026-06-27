@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Workflow, X } from 'lucide-react';
+import { strings } from '../../../content/strings.js';
 
 export function CreateFlowDialog({ saving = false, onClose, onSave }) {
   const [title, setTitle] = useState('');
@@ -17,7 +18,7 @@ export function CreateFlowDialog({ saving = false, onClose, onSave }) {
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2">
             <Workflow size={17} className="text-accent" />
-            <h2 className="serif text-xl text-primary">Add flow</h2>
+            <h2 className="serif text-xl text-primary">{strings.flow.createTitle}</h2>
           </div>
           <button type="button" onClick={onClose} className="text-muted hover:text-primary p-1" aria-label="Close">
             <X size={18} />
@@ -37,16 +38,15 @@ export function CreateFlowDialog({ saving = false, onClose, onSave }) {
           onChange={(event) => setDescription(event.target.value)}
           rows={3}
           className="sans w-full resize-none rounded-md border border-border bg-canvas px-3 py-2 text-sm text-primary focus:outline-none focus:border-accent"
-          placeholder="What this flow explains"
+          placeholder={strings.flow.createDescriptionPlaceholder}
         />
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="sans text-xs text-secondary px-4 py-2 rounded-full hover:bg-surface-muted">Cancel</button>
           <button disabled={!canSave} className="sans text-xs bg-accent text-on-accent px-4 py-2 rounded-full disabled:opacity-40">
-            {saving ? 'Creating…' : 'Create flow'}
+            {saving ? strings.flow.creating : strings.flow.createButton}
           </button>
         </div>
       </form>
     </div>
   );
 }
-

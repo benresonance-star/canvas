@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { strings } from '../../../content/strings.js';
 import { flowPreviewArtifactNodeLabel } from '../domain/flowDocument.js';
 import { resolveFlowPreviewOverlaps } from '../domain/flowPreviewLayout.js';
 import { buildFlowPreviewEdgePath } from '../domain/flowPreviewEdges.js';
@@ -152,7 +153,7 @@ export function FlowPreview({ preview, compact = false, cardsById = null }) {
   );
 
   if (!nodes.length) {
-    return <div className="h-full flex items-center justify-center serif italic text-muted text-sm">Empty flow</div>;
+    return <div className="h-full flex items-center justify-center serif italic text-muted text-sm">{strings.flow.previewEmpty}</div>;
   }
 
   const layoutById = new Map(nodeLayout.map((node) => [node.id, node]));
@@ -166,7 +167,7 @@ export function FlowPreview({ preview, compact = false, cardsById = null }) {
       viewBox={`${minX - 30} ${minY - 30} ${Math.max(260, maxX - minX + 60)} ${Math.max(160, maxY - minY + 60)}`}
       className="h-full w-full bg-canvas"
       role="img"
-      aria-label="Flow diagram preview"
+      aria-label={strings.flow.previewAriaLabel}
     >
       <defs>
         <marker

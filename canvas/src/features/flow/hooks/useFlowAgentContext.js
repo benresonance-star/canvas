@@ -5,6 +5,7 @@ import {
   filterFlowSubgraph,
   formatFlowDiagramForAgent,
   formatFlowSubgraphForAgent,
+  UNTITLED_EXPLORATION_TITLE,
 } from '../domain/flowDocument.js';
 
 /**
@@ -71,7 +72,7 @@ export function useFlowAgentContext({ flowCard, canvasCards = [], getFlowSnapsho
     const snap = getFlowSnapshot();
     if (!snap) return null;
     const meta = {
-      title: snap.title ?? flowCard?.name ?? 'Untitled flow',
+      title: snap.title ?? flowCard?.name ?? UNTITLED_EXPLORATION_TITLE,
       description: snap.description ?? '',
     };
     if (!selectedNodeIds.length) {

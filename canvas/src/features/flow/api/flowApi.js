@@ -1,4 +1,5 @@
 import { resolveApiBase } from '../../../lib/apiBase.js';
+import { strings } from '../../../content/strings.js';
 
 const API_BASE = resolveApiBase();
 
@@ -9,7 +10,7 @@ async function jsonRequest(path, options) {
   });
   const body = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    const error = new Error(body?.error || `Flow request failed (${response.status})`);
+    const error = new Error(body?.error || strings.flow.requestFailed(response.status));
     error.status = response.status;
     error.currentRevision = body?.currentRevision;
     throw error;

@@ -1,4 +1,5 @@
 import { cardLabel } from './agentContext.js';
+import { strings } from '../content/strings.js';
 import { resolveLiveArtifactId } from './liveAgentContext.js';
 import { folderRelativePathFromVersion, normalizeCardType } from './filename.js';
 import { readFileEntry } from './readFile.js';
@@ -364,7 +365,7 @@ export async function loadContextDocumentForCard(card, options = {}) {
         label,
         type,
         status: 'unsupported',
-        note: 'Flow diagram context is not available.',
+        note: strings.flow.diagramContextUnavailable,
       };
     }
     try {
@@ -375,7 +376,7 @@ export async function loadContextDocumentForCard(card, options = {}) {
           label,
           type,
           status: 'empty',
-          note: 'This flow has no diagram content.',
+          note: strings.flow.diagramContextEmpty,
         };
       }
       const { text: trimmed, truncated } = truncateText(text.trim(), limits.maxFileChars);

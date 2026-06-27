@@ -8,6 +8,9 @@ import React, { createContext, useContext } from 'react';
  *   updateNode: (nodeId: string, patch: { data?: Record<string, unknown>, width?: number, height?: number }, options?: { checkpoint?: boolean }) => void,
  *   checkpoint: () => void,
  *   agentScopedNodeIds: Set<string> | null,
+ *   readOnly: boolean,
+ *   localNodeTypeColors: Record<string, string>,
+ *   setLocalNodeTypeColor: (typeId: string, color: string) => void,
  * }>} */
 const FlowEditorContext = createContext(null);
 

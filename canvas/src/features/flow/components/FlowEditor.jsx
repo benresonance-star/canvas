@@ -30,9 +30,13 @@ import {
   removeFlowNodesById,
   stripFlowNodeDimensions,
 } from '../domain/flowDocument.js';
+import { patchFlowLocalNodeTypeColor, normalizeFlowLocalNodeTypeColors } from '../domain/flowLocalNodeTypeColors.js';
 import { ArtifactFlowNode, LocalFlowNode } from './FlowNodes.jsx';
 import { FlowConnectionInspectorFields } from './FlowConnectionInspectorFields.jsx';
 import { FlowEditorProvider } from './FlowEditorContext.jsx';
+import { FlowLocalNodeTypeMenu } from './FlowLocalNodeTypeMenu.jsx';
+import { FlowLocalNodeTypePicker } from './FlowLocalNodeTypePicker.jsx';
+import { FlowNodeActorPicker } from './FlowNodeActorPicker.jsx';
 
 const NODE_TYPES = { artifact: ArtifactFlowNode, local: LocalFlowNode };
 
@@ -189,10 +193,17 @@ function FlowEditorInner({
     }, { checkpoint: true });
   }, [cardsById, updateNode]);
 
-  const addLocal = useCallback((position) => {
+  const addLocal = useCallback((position, localNodeType) => {
     checkpoint();
-    document.setNodes((nodes) => [...nodes, newLocalFlowNode(position)]);
+    document.setNodes((nodes) => [...nodes, newLocalFlowNode(position, { localNodeType })]);
   }, [checkpoint, document]);
+
+  const setLocalNodeTypeColor = useCallback((typeId, color) => {
+    document.setFlow((flow) => ({
+      ...flow,
+      localNodeTypeColors: patchFlowLocalNodeTypeColor(flow?.localNodeTypeColors, typeId, color),
+    }));
+  }, [document]);
 
   const addArtifact = useCallback((cardToAdd, position) => {
     const node = newArtifactFlowNode(cardToAdd, position);
@@ -350,8 +361,8 @@ function FlowEditorInner({
     setSelectedNodeId(null);
   };
 
-  if (document.status.loading) return <div className="h-full flex items-center justify-center serif text-secondary">Loading flow…</div>;
-  if (!document.flow) return <div className="h-full flex items-center justify-center serif text-danger">{document.status.error || 'Flow unavailable'}</div>;
+  if (document.status.loading) return <div className="h-full flex items-center justify-center serif text-secondary">{strings.flow.loading}</div>;
+  if (!document.flow) return <div className="h-full flex items-center justify-center serif text-danger">{document.status.error || strings.flow.unavailable}</div>;
 
   const editorContextValue = {
     cardsById,
@@ -361,6 +372,9 @@ function FlowEditorInner({
     updateNode,
     checkpoint,
     agentScopedNodeIds: flowAgentScopeNodeIds ?? null,
+    readOnly: agentModeActive,
+    localNodeTypeColors: normalizeFlowLocalNodeTypeColors(document.flow?.localNodeTypeColors),
+    setLocalNodeTypeColor,
   };
 
   return (
@@ -376,9 +390,7 @@ function FlowEditorInner({
             <Search size={13} className="absolute left-2.5 top-2.5 text-muted" />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search artifacts" className="sans w-full rounded-full border border-border bg-canvas pl-8 pr-3 py-2 text-xs focus:outline-none focus:border-accent" />
           </label>
-          <button type="button" onClick={() => addLocal(viewportCenter())} className="sans mt-2 w-full flex items-center justify-center gap-1.5 rounded-full bg-accent text-on-accent px-3 py-2 text-xs">
-            <Plus size={13} /> New flow node
-          </button>
+          <FlowLocalNodeTypePicker onSelectType={(localNodeType) => addLocal(viewportCenter(), localNodeType)} />
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {candidates.map((candidate) => (
@@ -396,7 +408,9 @@ function FlowEditorInner({
       <main className="flex-1 min-w-0 flex flex-col">
         <div className="h-12 shrink-0 border-b border-border bg-surface flex items-center gap-2 px-3">
           <Workflow size={15} className="text-accent" />
-          <input value={document.flow.title} onChange={(event) => document.setFlow((flow) => ({ ...flow, title: event.target.value }))} className="serif flex-1 min-w-0 bg-transparent text-lg focus:outline-none" aria-label="Flow name" />
+                       
+new_string
+          <input value={document.flow.title} onChange={(event) => document.setFlow((flow) => ({ ...flow, title: event.target.value }))} className="serif flex-1 min-w-0 bg-transparent text-lg focus:outline-none" aria-label={strings.flow.nameLabel} />
           <button type="button" onClick={undo} disabled={!undoRef.current.length} className="p-2 text-muted hover:text-primary disabled:opacity-30" aria-label="Undo"><Undo2 size={15} /></button>
           <button type="button" onClick={redo} disabled={!redoRef.current.length} className="p-2 text-muted hover:text-primary disabled:opacity-30" aria-label="Redo"><Redo2 size={15} /></button>
           <button
@@ -424,8 +438,8 @@ function FlowEditorInner({
             {formatFlowSaveError(document.status.error, strings.flow)}
           </div>
         )}
-        {document.status.conflict && <div className="sans text-xs bg-warning-muted text-warning px-3 py-2 border-b border-warning">This flow changed elsewhere. <button type="button" className="underline" onClick={() => void document.reload()}>Reload server copy</button></div>}
-        {document.status.snapshotWarning && <div className="sans text-xs bg-warning-muted text-warning px-3 py-2 border-b border-warning">Flow saved to the database; the folder snapshot will retry later.</div>}
+        {document.status.conflict && <div className="sans text-xs bg-warning-muted text-warning px-3 py-2 border-b border-warning">{strings.flow.conflictRemote} <button type="button" className="underline" onClick={() => void document.reload()}>{strings.flow.reloadServerCopy}</button></div>}
+        {document.status.snapshotWarning && <div className="sans text-xs bg-warning-muted text-warning px-3 py-2 border-b border-warning">{strings.flow.snapshotWarning}</div>}
         <div
           id="flow-editor-canvas"
           ref={canvasRef}
@@ -578,6 +592,24 @@ function FlowEditorInner({
               {selectedNode.data?.showContent ? <EyeOff size={13} /> : <Eye size={13} />}
               {selectedNode.data?.showContent ? strings.flow.hideContent : strings.flow.showContent}
             </button>
+            <label className="sans text-[10px] text-muted">{strings.flow.nodeType}</label>
+            <div className="mt-1 mb-3 rounded-md border border-border bg-canvas p-1.5">
+              <FlowLocalNodeTypeMenu
+                ariaLabel={strings.flow.nodeType}
+                selectedTypeId={selectedNode.data?.localNodeType}
+                localNodeTypeColors={editorContextValue.localNodeTypeColors}
+                onColorChange={setLocalNodeTypeColor}
+                onSelect={(localNodeType) => updateNode(selectedNode.id, { data: { localNodeType } }, { checkpoint: true })}
+              />
+            </div>
+            <label className="sans text-[10px] text-muted">{strings.flow.nodeActors}</label>
+            <div className="mt-1 mb-3">
+              <FlowNodeActorPicker
+                ariaLabel={strings.flow.nodeActors}
+                actors={selectedNode.data?.actors}
+                onChange={(actors) => updateNode(selectedNode.id, { data: { actors } }, { checkpoint: true })}
+              />
+            </div>
             <label className="sans text-[10px] text-muted">Name</label>
             <input value={selectedNode.data?.title ?? ''} onChange={(event) => document.setNodes((nodes) => nodes.map((node) => node.id === selectedNode.id ? { ...node, data: { ...node.data, title: event.target.value } } : node))} className="sans mt-1 mb-3 w-full rounded-md border border-border bg-canvas px-3 py-2 text-sm focus:outline-none focus:border-accent" />
             <label className="sans text-[10px] text-muted">Description</label>
@@ -605,7 +637,15 @@ function FlowEditorInner({
             <div className="serif text-base">
               {flowArtifactNodeDisplayTitle(selectedNode.data, cardsById.get(selectedNode.data?.cardId))}
             </div>
-            <p className="sans text-xs text-muted mt-2">Live reference. Editing this flow will not change the source artifact.</p>
+            <label className="sans block text-[10px] text-muted mt-3">{strings.flow.nodeActors}</label>
+            <div className="mt-1 mb-3">
+              <FlowNodeActorPicker
+                ariaLabel={strings.flow.nodeActors}
+                actors={selectedNode.data?.actors}
+                onChange={(actors) => updateNode(selectedNode.id, { data: { actors } }, { checkpoint: true })}
+              />
+            </div>
+            <p className="sans text-xs text-muted mt-2">{strings.flow.artifactReferenceHint}</p>
             <button
               type="button"
               onClick={removeSelectedNode}
@@ -617,10 +657,22 @@ function FlowEditorInner({
             <p className="sans text-xs text-muted mt-3">{strings.flow.nodeHint}</p>
           </div>
         ) : (
-          <p className="sans text-xs text-muted">{strings.flow.selectNodeOrConnection}</p>
+          <>
+            <p className="sans text-xs text-muted mb-4">{strings.flow.selectNodeOrConnection}</p>
+            <label className="sans text-[10px] text-muted">{strings.flow.nodeTypeColors}</label>
+            <div className="mt-1 rounded-md border border-border bg-canvas p-1.5">
+              <FlowLocalNodeTypeMenu
+                ariaLabel={strings.flow.nodeTypeColors}
+                selectedTypeId={null}
+                localNodeTypeColors={editorContextValue.localNodeTypeColors}
+                onColorChange={setLocalNodeTypeColor}
+                onSelect={() => {}}
+              />
+            </div>
+          </>
         )}
         <div className="border-t border-border mt-6 pt-4">
-          <label className="sans text-[10px] text-muted">Flow description</label>
+          <label className="sans text-[10px] text-muted">{strings.flow.descriptionLabel}</label>
           <textarea value={document.flow.description ?? ''} onChange={(event) => document.setFlow((flow) => ({ ...flow, description: event.target.value }))} rows={5} className="sans mt-1 w-full resize-none rounded-md border border-border bg-canvas px-3 py-2 text-sm focus:outline-none focus:border-accent" />
         </div>
         </div>

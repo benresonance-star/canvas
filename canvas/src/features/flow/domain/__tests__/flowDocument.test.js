@@ -25,6 +25,7 @@ import {
   patchFlowNodePresentation,
   previewFromFlow,
   formatFlowSaveError,
+  formatFlowLoadError,
   removeFlowEdgesById,
   removeFlowNodesById,
   snapshotForSave,
@@ -84,7 +85,7 @@ describe('flow document isolation', () => {
   it('serializes only flow-owned geometry and references', () => {
     const sourceArtifact = { id: 'artifact-1', payload: 'must not leak' };
     const snapshot = snapshotForSave(
-      { revision: 4, title: 'Flow', description: '' },
+      { revision: 4, title: 'Flow', description: '', localNodeTypeColors: { step: '#112233' } },
       [{
         id: 'node-1',
         type: 'artifact',
@@ -96,6 +97,7 @@ describe('flow document isolation', () => {
       { x: 0, y: 0, zoom: 1 },
     );
     expect(snapshot.expectedRevision).toBe(4);
+    expect(snapshot.localNodeTypeColors.step).toBe('#112233');
     expect(snapshot.nodes[0].artifactId).toBe('artifact-1');
     expect(JSON.stringify(snapshot)).not.toContain('must not leak');
   });
@@ -266,6 +268,36 @@ describe('flow document isolation', () => {
     expect(snapshot.nodes[0].data.showContent).toBe(true);
     expect(snapshot.nodes[0].width).toBe(320);
     expect(snapshot.nodes[0].height).toBe(220);
+  });
+
+  it('snapshotForSave migrates legacy local node types to artifact', () => {
+    const snapshot = snapshotForSave(
+      { revision: 1, title: 'Flow', description: '' },
+      [{
+        id: 'node-1',
+        type: 'local',
+        position: { x: 0, y: 0 },
+        data: { title: 'Agent step', localNodeType: 'agent' },
+      }],
+      [],
+      { x: 0, y: 0, zoom: 1 },
+    );
+    expect(snapshot.nodes[0].data.localNodeType).toBe('artifact');
+  });
+
+  it('snapshotForSave normalizes node actors', () => {
+    const snapshot = snapshotForSave(
+      { revision: 1, title: 'Flow', description: '' },
+      [{
+        id: 'node-1',
+        type: 'local',
+        position: { x: 0, y: 0 },
+        data: { title: 'Review', actors: ['human', 'agent', 'human', 'invalid'] },
+      }],
+      [],
+      { x: 0, y: 0, zoom: 1 },
+    );
+    expect(snapshot.nodes[0].data.actors).toEqual(['human', 'agent']);
   });
 
   it('previewFromFlow includes node titles and flow description', () => {
@@ -597,7 +629,7 @@ describe('flow document isolation', () => {
         data: { flowing: true, flowDirection: FLOW_EDGE_DIRECTION.reverse },
       }],
     );
-    expect(text).toContain('# Flow: Plan');
+    expect(text).toContain('# Exploration: Plan');
     expect(text).toContain('agent.ts → Kickoff (animated, reversed)');
   });
 
@@ -607,7 +639,7 @@ describe('flow document isolation', () => {
       [{ id: 'n1', type: 'local', data: { title: 'Kickoff' } }],
       [],
     );
-    expect(text).toContain('# Flow selection: Plan');
+    expect(text).toContain('# Exploration selection: Plan');
     expect(text).toContain('Kickoff');
   });
 
@@ -819,6 +851,24 @@ describe('formatFlowSaveError', () => {
 
   it('maps network failures separately from validation errors', () => {
     expect(formatFlowSaveError('Failed to fetch', { saveFailedNetwork: 'API down.' })).toBe('API down.');
+  });
+
+  it('maps flow not found without save-failed prefix', () => {
+    expect(formatFlowSaveError('flow not found', { notFound: 'Exploration not found.' })).toBe('Exploration not found.');
+  });
+
+  it('passes through exploration request failed messages', () => {
+    expect(formatFlowSaveError('Exploration request failed (404)', {})).toBe('Exploration request failed (404)');
+  });
+});
+
+describe('formatFlowLoadError', () => {
+  it('maps flow not found to notFound copy', () => {
+    expect(formatFlowLoadError('flow not found', { notFound: 'Exploration not found.' })).toBe('Exploration not found.');
+  });
+
+  it('falls back to unavailable for unknown load errors', () => {
+    expect(formatFlowLoadError('unexpected', { unavailable: 'Exploration unavailable.' })).toBe('Exploration unavailable.');
   });
 });
 

@@ -465,11 +465,11 @@ describe('agentContextContent', () => {
         versions: [{ version: 1, flowId: 'flow-1' }],
       },
       {
-        loadFlowContextText: async () => '# Flow: Onboarding\n\n## Nodes',
+        loadFlowContextText: async () => '# Exploration: Onboarding\n\n## Nodes',
       },
     );
     expect(doc.status).toBe('included');
-    expect(doc.text).toContain('Flow: Onboarding');
+    expect(doc.text).toContain('Exploration: Onboarding');
   });
 
   it('contextStatusHint marks live cards as pending when liveArtifactId exists', () => {

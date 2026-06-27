@@ -1,5 +1,7 @@
 /** Bump when architecture or shipped load behavior changes. */
-export const ARCHITECTURE_SPEC_VERSION = '2026-06-19-flow-artifacts-ollama-templates';
+import { getArchitectureGraphManifest } from './architecture/index.js';
+
+export const ARCHITECTURE_SPEC_VERSION = '2026-06-27-diagnostics-graph';
 
 export const ARCHITECTURE_LAYERS = [
   {
@@ -20,13 +22,14 @@ export const ARCHITECTURE_LAYERS = [
       'bookmark-editing',
       'flow-artifacts',
       'code-preview',
+      'diagnostics-canvas',
     ],
   },
   {
     id: 'api',
     label: 'API',
     description:
-      'Express 5 — project documents, spec canvas layout, clusters/primitives, previews, agent chat, flow artifacts, agent templates',
+      'Express 5 — project documents, spec canvas layout, clusters/primitives, previews, agent chat, explorations, agent templates',
     featureIds: ['revision-sync', 'previews-api', 'spec-canvas-dual-write', 'flow-artifacts', 'agent-templates'],
   },
   {
@@ -182,9 +185,9 @@ export const ARCHITECTURE_FEATURES = [
   },
   {
     id: 'flow-artifacts',
-    title: 'Flow artifacts',
+    title: 'Explorations',
     shortDescription:
-      'Revisioned node/edge flow documents (`flow_document`, `flow_node`, `flow_edge`) separate from canvas layout. REST + per-flow SSE; `@xyflow/react` editor; `flow` cards show `FlowPreview` on canvas.',
+      'Revisioned node/edge exploration documents (`flow_document`, `flow_node`, `flow_edge`) separate from canvas layout. REST + per-document SSE; `@xyflow/react` editor; `flow` cards show `FlowPreview` on canvas.',
     layerIds: ['client', 'api', 'data'],
     tags: ['flow', 'features'],
     status: 'current',
@@ -214,6 +217,15 @@ export const ARCHITECTURE_FEATURES = [
       '`code` card types render via `CodePreviewFrame` + `highlight.js` (`codeHighlight.js`) in canvas and modal; JS/TS family extensions auto-detected.',
     layerIds: ['client'],
     tags: ['media', 'ux'],
+    status: 'current',
+  },
+  {
+    id: 'diagnostics-canvas',
+    title: 'Diagnostics canvas (React Flow)',
+    shortDescription:
+      'Fullscreen interactive architecture graph at `src/lib/architecture/*` + `src/features/diagnostics/*`. Mirrors nodes, pipes, and seven action simulations for humans and agents. Open from System architecture modal.',
+    layerIds: ['client'],
+    tags: ['debug', 'architecture'],
     status: 'current',
   },
 ];
@@ -303,7 +315,7 @@ export const ARCHITECTURE_ENTITY_STORAGE = [
   },
   {
     id: 'flows',
-    label: 'Flow artifacts',
+    label: 'Explorations',
     summary:
       'Directed node/edge diagrams referencing canvas artifacts or local nodes. Separate revision CAS from project canvas layout.',
     server:
@@ -440,6 +452,7 @@ export function buildArchitectureMermaid() {
  * @param {string} [runtime.folderLinkPhase]
  */
 export function buildArchitectureMarkdown(runtime) {
+  const graphManifest = getArchitectureGraphManifest();
   const lines = [
     `# Canvas — system architecture (spec ${ARCHITECTURE_SPEC_VERSION})`,
     '',
@@ -488,10 +501,10 @@ export function buildArchitectureMarkdown(runtime) {
     '- **`bookmark`** cards (`links__*`): URL + title editable on canvas and in modal (`BookmarkInlineEditor`, `saveBookmarkToProject`)',
     '- Not folder-backed; persisted in project JSON only',
     '',
-    '## Flow artifacts (current)',
-    '- **`flow`** cards open a revisioned node/edge editor (`src/features/flow/`) backed by `flow_document` tables',
-    '- Artifact nodes embed live canvas previews; local nodes are flow-scoped only',
-    '- Per-flow SSE at `GET /flows/:flowId/stream`; saves use `expectedRevision` CAS',
+    '## Explorations (current)',
+    '- **`flow`** cards (UI: **Exploration**) open a revisioned node/edge editor (`src/features/flow/`) backed by `flow_document` tables',
+    '- Artifact nodes embed live canvas previews; local nodes are exploration-local only',
+    '- Per-document SSE at `GET /flows/:flowId/stream`; saves use `expectedRevision` CAS',
     '',
     '## Agent providers (current)',
     '- **OpenAI** — stored API credential required (`agentChatProvider` → `openaiChat`)',
@@ -500,6 +513,14 @@ export function buildArchitectureMarkdown(runtime) {
     '',
     '## Code previews (current)',
     '- **`code`** card types use `CodePreviewFrame` + `highlight.js` for JS/TS family files',
+    '',
+    '## Diagnostics canvas (current)',
+    '- Fullscreen React Flow graph: `src/features/diagnostics/DiagnosticsCanvasView.jsx`',
+    '- Graph source of truth: `src/lib/architecture/*` (nodes, pipes, actions, route manifest)',
+    `- Inventory: ${graphManifest.nodeCount} nodes, ${graphManifest.pipeCount} pipes, ${graphManifest.actionCount} actions, ${graphManifest.routeCount} API routes`,
+    `- Simulated actions: ${graphManifest.actionIds.join(', ')}`,
+    '- Open from System architecture modal → **Open diagnostics canvas**',
+    '- Maintenance: update graph data when adding routes/pipes; run `npm test -- --run src/lib/architecture`',
     '',
     '## Spec data plane (partial)',
     `- ${CONSOLIDATED_SPEC_NOTE}`,

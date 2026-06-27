@@ -9,8 +9,12 @@ import {
   isKnownFlowConnectionTypeId,
   resolveFlowConnectionLabel,
 } from './flowConnectionTypes.js';
+import { flowLocalNodeTypeMeta, normalizeFlowLocalNodeType, resolveNewFlowLocalNodeType } from './flowLocalNodeTypes.js';
+import { normalizeFlowLocalNodeTypeColors } from './flowLocalNodeTypeColors.js';
+import { normalizeFlowNodeActors } from './flowNodeActors.js';
 
 export const EMPTY_FLOW_VIEWPORT = Object.freeze({ x: 0, y: 0, zoom: 1 });
+export const UNTITLED_EXPLORATION_TITLE = 'Untitled exploration';
 export const FLOW_EDGE_TYPE = 'smoothstep';
 export const FLOW_EDGE_MAX_PROPERTIES = 32;
 export const FLOW_EDGE_PROPERTY_KEY_MAX = 64;
@@ -54,24 +58,71 @@ export function stripFlowNodeDimensions(node) {
 
 /**
  * @param {object} node
+ */
+function normalizeFlowNodeDataFields(node) {
+  let next = node;
+  /** @type {Record<string, unknown>} */
+  const dataPatch = {};
+
+  if (node.type === 'local') {
+    const migratedType = normalizeFlowLocalNodeType(node.data?.localNodeType);
+    if (node.data?.localNodeType !== migratedType) {
+      dataPatch.localNodeType = migratedType;
+    }
+  }
+
+  const normalizedActors = normalizeFlowNodeActors(node.data?.actors);
+  const currentActors = Array.isArray(node.data?.actors) ? node.data.actors : [];
+  if (JSON.stringify(normalizedActors) !== JSON.stringify(currentActors)) {
+    dataPatch.actors = normalizedActors;
+  }
+
+  if (Object.keys(dataPatch).length) {
+    next = patchFlowNodePresentation(node, dataPatch);
+  }
+  return next;
+}
+
+/**
+ * @param {object} node
+ */
+function serializeFlowNodeData(node) {
+  const base = { ...(node.data ?? {}) };
+  const actors = normalizeFlowNodeActors(base.actors);
+  if (node.type === 'local') {
+    return {
+      ...base,
+      localNodeType: normalizeFlowLocalNodeType(base.localNodeType),
+      actors,
+    };
+  }
+  return {
+    ...base,
+    actors,
+  };
+}
+
+/**
+ * @param {object} node
  * @param {object | null | undefined} [card]
  */
 export function normalizeFlowNodeForEditor(node, card = null) {
   if (!node) return node;
-  if (node.data?.showContent !== true) {
-    const width = node.width ?? node.style?.width ?? null;
-    const height = node.height ?? node.style?.height ?? null;
-    if (width || height || node.measured) {
-      return stripFlowNodeDimensions(node);
+  let next = normalizeFlowNodeDataFields(node);
+  if (next.data?.showContent !== true) {
+    const width = next.width ?? next.style?.width ?? null;
+    const height = next.height ?? next.style?.height ?? null;
+    if (width || height || next.measured) {
+      return stripFlowNodeDimensions(next);
     }
-    return node;
+    return next;
   }
-  const width = node.width ?? node.style?.width ?? null;
-  const height = node.height ?? node.style?.height ?? null;
+  const width = next.width ?? next.style?.width ?? null;
+  const height = next.height ?? next.style?.height ?? null;
   if (!width || !height) {
-    return patchFlowNodePresentation(node, {}, defaultFlowNodePreviewSize(node, card));
+    return patchFlowNodePresentation(next, {}, defaultFlowNodePreviewSize(next, card));
   }
-  return patchFlowNodePresentation(node, {}, { width, height });
+  return patchFlowNodePresentation(next, {}, { width, height });
 }
 
 /**
@@ -97,13 +148,17 @@ export function patchFlowNodePresentation(node, dataPatch, sizePatch) {
 }
 
 export function newLocalFlowNode(position, values = {}) {
+  const localNodeType = resolveNewFlowLocalNodeType(values.localNodeType);
+  const meta = flowLocalNodeTypeMeta(localNodeType);
   return {
     id: crypto.randomUUID(),
     type: 'local',
     position,
     data: {
-      title: values.title || 'New node',
+      localNodeType,
+      title: values.title || meta.defaultTitle,
       description: values.description || '',
+      actors: normalizeFlowNodeActors(values.actors),
     },
   };
 }
@@ -258,10 +313,11 @@ function serializeFlowEdgeForSave(edge) {
 export function snapshotForSave(flow, nodes, edges, viewport) {
   return {
     expectedRevision: flow.revision,
-    title: flow.title.trim() || 'Untitled flow',
+    title: flow.title.trim() || UNTITLED_EXPLORATION_TITLE,
     description: flow.description || '',
     viewport: viewport || EMPTY_FLOW_VIEWPORT,
     snapshotPath: flow.snapshotPath || null,
+    localNodeTypeColors: normalizeFlowLocalNodeTypeColors(flow.localNodeTypeColors),
     nodes: nodes.map((node) => ({
       id: node.id,
       type: node.type,
@@ -269,7 +325,7 @@ export function snapshotForSave(flow, nodes, edges, viewport) {
       position: node.position,
       width: node.data?.showContent === true ? node.width : null,
       height: node.data?.showContent === true ? node.height : null,
-      data: node.data ?? {},
+      data: serializeFlowNodeData(node),
     })),
     edges: edges.map((edge) => serializeFlowEdgeForSave(edge)),
   };
@@ -492,10 +548,10 @@ function formatFlowConnectionLine(edge, nodesById) {
 export function formatFlowDiagramForAgent(meta, nodes, edges) {
   const title = typeof meta?.title === 'string' && meta.title.trim()
     ? meta.title.trim()
-    : 'Untitled flow';
+    : UNTITLED_EXPLORATION_TITLE;
   const description = typeof meta?.description === 'string' ? meta.description.trim() : '';
   const nodesById = flowNodesByIdMap(nodes);
-  const lines = [`# Flow: ${title}`];
+  const lines = [`# Exploration: ${title}`];
   if (description) {
     lines.push('', description);
   }
@@ -528,8 +584,8 @@ export function formatFlowDiagramForAgent(meta, nodes, edges) {
 export function formatFlowSubgraphForAgent(meta, nodes, edges) {
   const title = typeof meta?.title === 'string' && meta.title.trim()
     ? meta.title.trim()
-    : 'Untitled flow';
-  const lines = [`# Flow selection: ${title}`, '', '## Selected nodes'];
+    : UNTITLED_EXPLORATION_TITLE;
+  const lines = [`# Exploration selection: ${title}`, '', '## Selected nodes'];
   if (!nodes?.length) {
     lines.push('- (none)');
   } else {
@@ -718,20 +774,71 @@ export function patchFlowCard(card, flow, nodes, edges) {
 
 /**
  * @param {string | null | undefined} message
- * @param {{ saveFailed?: string, saveFailedNetwork?: string, artifactNotInProject?: string }} copy
+ * @param {{
+ *   saveFailed?: string,
+ *   saveFailedNetwork?: string,
+ *   artifactNotInProject?: string,
+ *   artifactNodeMissingRef?: string,
+ *   notFound?: string,
+ *   requestFailed?: string,
+ *   unavailable?: string,
+ * }} copy
  */
-export function formatFlowSaveError(message, copy = {}) {
-  const fallback = copy.saveFailed ?? 'Could not save flow.';
-  if (!message) return fallback;
-  if (message.includes('artifact nodes must reference artifacts in the same project')) {
-    return copy.artifactNotInProject ?? fallback;
+function mapFlowUserError(message, copy = {}) {
+  if (!message) return null;
+  if (/flow not found|exploration not found/i.test(message)) {
+    return copy.notFound ?? 'Exploration not found';
+  }
+  if (/exploration request failed|flow request failed/i.test(message)) {
+    return message;
   }
   if (/failed to fetch|network|ECONNREFUSED/i.test(message)) {
-    return copy.saveFailedNetwork ?? fallback;
+    return copy.saveFailedNetwork ?? null;
+  }
+  if (message.includes('artifact nodes must reference artifacts in the same project')) {
+    return copy.artifactNotInProject ?? null;
   }
   if (message.includes('artifact node requires artifactId')) {
-    return copy.artifactNodeMissingRef ?? fallback;
+    return copy.artifactNodeMissingRef ?? null;
   }
+  return null;
+}
+
+/**
+ * @param {string | null | undefined} message
+ * @param {{
+ *   saveFailed?: string,
+ *   saveFailedNetwork?: string,
+ *   artifactNotInProject?: string,
+ *   artifactNodeMissingRef?: string,
+ *   notFound?: string,
+ *   requestFailed?: string,
+ *   unavailable?: string,
+ * }} copy
+ */
+export function formatFlowLoadError(message, copy = {}) {
+  const mapped = mapFlowUserError(message, copy);
+  if (mapped) return mapped;
+  return copy.unavailable ?? 'Exploration unavailable';
+}
+
+/**
+ * @param {string | null | undefined} message
+ * @param {{
+ *   saveFailed?: string,
+ *   saveFailedNetwork?: string,
+ *   artifactNotInProject?: string,
+ *   artifactNodeMissingRef?: string,
+ *   notFound?: string,
+ *   requestFailed?: string,
+ *   unavailable?: string,
+ * }} copy
+ */
+export function formatFlowSaveError(message, copy = {}) {
+  const fallback = copy.saveFailed ?? 'Could not save exploration.';
+  const mapped = mapFlowUserError(message, copy);
+  if (mapped) return mapped;
+  if (!message) return fallback;
   return `${fallback} (${message})`;
 }
 
