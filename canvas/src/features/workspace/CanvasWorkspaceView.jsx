@@ -20,6 +20,7 @@ import {
   CANVAS_FIT_HORIZONTAL_PADDING_PX,
   clampCanvasZoom,
   canvasViewForCards,
+  clientToWorldPoint,
   setViewZoomAtViewportCenter,
 } from '../../lib/canvasView.js';
 import { getContextLimits } from '../../lib/agentContextContent.js';
@@ -37,6 +38,7 @@ import {
 import { SyncHoldingTray } from '../../components/SyncHoldingTray.jsx';
 import { PrimitiveTableModal } from '../../components/PrimitiveTableModal.jsx';
 import { NewNoteDialog } from '../../components/NewNoteDialog.jsx';
+import { NewTaskDialog } from '../../components/NewTaskDialog.jsx';
 import { AddLinkDialog } from '../../components/AddLinkDialog.jsx';
 import { CreateTaskDialog } from '../../components/CreateTaskDialog.jsx';
 import { Canvas } from '../../components/Canvas.jsx';
@@ -47,6 +49,7 @@ import { ChangeFolderDialog } from '../../components/ChangeFolderDialog.jsx';
 import { SyncConfirm } from '../../components/SyncConfirm.jsx';
 import { CanvasChrome } from '../../components/CanvasChrome.jsx';
 import { SystemArchitectureModal } from '../../components/SystemArchitectureModal.jsx';
+import { DiagnosticsCanvasView } from '../diagnostics/DiagnosticsCanvasView.jsx';
 import { ProjectDeleteConfirm } from '../../components/ProjectDeleteConfirm.jsx';
 import { DeleteLinkConfirm } from '../../components/DeleteLinkConfirm.jsx';
 import { ProjectArchiveLastConfirm } from '../../components/ProjectArchiveLastConfirm.jsx';
@@ -59,8 +62,13 @@ import { patchFlowCard } from '../flow/domain/flowDocument.js';
 import { CreateLiveArtifactDialog } from '../live/components/CreateLiveArtifactDialog.jsx';
 import { CreateAgentDialog } from '../agents/components/CreateAgentDialog.jsx';
 import { AgentControlRoom } from '../agents/components/AgentControlRoom.jsx';
+import { CreateBeatAgentDialog } from '../music/agents/beat/components/CreateBeatAgentDialog.jsx';
+import { BeatAgentFullscreen } from '../music/agents/beat/components/BeatAgentFullscreen.jsx';
+import { CreateSonicStudioDialog } from '../sonicStudio/components/CreateSonicStudioDialog.jsx';
+import { AddMenu, shouldOpenCanvasAddMenu } from '../../components/AddMenu.jsx';
+import { resolveNewCardPosition } from './resolveNewCardPosition.js';
 import { executeAgent } from '../agents/api/agentsApi.js';
-import { generatedImageCardFromOutput } from '../agents/domain/agentArtifact.js';
+import { completeAgentImageGeneration } from '../agents/domain/completeAgentImageGeneration.js';
 import { resolveAgentReferenceImages } from '../agents/domain/referenceImages.js';
 
 const ARTIFACT_AUDIT_RETRY_MS = 500;
@@ -128,6 +136,8 @@ export function CanvasWorkspaceView({
     requestFolder,
     importFilesToDock,
     beginChangeFolder,
+    folderPresentKeys,
+    setFolderPresentKeys,
   } = folder;
 
   const {
@@ -161,10 +171,12 @@ export function CanvasWorkspaceView({
     canvasViewportSize,
     setCanvasViewportSize,
     savingNote,
+    savingTask,
     savingLink,
     savingFlow,
     savingLive,
     savingAgent,
+    savingSonicStudio,
     savingCardId,
     setCanvasView,
     fitCanvasViewToCards,
@@ -183,14 +195,20 @@ export function CanvasWorkspaceView({
     handleUpdateVersion,
     handleNoteSaveStatus,
     handleInlineSaveUserNote,
+    handleInlineSaveUserTask,
     handleInlineSaveMarkdown,
     handleInlineSaveBookmark,
     handleSaveNoteToProject,
+    handleSaveTaskToProject,
     handleSaveNewNote,
+    handleSaveNewTask,
     handleSaveNewLink,
     handleSaveNewFlow,
     handleSaveNewLive,
     handleSaveNewAgent,
+    handleSaveNewBeatAgent,
+    handleSaveNewSonicStudio,
+    handleUpdateSonicStudioCard,
     appendGeneratedCards,
     handleFlowCardRefresh,
     removeCard,
@@ -280,15 +298,34 @@ export function CanvasWorkspaceView({
       if (outputs.length) {
         const baseX = (card?.x ?? 100) + (card?.w ?? card?.width ?? 240) + 60;
         const baseY = card?.y ?? 100;
-        const outputCards = outputs.map((output, index) =>
-          generatedImageCardFromOutput(output, {
-            x: baseX + (index % 2) * 300,
-            y: baseY + Math.floor(index / 2) * 250,
-          }),
-        );
-        await appendGeneratedCards(outputCards);
+        const positions = outputs.map((output, index) => ({
+          x: baseX + (index % 2) * 300,
+          y: baseY + Math.floor(index / 2) * 250,
+        }));
+        const { folderWriteOk } = await completeAgentImageGeneration({
+          folderHandle,
+          folderPresentKeys,
+          setFolderPresentKeys,
+          outputs,
+          positions,
+          executionId: result.execution?.id,
+          agentArtifactRef: { id: agentId, type: 'artifact' },
+          clusterId,
+          projectId: effectiveProjectId,
+          projectName: state.projectName,
+          appendGeneratedCards,
+          refreshGraph,
+        });
+        if (folderHandle && !folderWriteOk) {
+          setSyncStatus({
+            toast: `Generated ${outputs.length} image${outputs.length === 1 ? '' : 's'}, but folder save was denied or failed.`,
+          });
+          setTimeout(() => setSyncStatus(null), 7000);
+          return;
+        }
+      } else {
+        await refreshGraph?.({ clusterId, projectId: effectiveProjectId, force: true });
       }
-      await refreshGraph?.({ clusterId, projectId: effectiveProjectId, force: true });
       setSyncStatus({ toast: `Generated ${outputs.length || 0} image${outputs.length === 1 ? '' : 's'}.` });
       setTimeout(() => setSyncStatus(null), 5000);
     } catch (error) {
@@ -303,9 +340,12 @@ export function CanvasWorkspaceView({
     clusterId,
     effectiveProjectId,
     folderHandle,
+    folderPresentKeys,
     refreshGraph,
+    setFolderPresentKeys,
     setSyncStatus,
     state.cards,
+    state.projectName,
   ]);
 
   const {
@@ -491,6 +531,8 @@ export function CanvasWorkspaceView({
     setSearchQuery,
     architectureOpen,
     setArchitectureOpen,
+    diagnosticsOpen,
+    setDiagnosticsOpen,
     changeFolderDialog,
     setChangeFolderDialog,
     projectDeleteTarget,
@@ -503,6 +545,8 @@ export function CanvasWorkspaceView({
     setPrimitiveTableOpen,
     newNoteOpen,
     setNewNoteOpen,
+    newTaskOpen,
+    setNewTaskOpen,
     addLinkOpen,
     setAddLinkOpen,
     createTaskOpen,
@@ -511,9 +555,99 @@ export function CanvasWorkspaceView({
 
   const [createLiveOpen, setCreateLiveOpen] = useState(false);
   const [createAgentOpen, setCreateAgentOpen] = useState(false);
+  const [createBeatAgentOpen, setCreateBeatAgentOpen] = useState(false);
+  const [createSonicStudioOpen, setCreateSonicStudioOpen] = useState(false);
   const isMobile = useIsMobile();
   const [createFlowOpen, setCreateFlowOpen] = useState(false);
   const [deleteLinkTarget, setDeleteLinkTarget] = useState(null);
+  const pendingCardPlacementRef = useRef(null);
+  const [addMenu, setAddMenu] = useState({
+    open: false,
+    variant: 'button',
+    anchor: null,
+  });
+
+  const closeAddMenu = useCallback(() => {
+    setAddMenu({ open: false, variant: 'button', anchor: null });
+  }, []);
+
+  const openAddMenuFromButton = useCallback((anchor) => {
+    pendingCardPlacementRef.current = null;
+    setAddMenu({ open: true, variant: 'button', anchor });
+  }, []);
+
+  const consumeCardPosition = useCallback(({
+    mode = 'grid',
+    offset = { x: 0, y: 0 },
+  } = {}) => {
+    const pending = pendingCardPlacementRef.current;
+    pendingCardPlacementRef.current = null;
+    const view = state.canvasView ?? { x: 0, y: 0, zoom: 1 };
+    const resolved = resolveNewCardPosition({
+      pendingPlacement: pending,
+      cardCount: state.cards.length,
+      canvasView: view,
+      viewportSize: canvasViewportSize,
+      offset,
+      mode,
+    });
+    return { x: resolved.x, y: resolved.y };
+  }, [state.canvasView, state.cards.length, canvasViewportSize]);
+
+  const handleAddMenuSelect = useCallback((itemId) => {
+    switch (itemId) {
+      case 'sonic':
+        setCreateSonicStudioOpen(true);
+        break;
+      case 'beat':
+        setCreateBeatAgentOpen(true);
+        break;
+      case 'agent':
+        setCreateAgentOpen(true);
+        break;
+      case 'live':
+        setCreateLiveOpen(true);
+        break;
+      case 'flow':
+        setCreateFlowOpen(true);
+        break;
+      case 'link':
+        setAddLinkOpen(true);
+        break;
+      case 'task':
+        setNewTaskOpen(true);
+        break;
+      case 'note':
+        setNewNoteOpen(true);
+        break;
+      default:
+        break;
+    }
+  }, [
+    setAddLinkOpen,
+    setCreateBeatAgentOpen,
+    setCreateSonicStudioOpen,
+    setCreateAgentOpen,
+    setCreateLiveOpen,
+    setCreateFlowOpen,
+    setNewNoteOpen,
+    setNewTaskOpen,
+  ]);
+
+  const handleCanvasContextMenu = useCallback((event) => {
+    if (!shouldOpenCanvasAddMenu(event)) return;
+    event.preventDefault();
+    const rect = canvasElement?.getBoundingClientRect();
+    if (!rect) return;
+    const view = state.canvasView ?? { x: 0, y: 0, zoom: 1 };
+    const world = clientToWorldPoint(view, rect, event.clientX, event.clientY);
+    pendingCardPlacementRef.current = world;
+    setAddMenu({
+      open: true,
+      variant: 'context',
+      anchor: { clientX: event.clientX, clientY: event.clientY },
+    });
+  }, [canvasElement, state.canvasView]);
 
   const requestDeleteCard = useCallback((id) => {
     const card = state.cards.find((c) => c.id === id);
@@ -625,6 +759,21 @@ export function CanvasWorkspaceView({
     if (card?.id) setOpenCardId(card.id);
   }, [state.cards, setOpenCardId]);
 
+  const handleOpenLatestOutput = useCallback(({ artifactId }) => {
+    if (!artifactId) return;
+    const outputCard = state.cards.find((entry) => artifactIdForCanvasCard(entry) === artifactId);
+    closeOpenCard();
+    if (outputCard) {
+      openCardOrExternalLink(outputCard.id);
+      return;
+    }
+    openInspector({ type: 'artifact', id: artifactId });
+  }, [closeOpenCard, openCardOrExternalLink, openInspector, state.cards]);
+
+  const userTaskCards = useMemo(
+    () => state.cards.filter((card) => card.type === 'user_task'),
+    [state.cards],
+  );
   const openCard = openCardId ? state.cards.find(c => c.id === openCardId) : null;
   const cardsRef = useRef(state.cards);
   const openCardIdRef = useRef(openCardId);
@@ -852,6 +1001,7 @@ export function CanvasWorkspaceView({
           projectName={state.projectName}
           onPatchCardVersion={handleUpdateVersion}
           onInlineSaveUserNote={handleInlineSaveUserNote}
+          onInlineSaveUserTask={handleInlineSaveUserTask}
           onInlineSaveMarkdown={handleInlineSaveMarkdown}
           onInlineSaveBookmark={handleInlineSaveBookmark}
           savingCardId={savingCardId}
@@ -888,6 +1038,7 @@ export function CanvasWorkspaceView({
           agentChatTranscriptRevision={agentChatTranscriptRevision}
           agentChatThreadIndex={agentChatThreadIndex}
           agentChatConnectorId={singleConnectorId}
+          onCanvasContextMenu={handleCanvasContextMenu}
         />
       )}
 
@@ -928,14 +1079,22 @@ export function CanvasWorkspaceView({
           onOpenAgentMode={() => {
             setAgentPanelOpen(true);
           }}
-          onAddLive={() => setCreateLiveOpen(true)}
-          onAddAgent={() => setCreateAgentOpen(true)}
+          addMenuOpen={addMenu.open && addMenu.variant === 'button'}
+          addMenuAnchor={addMenu.variant === 'button' ? addMenu.anchor : null}
+          onOpenAddMenuButton={openAddMenuFromButton}
+          onCloseAddMenu={closeAddMenu}
+          onAddMenuSelect={handleAddMenuSelect}
           onOpenLiveArtifact={(liveArtifactId) => {
             const card = state.cards.find((item) =>
               item.liveArtifactId === liveArtifactId
               || item.versions?.some((version) => version.liveArtifactId === liveArtifactId),
             );
             if (card) setOpenCardId(card.id);
+          }}
+          userTaskCards={userTaskCards}
+          onOpenTaskCard={(cardId) => {
+            setOpenCardId(cardId);
+            setActiveCardId(cardId);
           }}
           workspaceTreeOpen={workspaceTreeOpen}
           onToggleWorkspaceTree={toggleWorkspaceTree}
@@ -1001,9 +1160,6 @@ export function CanvasWorkspaceView({
           folderLinked={folderConnected}
           showChangeFolder={showChangeFolder}
           onChangeFolder={() => setChangeFolderDialog(true)}
-          onNewNote={() => setNewNoteOpen(true)}
-          onAddLink={() => setAddLinkOpen(true)}
-          onAddFlow={() => setCreateFlowOpen(true)}
           onImportFiles={importFilesToDock}
           onSync={() => {
             void handleSyncClick();
@@ -1094,6 +1250,28 @@ export function CanvasWorkspaceView({
       {architectureOpen && (
         <SystemArchitectureModal
           onClose={() => setArchitectureOpen(false)}
+          onOpenDiagnostics={() => {
+            setArchitectureOpen(false);
+            setDiagnosticsOpen(true);
+          }}
+          runtime={{
+            generatedAt: new Date().toISOString(),
+            syncMode: getProjectSyncMode(),
+            serverSyncEnabled: isServerSyncEnabled(),
+            activeProjectId: effectiveProjectId,
+            syncLock,
+            clientRevision: effectiveProjectId ? getClientRevision(effectiveProjectId) : 0,
+            cardCount: state.cards.length,
+            stagedCount: stagedSyncCards.length,
+            folderLinked: folderConnected,
+            folderLinkPhase: folderLinkState.phase,
+          }}
+        />
+      )}
+
+      {diagnosticsOpen && (
+        <DiagnosticsCanvasView
+          onClose={() => setDiagnosticsOpen(false)}
           runtime={{
             generatedAt: new Date().toISOString(),
             syncMode: getProjectSyncMode(),
@@ -1327,16 +1505,34 @@ export function CanvasWorkspaceView({
       {newNoteOpen && (
         <NewNoteDialog
           onClose={() => setNewNoteOpen(false)}
-          onSave={handleSaveNewNote}
+          onSave={async (values) => {
+            const position = consumeCardPosition({ mode: 'grid' });
+            await handleSaveNewNote({ ...values, position });
+          }}
           saving={savingNote}
-          linkableCards={state.cards.filter((c) => c.type !== 'user_note')}
+          linkableCards={state.cards.filter((c) => c.type !== 'user_note' && c.type !== 'user_task')}
+        />
+      )}
+
+      {newTaskOpen && (
+        <NewTaskDialog
+          onClose={() => setNewTaskOpen(false)}
+          onSave={async (values) => {
+            const position = consumeCardPosition({ mode: 'grid' });
+            await handleSaveNewTask({ ...values, position });
+          }}
+          saving={savingTask}
+          linkableCards={state.cards.filter((c) => c.type !== 'user_task')}
         />
       )}
 
       {addLinkOpen && (
         <AddLinkDialog
           onClose={() => setAddLinkOpen(false)}
-          onSave={handleSaveNewLink}
+          onSave={async (values) => {
+            const position = consumeCardPosition({ mode: 'grid' });
+            await handleSaveNewLink({ ...values, position });
+          }}
           saving={savingLink}
           linkableCards={state.cards.filter((c) => c.type !== 'user_note' && c.type !== 'bookmark')}
         />
@@ -1347,13 +1543,27 @@ export function CanvasWorkspaceView({
           saving={savingFlow}
           onClose={() => setCreateFlowOpen(false)}
           onSave={async (values) => {
-            const view = state.canvasView ?? { x: 0, y: 0, zoom: 1 };
-            const position = {
-              x: (canvasViewportSize.width / 2 - view.x) / view.zoom - 180,
-              y: (canvasViewportSize.height / 2 - view.y) / view.zoom - 120,
-            };
+            const position = consumeCardPosition({
+              mode: 'center',
+              offset: { x: -180, y: -120 },
+            });
             const card = await handleSaveNewFlow({ ...values, position });
             if (card) setCreateFlowOpen(false);
+          }}
+        />
+      )}
+
+      {createSonicStudioOpen && (
+        <CreateSonicStudioDialog
+          saving={savingSonicStudio}
+          onClose={() => setCreateSonicStudioOpen(false)}
+          onSave={async (values) => {
+            const position = consumeCardPosition({
+              mode: 'center',
+              offset: { x: -190, y: -140 },
+            });
+            const card = await handleSaveNewSonicStudio({ ...values, position });
+            if (card) setCreateSonicStudioOpen(false);
           }}
         />
       )}
@@ -1363,11 +1573,10 @@ export function CanvasWorkspaceView({
           saving={savingLive}
           onClose={() => setCreateLiveOpen(false)}
           onSave={async (values) => {
-            const view = state.canvasView ?? { x: 0, y: 0, zoom: 1 };
-            const position = {
-              x: (canvasViewportSize.width / 2 - view.x) / view.zoom - 190,
-              y: (canvasViewportSize.height / 2 - view.y) / view.zoom - 140,
-            };
+            const position = consumeCardPosition({
+              mode: 'center',
+              offset: { x: -190, y: -140 },
+            });
             const card = await handleSaveNewLive({ ...values, position });
             if (card) setCreateLiveOpen(false);
           }}
@@ -1379,14 +1588,41 @@ export function CanvasWorkspaceView({
           saving={savingAgent}
           onClose={() => setCreateAgentOpen(false)}
           onSave={async (values) => {
-            const view = state.canvasView ?? { x: 0, y: 0, zoom: 1 };
-            const position = {
-              x: (canvasViewportSize.width / 2 - view.x) / view.zoom - 120,
-              y: (canvasViewportSize.height / 2 - view.y) / view.zoom - 120,
-            };
+            const position = consumeCardPosition({
+              mode: 'center',
+              offset: { x: -120, y: -120 },
+            });
             const card = await handleSaveNewAgent({ ...values, position });
             if (card) setCreateAgentOpen(false);
           }}
+        />
+      )}
+
+      {createBeatAgentOpen && (
+        <CreateBeatAgentDialog
+          saving={savingAgent}
+          onClose={() => setCreateBeatAgentOpen(false)}
+          onSave={async (values) => {
+            const position = consumeCardPosition({
+              mode: 'center',
+              offset: { x: -180, y: -130 },
+            });
+            const card = await handleSaveNewBeatAgent({ ...values, position });
+            if (card) setCreateBeatAgentOpen(false);
+          }}
+        />
+      )}
+
+      {addMenu.open && addMenu.variant === 'context' && (
+        <AddMenu
+          variant="context"
+          open
+          anchor={addMenu.anchor}
+          onClose={closeAddMenu}
+          onSelect={handleAddMenuSelect}
+          syncLock={syncLock}
+          activeProjectId={effectiveProjectId}
+          folderLinked={folderConnected}
         />
       )}
 
@@ -1413,14 +1649,58 @@ export function CanvasWorkspaceView({
           card={openCard}
           cards={state.cards}
           folderHandle={folderHandle}
+          folderPresentKeys={folderPresentKeys}
+          setFolderPresentKeys={setFolderPresentKeys}
+          clusterId={clusterId}
+          projectId={effectiveProjectId}
+          projectName={state.projectName}
+          refreshGraph={refreshGraph}
           onClose={closeOpenCard}
           onDeleteCard={requestDeleteCard}
           onUpdateCard={(updates) => updateCard(openCard.id, updates)}
           onAddOutputCards={appendGeneratedCards}
+          onOpenLatestOutput={handleOpenLatestOutput}
         />
       )}
 
-      {openCardId && openCard && openCard.type !== 'agent' && (
+      {openCardId && openCard?.type === 'music-agent' && (
+        <CardModal
+          card={openCard}
+          cards={state.cards}
+          clusterId={clusterId}
+          folderHandle={folderHandle}
+          folderConnected={folderConnected}
+          folderKeySet={folderKeySet}
+          projectId={effectiveProjectId}
+          projectName={state.projectName}
+          onClose={closeOpenCard}
+          onPinVersion={pinVersion}
+          onDeleteCard={requestDeleteCard}
+          onUpdateVersion={(versionNum, updatedVersion) =>
+            handleUpdateVersion(openCard.id, versionNum, updatedVersion)
+          }
+          missingFromFolder={false}
+          onUpdateCard={(updates) => updateCard(openCard.id, updates)}
+          onInspectArtifact={openInspector}
+          onFocusCard={(id) => {
+            setOpenCardId(id);
+            setActiveCardId(id);
+          }}
+          onGraphRefresh={refreshGraph}
+          onSaveStatus={handleNoteSaveStatus}
+          onRehydratePreview={rehydratePreview}
+          customContent={
+            <BeatAgentFullscreen
+              card={openCard}
+              projectId={effectiveProjectId}
+              folderHandle={folderHandle}
+              onUpdateCard={(updates) => updateCard(openCard.id, updates)}
+            />
+          }
+        />
+      )}
+
+      {openCardId && openCard && openCard.type !== 'agent' && openCard.type !== 'music-agent' && (
         <CardModal
           card={openCard}
           cards={state.cards}
@@ -1439,11 +1719,19 @@ export function CanvasWorkspaceView({
           }
           missingFromFolder={openCardMissingFromFolder}
           userNoteDisabled={openCardUserNoteDisabled}
+          userTaskDisabled={openCardUserNoteDisabled}
           bookmarkEditDisabled={!canEditCanvas}
           bookmarkSaving={savingCardId === openCard.id}
           onSaveBookmark={(payload) => handleInlineSaveBookmark(openCard, payload)}
           onSaveNoteToProject={(payload) => handleSaveNoteToProject(openCard, payload)}
-          onUpdateCard={(updates) => updateCard(openCard.id, updates)}
+          onSaveTaskToProject={(payload) => handleSaveTaskToProject(openCard, payload)}
+          onUpdateCard={(updates) => {
+            if (openCard.type === 'sonic_studio') {
+              void handleUpdateSonicStudioCard(openCard.id, updates);
+              return;
+            }
+            updateCard(openCard.id, updates);
+          }}
           onInspectArtifact={openInspector}
           onFocusCard={(id) => {
             setOpenCardId(id);

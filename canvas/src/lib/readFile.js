@@ -6,6 +6,7 @@ import { fileTypeFromExt } from './filename.js';
 import { putPreview } from './previewStore.js';
 import { sha256Hex } from './ingest/hashFile.js';
 import { parseAudioTags } from './audio/parseAudioTags.js';
+import { buildImageArtifactMetadata } from './image/imageArtifactMetadata.js';
 
 function blobToDataUrl(blob) {
   return new Promise((resolve) => {
@@ -36,6 +37,7 @@ export async function readFileEntry(entry, options = {}) {
   let objectUrl = null;
   let previewCacheKey = null;
   let audioMeta = null;
+  let imageMeta = null;
 
   if (
     type === 'markdown'
@@ -77,6 +79,13 @@ export async function readFileEntry(entry, options = {}) {
     if (file.size <= PREVIEW_MAX_BYTES_IMAGE_PDF) {
       const buf = await file.arrayBuffer();
       const blob = new Blob([buf], { type: file.type || 'application/octet-stream' });
+      if (type === 'image') {
+        imageMeta = buildImageArtifactMetadata(new Uint8Array(buf), {
+          mimeType: file.type || `image/${ext}`,
+          ext,
+          fileSizeBytes: file.size,
+        });
+      }
       if (cacheKey) {
         await putPreview(cacheKey, blob);
         previewCacheKey = cacheKey;
@@ -109,5 +118,6 @@ export async function readFileEntry(entry, options = {}) {
     previewStripped: false,
     previewCacheKey,
     audioMeta,
+    imageMeta,
   };
 }

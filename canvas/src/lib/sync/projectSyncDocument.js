@@ -94,7 +94,9 @@ function scheduleProjectRemoteSave(projectId, payload) {
       'debounced-push',
       () => pushProjectDocumentIfLocalNewerInner(id, doc),
       { scope: projectSyncScope(id) },
-    );
+    ).catch((error) => {
+      console.warn('Debounced project sync failed:', error);
+    });
   });
 }
 

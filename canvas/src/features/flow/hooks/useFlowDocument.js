@@ -16,6 +16,7 @@ import {
   normalizeFlowNodeForEditor,
   normalizeFlowEdgeForEditor,
 } from '../domain/flowDocument.js';
+import { normalizeFlowPaths } from '../domain/flowPaths.js';
 import {
   clearAutosaveTimer,
   FLOW_AUTOSAVE_DELAY_MS,
@@ -37,6 +38,7 @@ export function useFlowDocument({ flowId, folderHandle, onCardRefresh }) {
   const [nodes, setNodes] = useNodesState([]);
   const [edges, setEdges] = useEdgesState([]);
   const [viewport, setViewportState] = useState({ x: 0, y: 0, zoom: 1 });
+  const [paths, setPathsState] = useState([]);
   const [status, setStatus] = useState({ loading: true });
   const [dirty, setDirty] = useState(false);
   const savingRef = useRef(false);
@@ -44,7 +46,7 @@ export function useFlowDocument({ flowId, folderHandle, onCardRefresh }) {
   const clientIdRef = useRef(crypto.randomUUID());
   const dirtyRef = useRef(false);
   const revisionRef = useRef(0);
-  const latestRef = useRef({ flow: null, nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } });
+  const latestRef = useRef({ flow: null, nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 }, paths: [] });
   const saveTimerRef = useRef(null);
   const pendingSaveRef = useRef(false);
   const statusRef = useRef(status);
@@ -142,27 +144,45 @@ export function useFlowDocument({ flowId, folderHandle, onCardRefresh }) {
     markDirty();
   }, [markDirty]);
 
+  const updatePaths = useCallback((updater) => {
+    const previous = latestRef.current.paths;
+    const next = resolveUpdaterValue(updater, previous);
+    latestRef.current = { ...latestRef.current, paths: next };
+    setPathsState(next);
+    markDirty();
+  }, [markDirty]);
+
   const load = useCallback(async () => {
     clearSaveTimer();
     patchStatus({ loading: true });
+    const loadStartedDirty = dirtyRef.current;
     try {
       const loaded = await fetchFlow(flowId);
       const loadedNodes = (loaded.nodes ?? []).map((node) => normalizeFlowNodeForEditor(node));
       const loadedEdges = (loaded.edges ?? []).map((edge) => normalizeFlowEdgeForEditor(edge));
       const loadedViewport = loaded.viewport ?? { x: 0, y: 0, zoom: 1 };
+      const nodeIds = loadedNodes.map((node) => node.id);
+      const loadedPaths = normalizeFlowPaths(loaded.paths ?? [], nodeIds);
+      const pathsToApply = loadStartedDirty || dirtyRef.current
+        ? normalizeFlowPaths(latestRef.current.paths ?? [], nodeIds)
+        : loadedPaths;
       if (!mountedRef.current) return;
       latestRef.current = {
         flow: loaded,
         nodes: loadedNodes,
         edges: loadedEdges,
         viewport: loadedViewport,
+        paths: pathsToApply,
       };
       setFlow(loaded);
       setNodes(loadedNodes);
       setEdges(loadedEdges);
       setViewportState(loadedViewport);
-      dirtyRef.current = false;
-      setDirty(false);
+      setPathsState(pathsToApply);
+      if (!loadStartedDirty && !dirtyRef.current) {
+        dirtyRef.current = false;
+        setDirty(false);
+      }
       patchStatus({ loading: false });
     } catch (error) {
       patchStatus({ loading: false, error: formatFlowLoadError(error.message, strings.flow) });
@@ -216,22 +236,31 @@ export function useFlowDocument({ flowId, folderHandle, onCardRefresh }) {
     try {
       const snapshot = latestRef.current;
       const snapshotPath = folderHandle ? flowSnapshotPath(snapshot.flow) : snapshot.flow.snapshotPath;
+      const snapshotPayload = snapshotForSave(
+        { ...snapshot.flow, snapshotPath },
+        snapshot.nodes,
+        snapshot.edges,
+        snapshot.viewport,
+        snapshot.paths,
+      );
       const saved = await saveFlow(flowId, {
-        ...snapshotForSave(
-          { ...snapshot.flow, snapshotPath },
-          snapshot.nodes,
-          snapshot.edges,
-          snapshot.viewport,
-        ),
+        ...snapshotPayload,
         clientId: clientIdRef.current,
       });
       const fresh = latestRef.current;
+      const persistedPaths = normalizeFlowPaths(
+        saved.paths ?? snapshotPayload.paths ?? [],
+        fresh.nodes.map((node) => node.id),
+      );
+      latestRef.current = { ...fresh, paths: persistedPaths };
       const snapshotResult = await writeFlowSnapshot(folderHandle, {
         ...saved,
         nodes: fresh.nodes,
         edges: fresh.edges,
+        paths: persistedPaths,
         preview: previewFromFlow(fresh.nodes, fresh.edges, {
           description: fresh.flow?.description,
+          localNodeTypeColors: fresh.flow?.localNodeTypeColors,
         }),
       });
       syncFlowRevisionRefs(latestRef, revisionRef, saved);
@@ -240,6 +269,7 @@ export function useFlowDocument({ flowId, folderHandle, onCardRefresh }) {
         setFlow((currentFlow) => changedDuringSave
           ? { ...currentFlow, revision: saved.revision, updatedAt: saved.updatedAt }
           : saved);
+        setPathsState(persistedPaths);
         dirtyRef.current = changedDuringSave;
         setDirty(changedDuringSave);
         patchStatus({
@@ -252,7 +282,7 @@ export function useFlowDocument({ flowId, folderHandle, onCardRefresh }) {
       } else {
         dirtyRef.current = changedDuringSave;
         if (!changedDuringSave && latestRef.current.flow) {
-          latestRef.current = { ...latestRef.current, flow: saved };
+          latestRef.current = { ...latestRef.current, flow: saved, paths: persistedPaths };
         }
       }
       needsFollowUp = changedDuringSave;
@@ -338,6 +368,8 @@ export function useFlowDocument({ flowId, folderHandle, onCardRefresh }) {
     setNodes: updateNodes,
     edges,
     setEdges: updateEdges,
+    paths,
+    setPaths: updatePaths,
     viewport,
     setViewport: updateViewport,
     status,

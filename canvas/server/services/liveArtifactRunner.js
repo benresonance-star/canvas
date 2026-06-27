@@ -30,7 +30,7 @@ export async function runLiveArtifact(id, {
       && (!output.meaningfulChangeDetected
         || output.changeScore < live.minimumChangeThreshold);
     if (shouldSkip) {
-      await finishLiveRunSkipped(runId, output.changeScore, output);
+      await finishLiveRunSkipped(runId, output.changeScore, output, sourceContext.length);
       return {
         status: 'skipped_no_meaningful_change',
         runId,

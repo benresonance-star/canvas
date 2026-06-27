@@ -4,7 +4,9 @@ const EXTENSION_LANGUAGE = {
   cjs: 'javascript',
   js: 'javascript',
   jsx: 'javascript',
+  json: 'json',
   mjs: 'javascript',
+  py: 'python',
   ts: 'typescript',
   tsx: 'typescript',
 };

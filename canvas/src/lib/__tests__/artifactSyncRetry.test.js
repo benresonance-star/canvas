@@ -78,4 +78,75 @@ describe('artifact sync retry', () => {
       cardKey: 'links__example-com',
     });
   });
+
+  it('retries JSON and Python code artifacts with concrete language metadata', async () => {
+    const ingestArtifacts = vi.fn(async () => ({
+      clusterId: 'cluster-1',
+      artifacts: [{
+        artifactRef: { id: 'artifact-code', type: 'artifact' },
+        content_hash: 'hash-code',
+      }],
+    }));
+    vi.doMock('../primitivesApi.js', () => ({
+      isApiAvailable: vi.fn(async () => true),
+      ensureClusterForProject: vi.fn(async () => ({ id: 'cluster-1' })),
+      ingestArtifacts,
+      createRelationship: vi.fn(async () => ({ created: true })),
+    }));
+
+    const { processArtifactSyncRetryEntry } = await import('../artifactSyncRetry.js');
+
+    await expect(processArtifactSyncRetryEntry({
+      kind: 'artifact',
+      projectId: 'project-1',
+      projectName: 'Project',
+      cardKey: 'data__settings',
+      cardType: 'code',
+      filename: 'data__settings-v1.json',
+      content: '{"ok":true}\n',
+      contentHash: 'hash-code',
+    })).resolves.toMatchObject({
+      ok: true,
+      artifactRef: { id: 'artifact-code', type: 'artifact' },
+    });
+
+    expect(ingestArtifacts).toHaveBeenCalledWith('project-1', {
+      files: [expect.objectContaining({
+        type: 'doc',
+        payload_text: '{"ok":true}\n',
+        metadata: expect.objectContaining({
+          canvas_kind: 'code',
+          file_kind: 'code',
+          language: 'json',
+          ext: 'json',
+        }),
+      })],
+      relationships: [],
+    });
+
+    await processArtifactSyncRetryEntry({
+      kind: 'artifact',
+      projectId: 'project-1',
+      projectName: 'Project',
+      cardKey: 'scripts__runner',
+      cardType: 'code',
+      filename: 'scripts__runner-v1.py',
+      content: 'def run():\n    return True\n',
+      contentHash: 'hash-code',
+    });
+
+    expect(ingestArtifacts).toHaveBeenLastCalledWith('project-1', {
+      files: [expect.objectContaining({
+        type: 'doc',
+        payload_text: 'def run():\n    return True\n',
+        metadata: expect.objectContaining({
+          canvas_kind: 'code',
+          file_kind: 'code',
+          language: 'python',
+          ext: 'py',
+        }),
+      })],
+      relationships: [],
+    });
+  });
 });

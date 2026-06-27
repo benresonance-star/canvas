@@ -75,3 +75,8 @@ export async function executeAgent(id, input) {
 export async function fetchAgentExecutions(id) {
   return (await request(`/agents/${encodeURIComponent(id)}/executions`)).executions;
 }
+
+export async function fetchAgentModelOptions(provider = 'local') {
+  const query = new URLSearchParams({ provider }).toString();
+  return request(`/agents/model-options?${query}`);
+}

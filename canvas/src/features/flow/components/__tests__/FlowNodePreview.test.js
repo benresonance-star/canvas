@@ -39,6 +39,7 @@ const editorContext = {
   readOnly: false,
   localNodeTypeColors: {},
   setLocalNodeTypeColor: vi.fn(),
+  pathRunStateByStepId: new Map(),
 };
 
 function renderPreview(props, context = editorContext) {

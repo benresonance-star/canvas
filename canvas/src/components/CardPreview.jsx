@@ -10,6 +10,8 @@ import { NotePreviewFrame } from './NotePreviewFrame.jsx';
 import { AgentChatThreadView } from './AgentChatThreadView.jsx';
 import { useAgentChatCardMessages } from '../hooks/useAgentChatCardMessages.js';
 import { UserNoteInlineEditor } from './UserNoteInlineEditor.jsx';
+import { UserTaskInlineEditor } from './UserTaskInlineEditor.jsx';
+import { parseUserTask } from '../features/tasks/domain/userTaskContent.js';
 import { CodePreviewFrame } from './CodePreviewFrame.jsx';
 import { PdfPreviewFrame } from './PdfPreviewFrame.jsx';
 import { SpreadsheetArtifactView } from './SpreadsheetArtifactView.jsx';
@@ -20,6 +22,8 @@ import { audioSkinUsesDarkText, resolveAudioSkinColor } from '../lib/audioSkin.j
 import { buildHtmlPreviewSrcDoc } from '../lib/htmlPreviewDocument.js';
 import { FlowPreview } from '../features/flow/components/FlowPreview.jsx';
 import { LiveArtifactView } from '../features/live/components/LiveArtifactView.jsx';
+import { BeatAgentPreview } from '../features/music/agents/beat/components/BeatAgentPreview.jsx';
+import { SonicStudioPreview } from '../features/sonicStudio/components/SonicStudioPreview.jsx';
 import { Bot } from 'lucide-react';
 
 export function CardPreview({
@@ -31,12 +35,15 @@ export function CardPreview({
   minimalChrome = false,
   onRehydratePreview,
   onInlineSaveUserNote,
+  onInlineSaveUserTask,
   onInlineSaveMarkdown,
   onInlineSaveBookmark,
   userNoteSaving = false,
+  userTaskSaving = false,
   markdownSaving = false,
   bookmarkSaving = false,
   userNoteDisabled = false,
+  userTaskDisabled = false,
   markdownEditDisabled = false,
   bookmarkEditDisabled = false,
   userNoteEditTitle,
@@ -47,6 +54,8 @@ export function CardPreview({
   agentChatThreadIndex = null,
   agentChatConnectorId = null,
   folderHandle = null,
+  projectId = null,
+  onUpdateCard = null,
   cardsById = null,
 }) {
   const [imgKey, setImgKey] = useState(0);
@@ -83,7 +92,11 @@ export function CardPreview({
   }, [card.id, pinned, onRehydratePreview]);
 
   const localTranscript = pinned?.content?.trim() || '';
-  const mediaSrc = pinned?.objectUrl || pinned?.dataUrl || null;
+  const imageArtifactSrc =
+    card.type === 'image' && artifactPayload.text?.startsWith('data:image/')
+      ? artifactPayload.text
+      : null;
+  const mediaSrc = pinned?.objectUrl || pinned?.dataUrl || imageArtifactSrc || null;
   const msgClass = compact ? 'text-xs' : 'text-sm';
   const hintClass = compact ? 'text-[9px]' : 'text-[10px]';
 
@@ -118,6 +131,20 @@ export function CardPreview({
         compact={compact}
       />
     );
+  }
+  if (cardType === 'music-agent') {
+    return (
+      <BeatAgentPreview
+        card={card}
+        projectId={projectId || card.projectId}
+        folderHandle={folderHandle}
+        onUpdateCard={onUpdateCard}
+        compact={compact}
+      />
+    );
+  }
+  if (cardType === 'sonic_studio') {
+    return <SonicStudioPreview card={card} compact={compact} />;
   }
   if (cardType === 'agent') {
     return (
@@ -223,6 +250,51 @@ export function CardPreview({
             }}
           >
             {strings.userNote.tapToEdit}
+          </button>
+        )}
+      </div>
+    );
+  }
+  if (cardType === 'user_task') {
+    const noteEditKey = `${card.id}:${pinned.version}`;
+    const noteEditing = isActive && noteEditingKey === noteEditKey;
+    const taskContent = parseUserTask(pinned.content || '').body;
+
+    if (noteEditing && onInlineSaveUserTask && !compact) {
+      return (
+        <UserTaskInlineEditor
+          content={pinned.content}
+          initialTitle={userNoteInitialTitle ?? card.name}
+          title={userNoteEditTitle ?? card.name}
+          disabled={userTaskDisabled}
+          saving={userTaskSaving}
+          onSave={async (payload) => {
+            const ok = await onInlineSaveUserTask(payload);
+            if (ok) setNoteEditingKey(null);
+          }}
+        />
+      );
+    }
+
+    return (
+      <div className="h-full w-full min-h-0 flex flex-col">
+        <NotePreviewFrame
+          content={taskContent}
+          contentKey={`${card.id}-v${pinned.version}-${cardType}`}
+          isActive={isActive}
+        />
+        {isActive && !compact && !userTaskDisabled && onInlineSaveUserTask && (
+          <button
+            type="button"
+            className="sans text-[9px] text-muted hover:text-accent text-center py-1 shrink-0 pointer-events-auto"
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={() => {
+              setNoteEditingKey(noteEditKey);
+            }}
+          >
+            {strings.userTask.tapToEdit}
           </button>
         )}
       </div>

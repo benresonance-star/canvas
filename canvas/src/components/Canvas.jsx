@@ -21,6 +21,8 @@ import { computeUserNoteDisabled } from '../lib/filename.js';
 import { ensureCardArtifactRef } from '../lib/ensureCardArtifactRef.js';
 import { resolveThreadForCard } from '../lib/agentChatThreads.js';
 import { buildClusterHulls } from '../lib/graph/clusterHull.js';
+import { cardLinkBounds, resolveLinkDragAnchors } from '../lib/graph/canvasEdgeGeometry.js';
+import { Position } from '@xyflow/react';
 import { EMPTY_CLUSTER_HULL_SOURCE } from '../lib/clusterProjectContext.js';
 import {
   computeDragPosition,
@@ -31,8 +33,8 @@ import {
   isCanvasPanModifier,
 } from '../lib/canvasPanModifier.js';
 
-const PROMPT_INPUT_CARD_TYPES = new Set(['user_note', 'markdown', 'note']);
-const REFERENCE_INPUT_CARD_TYPES = new Set(['image', 'file', 'pdf', 'doc', 'other']);
+const PROMPT_INPUT_CARD_TYPES = new Set(['user_note', 'user_task', 'markdown', 'note']);
+const REFERENCE_INPUT_CARD_TYPES = new Set(['image', 'file', 'pdf', 'doc', 'other', 'code']);
 const LINKABLE_CARD_TYPES = new Set([
   ...PROMPT_INPUT_CARD_TYPES,
   ...REFERENCE_INPUT_CARD_TYPES,
@@ -82,6 +84,7 @@ export function Canvas({
   projectName,
   onPatchCardVersion,
   onInlineSaveUserNote,
+  onInlineSaveUserTask,
   onInlineSaveMarkdown,
   onInlineSaveBookmark,
   savingCardId,
@@ -108,6 +111,7 @@ export function Canvas({
   onCommitCardPosition,
   onCommitCanvasView,
   onAgentChatCardActivate,
+  onCanvasContextMenu,
   agentChatLiveMessages = null,
   agentChatLiveCardId = null,
   agentChatTranscriptRevision = 0,
@@ -722,10 +726,14 @@ export function Canvas({
       const hover = cardAtWorldPoint(world.x, world.y);
       setLinkDrag((prev) => {
         if (!prev) return prev;
+        const sourceCard = cardsForLink.find((c) => c.id === prev.sourceCardId);
+        if (!sourceCard) return prev;
+        const sourceBounds = cardLinkBounds(sourceCard);
+        const targetBounds = hover ? cardLinkBounds(hover) : null;
+        const anchors = resolveLinkDragAnchors(sourceBounds, targetBounds, world);
         return {
           ...prev,
-          toX: world.x,
-          toY: world.y,
+          ...anchors,
           active: true,
           hoverCardId: hover?.id ?? null,
         };
@@ -744,7 +752,7 @@ export function Canvas({
       window.removeEventListener('pointerup', onEnd);
       window.removeEventListener('pointercancel', onEnd);
     };
-  }, [linkDrag, clientToWorld, cardAtWorldPoint, finishLinkDrag]);
+  }, [linkDrag, clientToWorld, cardAtWorldPoint, finishLinkDrag, cardsForLink]);
 
   useEffect(() => {
     if (!draggingCard) return undefined;
@@ -916,14 +924,16 @@ export function Canvas({
     e.preventDefault();
     setDraggingCard(null);
     endCardDragSession(canvasRef.current);
-    const { w, h } = getCardPixelSize(card);
     const world = clientToWorld(e.clientX, e.clientY);
+    const sourceBounds = cardLinkBounds(card);
     const next = {
       sourceCardId: card.id,
-      fromX: card.x + w,
-      fromY: card.y + h / 2,
+      fromX: sourceBounds.right,
+      fromY: sourceBounds.centerY,
       toX: world.x,
       toY: world.y,
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
       active: true,
       hoverCardId: null,
     };
@@ -1048,6 +1058,9 @@ export function Canvas({
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
       onMouseLeave={onMouseUp}
+      onContextMenu={(e) => {
+        onCanvasContextMenu?.(e);
+      }}
     >
       <div
         className="absolute inset-0 canvas-bg pointer-events-none"
@@ -1060,17 +1073,17 @@ export function Canvas({
           transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`,
         }}
       >
-        <CanvasEdgeLayer
-          variant="paths"
-          canvasEdges={canvasEdges}
-          linkDrag={linkDrag}
-        />
         <ClusterHullLayer
           mode="paths"
           hulls={clusterHulls}
           highlightedClusterId={highlightedClusterId}
           onHullSelect={onSelectCluster}
           onHullDoubleClick={onInspectCluster}
+        />
+        <CanvasEdgeLayer
+          variant="paths"
+          canvasEdges={canvasEdges}
+          linkDrag={linkDrag}
         />
         {displayCards.map(card => (
           <CanvasCard
@@ -1153,6 +1166,11 @@ export function Canvas({
                 ? (payload) => onInlineSaveUserNote(card, payload)
                 : undefined
             }
+            onInlineSaveUserTask={
+              onInlineSaveUserTask
+                ? (payload) => onInlineSaveUserTask(card, payload)
+                : undefined
+            }
             onInlineSaveMarkdown={
               onInlineSaveMarkdown
                 ? (payload) => onInlineSaveMarkdown(card, payload)
@@ -1165,6 +1183,7 @@ export function Canvas({
             }
             onUpdateCard={onUpdateCard}
             userNoteSaving={savingCardId === card.id}
+            userTaskSaving={savingCardId === card.id}
             markdownSaving={savingCardId === card.id}
             bookmarkSaving={savingCardId === card.id}
             agentChatLiveMessages={agentChatLiveMessages}
@@ -1173,7 +1192,14 @@ export function Canvas({
             agentChatThreadIndex={agentChatThreadIndex}
             agentChatConnectorId={agentChatConnectorId}
             folderHandle={folderHandle}
+            projectId={projectId}
             userNoteDisabled={computeUserNoteDisabled({
+              folderHandle,
+              folderConnected,
+              folderKeySet,
+              cardKey: card.key,
+            })}
+            userTaskDisabled={computeUserNoteDisabled({
               folderHandle,
               folderConnected,
               folderKeySet,

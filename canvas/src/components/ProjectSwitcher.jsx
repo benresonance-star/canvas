@@ -159,7 +159,7 @@ export function ProjectSwitcher({
         title={strings.projects.switcherLabel}
         aria-label={strings.projects.switcherLabel}
         aria-expanded={open}
-        className="sans p-1.5 text-muted hover:text-secondary transition rounded-md hover:bg-surface-muted/80"
+        className="sans p-1 text-muted hover:text-secondary transition rounded-md hover:bg-surface-muted/80"
       >
         <LayoutGrid size={15} strokeWidth={1.5} />
       </button>

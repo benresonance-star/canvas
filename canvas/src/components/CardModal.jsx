@@ -493,11 +493,11 @@ export function CardModal({
               }`}
               aria-label={strings.userTask.name}
             />
-          ) : (
+          ) : !isFlow ? (
             <div className={`serif text-xl truncate ${missingFromFolder ? 'text-danger' : ''}`}>
               {cardDisplayFilename(card)}
             </div>
-          )}
+          ) : null}
           {isUserNote && (
             <p className="sans text-[10px] text-on-overlay/60 mt-1">{strings.userNote.editHint}</p>
           )}

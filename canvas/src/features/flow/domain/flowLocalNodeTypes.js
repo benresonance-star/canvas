@@ -2,13 +2,15 @@ import {
   ExternalLink,
   FileText,
   GitBranch,
-  Workflow,
 } from 'lucide-react';
 
 export const FLOW_LOCAL_NODE_TYPE_ARTIFACT = 'artifact';
+export const FLOW_LOCAL_NODE_TYPE_DECISION = 'decision';
+
+/** @deprecated Stored as `step` in older documents; migrates to decision. */
 export const FLOW_LOCAL_NODE_TYPE_STEP = 'step';
 
-/** @typedef {'artifact' | 'step' | 'decision' | 'external_resource'} FlowLocalNodeTypeId */
+/** @typedef {'artifact' | 'decision' | 'external_resource'} FlowLocalNodeTypeId */
 
 /** @type {ReadonlySet<string>} */
 export const LEGACY_FLOW_LOCAL_NODE_TYPE_IDS = new Set([
@@ -18,6 +20,7 @@ export const LEGACY_FLOW_LOCAL_NODE_TYPE_IDS = new Set([
   'agent_skill',
   'agent_rules',
   'tool',
+  'step',
 ]);
 
 /** @type {ReadonlyArray<{ id: FlowLocalNodeTypeId, label: string, icon: import('react').ComponentType<{ size?: number, className?: string, strokeWidth?: number }>, defaultTitle: string, iconClassName: string }>} */
@@ -28,13 +31,6 @@ export const FLOW_LOCAL_NODE_TYPES = Object.freeze([
     icon: FileText,
     defaultTitle: 'Artifact',
     iconClassName: 'text-accent',
-  },
-  {
-    id: 'step',
-    label: 'Step',
-    icon: Workflow,
-    defaultTitle: 'Step',
-    iconClassName: 'text-secondary',
   },
   {
     id: 'decision',
@@ -55,13 +51,19 @@ export const FLOW_LOCAL_NODE_TYPES = Object.freeze([
 const FLOW_LOCAL_NODE_TYPE_IDS = new Set(FLOW_LOCAL_NODE_TYPES.map((entry) => entry.id));
 
 /**
- * Maps legacy/unknown node types to Artifact; preserves the four current types.
+ * Maps legacy/unknown node types to Artifact; migrates retired `step` to Decision.
  * @param {unknown} value
  * @returns {FlowLocalNodeTypeId}
  */
 export function normalizeFlowLocalNodeType(value) {
+  if (value === FLOW_LOCAL_NODE_TYPE_STEP) {
+    return FLOW_LOCAL_NODE_TYPE_DECISION;
+  }
   if (typeof value === 'string' && FLOW_LOCAL_NODE_TYPE_IDS.has(value)) {
     return /** @type {FlowLocalNodeTypeId} */ (value);
+  }
+  if (typeof value === 'string' && LEGACY_FLOW_LOCAL_NODE_TYPE_IDS.has(value)) {
+    return FLOW_LOCAL_NODE_TYPE_ARTIFACT;
   }
   return FLOW_LOCAL_NODE_TYPE_ARTIFACT;
 }
@@ -76,13 +78,13 @@ export function flowLocalNodeTypeMeta(value) {
 }
 
 /**
- * Default type for newly created local nodes (quick-add).
+ * Default type for newly created local steps (quick-add).
  * @param {unknown} [requestedType]
  * @returns {FlowLocalNodeTypeId}
  */
 export function resolveNewFlowLocalNodeType(requestedType) {
-  if (typeof requestedType === 'string' && FLOW_LOCAL_NODE_TYPE_IDS.has(requestedType)) {
-    return /** @type {FlowLocalNodeTypeId} */ (requestedType);
+  if (typeof requestedType === 'string' && requestedType.trim()) {
+    return normalizeFlowLocalNodeType(requestedType);
   }
-  return FLOW_LOCAL_NODE_TYPE_STEP;
+  return FLOW_LOCAL_NODE_TYPE_DECISION;
 }

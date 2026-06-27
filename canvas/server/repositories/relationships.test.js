@@ -47,6 +47,10 @@ describe('insertRelationshipIfAbsent', () => {
     expect(result.relationship.from_ref).toEqual(fromRef);
     expect(result.relationship.to_ref).toEqual(toRef);
     expect(query).toHaveBeenCalledTimes(1);
+    expect(addClusterMember).toHaveBeenCalledWith('cluster-1', {
+      id: existingRow.id,
+      type: 'relationship',
+    });
   });
 
   it('allows different relationship types between same endpoints', async () => {

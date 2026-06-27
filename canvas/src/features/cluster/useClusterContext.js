@@ -14,7 +14,10 @@ import {
   EMPTY_CLUSTER_HULL_SOURCE,
 } from '../../lib/clusterProjectContext.js';
 import { artifactMembersFromCards } from '../../lib/clusterMembers.js';
-import { loadCanvasGraph } from '../../lib/graph/clusterGraph.js';
+import {
+  buildArtifactToCardMap,
+  loadCanvasGraph,
+} from '../../lib/graph/clusterGraph.js';
 
 export function useClusterContext({
   refs: {
@@ -24,6 +27,7 @@ export function useClusterContext({
     refreshGraphRef,
     applyClusterContextForProjectRef,
     refreshClusterApiHealthRef,
+    refreshProjectClusterStateRef,
   },
   deps: {
     loaded,
@@ -86,11 +90,33 @@ export function useClusterContext({
     return status;
   }, []);
 
+  const countClusterHullMatches = useCallback((clusters, membersByClusterId, cards) => {
+    const artifactMap = buildArtifactToCardMap(cards ?? []);
+    let memberCount = 0;
+    let matchedCardCount = 0;
+    for (const cluster of clusters ?? []) {
+      const members = membersByClusterId.get(cluster.id) || [];
+      for (const member of members) {
+        if (member.type !== 'artifact') continue;
+        memberCount += 1;
+        if (artifactMap.has(member.id)) matchedCardCount += 1;
+      }
+    }
+    const cardsWithArtifactRefs = artifactMap.size;
+    return { memberCount, matchedCardCount, cardsWithArtifactRefs };
+  }, []);
+
   const loadClusterHullSource = useCallback(async (projectIdOverride) => {
     const projectId = projectIdOverride ?? activeProjectIdRef.current;
     if (!projectId) {
       setClusterHullSource(EMPTY_CLUSTER_HULL_SOURCE);
-      return { ok: true };
+      return {
+        ok: true,
+        subclusterCount: 0,
+        memberCount: 0,
+        matchedCardCount: 0,
+        cardsWithArtifactRefs: 0,
+      };
     }
     try {
       const { clusters } = await listSubClusters(projectId);
@@ -101,14 +127,37 @@ export function useClusterContext({
           membersByClusterId.set(c.id, members || []);
         }),
       );
-      setClusterHullSource({ clusters: clusters || [], membersByClusterId });
-      return { ok: true };
+      const safeClusters = clusters || [];
+      const counts = countClusterHullMatches(
+        safeClusters,
+        membersByClusterId,
+        stateRef.current.cards ?? [],
+      );
+      setClusterHullSource({ clusters: safeClusters, membersByClusterId });
+      if (
+        import.meta.env?.DEV
+        && safeClusters.length > 0
+        && counts.memberCount > 0
+        && counts.cardsWithArtifactRefs > 0
+        && counts.matchedCardCount === 0
+      ) {
+        console.info('[cluster] hull members did not match canvas cards', {
+          projectId,
+          subclusterCount: safeClusters.length,
+          ...counts,
+        });
+      }
+      return {
+        ok: true,
+        subclusterCount: safeClusters.length,
+        ...counts,
+      };
     } catch (e) {
       setClusterHullSource(EMPTY_CLUSTER_HULL_SOURCE);
       const msg = e?.message || strings.cluster.hullsLoadFailed;
       return { ok: false, error: msg };
     }
-  }, []);
+  }, [countClusterHullMatches]);
 
   const refreshCanvasEdges = useCallback(async (opts = {}) => {
     const {
@@ -164,7 +213,11 @@ export function useClusterContext({
         reportClusterError(hullResult.error);
       }
       setClusterInspectorReload((k) => k + 1);
-      return;
+      return {
+        ok: hullResult?.ok !== false,
+        clusterId: cid ?? null,
+        ...(hullResult ?? {}),
+      };
     }
     try {
       const [graphResult, hullResult] = await Promise.all([
@@ -177,6 +230,13 @@ export function useClusterContext({
       if (hullResult?.ok === false && hullResult.error) {
         reportClusterError(hullResult.error);
       }
+      setClusterInspectorReload((k) => k + 1);
+      setWorkspaceTreeReloadKey((k) => k + 1);
+      return {
+        ok: hullResult?.ok !== false,
+        clusterId: cid,
+        ...(hullResult ?? {}),
+      };
     } catch (e) {
       setCanvasEdges([]);
       setLinkCountByCardId(new Map());
@@ -186,54 +246,92 @@ export function useClusterContext({
       } else {
         reportClusterError(e?.message);
       }
+      setClusterInspectorReload((k) => k + 1);
+      setWorkspaceTreeReloadKey((k) => k + 1);
+      return {
+        clusterId: cid,
+        error: e?.message || strings.cluster.hullsLoadFailed,
+        ...(hullResult ?? {}),
+        ok: false,
+      };
     }
-    setClusterInspectorReload((k) => k + 1);
-    setWorkspaceTreeReloadKey((k) => k + 1);
   }, [clusterId, loadClusterHullSource, reportClusterError]);
 
   useEffect(() => {
     refreshGraphRef.current = refreshGraph;
   }, [refreshGraph]);
 
-  const applyClusterContextForProject = useCallback(
-    async (projectId, projectName, { refresh = true } = {}) => {
+  const refreshProjectClusterState = useCallback(
+    async ({ projectId, projectName, force = true } = {}) => {
       if (!projectId) {
         clusterContextProjectIdRef.current = null;
         setClusterId(null);
-        return null;
+        return { ok: false, clusterId: null, error: 'projectId required' };
       }
       try {
         const healthStatus = await refreshClusterApiHealth();
         if (!healthStatus.available) {
           clusterContextProjectIdRef.current = projectId;
-          setClusterId(null);
-          return null;
+          return {
+            ok: false,
+            clusterId: clusterId ?? null,
+            error: strings.cluster.dbUnavailableBanner,
+            reason: healthStatus.reason,
+          };
         }
         const cid = await resolveWorkspaceClusterId(projectId, projectName);
         if (!cid) {
           reportClusterError(strings.cluster.workspaceClusterFailed);
           clusterContextProjectIdRef.current = projectId;
           setClusterId(null);
-          return null;
+          return {
+            ok: false,
+            clusterId: null,
+            error: strings.cluster.workspaceClusterFailed,
+          };
         }
         clusterContextProjectIdRef.current = projectId;
         setClusterId(cid);
-        if (refresh) {
-          await refreshGraphRef.current({
-            clusterId: cid,
-            projectId,
-            force: true,
-          });
-        }
-        return cid;
+        const refreshResult = await refreshGraphRef.current({
+          clusterId: cid,
+          projectId,
+          force,
+        });
+        return {
+          ok: refreshResult?.ok !== false,
+          clusterId: cid,
+          ...(refreshResult ?? {}),
+        };
       } catch (e) {
         reportClusterError(e?.message || strings.cluster.workspaceClusterFailed);
         clusterContextProjectIdRef.current = projectId;
         setClusterId(null);
-        return null;
+        return {
+          ok: false,
+          clusterId: null,
+          error: e?.message || strings.cluster.workspaceClusterFailed,
+        };
       }
     },
-    [refreshClusterApiHealth, reportClusterError],
+    [clusterId, refreshClusterApiHealth, reportClusterError],
+  );
+
+  useEffect(() => {
+    if (refreshProjectClusterStateRef) {
+      refreshProjectClusterStateRef.current = refreshProjectClusterState;
+    }
+  }, [refreshProjectClusterState, refreshProjectClusterStateRef]);
+
+  const applyClusterContextForProject = useCallback(
+    async (projectId, projectName, { refresh = true } = {}) => {
+      const result = await refreshProjectClusterState({
+        projectId,
+        projectName,
+        force: refresh,
+      });
+      return result.clusterId ?? null;
+    },
+    [refreshProjectClusterState],
   );
 
   const handleClusterRenamed = useCallback((renamedClusterId, name) => {

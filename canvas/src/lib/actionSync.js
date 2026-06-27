@@ -195,6 +195,8 @@ function schedulePlacementPushRetry(projectId, reason = 'structuralChange') {
       if (!payload) return;
       const beforePayload = getPriorPayloadForPatch(projectId);
       await pushPayloadForProject(projectId, payload, reason, null, beforePayload);
+    }).catch((error) => {
+      console.warn('Structural sync retry failed:', error);
     });
   }, 2000);
 }

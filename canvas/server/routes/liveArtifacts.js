@@ -5,6 +5,7 @@ import {
   getLiveArtifact,
   listLiveArtifacts,
   listLiveHistory,
+  listLiveRuns,
   listLiveSources,
   listProjectUpdates,
   markAllProjectUpdatesRead,
@@ -71,6 +72,15 @@ export function registerLiveArtifactRoutes(app, { requireDb }) {
     if (!requireDb(res)) return;
     try {
       res.json({ versions: await listLiveHistory(req.params.id, req.query.limit) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.get('/live-artifacts/:id/runs', async (req, res) => {
+    if (!requireDb(res)) return;
+    try {
+      res.json({ runs: await listLiveRuns(req.params.id, req.query.limit) });
     } catch (error) {
       sendError(res, error);
     }

@@ -8,6 +8,18 @@ function splitRelativePath(path) {
     .filter(Boolean);
 }
 
+export async function getDirectoryHandleAtPath(handle, relativePath, { create = false } = {}) {
+  const parts = splitRelativePath(relativePath);
+  if (!handle || parts.length === 0) {
+    throw new DOMException('Directory path unavailable', 'NotFoundError');
+  }
+  let dir = handle;
+  for (const segment of parts) {
+    dir = await dir.getDirectoryHandle(segment, { create });
+  }
+  return dir;
+}
+
 export async function getFileHandleAtPath(handle, relativePath, options) {
   const parts = splitRelativePath(relativePath);
   if (!handle || parts.length === 0) {
@@ -15,9 +27,25 @@ export async function getFileHandleAtPath(handle, relativePath, options) {
   }
   let dir = handle;
   for (const segment of parts.slice(0, -1)) {
-    dir = await dir.getDirectoryHandle(segment, { create: false });
+    dir = await dir.getDirectoryHandle(segment, { create: options?.create === true });
   }
   return dir.getFileHandle(parts[parts.length - 1], options);
+}
+
+export async function writeBinaryFileAtPath(handle, relativePath, bytes) {
+  const parts = splitRelativePath(relativePath);
+  if (!handle || parts.length === 0) {
+    throw new DOMException('File path unavailable', 'NotFoundError');
+  }
+  let dir = handle;
+  for (const segment of parts.slice(0, -1)) {
+    dir = await dir.getDirectoryHandle(segment, { create: true });
+  }
+  const fileHandle = await dir.getFileHandle(parts[parts.length - 1], { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(bytes);
+  await writable.close();
+  return relativePath;
 }
 
 export async function ensureWritePermission(handle) {
@@ -43,6 +71,12 @@ export async function writeTextFileToFolder(handle, filename, text) {
 }
 
 export async function writeUserNoteFile(handle, { prefix, name, body, version = 1 }) {
+  const filename = buildFilename({ prefix, name, version, ext: 'md' });
+  await writeTextFileToFolder(handle, filename, body);
+  return filename;
+}
+
+export async function writeUserTaskFile(handle, { prefix, name, body, version = 1 }) {
   const filename = buildFilename({ prefix, name, version, ext: 'md' });
   await writeTextFileToFolder(handle, filename, body);
   return filename;

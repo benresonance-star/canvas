@@ -12,10 +12,11 @@ import { ArchitectureDiagramView } from './ArchitectureDiagramView.jsx';
 /**
  * @param {{
  *   onClose: () => void,
+ *   onOpenDiagnostics?: () => void,
  *   runtime?: object,
  * }} props
  */
-export function SystemArchitectureModal({ onClose, runtime }) {
+export function SystemArchitectureModal({ onClose, onOpenDiagnostics, runtime }) {
   const [highlightedFeatureId, setHighlightedFeatureId] = useState(null);
   const [copyState, setCopyState] = useState('idle');
 
@@ -177,6 +178,15 @@ export function SystemArchitectureModal({ onClose, runtime }) {
         </div>
 
         <footer className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border shrink-0">
+          {onOpenDiagnostics && (
+            <button
+              type="button"
+              onClick={onOpenDiagnostics}
+              className="sans text-xs mr-auto text-accent hover:underline"
+            >
+              {strings.architecture.openDiagnostics}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void handleCopy()}

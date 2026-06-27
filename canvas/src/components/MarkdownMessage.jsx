@@ -54,6 +54,19 @@ function renderInlineSegment(segment, index, compact) {
       </code>
     );
   }
+  if (segment.type === 'link') {
+    return (
+      <a
+        key={key}
+        href={segment.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-link hover:text-link-hover underline break-all"
+      >
+        {segment.text}
+      </a>
+    );
+  }
   if (segment.type === 'symbol') {
     return (
       <span

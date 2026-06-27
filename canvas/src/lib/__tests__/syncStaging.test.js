@@ -83,6 +83,26 @@ describe('buildStagedSyncCardFromChange', () => {
       pinnedVersion: 1,
     });
   });
+
+  it('stages JSON and Python files as code cards', () => {
+    const json = buildStagedSyncCardFromChange({
+      key: 'data/app__settings',
+      group: {
+        parsed: { ext: 'json', prefix: 'app', name: 'settings' },
+        versions: [{ version: 1, filename: 'app__settings-v1.json' }],
+      },
+    });
+    const python = buildStagedSyncCardFromChange({
+      key: 'scripts/app__runner',
+      group: {
+        parsed: { ext: 'py', prefix: 'app', name: 'runner' },
+        versions: [{ version: 1, filename: 'app__runner-v1.py' }],
+      },
+    });
+
+    expect(json.type).toBe('code');
+    expect(python.type).toBe('code');
+  });
 });
 
 describe('mergeNewlyStaged', () => {
@@ -689,6 +709,71 @@ describe('reconcileFolderRenamesByIdentity', () => {
 
     expect(result.changed).toBe(false);
     expect(result.cards).toBe(cards);
+  });
+
+  it('re-links legacy generated__ cards to on-disk generated image paths by content hash', () => {
+    const relativePath = 'generated/facade-agent/2026-06-24_0717_facade-agent_exec-0001_v01.png';
+    const folderKey = 'generated/facade-agent/2026-06-24_0717_facade-agent_exec-0001_v01';
+    const grouped = {
+      [folderKey]: {
+        parsed: { ext: 'png', prefix: 'general', name: '2026-06-24_0717_facade-agent_exec-0001_v01' },
+        versions: [{
+          version: 1,
+          filename: '2026-06-24_0717_facade-agent_exec-0001_v01.png',
+          relativePath,
+          content_hash: 'hash-generated',
+        }],
+      },
+    };
+    const cards = [{
+      id: 'card-generated',
+      key: 'generated__artifact-1',
+      type: 'image',
+      prefix: 'generated',
+      name: 'legacy-generated',
+      versions: [{
+        version: 1,
+        content_hash: 'hash-generated',
+        artifactRef: { id: 'artifact-1', type: 'artifact' },
+      }],
+    }];
+
+    const result = reconcileFolderRenamesByIdentity(grouped, cards, []);
+    expect(result.changed).toBe(true);
+    expect(result.cards[0].key).toBe(folderKey);
+  });
+});
+
+describe('buildSyncChangesFromFolder generated images', () => {
+  it('does not stage a new dock row when canvas card already matches generated folder path', () => {
+    const relativePath = 'generated/facade-agent/2026-06-24_0717_facade-agent_exec-0001_v01.png';
+    const folderKey = 'generated/facade-agent/2026-06-24_0717_facade-agent_exec-0001_v01';
+    const grouped = {
+      [folderKey]: {
+        parsed: { ext: 'png', prefix: 'general', name: '2026-06-24_0717_facade-agent_exec-0001_v01' },
+        versions: [{
+          version: 1,
+          filename: '2026-06-24_0717_facade-agent_exec-0001_v01.png',
+          relativePath,
+          content_hash: 'hash-generated',
+        }],
+      },
+    };
+    const canvas = [{
+      key: folderKey,
+      type: 'image',
+      versions: [{
+        version: 1,
+        relativePath,
+        filename: '2026-06-24_0717_facade-agent_exec-0001_v01.png',
+        content_hash: 'hash-generated',
+        artifactRef: { id: 'artifact-1', type: 'artifact' },
+      }],
+      pinnedVersion: 1,
+    }];
+
+    const { changes } = buildSyncChangesFromFolder(grouped, canvas, []);
+    expect(changes).toEqual([]);
   });
 });
 

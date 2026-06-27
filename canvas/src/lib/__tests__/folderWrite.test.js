@@ -4,6 +4,7 @@ import {
   buildBookmarkMarkdownFile,
   buildBookmarkShortcutFile,
   getFileHandleAtPath,
+  writeBinaryFileAtPath,
   writeBookmarkFile,
 } from '../folderWrite.js';
 
@@ -118,6 +119,43 @@ describe('bookmark folder writes', () => {
     expect(writable.write).toHaveBeenCalledWith(
       '# Updated Example\n\nURL: https://example.com/updated\n',
     );
+  });
+});
+
+describe('binary folder writes', () => {
+  it('writes nested generated image paths', async () => {
+    const writable = {
+      write: vi.fn(),
+      close: vi.fn(),
+    };
+    const fileHandle = {
+      createWritable: vi.fn(async () => writable),
+    };
+    const agentDir = {
+      getFileHandle: vi.fn(async () => fileHandle),
+    };
+    const generatedDir = {
+      getDirectoryHandle: vi.fn(async () => agentDir),
+    };
+    const root = {
+      getDirectoryHandle: vi.fn(async () => generatedDir),
+    };
+
+    const bytes = new Uint8Array([137, 80, 78, 71]);
+    await writeBinaryFileAtPath(
+      root,
+      'generated/facade-agent/2026-06-24_0717_facade-agent_exec-0001_v01.png',
+      bytes,
+    );
+
+    expect(root.getDirectoryHandle).toHaveBeenCalledWith('generated', { create: true });
+    expect(generatedDir.getDirectoryHandle).toHaveBeenCalledWith('facade-agent', { create: true });
+    expect(agentDir.getFileHandle).toHaveBeenCalledWith(
+      '2026-06-24_0717_facade-agent_exec-0001_v01.png',
+      { create: true },
+    );
+    expect(writable.write).toHaveBeenCalledWith(bytes);
+    expect(writable.close).toHaveBeenCalled();
   });
 });
 

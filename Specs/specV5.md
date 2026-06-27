@@ -860,6 +860,6 @@ The test `diagnostic: sends stripped base64 images in the Ollama request body` a
 | Generated Image Artifacts | Shipped — folder write, `metadata.image`, prompts in inspector, auto `created_by_agent` wires |
 | Reference inputs | Shipped — `reference_input_to` edges, Control Room checkboxes |
 | Execution history | Shipped — `execution` table + Control Room recent runs |
-| Explorations (`type: 'flow'`) | Shipped — user-facing name **Exploration**; revisioned `flow_document` editor, agent node context; internal API/storage still `flow` |
+| Explorations (`type: 'flow'`) | Shipped — user-facing name **Exploration**; revisioned `flow_document` editor with `paths` JSONB step groups, path hulls, per-member run states, path inspector delete/remove, collapsible left sidebar, agent node context; internal API/storage still `flow` |
 | Real-time WebSockets | **Not shipped** — polling / refresh only (non-goal deferral) |
 | Agent Type user CRUD UI | **Partial** — read catalog; create/update/delete API exists, minimal UI |

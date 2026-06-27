@@ -90,6 +90,7 @@ export function registerArtifactRoutes(app) {
   app.get('/artifacts/:id', async (req, res) => {
     try {
       const artifact = await getArtifactById(req.params.id);
+      if (!artifact && req.query.optional === '1') return res.json({ artifact: null });
       if (!artifact) return res.status(404).json({ error: 'not found' });
       res.json({ artifact });
     } catch (e) {

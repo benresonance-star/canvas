@@ -132,8 +132,9 @@ export async function createGeneratedImageArtifacts({
         version: image.version,
         filePath: image.filePath,
         filename: image.filename,
-        width: image.width,
-        height: image.height,
+        width: image.image?.width ?? image.width,
+        height: image.image?.height ?? image.height,
+        ...(image.image ? { image: image.image } : {}),
       };
       const inserted = await client.query(
         `INSERT INTO artifact (id, type, uri, content_hash, version, source_authority, retrieved_at, payload_text, metadata)

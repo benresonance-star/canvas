@@ -1,5 +1,6 @@
 import { fetchClusterGraph as apiFetchGraph } from '../primitivesApi.js';
 import { getCardPixelSize } from '../cards.js';
+import { cardLinkBounds, resolveCardEdgeAnchors } from './canvasEdgeGeometry.js';
 
 export { fetchClusterGraph } from '../primitivesApi.js';
 
@@ -12,14 +13,16 @@ export function buildArtifactToCardMap(cards) {
     const ref = pinned?.artifactRef;
     if (ref?.id && ref.type === 'artifact') {
       const { w, h } = getCardPixelSize(card);
+      const bounds = cardLinkBounds(card);
       map.set(ref.id, {
         cardId: card.id,
         cardKey: card.key,
         name: card.name,
-        x: card.x + w / 2,
-        y: card.y + h / 2,
+        ...bounds,
         w,
         h,
+        x: bounds.centerX,
+        y: bounds.centerY,
       });
     }
   }
@@ -37,14 +40,22 @@ export function resolveGraphToCards(graph, cards) {
     if (edge.kind === 'note_attachment') {
       const to = artifactMap.get(edge.toId);
       if (!to) continue;
+      const noteX = to.centerX - 40;
+      const noteY = to.centerY - 40;
+      const anchors = resolveCardEdgeAnchors(
+        { centerX: noteX, centerY: noteY, left: noteX, right: noteX, top: noteY, bottom: noteY },
+        to,
+      );
       canvasEdges.push({
         ...edge,
         noteId: edge.fromId,
         toCardId: to.cardId,
-        toX: to.x,
-        toY: to.y,
-        fromX: to.x - 40,
-        fromY: to.y - 40,
+        fromX: anchors.fromX,
+        fromY: anchors.fromY,
+        toX: anchors.toX,
+        toY: anchors.toY,
+        sourcePosition: anchors.sourcePosition,
+        targetPosition: anchors.targetPosition,
         dashed: true,
         noteOnly: true,
       });
@@ -56,14 +67,17 @@ export function resolveGraphToCards(graph, cards) {
     if (!fromArt && !toArt) continue;
     if (!fromArt || !toArt) continue;
 
+    const anchors = resolveCardEdgeAnchors(fromArt, toArt);
     canvasEdges.push({
       ...edge,
       fromCardId: fromArt.cardId,
       toCardId: toArt.cardId,
-      fromX: fromArt.x,
-      fromY: fromArt.y,
-      toX: toArt.x,
-      toY: toArt.y,
+      fromX: anchors.fromX,
+      fromY: anchors.fromY,
+      toX: anchors.toX,
+      toY: anchors.toY,
+      sourcePosition: anchors.sourcePosition,
+      targetPosition: anchors.targetPosition,
       dashed: false,
     });
   }

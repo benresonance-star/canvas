@@ -18,8 +18,8 @@ describe('FlowLocalNodeTypePicker', () => {
     const html = renderToStaticMarkup(
       React.createElement(FlowLocalNodeTypePicker, { onSelectType: vi.fn() }),
     );
-    expect(html).toContain('New node');
+    expect(html).toContain('New step');
     expect(html.match(/type="button"/g)?.length).toBe(2);
-    expect(html).toContain('aria-label="Choose node type"');
+    expect(html).toContain('aria-label="Choose step type"');
   });
 });

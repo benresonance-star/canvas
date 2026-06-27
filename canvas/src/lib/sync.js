@@ -13,6 +13,7 @@ export function pickPreviewFieldsFromDisk(disk) {
     inline: disk.inline,
     previewStripped: disk.previewStripped ?? false,
     previewCacheKey: disk.previewCacheKey ?? null,
+    ...(disk.imageMeta ? { imageMeta: disk.imageMeta } : {}),
     ...(disk.artifactRef ? { artifactRef: disk.artifactRef } : {}),
   };
 }

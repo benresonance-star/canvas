@@ -9,6 +9,11 @@ describe('codeHighlight', () => {
     expect(resolveCodeLanguage({ filename: 'src__example-v1.ts' })).toBe('typescript');
   });
 
+  it('resolves JSON and Python languages from filenames', () => {
+    expect(resolveCodeLanguage({ filename: 'data__settings-v1.json' })).toBe('json');
+    expect(resolveCodeLanguage({ filename: 'scripts__clean-v1.py' })).toBe('python');
+  });
+
   it('highlights TypeScript syntax', () => {
     const highlighted = highlightCode(
       "export type Person = { name: string };\nconst answer: number = 42;\n",
@@ -22,6 +27,17 @@ describe('codeHighlight', () => {
     expect(highlighted.html).toContain('hljs-keyword');
     expect(highlighted.html).toContain('export');
     expect(highlighted.html).toContain('Person');
+  });
+
+  it('highlights JSON and Python syntax', () => {
+    expect(highlightCode('{"enabled": true}', { ext: 'json' })).toMatchObject({
+      language: 'json',
+      highlighted: true,
+    });
+    expect(highlightCode('def run():\n    return True\n', { ext: 'py' })).toMatchObject({
+      language: 'python',
+      highlighted: true,
+    });
   });
 
   it('escapes unsupported code without rendering raw HTML', () => {

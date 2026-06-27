@@ -16,6 +16,20 @@ import { createAgentPrompt, runImageTransformer } from './imageTransformer.js';
 
 const TRANSFORMER_ID = 'transformer_image_generation';
 
+async function resolveTransformerApiKey(provider) {
+  const normalized = String(provider || '').toLowerCase();
+  if (normalized === 'openai') {
+    return (await getDecryptedApiKey('openai')) || process.env.OPENAI_API_KEY || null;
+  }
+  if (normalized === 'gemini') {
+    return (await getDecryptedApiKey('gemini'))
+      || process.env.GEMINI_API_KEY
+      || process.env.GOOGLE_API_KEY
+      || null;
+  }
+  return null;
+}
+
 function slugify(value) {
   return String(value || 'agent')
     .toLowerCase()
@@ -201,10 +215,7 @@ export async function executeAgent(agentId, input = {}) {
       provider: settings.provider || 'local',
       model: settings.model,
       settings,
-      apiKey:
-        settings.provider === 'openai'
-          ? await getDecryptedApiKey('openai')
-          : null,
+      apiKey: await resolveTransformerApiKey(settings.provider),
     });
 
     const projectSlug = slugify(agent.projectId);
@@ -250,9 +261,9 @@ export async function executeAgent(agentId, input = {}) {
         { id: promptArtifact.id, type: 'artifact' },
       );
       await relate(
-        { id: artifact.id, type: 'artifact' },
-        'created_by_agent',
         { id: agent.id, type: 'artifact' },
+        'created_by_agent',
+        { id: artifact.id, type: 'artifact' },
       );
       await relate(
         { id: artifact.id, type: 'artifact' },
@@ -270,6 +281,7 @@ export async function executeAgent(agentId, input = {}) {
           filePath: artifact.metadata.filePath,
           contentHash: artifact.content_hash,
           dataUrl: artifact.payload_text,
+          metadata: artifact.metadata,
         })),
       },
       logs: [{

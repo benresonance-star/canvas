@@ -3,13 +3,17 @@ import { summarizePatchOps, syncTraceLog } from './sync/syncTrace.js';
 import { resolveApiBase } from './apiBase.js';
 
 const API_BASE = resolveApiBase();
-const REQUEST_TIMEOUT_MS = BOOT_API_REQUEST_TIMEOUT_MS;
+const READ_REQUEST_TIMEOUT_MS = BOOT_API_REQUEST_TIMEOUT_MS;
+const WRITE_REQUEST_TIMEOUT_MS = 60_000;
+const INDEX_WRITE_REQUEST_TIMEOUT_MS = 180_000;
 
 async function request(path, options = {}) {
+  const timeoutMs = options.timeoutMs ?? READ_REQUEST_TIMEOUT_MS;
+  const { timeoutMs: _timeoutMs, ...fetchOptions } = options;
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    ...options,
+    headers: { 'Content-Type': 'application/json', ...fetchOptions.headers },
+    signal: AbortSignal.timeout(timeoutMs),
+    ...fetchOptions,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -68,7 +72,7 @@ export async function saveCanvasIndex(
       clientId: clientId ?? undefined,
       deletedProjectIds: deletedProjectIds.length > 0 ? deletedProjectIds : undefined,
     }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(INDEX_WRITE_REQUEST_TIMEOUT_MS),
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 409) {
@@ -101,7 +105,7 @@ export async function fetchCanvasProjectMeta(projectId) {
     `${API_BASE}/canvas/projects/${encodeURIComponent(projectId)}/meta`,
     {
       headers: { 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(READ_REQUEST_TIMEOUT_MS),
     },
   );
   const data = await res.json().catch(() => ({}));
@@ -123,7 +127,7 @@ export async function fetchCanvasProjectMeta(projectId) {
 export async function fetchCanvasProjectDocument(projectId) {
   const res = await fetch(`${API_BASE}/canvas/projects/${encodeURIComponent(projectId)}`, {
     headers: { 'Content-Type': 'application/json' },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(READ_REQUEST_TIMEOUT_MS),
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 404) return null;
@@ -146,7 +150,7 @@ export async function fetchCanvasProjectDocument(projectId) {
 export async function fetchCanvasProjectLayout(projectId) {
   const res = await fetch(`${API_BASE}/canvas/projects/${encodeURIComponent(projectId)}/layout`, {
     headers: { 'Content-Type': 'application/json' },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(READ_REQUEST_TIMEOUT_MS),
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 404) return null;
@@ -191,7 +195,7 @@ export async function saveCanvasProject(projectId, payload, expectedRevision, op
       allowDockOnlyRemoteOverwrite:
         options.allowDockOnlyRemoteOverwrite === true || undefined,
     }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(WRITE_REQUEST_TIMEOUT_MS),
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 409) {
@@ -240,7 +244,7 @@ export async function patchCanvasProject(projectId, body) {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(WRITE_REQUEST_TIMEOUT_MS),
     },
   );
   const data = await res.json().catch(() => ({}));
@@ -288,5 +292,6 @@ export function projectSyncStreamUrl(projectId) {
 export async function deleteCanvasProject(projectId) {
   return request(`/canvas/projects/${encodeURIComponent(projectId)}`, {
     method: 'DELETE',
+    timeoutMs: WRITE_REQUEST_TIMEOUT_MS,
   });
 }

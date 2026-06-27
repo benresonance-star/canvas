@@ -36,6 +36,14 @@ describe('imageTransformer', () => {
     expect(result.images[0].dataUrl).toMatch(/^data:image\/png;base64,/);
     expect(result.images[0].width).toBe(640);
     expect(result.images[0].height).toBe(360);
+    expect(result.images[0].image).toMatchObject({
+      mimeType: 'image/png',
+      ext: 'png',
+      width: 640,
+      height: 360,
+      bitDepth: 8,
+    });
+    expect(result.images[0].image.fileSizeBytes).toBeGreaterThan(0);
     expect(result.images[0].contentHash).not.toBe(result.images[1].contentHash);
   });
 
@@ -73,6 +81,13 @@ describe('imageTransformer', () => {
       n: 1,
     });
     expect(result.images[0].dataUrl).toMatch(/^data:image\/jpeg;base64,/);
+    expect(result.images[0].image).toMatchObject({
+      mimeType: 'image/jpeg',
+      ext: 'jpg',
+      width: 1536,
+      height: 1024,
+      bitDepth: 8,
+    });
     expect(result.usage).toEqual({ total_tokens: 272 });
   });
 
@@ -133,5 +148,61 @@ describe('imageTransformer', () => {
       }),
     ).rejects.toThrow('Connected reference images are not available');
     expect(fetchOpenAI).not.toHaveBeenCalled();
+  });
+
+  it('posts Gemini image requests to generateContent with reference images', async () => {
+    vi.mocked(fetchOpenAI).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [{
+          content: {
+            parts: [
+              { text: 'Generated image' },
+              {
+                inlineData: {
+                  mimeType: 'image/png',
+                  data: Buffer.from('gemini-image').toString('base64'),
+                },
+              },
+            ],
+          },
+        }],
+      }),
+    });
+
+    const result = await runImageTransformer({
+      provider: 'gemini',
+      apiKey: 'gem-test',
+      model: 'gemini-3.1-flash-image',
+      prompt: 'A courtyard house',
+      references: [{
+        id: 'artifact-image',
+        type: 'image',
+        payload_text: `data:image/png;base64,${Buffer.from('source-image').toString('base64')}`,
+        metadata: {},
+      }],
+      settings: {
+        aspectRatio: '16:9',
+        imageCount: 1,
+        quality: 'high',
+      },
+    });
+
+    expect(fetchOpenAI).toHaveBeenCalledOnce();
+    const [url, request] = vi.mocked(fetchOpenAI).mock.calls[0];
+    expect(url).toContain('models/gemini-3.1-flash-image:generateContent');
+    expect(url).toContain('key=gem-test');
+    const body = JSON.parse(request.body);
+    expect(body.generationConfig).toMatchObject({
+      responseModalities: ['TEXT', 'IMAGE'],
+      imageConfig: {
+        aspectRatio: '16:9',
+        imageSize: '2K',
+      },
+    });
+    expect(body.contents[0].parts).toHaveLength(2);
+    expect(body.contents[0].parts[0].inline_data.mime_type).toBe('image/png');
+    expect(result.provider).toBe('gemini');
+    expect(result.images[0].dataUrl).toMatch(/^data:image\/png;base64,/);
   });
 });

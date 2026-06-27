@@ -7,11 +7,14 @@ import {
   Panel,
   ReactFlow,
   ReactFlowProvider,
+  ViewportPortal,
+  useViewport,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Plus, Redo2, Save, Search, Trash2, Undo2, Workflow, Eye, EyeOff, ArrowLeftRight, PanelRight, PanelRightClose, Map as MapIcon, Minimize2 } from 'lucide-react';
+import { Plus, Redo2, Save, Search, Trash2, Undo2, Workflow, Eye, EyeOff, ArrowLeftRight, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Map as MapIcon, Minimize2, ChevronDown, ChevronRight } from 'lucide-react';
 import { strings } from '../../../content/strings.js';
 import { artifactRefIdForClusterCard } from '../../../lib/clusterMembers.js';
+import { getMutedStagingStyleForType } from '../../../lib/stagingColors.js';
 import { useFlowDocument } from '../hooks/useFlowDocument.js';
 import {
   defaultFlowNodePreviewSize,
@@ -37,11 +40,60 @@ import { FlowEditorProvider } from './FlowEditorContext.jsx';
 import { FlowLocalNodeTypeMenu } from './FlowLocalNodeTypeMenu.jsx';
 import { FlowLocalNodeTypePicker } from './FlowLocalNodeTypePicker.jsx';
 import { FlowNodeActorPicker } from './FlowNodeActorPicker.jsx';
+import { FlowPathControls } from './FlowPathControls.jsx';
+import { FlowPathHullLayer } from './FlowPathHullLayer.jsx';
+import { FlowPathInspectorFields } from './FlowPathInspectorFields.jsx';
+import {
+  applyDeltaToPathSteps,
+  addStepsToFlowPath,
+  buildFlowPathHulls,
+  createFlowPathFromSelection,
+  deleteFlowPath,
+  duplicateFlowPath,
+  normalizeFlowPaths,
+  patchFlowPathName,
+  patchPathStepRunState,
+  removeStepsFromFlowPath,
+} from '../domain/flowPaths.js';
+import { resolvePathCurrentActiveStepTitle } from '../domain/flowPathStepDisplay.js';
+import { buildPathRunStateByStepId, resolvePathStepRunState } from '../domain/flowStepRunState.js';
+import { FlowStepRunStateMenu } from './FlowStepRunStateMenu.jsx';
 
 const NODE_TYPES = { artifact: ArtifactFlowNode, local: LocalFlowNode };
 
+function FlowPathHullOverlay(props) {
+  const { zoom } = useViewport();
+  return (
+    <ViewportPortal>
+      <FlowPathHullLayer zoom={zoom} {...props} />
+    </ViewportPortal>
+  );
+}
+
 const FLOW_INSPECTOR_REMOVE_BUTTON_CLASS =
   'sans w-full flex items-center justify-center gap-1.5 rounded-full border border-danger-border bg-danger-muted text-danger px-3 py-2 text-xs hover:bg-danger-border/40 transition';
+
+function FlowSidebarSection({ title, open, onToggle, children, className = '' }) {
+  return (
+    <section className={className}>
+      <button
+        type="button"
+        className="w-full flex items-center gap-2 px-3 py-2.5 border-b border-border hover:bg-surface-muted/50 transition text-left shrink-0"
+        aria-expanded={open}
+        aria-label={`${open ? strings.flow.collapseFlowSection : strings.flow.expandFlowSection} ${title}`}
+        onClick={onToggle}
+      >
+        {open ? (
+          <ChevronDown size={12} className="text-muted shrink-0" />
+        ) : (
+          <ChevronRight size={12} className="text-muted shrink-0" />
+        )}
+        <span className="sans text-[10px] uppercase tracking-wider text-muted">{title}</span>
+      </button>
+      {open ? children : null}
+    </section>
+  );
+}
 
 function FlowEditorInner({
   card,
@@ -63,13 +115,19 @@ function FlowEditorInner({
   const [query, setQuery] = useState('');
   const [instance, setInstance] = useState(null);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState([]);
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
+  const [selectedPathId, setSelectedPathId] = useState(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [minimapOpen, setMinimapOpen] = useState(false);
+  const [stepsSectionOpen, setStepsSectionOpen] = useState(false);
+  const [artifactsSectionOpen, setArtifactsSectionOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const canvasRef = useRef(null);
   const undoRef = useRef([]);
   const redoRef = useRef([]);
   const viewportSyncedRef = useRef(false);
+  const draggingPathRef = useRef(null);
 
   const handleSave = useCallback(async () => {
     await document.flushSave();
@@ -78,8 +136,12 @@ function FlowEditorInner({
   useEffect(() => {
     viewportSyncedRef.current = false;
     setInspectorOpen(false);
+    setStepsSectionOpen(false);
+    setArtifactsSectionOpen(false);
     setSelectedNodeId(null);
+    setSelectedNodeIds([]);
     setSelectedEdgeId(null);
+    setSelectedPathId(null);
   }, [flowId]);
 
   useEffect(() => {
@@ -113,7 +175,34 @@ function FlowEditorInner({
     () => new Map(document.nodes.map((node) => [node.id, node])),
     [document.nodes],
   );
+  const pathHulls = useMemo(() => {
+    const hulls = buildFlowPathHulls({ paths: document.paths, nodes: document.nodes });
+    const pathsById = new Map(document.paths.map((path) => [path.id, path]));
+    return hulls.map((hull) => {
+      const path = pathsById.get(hull.pathId);
+      return {
+        ...hull,
+        currentStepTitle: resolvePathCurrentActiveStepTitle(
+          path,
+          document.edges,
+          nodesById,
+          cardsById,
+        ),
+      };
+    });
+  }, [cardsById, document.edges, document.nodes, document.paths, nodesById]);
   const selectedNode = document.nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const selectedPath = document.paths.find((path) => path.id === selectedPathId) ?? null;
+  const selectedNodePath = useMemo(
+    () => (selectedNodeId
+      ? document.paths.find((path) => path.stepIds?.includes(selectedNodeId)) ?? null
+      : null),
+    [document.paths, selectedNodeId],
+  );
+  const pathRunStateByStepId = useMemo(
+    () => buildPathRunStateByStepId(document.paths),
+    [document.paths],
+  );
   const selectedEdge = document.edges.find((edge) => edge.id === selectedEdgeId) ?? null;
   const selectedEdgeFlowTitles = selectedEdge
     ? flowEdgeEndpointTitles(selectedEdge, nodesById)
@@ -151,10 +240,151 @@ function FlowEditorInner({
   }, []);
 
   const checkpoint = useCallback(() => {
-    undoRef.current.push({ nodes: document.nodes, edges: document.edges });
+    undoRef.current.push({ nodes: document.nodes, edges: document.edges, paths: document.paths });
     if (undoRef.current.length > 50) undoRef.current.shift();
     redoRef.current = [];
-  }, [document.edges, document.nodes]);
+  }, [document.edges, document.nodes, document.paths]);
+
+  const clearFlowSelection = useCallback(() => {
+    if (!instance) return;
+    instance.setNodes((nodes) => nodes.map((node) => (
+      node.selected ? { ...node, selected: false } : node
+    )));
+    instance.setEdges((edges) => edges.map((edge) => (
+      edge.selected ? { ...edge, selected: false } : edge
+    )));
+  }, [instance]);
+
+  const selectPath = useCallback((pathId) => {
+    if (!pathId) return;
+    setSelectedPathId(pathId);
+    setSelectedNodeId(null);
+    setSelectedNodeIds([]);
+    setSelectedEdgeId(null);
+    onSelectedNodeIdsChange?.([]);
+    clearFlowSelection();
+    setInspectorOpen(true);
+  }, [clearFlowSelection, onSelectedNodeIdsChange]);
+
+  const applyPathPointerMove = useCallback((clientX, clientY) => {
+    const drag = draggingPathRef.current;
+    if (!drag) return;
+    const dx = (clientX - drag.startMouseX) / drag.zoom;
+    const dy = (clientY - drag.startMouseY) / drag.zoom;
+    document.setNodes((nodes) => applyDeltaToPathSteps(
+      nodes,
+      drag.stepIds,
+      dx,
+      dy,
+      drag.startPositions,
+    ));
+  }, [document]);
+
+  const finishPathDrag = useCallback(() => {
+    draggingPathRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    const onPointerMove = (event) => {
+      if (!draggingPathRef.current) return;
+      applyPathPointerMove(event.clientX, event.clientY);
+    };
+    const onPointerEnd = () => {
+      finishPathDrag();
+    };
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerEnd);
+    window.addEventListener('pointercancel', onPointerEnd);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerEnd);
+      window.removeEventListener('pointercancel', onPointerEnd);
+    };
+  }, [applyPathPointerMove, finishPathDrag]);
+
+  const startPathMove = useCallback((hull, event) => {
+    if (agentModeActive || event.button !== 0) return;
+    const path = document.paths.find((candidate) => candidate.id === hull.pathId);
+    if (!path?.stepIds?.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectPath(path.id);
+    const startPositions = new Map();
+    for (const stepId of path.stepIds) {
+      const node = document.nodes.find((candidate) => candidate.id === stepId);
+      if (node?.position) {
+        startPositions.set(stepId, { x: node.position.x, y: node.position.y });
+      }
+    }
+    if (!startPositions.size) return;
+    checkpoint();
+    draggingPathRef.current = {
+      pathId: path.id,
+      stepIds: path.stepIds,
+      startMouseX: event.clientX,
+      startMouseY: event.clientY,
+      startPositions,
+      zoom: instance?.getZoom?.() ?? 1,
+    };
+  }, [agentModeActive, checkpoint, document.nodes, document.paths, instance, selectPath]);
+
+  const handleNewPath = useCallback(() => {
+    if (!selectedNodeIds.length || selectedPathId) return;
+    try {
+      checkpoint();
+      const result = createFlowPathFromSelection({
+        paths: document.paths,
+        selectedStepIds: selectedNodeIds,
+      });
+      document.setPaths(result.paths);
+      selectPath(result.pathId);
+    } catch {
+      /* selection guard in controls */
+    }
+  }, [checkpoint, document, selectPath, selectedNodeIds, selectedPathId]);
+
+  const handleDuplicatePath = useCallback(() => {
+    const path = document.paths.find((candidate) => candidate.id === selectedPathId);
+    if (!path) return;
+    try {
+      checkpoint();
+      const result = duplicateFlowPath({
+        path,
+        nodes: document.nodes,
+        edges: document.edges,
+        paths: document.paths,
+      });
+      document.setPaths(result.paths);
+      document.setNodes(result.nodes);
+      document.setEdges(result.edges);
+      selectPath(result.pathId);
+    } catch {
+      /* invalid path state */
+    }
+  }, [checkpoint, document, selectPath, selectedPathId]);
+
+  const handleAddStepsToPath = useCallback(() => {
+    const path = document.paths.find((candidate) => candidate.id === selectedPathId);
+    if (!path) return;
+    const addable = selectedNodeIds.filter((id) => !path.stepIds?.includes(id));
+    if (!addable.length || agentModeActive) return;
+    checkpoint();
+    document.setPaths((paths) => addStepsToFlowPath({
+      paths,
+      pathId: selectedPathId,
+      stepIds: addable,
+    }));
+  }, [agentModeActive, checkpoint, document, selectedNodeIds, selectedPathId]);
+
+  const patchSelectedPathName = useCallback((name) => {
+    if (!selectedPathId) return;
+    document.setPaths((paths) => patchFlowPathName(paths, selectedPathId, name));
+  }, [document, selectedPathId]);
+
+  const handleStepRunStateChange = useCallback((pathId, stepId, runState) => {
+    checkpoint();
+    document.setPaths((paths) => patchPathStepRunState(paths, pathId, stepId, runState));
+  }, [checkpoint, document]);
 
   const updateNode = useCallback((nodeId, patch, options = {}) => {
     if (options.checkpoint) checkpoint();
@@ -267,11 +497,48 @@ function FlowEditorInner({
     if (!idsToRemove.length) return;
     checkpoint();
     const next = removeFlowNodesById(document.nodes, document.edges, idsToRemove);
+    const normalizedPaths = normalizeFlowPaths(document.paths, next.nodes.map((node) => node.id));
     document.setNodes(next.nodes);
     document.setEdges(next.edges);
+    document.setPaths(normalizedPaths);
     setSelectedNodeId((current) => (current && ids.has(current) ? null : current));
+    setSelectedPathId((current) => (
+      current && normalizedPaths.some((path) => path.id === current) ? current : null
+    ));
     setSelectedEdgeId(null);
   }, [checkpoint, document]);
+
+  const handleDeletePathOnly = useCallback((pathId) => {
+    const path = document.paths.find((candidate) => candidate.id === pathId);
+    if (!path || agentModeActive) return;
+    if (!window.confirm(strings.flow.deleteFlowPathConfirm(path.name))) return;
+    checkpoint();
+    document.setPaths((paths) => deleteFlowPath(paths, pathId));
+    setSelectedPathId((current) => (current === pathId ? null : current));
+  }, [agentModeActive, checkpoint, document]);
+
+  const handleDeletePathAndSteps = useCallback((pathId) => {
+    const path = document.paths.find((candidate) => candidate.id === pathId);
+    if (!path?.stepIds?.length || agentModeActive) return;
+    const count = path.stepIds.length;
+    if (!window.confirm(strings.flow.deleteFlowPathAndStepsConfirm(path.name, count))) return;
+    removeNodesById(path.stepIds);
+    setSelectedPathId(null);
+  }, [agentModeActive, document.paths, removeNodesById]);
+
+  const handleRemoveStepFromPath = useCallback((pathId, stepId) => {
+    if (agentModeActive) return;
+    checkpoint();
+    let pathDeleted = false;
+    document.setPaths((paths) => {
+      const next = removeStepsFromFlowPath({ paths, pathId, stepIds: [stepId] });
+      pathDeleted = !next.some((path) => path.id === pathId);
+      return next;
+    });
+    if (pathDeleted) {
+      setSelectedPathId((current) => (current === pathId ? null : current));
+    }
+  }, [agentModeActive, checkpoint, document]);
 
   const removeSelectedNode = useCallback(() => {
     if (!selectedNodeId) return;
@@ -306,20 +573,35 @@ function FlowEditorInner({
 
   const handleSelectionChange = useCallback(({ nodes, edges }) => {
     if (edges.length > 0) {
+      setSelectedPathId(null);
       setSelectedEdgeId(edges[0]?.id ?? null);
       setSelectedNodeId(null);
+      setSelectedNodeIds([]);
       onSelectedNodeIdsChange?.([]);
       return;
     }
     setSelectedEdgeId(null);
     const nodeIds = nodes.map((node) => node.id);
     setSelectedNodeId(nodeIds[0] ?? null);
+    setSelectedNodeIds(nodeIds);
     onSelectedNodeIdsChange?.(nodeIds);
-  }, [onSelectedNodeIdsChange]);
+
+    if (nodeIds.length > 0 && selectedPathId) {
+      const path = document.paths.find((candidate) => candidate.id === selectedPathId);
+      const hasOutsidePath = nodeIds.some((id) => !path?.stepIds?.includes(id));
+      if (hasOutsidePath) return;
+    }
+
+    if (nodeIds.length > 0) {
+      setSelectedPathId(null);
+    }
+  }, [document.paths, onSelectedNodeIdsChange, selectedPathId]);
 
   const revealInspectorForNode = useCallback((node) => {
     if (agentModeActive || !node?.id) return;
+    setSelectedPathId(null);
     setSelectedNodeId(node.id);
+    setSelectedNodeIds([node.id]);
     setSelectedEdgeId(null);
     setInspectorOpen(true);
     onSelectedNodeIdsChange?.([node.id]);
@@ -327,8 +609,10 @@ function FlowEditorInner({
 
   const revealInspectorForEdge = useCallback((edge) => {
     if (agentModeActive || !edge?.id) return;
+    setSelectedPathId(null);
     setSelectedEdgeId(edge.id);
     setSelectedNodeId(null);
+    setSelectedNodeIds([]);
     setInspectorOpen(true);
     onSelectedNodeIdsChange?.([]);
   }, [agentModeActive, onSelectedNodeIdsChange]);
@@ -345,20 +629,26 @@ function FlowEditorInner({
   const undo = () => {
     const previous = undoRef.current.pop();
     if (!previous) return;
-    redoRef.current.push({ nodes: document.nodes, edges: document.edges });
+    redoRef.current.push({ nodes: document.nodes, edges: document.edges, paths: document.paths });
     document.setNodes(previous.nodes);
     document.setEdges(previous.edges.map((edge) => normalizeFlowEdgeForEditor(edge)));
+    if (previous.paths) document.setPaths(previous.paths);
     setSelectedEdgeId(null);
     setSelectedNodeId(null);
+    setSelectedNodeIds([]);
+    setSelectedPathId(null);
   };
   const redo = () => {
     const next = redoRef.current.pop();
     if (!next) return;
-    undoRef.current.push({ nodes: document.nodes, edges: document.edges });
+    undoRef.current.push({ nodes: document.nodes, edges: document.edges, paths: document.paths });
     document.setNodes(next.nodes);
     document.setEdges(next.edges.map((edge) => normalizeFlowEdgeForEditor(edge)));
+    if (next.paths) document.setPaths(next.paths);
     setSelectedEdgeId(null);
     setSelectedNodeId(null);
+    setSelectedNodeIds([]);
+    setSelectedPathId(null);
   };
 
   if (document.status.loading) return <div className="h-full flex items-center justify-center serif text-secondary">{strings.flow.loading}</div>;
@@ -375,6 +665,7 @@ function FlowEditorInner({
     readOnly: agentModeActive,
     localNodeTypeColors: normalizeFlowLocalNodeTypeColors(document.flow?.localNodeTypeColors),
     setLocalNodeTypeColor,
+    pathRunStateByStepId,
   };
 
   return (
@@ -384,35 +675,88 @@ function FlowEditorInner({
       onPointerDown={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
     >
-      <aside className="w-64 shrink-0 border-r border-border bg-surface flex flex-col min-h-0">
-        <div className="p-3 border-b border-border">
-          <label className="relative block">
-            <Search size={13} className="absolute left-2.5 top-2.5 text-muted" />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search artifacts" className="sans w-full rounded-full border border-border bg-canvas pl-8 pr-3 py-2 text-xs focus:outline-none focus:border-accent" />
-          </label>
-          <FlowLocalNodeTypePicker onSelectType={(localNodeType) => addLocal(viewportCenter(), localNodeType)} />
-        </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {candidates.map((candidate) => (
-            <div key={candidate.id} draggable onDragStart={(event) => event.dataTransfer.setData('application/x-canvas-artifact', candidate.id)} className="flex items-center gap-2 rounded-lg border border-transparent hover:border-border hover:bg-surface-muted px-2 py-2 cursor-grab">
-              <div className="min-w-0 flex-1">
-                <div className="serif text-sm truncate">{candidate.name}</div>
-                <div className="sans text-[9px] uppercase tracking-wider text-muted">{candidate.type}</div>
+      {sidebarOpen && (
+      <aside id="flow-sidebar" className="w-64 shrink-0 border-r border-border bg-surface flex flex-col min-h-0">
+        <FlowSidebarSection
+          title={strings.flow.stepsAndPathsSection}
+          open={stepsSectionOpen}
+          onToggle={() => setStepsSectionOpen((open) => !open)}
+        >
+          <div className="flex flex-col gap-2 p-3 border-b border-border">
+            <FlowLocalNodeTypePicker onSelectType={(localNodeType) => addLocal(viewportCenter(), localNodeType)} />
+            <FlowPathControls
+              selectedPathId={selectedPathId}
+              selectedStepIds={selectedNodeIds}
+              paths={document.paths}
+              onNewPath={handleNewPath}
+              onDuplicatePath={handleDuplicatePath}
+              onAddStepsToPath={handleAddStepsToPath}
+              disabled={agentModeActive}
+            />
+          </div>
+        </FlowSidebarSection>
+        <FlowSidebarSection
+          title={strings.flow.canvasArtifactsSection}
+          open={artifactsSectionOpen}
+          onToggle={() => setArtifactsSectionOpen((open) => !open)}
+          className={artifactsSectionOpen ? 'flex flex-1 flex-col min-h-0' : 'shrink-0'}
+        >
+          <div className="px-3 pt-2 pb-2 border-b border-border shrink-0">
+            <label className="relative block">
+              <Search size={12} className="absolute left-2.5 top-2 text-muted" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={strings.flow.artifactSearchPlaceholder}
+                className="sans w-full rounded-full border border-border bg-canvas pl-8 pr-3 py-1.5 text-[11px] focus:outline-none focus:border-accent"
+              />
+            </label>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-1.5 min-h-0">
+            {candidates.map((candidate) => {
+              const typeStyle = getMutedStagingStyleForType(candidate.type);
+              return (
+              <div
+                key={candidate.id}
+                draggable
+                onDragStart={(event) => event.dataTransfer.setData('application/x-canvas-artifact', candidate.id)}
+                className="flex items-center gap-2 rounded-md border px-2 py-1.5 cursor-grab transition-[filter] hover:brightness-[1.04]"
+                style={typeStyle}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="sans text-xs truncate leading-snug">{candidate.name}</div>
+                  <div className="sans text-[8px] uppercase tracking-wider text-muted">{candidate.type}</div>
+                </div>
+                <button type="button" aria-label={`Add ${candidate.name}`} onClick={() => addArtifact(candidate, viewportCenter())} className="text-muted hover:text-accent p-0.5"><Plus size={12} /></button>
               </div>
-              <button type="button" aria-label={`Add ${candidate.name}`} onClick={() => addArtifact(candidate, viewportCenter())} className="text-muted hover:text-accent p-1"><Plus size={14} /></button>
-            </div>
-          ))}
-        </div>
+              );
+            })}
+          </div>
+        </FlowSidebarSection>
       </aside>
+      )}
 
       <main className="flex-1 min-w-0 flex flex-col">
         <div className="h-12 shrink-0 border-b border-border bg-surface flex items-center gap-2 px-3">
-          <Workflow size={15} className="text-accent" />
-                       
-new_string
-          <input value={document.flow.title} onChange={(event) => document.setFlow((flow) => ({ ...flow, title: event.target.value }))} className="serif flex-1 min-w-0 bg-transparent text-lg focus:outline-none" aria-label={strings.flow.nameLabel} />
+          <Workflow size={15} className="text-accent shrink-0" />
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <span className="sans shrink-0 text-[10px] uppercase tracking-wider text-muted whitespace-nowrap">
+              {strings.flow.explorationTitlePrefix}
+            </span>
+            <input value={document.flow.title} onChange={(event) => document.setFlow((flow) => ({ ...flow, title: event.target.value }))} className="serif min-w-0 flex-1 bg-transparent text-lg focus:outline-none" aria-label={strings.flow.nameLabel} />
+          </div>
           <button type="button" onClick={undo} disabled={!undoRef.current.length} className="p-2 text-muted hover:text-primary disabled:opacity-30" aria-label="Undo"><Undo2 size={15} /></button>
           <button type="button" onClick={redo} disabled={!redoRef.current.length} className="p-2 text-muted hover:text-primary disabled:opacity-30" aria-label="Redo"><Redo2 size={15} /></button>
+          <button
+            type="button"
+            onClick={() => setSidebarOpen((open) => !open)}
+            aria-expanded={sidebarOpen}
+            aria-controls="flow-sidebar"
+            title={sidebarOpen ? strings.flow.collapseFlowSidebar : strings.flow.expandFlowSidebar}
+            className={`p-2 transition ${sidebarOpen ? 'text-accent' : 'text-muted hover:text-primary'}`}
+          >
+            {sidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeft size={15} />}
+          </button>
           <button
             type="button"
             onClick={() => setInspectorOpen((open) => !open)}
@@ -480,6 +824,13 @@ new_string
             colorMode="system"
           >
             <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-border)" />
+            <FlowPathHullOverlay
+              hulls={pathHulls}
+              highlightedPathId={selectedPathId}
+              onHullSelect={selectPath}
+              onStartPathMove={startPathMove}
+              readOnly={agentModeActive}
+            />
             <Panel position="bottom-right" className="m-3 flex flex-col items-end gap-2">
               {minimapOpen && (
                 <div className="group flow-minimap-shell">
@@ -528,7 +879,27 @@ new_string
         {inspectorOpen && (
         <div className="flex-1 min-h-0 overflow-y-auto p-4">
         <div className="sans text-[10px] uppercase tracking-wider text-muted mb-3">Inspector</div>
-        {selectedEdge ? (
+        {selectedPath ? (
+          <>
+            <div className="sans text-[10px] uppercase tracking-wider text-muted mb-2">
+              {strings.flow.pathInspector}
+            </div>
+            <FlowPathInspectorFields
+              path={selectedPath}
+              nodesById={nodesById}
+              cardsById={cardsById}
+              edges={document.edges}
+              selectedStepIds={selectedNodeIds}
+              onNameChange={patchSelectedPathName}
+              onAddStepsToPath={handleAddStepsToPath}
+              onStepRunStateChange={handleStepRunStateChange}
+              onRemoveStepFromPath={handleRemoveStepFromPath}
+              onDeletePathOnly={handleDeletePathOnly}
+              onDeletePathAndSteps={handleDeletePathAndSteps}
+              readOnly={agentModeActive}
+            />
+          </>
+        ) : selectedEdge ? (
           <>
             <div className="sans text-[10px] uppercase tracking-wider text-muted mb-2">
               {strings.flow.inspectorConnection}
@@ -614,6 +985,19 @@ new_string
             <input value={selectedNode.data?.title ?? ''} onChange={(event) => document.setNodes((nodes) => nodes.map((node) => node.id === selectedNode.id ? { ...node, data: { ...node.data, title: event.target.value } } : node))} className="sans mt-1 mb-3 w-full rounded-md border border-border bg-canvas px-3 py-2 text-sm focus:outline-none focus:border-accent" />
             <label className="sans text-[10px] text-muted">Description</label>
             <textarea value={selectedNode.data?.description ?? ''} onChange={(event) => document.setNodes((nodes) => nodes.map((node) => node.id === selectedNode.id ? { ...node, data: { ...node.data, description: event.target.value } } : node))} rows={5} className="sans mt-1 w-full resize-none rounded-md border border-border bg-canvas px-3 py-2 text-sm focus:outline-none focus:border-accent" />
+            {selectedNodePath && (
+              <>
+                <label className="sans text-[10px] text-muted mt-3 block">{strings.flow.stepRunState}</label>
+                <div className="mt-1 mb-3 rounded-md border border-border bg-canvas p-1.5">
+                  <FlowStepRunStateMenu
+                    ariaLabel={strings.flow.stepRunState}
+                    selectedStateId={resolvePathStepRunState(selectedNodePath, selectedNode.id)}
+                    onSelect={(runState) => handleStepRunStateChange(selectedNodePath.id, selectedNode.id, runState)}
+                  />
+                </div>
+                <p className="sans text-xs text-muted mb-3">{strings.flow.stepRunStateHint}</p>
+              </>
+            )}
             <button
               type="button"
               onClick={removeSelectedNode}
@@ -646,6 +1030,19 @@ new_string
               />
             </div>
             <p className="sans text-xs text-muted mt-2">{strings.flow.artifactReferenceHint}</p>
+            {selectedNodePath && (
+              <>
+                <label className="sans text-[10px] text-muted mt-3 block">{strings.flow.stepRunState}</label>
+                <div className="mt-1 mb-3 rounded-md border border-border bg-canvas p-1.5">
+                  <FlowStepRunStateMenu
+                    ariaLabel={strings.flow.stepRunState}
+                    selectedStateId={resolvePathStepRunState(selectedNodePath, selectedNode.id)}
+                    onSelect={(runState) => handleStepRunStateChange(selectedNodePath.id, selectedNode.id, runState)}
+                  />
+                </div>
+                <p className="sans text-xs text-muted mb-3">{strings.flow.stepRunStateHint}</p>
+              </>
+            )}
             <button
               type="button"
               onClick={removeSelectedNode}
@@ -659,6 +1056,7 @@ new_string
         ) : (
           <>
             <p className="sans text-xs text-muted mb-4">{strings.flow.selectNodeOrConnection}</p>
+            <p className="sans text-xs text-muted mb-4">{strings.flow.pathWorkflowHint}</p>
             <label className="sans text-[10px] text-muted">{strings.flow.nodeTypeColors}</label>
             <div className="mt-1 rounded-md border border-border bg-canvas p-1.5">
               <FlowLocalNodeTypeMenu

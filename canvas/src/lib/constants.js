@@ -57,6 +57,7 @@ export const CARD_TYPE_DEFAULT_SIZE = {
   markdown: { w: 280, h: 180 },
   code: { w: 320, h: 220 },
   user_note: { w: 300, h: 200 },
+  user_task: { w: 300, h: 200 },
   image: { w: 280, h: 220 },
   html: { w: 320, h: 220 },
   pdf: { w: 280, h: 320 },
@@ -66,5 +67,6 @@ export const CARD_TYPE_DEFAULT_SIZE = {
   bookmark: { w: 280, h: 200 },
   agent_chat: { w: 360, h: 280 },
   flow: { w: 360, h: 240 },
+  'music-agent': { w: 360, h: 260 },
   file: { w: 240, h: 140 },
 };

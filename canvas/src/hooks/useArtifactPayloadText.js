@@ -23,7 +23,7 @@ export function useArtifactPayloadText(artifactRefId, enabled) {
     setError(false);
     setText(null);
 
-    getArtifact(artifactRefId)
+    getArtifact(artifactRefId, { optional: true })
       .then(({ artifact }) => {
         if (cancelled) return;
         const payload = artifact?.payload_text?.trim() || '';

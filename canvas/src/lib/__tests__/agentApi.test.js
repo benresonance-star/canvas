@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AgentApiError, saveAgentTemplate, sendAgentChat } from '../agentApi.js';
+import { AgentApiError, getArtifact, saveAgentTemplate, sendAgentChat } from '../agentApi.js';
 
 describe('agentApi', () => {
   beforeEach(() => {
@@ -106,6 +106,20 @@ describe('agentApi', () => {
     expect(fetch).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining('/agent/templates/brainstorming'),
+      expect.anything(),
+    );
+  });
+
+  it('supports optional artifact payload lookups without hard 404 fetches', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ artifact: null }),
+    });
+
+    await expect(getArtifact('artifact/1', { optional: true })).resolves.toEqual({ artifact: null });
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/artifacts/artifact%2F1?optional=1'),
       expect.anything(),
     );
   });

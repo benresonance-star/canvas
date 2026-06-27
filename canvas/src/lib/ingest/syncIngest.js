@@ -1,9 +1,22 @@
 import { artifactTypeFromFile } from './artifactType.js';
-import { normalizeFolderRelativePath, syncKeysMatch } from '../filename.js';
+import { normalizeFolderRelativePath, parseFilename, syncKeysMatch } from '../filename.js';
+import { resolveCodeLanguage } from '../codeHighlight.js';
 import { ingestArtifacts, ensureClusterForProject, isApiAvailable } from '../primitivesApi.js';
 
 function artifactFileKey(version) {
   return normalizeFolderRelativePath(version?.relativePath ?? version?.filename);
+}
+
+function codeMetadata(version) {
+  if (version.cardType !== 'code') return {};
+  const ext = version.ext ?? parseFilename(version.filename ?? '').ext;
+  const language = resolveCodeLanguage({ filename: version.filename, ext });
+  return {
+    canvas_kind: 'code',
+    file_kind: 'code',
+    ...(ext ? { ext } : {}),
+    ...(language ? { language } : {}),
+  };
 }
 
 /**
@@ -47,7 +60,9 @@ export async function ingestFoundFiles(projectId, projectName, flatVersions, pre
             }
           : {}),
         ...(v.cardType === 'spreadsheet' ? { file_kind: 'spreadsheet' } : {}),
+        ...codeMetadata(v),
         ...(v.cardType === 'user_note' ? { canvas_kind: 'user_note' } : {}),
+        ...(v.cardType === 'user_task' ? { canvas_kind: 'user_task' } : {}),
         ...(v.cardType === 'agent_chat'
           ? {
               canvas_kind: 'agent_chat',
@@ -57,6 +72,9 @@ export async function ingestFoundFiles(projectId, projectName, flatVersions, pre
           : {}),
         ...(v.cardType === 'audio' && v.audioMeta
           ? { canvas_kind: 'audio', audio: v.audioMeta }
+          : {}),
+        ...(v.cardType === 'image' && v.imageMeta
+          ? { canvas_kind: 'image', image: v.imageMeta }
           : {}),
       },
     };

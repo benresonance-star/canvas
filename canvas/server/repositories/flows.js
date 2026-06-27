@@ -3,6 +3,7 @@ import { pool } from '../db.js';
 import { newUlid } from '../../src/primitives/shared/ulid.js';
 import { validateFlowEdgeMetadata } from '../../src/features/flow/domain/flowDocument.js';
 import { validateFlowLocalNodeTypeColors } from '../../src/features/flow/domain/flowLocalNodeTypeColors.js';
+import { validateFlowPaths } from '../../src/features/flow/domain/flowPaths.js';
 
 function flowHash(id) {
   return crypto.createHash('sha256').update(`canvas-flow:${id}`).digest('hex');
@@ -41,7 +42,7 @@ function mapEdge(row) {
 async function loadFlowWith(client, id) {
   const document = await client.query(
     `SELECT id, project_id, title, description, viewport, revision, snapshot_path,
-            local_node_type_colors, created_at, updated_at
+            local_node_type_colors, paths, created_at, updated_at
      FROM flow_document WHERE id = $1`,
     [id],
   );
@@ -60,6 +61,7 @@ async function loadFlowWith(client, id) {
     revision: Number(row.revision),
     snapshotPath: row.snapshot_path,
     localNodeTypeColors: row.local_node_type_colors ?? {},
+    paths: row.paths ?? [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     nodes: nodes.rows.map(mapNode),
@@ -149,6 +151,7 @@ function validateSnapshot(snapshot) {
     }
     ids.add(node.id);
   }
+  validateFlowPaths(snapshot.paths, [...ids]);
   for (const edge of snapshot.edges) {
     if (!edge?.id || !ids.has(edge.source) || !ids.has(edge.target)) {
       throw new Error('flow edge endpoints must reference nodes in the flow');
@@ -191,6 +194,7 @@ export async function replaceFlow(id, expectedRevision, snapshot) {
       `UPDATE flow_document
        SET title = $3, description = $4, viewport = $5::jsonb,
            snapshot_path = $6, local_node_type_colors = $7::jsonb,
+           paths = $8::jsonb,
            revision = revision + 1, updated_at = NOW()
        WHERE id = $1 AND revision = $2
        RETURNING revision`,
@@ -202,6 +206,7 @@ export async function replaceFlow(id, expectedRevision, snapshot) {
         JSON.stringify(snapshot.viewport ?? { x: 0, y: 0, zoom: 1 }),
         snapshot.snapshotPath ?? null,
         JSON.stringify(snapshot.localNodeTypeColors ?? {}),
+        JSON.stringify(snapshot.paths ?? []),
       ],
     );
     if (!updated.rows[0]) {

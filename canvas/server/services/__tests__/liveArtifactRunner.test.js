@@ -40,7 +40,7 @@ describe('live artifact runner', () => {
       generate: vi.fn().mockResolvedValue({ ...output, changeScore: 0.1 }),
     });
     expect(result.status).toBe('skipped_no_meaningful_change');
-    expect(repo.finishLiveRunSkipped).toHaveBeenCalledOnce();
+    expect(repo.finishLiveRunSkipped).toHaveBeenCalledWith('run-1', 0.1, expect.any(Object), 'source'.length);
     expect(repo.finishLiveRunSuccess).not.toHaveBeenCalled();
   });
 });

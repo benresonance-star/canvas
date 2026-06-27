@@ -8,24 +8,49 @@ describe('flow edge metadata validation', () => {
       id: 'e1',
       source: 'n1',
       target: 'n2',
-      label: 'Driven by',
+      label: 'Depends on',
       data: {
-        connectionTypeId: 'driven_by',
+        connectionTypeId: 'depends_on',
         connectionTypeCustom: '',
         properties: { format: 'json' },
       },
     })).not.toThrow();
   });
 
-  it('accepts schema types with optional detail', () => {
+  it('accepts legacy connection type ids via normalization', () => {
     expect(() => validateFlowEdgeMetadata({
       id: 'e1',
       source: 'n1',
       target: 'n2',
-      label: 'Driven by: Love',
+      label: 'Depends on',
       data: {
         connectionTypeId: 'driven_by',
-        connectionTypeCustom: 'Love',
+        connectionTypeCustom: '',
+      },
+    })).not.toThrow();
+  });
+
+  it('accepts schema v2 produces edges', () => {
+    expect(() => validateFlowEdgeMetadata({
+      id: 'e1',
+      source: 'n1',
+      target: 'n2',
+      label: 'Produces',
+      data: {
+        connectionTypeId: 'produces',
+        connectionTypeCustom: '',
+      },
+    })).not.toThrow();
+  });
+
+  it('accepts optional decision conditions', () => {
+    expect(() => validateFlowEdgeMetadata({
+      id: 'e1',
+      source: 'n1',
+      target: 'n2',
+      data: {
+        connectionTypeId: 'approves',
+        condition: { type: 'decision', value: 'approved' },
       },
     })).not.toThrow();
   });
@@ -38,6 +63,18 @@ describe('flow edge metadata validation', () => {
       label: 'legacy',
       data: { flowing: false },
     })).not.toThrow();
+  });
+
+  it('rejects invalid decision conditions', () => {
+    expect(() => validateFlowEdgeMetadata({
+      id: 'e1',
+      source: 'n1',
+      target: 'n2',
+      data: {
+        connectionTypeId: 'approves',
+        condition: { type: 'decision', value: 'maybe' },
+      },
+    })).toThrow(/invalid flow edge connection condition/);
   });
 
   it('rejects custom type without label text', () => {

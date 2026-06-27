@@ -45,15 +45,6 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
       if (expectedRevision === undefined || expectedRevision === null) {
         return res.status(400).json({ error: 'expectedRevision required' });
       }
-      for (const row of index.projects) {
-        if (!row?.id) continue;
-        const meta = await getCanvasProjectMeta(row.id);
-        if (!meta) {
-          console.warn(
-            `[canvas] workspace index lists project ${row.id} but canvas_project_document is missing`,
-          );
-        }
-      }
       const result = await putCanvasIndex(index, expectedRevision, {
         deletedProjectIds: Array.isArray(deletedProjectIds) ? deletedProjectIds : [],
         enforceDocumentIntegrity: true,

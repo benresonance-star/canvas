@@ -6,6 +6,10 @@ import {
   validateLiveModel,
 } from '../../src/features/live/domain/liveArtifact.js';
 import { nextLiveRunAt } from '../lib/liveSchedule.js';
+import {
+  resolveCanvasArtifactSource,
+  resolveManualTextSource,
+} from '../services/liveSourceContent.js';
 
 function identityHash(id) {
   return crypto.createHash('sha256').update(`canvas-live:${id}`).digest('hex');
@@ -69,6 +73,23 @@ function mapVersion(row) {
   };
 }
 
+function mapRun(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    liveArtifactId: row.live_artifact_id,
+    status: row.status,
+    triggerType: row.trigger_type,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    sourceCharCount: row.source_char_count,
+    outputCharCount: row.output_char_count,
+    changeScore: row.change_score != null ? Number(row.change_score) : null,
+    errorMessage: row.error_message,
+    createdVersionId: row.created_version_id,
+  };
+}
+
 function mapSource(row) {
   return {
     id: row.id,
@@ -94,7 +115,16 @@ async function loadLiveWith(client, id) {
       [live.currentVersionId],
     )
     : { rows: [] };
-  return { ...live, latestVersion: mapVersion(version.rows[0]) };
+  const lastRun = await client.query(
+    `SELECT * FROM live_artifact_run WHERE live_artifact_id = $1
+     ORDER BY started_at DESC LIMIT 1`,
+    [id],
+  );
+  return {
+    ...live,
+    latestVersion: mapVersion(version.rows[0]),
+    lastRun: mapRun(lastRun.rows[0]),
+  };
 }
 
 export async function createLiveArtifact(projectId, input = {}) {
@@ -275,18 +305,35 @@ export async function listLiveHistory(id, limit = 100) {
   return result.rows.map(mapVersion);
 }
 
+export async function listLiveRuns(id, limit = 20) {
+  const result = await pool.query(
+    `SELECT * FROM live_artifact_run WHERE live_artifact_id=$1
+     ORDER BY started_at DESC LIMIT $2`,
+    [id, Math.max(1, Math.min(Number(limit) || 20, 100))],
+  );
+  return result.rows.map(mapRun);
+}
+
 export async function buildLiveSourceContext(live) {
   const sources = (await listLiveSources(live.id)).filter((source) => source.isEnabled);
   const parts = [];
+  const maxCharsPerUrl = Math.min(
+    8000,
+    Math.max(1000, Math.floor((live.maxSourceChars || 24000) / Math.max(sources.length, 1))),
+  );
+
   for (const source of sources) {
     let text = '';
     if (source.sourceType === 'previous_version') {
       text = live.latestVersion?.markdownBody || '';
     } else if (source.sourceType === 'manual_text' || source.sourceType === 'project_assumptions') {
-      text = source.manualText || '';
+      text = await resolveManualTextSource(source.manualText || '', { maxCharsPerUrl });
     } else if (source.sourceType === 'canvas_artifact' && source.sourceId) {
-      const row = await pool.query('SELECT payload_text FROM artifact WHERE id=$1', [source.sourceId]);
-      text = row.rows[0]?.payload_text || '';
+      const row = await pool.query(
+        'SELECT payload_text, type, metadata FROM artifact WHERE id=$1',
+        [source.sourceId],
+      );
+      text = await resolveCanvasArtifactSource(row.rows[0], { maxCharsPerUrl });
     } else if (source.sourceType === 'canvas_note' && source.sourceId) {
       const row = await pool.query('SELECT body FROM note WHERE id=$1', [source.sourceId]);
       text = row.rows[0]?.body || '';
@@ -307,11 +354,11 @@ export async function startLiveRun(live, triggerType) {
   return id;
 }
 
-export async function finishLiveRunSkipped(runId, changeScore, rawResponse) {
+export async function finishLiveRunSkipped(runId, changeScore, rawResponse, contextLength = null) {
   await pool.query(
     `UPDATE live_artifact_run SET status='skipped_no_meaningful_change', finished_at=NOW(),
-     change_score=$2, raw_response=$3::jsonb WHERE id=$1`,
-    [runId, changeScore, JSON.stringify(rawResponse)],
+     change_score=$2, raw_response=$3::jsonb, source_char_count=COALESCE($4, source_char_count) WHERE id=$1`,
+    [runId, changeScore, JSON.stringify(rawResponse), contextLength],
   );
 }
 

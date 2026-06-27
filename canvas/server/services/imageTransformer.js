@@ -1,10 +1,13 @@
 import zlib from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { fetchOpenAI } from '../lib/openaiFetch.js';
+import { buildImageArtifactMetadata } from '../../src/lib/image/imageArtifactMetadata.js';
+import { defaultModelForProvider } from '../../src/features/agents/domain/imageModelOptions.js';
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const OPENAI_IMAGES_GENERATE_URL = 'https://api.openai.com/v1/images/generations';
 const OPENAI_IMAGES_EDIT_URL = 'https://api.openai.com/v1/images/edits';
+const GEMINI_GENERATE_CONTENT_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 function crc32(buffer) {
   let crc = 0xffffffff;
@@ -97,6 +100,16 @@ function openAiSize(aspectRatio = '1:1') {
   return '1024x1024';
 }
 
+function openAiDimensions(aspectRatio = '1:1') {
+  const size = openAiSize(aspectRatio);
+  const [width, height] = size.split('x').map((value) => Number(value) || 0);
+  return { width, height };
+}
+
+function attachImageMetadata(bytes, { mimeType, ext, width, height }) {
+  return buildImageArtifactMetadata(bytes, { mimeType, ext, width, height });
+}
+
 function imageBytesFromDataUrl(dataUrl) {
   const match = /^data:([^;,]+);base64,(.+)$/i.exec(String(dataUrl || ''));
   if (!match) return null;
@@ -114,6 +127,25 @@ function artifactDataUrl(artifact) {
     return artifact.metadata.dataUrl;
   }
   return null;
+}
+
+function collectReferenceImages(request) {
+  const imageReferenceArtifacts = (request.references ?? [])
+    .filter((artifact) => artifact?.type === 'image' || artifactDataUrl(artifact));
+
+  const referenceImages = imageReferenceArtifacts
+    .map((artifact) => {
+      const dataUrl = artifactDataUrl(artifact);
+      const parsed = imageBytesFromDataUrl(dataUrl);
+      return parsed ? { artifact, ...parsed } : null;
+    })
+    .filter(Boolean);
+
+  if (imageReferenceArtifacts.length > 0 && referenceImages.length === 0) {
+    throw new Error('Connected reference images are not available to the server yet. Reconnect the project folder or rehydrate the image preview, then run the agent again.');
+  }
+
+  return referenceImages;
 }
 
 async function parseOpenAiImageResponse(res, fallbackModel) {
@@ -166,20 +198,7 @@ async function runOpenAiImageTransformer(request) {
     output_format: outputFormat,
   };
 
-  const imageReferenceArtifacts = (request.references ?? [])
-    .filter((artifact) => artifact?.type === 'image' || artifactDataUrl(artifact));
-
-  const referenceImages = imageReferenceArtifacts
-    .map((artifact) => {
-      const dataUrl = artifactDataUrl(artifact);
-      const parsed = imageBytesFromDataUrl(dataUrl);
-      return parsed ? { artifact, ...parsed } : null;
-    })
-    .filter(Boolean);
-
-  if (imageReferenceArtifacts.length > 0 && referenceImages.length === 0) {
-    throw new Error('Connected reference images are not available to the server yet. Reconnect the project folder or rehydrate the image preview, then run the agent again.');
-  }
+  const referenceImages = collectReferenceImages(request);
 
   let parsed;
   if (referenceImages.length) {
@@ -215,17 +234,147 @@ async function runOpenAiImageTransformer(request) {
 
   const ext = extForOutputFormat(outputFormat);
   const mimeType = mimeForOutputFormat(outputFormat);
+  const fallbackDimensions = openAiDimensions(settings.aspectRatio);
   return {
     provider: 'openai',
     model: parsed.model,
     usage: parsed.usage,
-    images: parsed.images.map((image) => ({
-      version: image.version,
-      mimeType,
-      ext,
-      contentHash: image.contentHash,
-      dataUrl: `data:${mimeType};base64,${image.bytes.toString('base64')}`,
-    })),
+    images: parsed.images.map((image) => {
+      const imageMeta = attachImageMetadata(image.bytes, {
+        mimeType,
+        ext,
+        ...fallbackDimensions,
+      });
+      return {
+        version: image.version,
+        mimeType,
+        ext,
+        contentHash: image.contentHash,
+        dataUrl: `data:${mimeType};base64,${image.bytes.toString('base64')}`,
+        width: imageMeta.width,
+        height: imageMeta.height,
+        image: imageMeta,
+      };
+    }),
+  };
+}
+
+function geminiAspectRatio(aspectRatio = '1:1') {
+  const allowed = new Set(['1:1', '4:3', '3:4', '16:9', '9:16']);
+  return allowed.has(aspectRatio) ? aspectRatio : '1:1';
+}
+
+function geminiImageSize(quality = 'standard') {
+  if (quality === 'high') return '2K';
+  return '1K';
+}
+
+function geminiGenerateUrl(model, apiKey) {
+  const url = new URL(`${GEMINI_GENERATE_CONTENT_BASE}/${model}:generateContent`);
+  url.searchParams.set('key', apiKey);
+  return url.toString();
+}
+
+function buildGeminiParts(prompt, referenceImages) {
+  const parts = [];
+  for (const reference of referenceImages) {
+    parts.push({
+      inline_data: {
+        mime_type: reference.mimeType,
+        data: reference.bytes.toString('base64'),
+      },
+    });
+  }
+  parts.push({ text: prompt });
+  return parts;
+}
+
+function extractGeminiImageParts(body) {
+  const images = [];
+  for (const candidate of body?.candidates ?? []) {
+    for (const part of candidate?.content?.parts ?? []) {
+      const inline = part.inlineData || part.inline_data;
+      if (!inline?.data) continue;
+      const mimeType = inline.mimeType || inline.mime_type || 'image/png';
+      images.push({
+        mimeType,
+        bytes: Buffer.from(inline.data, 'base64'),
+      });
+    }
+  }
+  return images;
+}
+
+function extForMimeType(mimeType = 'image/png') {
+  if (mimeType === 'image/jpeg') return 'jpg';
+  if (mimeType === 'image/webp') return 'webp';
+  return 'png';
+}
+
+async function runGeminiImageTransformer(request) {
+  const apiKey = request.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!apiKey) {
+    throw new Error('Gemini API key is not configured.');
+  }
+
+  const settings = request.settings ?? {};
+  const model = request.model || process.env.GEMINI_IMAGE_MODEL || defaultModelForProvider('gemini');
+  const imageCount = Math.max(1, Math.min(Number(settings.imageCount) || 1, 4));
+  const referenceImages = collectReferenceImages(request);
+  const generationConfig = {
+    responseModalities: ['TEXT', 'IMAGE'],
+    imageConfig: {
+      aspectRatio: geminiAspectRatio(settings.aspectRatio),
+      imageSize: geminiImageSize(settings.quality),
+    },
+  };
+
+  const collected = [];
+  while (collected.length < imageCount) {
+    const res = await fetchOpenAI(geminiGenerateUrl(model, apiKey), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: buildGeminiParts(request.prompt, referenceImages),
+        }],
+        generationConfig,
+      }),
+      timeoutMs: 180_000,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = body?.error?.message || `Gemini image request failed (${res.status})`;
+      throw new Error(msg);
+    }
+    const extracted = extractGeminiImageParts(body);
+    if (!extracted.length) {
+      throw new Error('Gemini returned no generated images.');
+    }
+    collected.push(...extracted);
+    if (referenceImages.length > 0) break;
+  }
+
+  return {
+    provider: 'gemini',
+    model,
+    usage: null,
+    images: collected.slice(0, imageCount).map((image, index) => {
+      const mimeType = image.mimeType || 'image/png';
+      const ext = extForMimeType(mimeType);
+      const imageMeta = attachImageMetadata(image.bytes, { mimeType, ext });
+      return {
+        version: index + 1,
+        mimeType,
+        ext,
+        contentHash: sha256(image.bytes),
+        dataUrl: `data:${mimeType};base64,${image.bytes.toString('base64')}`,
+        width: imageMeta.width,
+        height: imageMeta.height,
+        image: imageMeta,
+      };
+    }),
   };
 }
 
@@ -243,6 +392,10 @@ export async function runImageTransformer(request) {
     return runOpenAiImageTransformer(request);
   }
 
+  if (request.provider === 'gemini') {
+    return runGeminiImageTransformer(request);
+  }
+
   const settings = request.settings ?? {};
   const imageCount = Math.max(1, Math.min(Number(settings.imageCount) || 1, 8));
   const { width, height } = sizeForAspectRatio(settings.aspectRatio);
@@ -250,14 +403,21 @@ export async function runImageTransformer(request) {
   for (let i = 0; i < imageCount; i += 1) {
     const seed = Number(settings.seed ?? 0) + i + request.prompt.length;
     const bytes = makePng({ width, height, seed });
-    images.push({
-      version: i + 1,
+    const imageMeta = attachImageMetadata(bytes, {
+      mimeType: 'image/png',
+      ext: 'png',
       width,
       height,
+    });
+    images.push({
+      version: i + 1,
+      width: imageMeta.width,
+      height: imageMeta.height,
       mimeType: 'image/png',
       ext: 'png',
       contentHash: sha256(bytes),
       dataUrl: `data:image/png;base64,${bytes.toString('base64')}`,
+      image: imageMeta,
     });
   }
   return {

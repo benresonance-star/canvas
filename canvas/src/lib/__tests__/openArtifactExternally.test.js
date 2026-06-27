@@ -10,6 +10,11 @@ describe('mimeFromExt', () => {
     expect(mimeFromExt('xlsx')).toContain('spreadsheetml');
     expect(mimeFromExt('csv')).toBe('text/csv');
   });
+
+  it('maps JSON and Python code extensions', () => {
+    expect(mimeFromExt('json')).toBe('application/json');
+    expect(mimeFromExt('py')).toBe('text/x-python');
+  });
 });
 
 describe('canOpenArtifactExternally', () => {

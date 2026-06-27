@@ -31,7 +31,7 @@ export function ThemeToggle() {
       onClick={cycleTheme}
       title={label}
       aria-label={label}
-      className="sans p-1.5 text-muted hover:text-secondary transition rounded-md hover:bg-surface-muted/80"
+      className="sans p-1 text-muted hover:text-secondary transition rounded-md hover:bg-surface-muted/80"
     >
       <Icon size={15} strokeWidth={1.5} />
     </button>

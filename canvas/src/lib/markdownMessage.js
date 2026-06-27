@@ -221,6 +221,48 @@ const LATEX_INLINE_PATTERN = new RegExp(
   'g',
 );
 
+const INLINE_LINK_PATTERN = /\[([^\]]+)\]\(([^)]+)\)|(?:https?:\/\/|www\.)[^\s<>"')\]]+/gi;
+
+function normalizeLinkHref(rawHref) {
+  const href = String(rawHref ?? '').trim();
+  if (!href) return null;
+  if (/^https?:\/\//i.test(href)) return href;
+  if (/^www\./i.test(href)) return `https://${href}`;
+  return null;
+}
+
+function pushAutolinkedText(segments, text) {
+  const chunk = String(text ?? '');
+  if (!chunk) return;
+  INLINE_LINK_PATTERN.lastIndex = 0;
+  let cursor = 0;
+  let match;
+  while ((match = INLINE_LINK_PATTERN.exec(chunk)) !== null) {
+    if (match.index > cursor) {
+      segments.push({ type: 'text', text: chunk.slice(cursor, match.index) });
+    }
+    if (match[1] !== undefined) {
+      const href = normalizeLinkHref(match[2]);
+      if (href) {
+        segments.push({ type: 'link', text: match[1], href });
+      } else {
+        segments.push({ type: 'text', text: match[0] });
+      }
+    } else {
+      const href = normalizeLinkHref(match[0]);
+      if (href) {
+        segments.push({ type: 'link', text: match[0], href });
+      } else {
+        segments.push({ type: 'text', text: match[0] });
+      }
+    }
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < chunk.length) {
+    segments.push({ type: 'text', text: chunk.slice(cursor) });
+  }
+}
+
 function pushLatexAwareTextSegment(segments, text) {
   const chunk = String(text ?? '');
   if (!chunk) return;
@@ -229,18 +271,18 @@ function pushLatexAwareTextSegment(segments, text) {
   let match;
   while ((match = LATEX_INLINE_PATTERN.exec(chunk)) !== null) {
     if (match.index > cursor) {
-      segments.push({ type: 'text', text: chunk.slice(cursor, match.index) });
+      pushAutolinkedText(segments, chunk.slice(cursor, match.index));
     }
     const symbol = resolveLatexSymbol(match[0]);
     if (symbol) {
       segments.push({ type: 'symbol', text: symbol, raw: match[0] });
     } else {
-      segments.push({ type: 'text', text: match[0] });
+      pushAutolinkedText(segments, match[0]);
     }
     cursor = match.index + match[0].length;
   }
   if (cursor < chunk.length) {
-    segments.push({ type: 'text', text: chunk.slice(cursor) });
+    pushAutolinkedText(segments, chunk.slice(cursor));
   }
 }
 
@@ -326,6 +368,7 @@ export function serializeInlineMarkdown(segments) {
     if (segment.type === 'strong') return `**${segment.text}**`;
     if (segment.type === 'emphasis') return `*${segment.text}*`;
     if (segment.type === 'code') return `\`${segment.text}\``;
+    if (segment.type === 'link') return `[${segment.text}](${segment.href})`;
     if (segment.type === 'symbol') return segment.raw ?? segment.text ?? '';
     return segment.text ?? '';
   }).join('');

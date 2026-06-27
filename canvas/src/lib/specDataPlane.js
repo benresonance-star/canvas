@@ -7,6 +7,7 @@ import { canvasCardToStaged } from './syncStaging.js';
  */
 export function cardTypeToLayoutKind(type) {
   if (type === 'user_note') return 'note';
+  if (type === 'user_task') return 'task';
   if (type === 'bookmark') return 'url';
   return 'resource';
 }

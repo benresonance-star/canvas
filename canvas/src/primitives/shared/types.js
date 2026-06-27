@@ -15,6 +15,7 @@ export const ARTIFACT_TYPES = [
   'video',
   'transcript',
   'user_note',
+  'user_task',
   'agent_chat',
   'flow',
   'live',

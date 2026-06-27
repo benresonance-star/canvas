@@ -13,14 +13,31 @@ import { CodePreviewFrame } from './CodePreviewFrame.jsx';
 import { AgentChatThreadView } from './AgentChatThreadView.jsx';
 import { parseAgentChatTranscript } from '../lib/agentChatArtifact.js';
 import { LiveArtifactView } from '../features/live/components/LiveArtifactView.jsx';
+import { BeatAgentFullscreen } from '../features/music/agents/beat/components/BeatAgentFullscreen.jsx';
+import { SonicStudioEditor } from '../features/sonicStudio/components/SonicStudioEditor.jsx';
 
-export function ModalContent({ card, version, folderHandle = null, projectId = null }) {
+export function ModalContent({
+  card,
+  version,
+  folderHandle = null,
+  projectId = null,
+  onUpdateCard = null,
+}) {
   const cardType = normalizeCardType(card?.type);
   const localTranscript = version?.content?.trim() || '';
   const artifactRefId =
-    cardType === 'agent_chat' && !localTranscript && version?.artifactRef?.id
+    (cardType === 'agent_chat' || isCodePreviewType(cardType))
+    && !localTranscript
+    && version?.artifactRef?.id
       ? version.artifactRef.id
-      : null;
+      : (
+        cardType === 'image'
+        && !version?.objectUrl
+        && !version?.dataUrl
+        && version?.artifactRef?.id
+          ? version.artifactRef.id
+          : null
+      );
   const artifactPayload = useArtifactPayloadText(artifactRefId, Boolean(artifactRefId));
 
   if (!version) return null;
@@ -37,7 +54,38 @@ export function ModalContent({ card, version, folderHandle = null, projectId = n
     );
   }
 
-  const mediaSrc = version.objectUrl || version.dataUrl || null;
+  if (cardType === 'music-agent') {
+    return (
+      <BeatAgentFullscreen
+        card={card}
+        projectId={projectId || card.projectId}
+        folderHandle={folderHandle}
+        onUpdateCard={onUpdateCard}
+      />
+    );
+  }
+
+  if (cardType === 'sonic_studio') {
+    return (
+      <SonicStudioEditor
+        card={card}
+        onUpdateCard={onUpdateCard}
+      />
+    );
+  }
+
+  const mediaSrc =
+    version.objectUrl
+    || version.dataUrl
+    || (card.type === 'image' && artifactPayload.text?.startsWith('data:image/')
+      ? artifactPayload.text
+      : null)
+    || null;
+
+  function formatVersionSizeLabel(size) {
+    if (!Number.isFinite(size) || size <= 0) return null;
+    return `${(size / 1024 / 1024).toFixed(1)}MB`;
+  }
 
   if (cardType === 'spreadsheet') {
     return (
@@ -53,6 +101,20 @@ export function ModalContent({ card, version, folderHandle = null, projectId = n
   }
 
   if ((card.type === 'image' || card.type === 'pdf') && !mediaSrc) {
+    if (card.type === 'image' && artifactPayload.loading) {
+      return (
+        <div className="h-full flex items-center justify-center text-center p-8">
+          <div className="serif text-secondary text-lg">{strings.preview.loadingPdf}</div>
+        </div>
+      );
+    }
+    if (version.previewCacheKey) {
+      return (
+        <div className="h-full flex flex-col items-center justify-center text-center p-8">
+          <div className="serif text-secondary text-lg">{strings.preview.loadingPdf}</div>
+        </div>
+      );
+    }
     if (version.previewStripped) {
       return (
         <div className="h-full flex flex-col items-center justify-center text-center p-8">
@@ -66,7 +128,8 @@ export function ModalContent({ card, version, folderHandle = null, projectId = n
         <div>
           <div className="serif text-secondary text-lg mb-2">{strings.preview.modalTooLarge}</div>
           <div className="sans text-xs text-muted">
-            {version.filename} · {(version.size / 1024 / 1024).toFixed(1)}MB
+            {version.filename}
+            {formatVersionSizeLabel(version.size) ? ` · ${formatVersionSizeLabel(version.size)}` : ''}
           </div>
         </div>
       </div>
@@ -137,13 +200,48 @@ export function ModalContent({ card, version, folderHandle = null, projectId = n
     );
   }
 
+  if (isCodePreviewType(cardType)) {
+    const content = localTranscript || artifactPayload.text || '';
+    if (!content && artifactPayload.loading) {
+      return (
+        <div className="h-full flex items-center justify-center text-center p-8">
+          <div className="serif text-secondary text-lg">{strings.preview.loadingPdf}</div>
+        </div>
+      );
+    }
+    if (!content && !version.inline) {
+      return (
+        <div className="h-full flex items-center justify-center text-center p-8">
+          <div>
+            <div className="serif text-secondary text-lg mb-2">{strings.preview.modalTooLarge}</div>
+            <div className="sans text-xs text-muted">
+              {version.filename}
+              {formatVersionSizeLabel(version.size) ? ` · ${formatVersionSizeLabel(version.size)}` : ''}
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="h-full w-full min-h-0 p-4">
+        <CodePreviewFrame
+          content={content}
+          filename={version.filename}
+          ext={version.ext}
+          compact={false}
+        />
+      </div>
+    );
+  }
+
   if (!version.inline) {
     return (
       <div className="h-full flex items-center justify-center text-center p-8">
         <div>
           <div className="serif text-secondary text-lg mb-2">{strings.preview.modalTooLarge}</div>
           <div className="sans text-xs text-muted">
-            {version.filename} · {(version.size / 1024 / 1024).toFixed(1)}MB
+            {version.filename}
+            {formatVersionSizeLabel(version.size) ? ` · ${formatVersionSizeLabel(version.size)}` : ''}
           </div>
         </div>
       </div>
@@ -187,19 +285,6 @@ export function ModalContent({ card, version, folderHandle = null, projectId = n
           messages={parseAgentChatTranscript(body)}
           scrollOnUpdate={false}
           className="max-w-2xl mx-auto"
-        />
-      </div>
-    );
-  }
-
-  if (isCodePreviewType(cardType)) {
-    return (
-      <div className="h-full w-full min-h-0 p-4">
-        <CodePreviewFrame
-          content={version.content || ''}
-          filename={version.filename}
-          ext={version.ext}
-          compact={false}
         />
       </div>
     );

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../repositories/live-artifacts.js', () => ({
   addLiveSource: vi.fn(), createLiveArtifact: vi.fn(), deleteLiveSource: vi.fn(),
-  getLiveArtifact: vi.fn(), listLiveArtifacts: vi.fn(), listLiveHistory: vi.fn(),
+  getLiveArtifact: vi.fn(), listLiveArtifacts: vi.fn(), listLiveHistory: vi.fn(), listLiveRuns: vi.fn(),
   listLiveSources: vi.fn(), listProjectUpdates: vi.fn(), markAllProjectUpdatesRead: vi.fn(),
   markLiveExported: vi.fn(), markProjectUpdateRead: vi.fn(), updateLiveArtifact: vi.fn(),
   updateLiveSource: vi.fn(),
@@ -27,6 +27,13 @@ describe('live artifact routes', () => {
     const result = await request(server, '/projects/p1/live-artifacts', { method: 'POST', body: JSON.stringify({ name: 'Development Feed' }) });
     expect(result.response.status).toBe(201);
     expect(result.body.live.kind).toBe('agent_feed');
+  });
+
+  it('returns run diagnostics', async () => {
+    repo.listLiveRuns.mockResolvedValue([{ id: 'run-1', sourceCharCount: 1200, status: 'succeeded' }]);
+    const result = await request(server, '/live-artifacts/live-1/runs');
+    expect(result.response.status).toBe(200);
+    expect(result.body.runs[0].sourceCharCount).toBe(1200);
   });
 
   it('returns the successful run result', async () => {

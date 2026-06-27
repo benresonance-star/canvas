@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { strings } from '../content/strings.js';
+import { isLinkableArtifactType } from '../lib/ingest/linkIngest.js';
 import {
   getPrimitiveDetail,
   fetchArtifactEdges,
@@ -12,6 +13,7 @@ import { ClusterManagementSection } from './ClusterManagementSection.jsx';
 import { buildArtifactToCardMap } from '../lib/graph/clusterGraph.js';
 import { formatDurationSec } from '../lib/audio/parseAudioTags.js';
 import { FieldRow } from './FieldRow.jsx';
+import { ImageArtifactMetadataFields } from './ImageArtifactMetadataFields.jsx';
 
 function stripPrimitivePrefix(summary) {
   return summary?.replace(/^[^:]+:\s*/, '') || '';
@@ -141,7 +143,8 @@ export function PrimitiveInspectorPanel({
   const fromRef =
     selection.type === 'artifact' ? { id: selection.id, type: 'artifact' } : null;
 
-  const canLinkFrom = selection.type === 'artifact' && p?.type === 'user_note';
+  const canLinkFrom =
+    selection.type === 'artifact' && isLinkableArtifactType(p?.type, meta);
 
   const handleUnlink = async (relId) => {
     try {
@@ -219,6 +222,7 @@ export function PrimitiveInspectorPanel({
                       <FieldRow label="Hash" value={p.content_hash} />
                       <FieldRow label="Type" value={p.type} />
                       <FieldRow label="File" value={meta?.filename} />
+                      <ImageArtifactMetadataFields meta={meta} />
                       {meta?.canvas_kind === 'audio' && meta?.audio && (
                         <>
                           <FieldRow label={strings.audio.title} value={meta.audio.title} />
@@ -243,7 +247,11 @@ export function PrimitiveInspectorPanel({
                           value={meta?.connectorLabel || meta?.connectorId}
                         />
                       )}
-                      {(p.type === 'user_note' || p.type === 'agent_chat') && p.payload_text && (
+                      {(p.type === 'user_note'
+                        || p.type === 'user_task'
+                        || p.type === 'agent_chat'
+                        || (p.type === 'doc' && meta?.canvas_kind === 'code'))
+                        && p.payload_text && (
                         <section className="py-2">
                           <div className="sans text-[10px] uppercase tracking-wider text-muted mb-1">
                             {p.type === 'agent_chat'

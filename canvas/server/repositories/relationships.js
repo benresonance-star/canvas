@@ -112,7 +112,13 @@ export async function insertRelationshipIfAbsent(clusterId, fields) {
     to_ref: fields.to_ref,
     type: fields.type,
   });
-  if (existing) return { relationship: rowToRelationship(existing), created: false };
+  if (existing) {
+    const relationship = rowToRelationship(existing);
+    if (clusterId) {
+      await addClusterMember(clusterId, { id: relationship.id, type: 'relationship' });
+    }
+    return { relationship, created: false };
+  }
   const relationship = await insertRelationship(clusterId, fields);
   return { relationship, created: true };
 }

@@ -3,18 +3,24 @@ import { getCardPixelSize } from '../../../lib/cards.js';
 import { cardDisplayFilename, cardFileExtension, pinnedCardVersion } from '../../../lib/filename.js';
 import {
   FLOW_CONNECTION_CUSTOM_TYPE_ID,
+  flowEdgeCondition,
   flowEdgeConnectionTypeCustom,
   flowEdgeConnectionTypeId,
-  inferFlowEdgeConnectionTypeState,
   isKnownFlowConnectionTypeId,
+  normalizeFlowConnectionTypeId,
+  normalizeFlowEdgeCondition,
+  resolveFlowEdgeConnectionTypeFields,
   resolveFlowConnectionLabel,
+  validateFlowEdgeCondition,
 } from './flowConnectionTypes.js';
-import { flowLocalNodeTypeMeta, normalizeFlowLocalNodeType, resolveNewFlowLocalNodeType } from './flowLocalNodeTypes.js';
+import { flowLocalNodeTypeMeta, FLOW_LOCAL_NODE_TYPE_ARTIFACT, normalizeFlowLocalNodeType, resolveNewFlowLocalNodeType } from './flowLocalNodeTypes.js';
 import { normalizeFlowLocalNodeTypeColors } from './flowLocalNodeTypeColors.js';
 import { normalizeFlowNodeActors } from './flowNodeActors.js';
+import { normalizeFlowPaths } from './flowPaths.js';
 
 export const EMPTY_FLOW_VIEWPORT = Object.freeze({ x: 0, y: 0, zoom: 1 });
 export const UNTITLED_EXPLORATION_TITLE = 'Untitled exploration';
+export const UNTITLED_FLOW_STEP_TITLE = 'Untitled step';
 export const FLOW_EDGE_TYPE = 'smoothstep';
 export const FLOW_EDGE_MAX_PROPERTIES = 32;
 export const FLOW_EDGE_PROPERTY_KEY_MAX = 64;
@@ -210,18 +216,25 @@ export function flowEdgeProperties(edge) {
  * @param {object} edge
  */
 export function normalizeFlowEdgeMetadata(edge) {
-  const inferred = inferFlowEdgeConnectionTypeState(edge);
-  const connectionTypeId = inferred.connectionTypeId;
-  const connectionTypeCustom = String(inferred.connectionTypeCustom ?? '')
-    .trim()
-    .slice(0, FLOW_EDGE_CUSTOM_LABEL_MAX);
+  const { connectionTypeId, connectionTypeCustom: rawCustom, condition } = resolveFlowEdgeConnectionTypeFields(edge);
+  const normalizedTypeId = normalizeFlowConnectionTypeId(connectionTypeId);
+  const typeAllowsCustom = normalizedTypeId === FLOW_CONNECTION_CUSTOM_TYPE_ID;
+  const connectionTypeCustom = typeAllowsCustom
+    ? String(rawCustom ?? '').trim().slice(0, FLOW_EDGE_CUSTOM_LABEL_MAX)
+    : '';
+  const normalizedCondition = normalizeFlowEdgeCondition(condition);
   const properties = normalizeFlowEdgeProperties(edge?.data?.properties);
   const data = {
     ...(edge.data ?? {}),
-    connectionTypeId,
+    connectionTypeId: normalizedTypeId,
     connectionTypeCustom,
     properties,
   };
+  if (normalizedCondition) {
+    data.condition = normalizedCondition;
+  } else {
+    delete data.condition;
+  }
   const normalized = {
     ...edge,
     data,
@@ -232,25 +245,38 @@ export function normalizeFlowEdgeMetadata(edge) {
 
 /**
  * @param {object} edge
- * @param {{ connectionTypeId?: string, connectionTypeCustom?: string, properties?: Record<string, string> }} patch
+ * @param {{ connectionTypeId?: string, connectionTypeCustom?: string, condition?: object | null, properties?: Record<string, string> }} patch
  */
 export function patchFlowEdge(edge, patch) {
   const currentTypeId = flowEdgeConnectionTypeId(edge);
   const nextTypeId = patch.connectionTypeId !== undefined
-    ? String(patch.connectionTypeId ?? '').trim()
+    ? normalizeFlowConnectionTypeId(String(patch.connectionTypeId ?? '').trim())
     : currentTypeId;
   const nextCustom = patch.connectionTypeCustom !== undefined
     ? String(patch.connectionTypeCustom ?? '').trim().slice(0, FLOW_EDGE_CUSTOM_LABEL_MAX)
-    : flowEdgeConnectionTypeCustom(edge);
+    : (patch.connectionTypeId !== undefined && !nextTypeId
+      ? ''
+      : flowEdgeConnectionTypeCustom(edge));
+  let nextCondition = patch.condition !== undefined
+    ? normalizeFlowEdgeCondition(patch.condition)
+    : flowEdgeCondition(edge);
+  if (patch.connectionTypeId !== undefined && !nextTypeId) {
+    nextCondition = null;
+  }
   const nextProperties = patch.properties !== undefined
     ? normalizeFlowEdgeProperties(patch.properties)
     : flowEdgeProperties(edge);
   const data = {
     ...(edge.data ?? {}),
     connectionTypeId: nextTypeId,
-    connectionTypeCustom: nextCustom,
+    connectionTypeCustom: nextTypeId === FLOW_CONNECTION_CUSTOM_TYPE_ID ? nextCustom : '',
     properties: nextProperties,
   };
+  if (nextCondition) {
+    data.condition = nextCondition;
+  } else {
+    delete data.condition;
+  }
   return {
     ...edge,
     data,
@@ -263,9 +289,8 @@ export function patchFlowEdge(edge, patch) {
  * @throws {Error}
  */
 export function validateFlowEdgeMetadata(edge) {
-  const typeId = typeof edge?.data?.connectionTypeId === 'string'
-    ? edge.data.connectionTypeId.trim()
-    : '';
+  validateFlowEdgeCondition(edge?.data?.condition);
+  const typeId = normalizeFlowConnectionTypeId(edge?.data?.connectionTypeId);
   if (!isKnownFlowConnectionTypeId(typeId)) {
     throw new Error(`invalid flow edge connection type: ${typeId}`);
   }
@@ -292,7 +317,23 @@ export function validateFlowEdgeMetadata(edge) {
 
 function serializeFlowEdgeForSave(edge) {
   const normalized = normalizeFlowEdgeMetadata(edge);
-  const { properties, connectionTypeId, connectionTypeCustom, ...presentationRest } = normalized.data ?? {};
+  const {
+    properties,
+    connectionTypeId,
+    connectionTypeCustom,
+    condition,
+    ...presentationRest
+  } = normalized.data ?? {};
+  const data = {
+    ...presentationRest,
+    connectionTypeId,
+    connectionTypeCustom,
+    properties: flowEdgeProperties(normalized),
+    edgeType: normalized.type ?? normalized.data?.edgeType ?? FLOW_EDGE_TYPE,
+  };
+  if (condition) {
+    data.condition = condition;
+  }
   return {
     id: normalized.id,
     source: normalized.source,
@@ -300,17 +341,12 @@ function serializeFlowEdgeForSave(edge) {
     sourceHandle: normalized.sourceHandle ?? null,
     targetHandle: normalized.targetHandle ?? null,
     label: normalized.label ?? '',
-    data: {
-      ...presentationRest,
-      connectionTypeId,
-      connectionTypeCustom,
-      properties: flowEdgeProperties(normalized),
-      edgeType: normalized.type ?? normalized.data?.edgeType ?? FLOW_EDGE_TYPE,
-    },
+    data,
   };
 }
 
-export function snapshotForSave(flow, nodes, edges, viewport) {
+export function snapshotForSave(flow, nodes, edges, viewport, paths = []) {
+  const nodeIds = (nodes ?? []).map((node) => node.id);
   return {
     expectedRevision: flow.revision,
     title: flow.title.trim() || UNTITLED_EXPLORATION_TITLE,
@@ -318,6 +354,7 @@ export function snapshotForSave(flow, nodes, edges, viewport) {
     viewport: viewport || EMPTY_FLOW_VIEWPORT,
     snapshotPath: flow.snapshotPath || null,
     localNodeTypeColors: normalizeFlowLocalNodeTypeColors(flow.localNodeTypeColors),
+    paths: normalizeFlowPaths(paths, nodeIds),
     nodes: nodes.map((node) => ({
       id: node.id,
       type: node.type,
@@ -333,10 +370,12 @@ export function snapshotForSave(flow, nodes, edges, viewport) {
 
 function previewEdgeMetadata(edge) {
   const normalized = normalizeFlowEdgeMetadata(edge);
+  const condition = flowEdgeCondition(normalized);
   return {
     label: normalized.label ?? '',
     connectionTypeId: flowEdgeConnectionTypeId(normalized),
     connectionTypeCustom: flowEdgeConnectionTypeCustom(normalized),
+    ...(condition ? { condition } : {}),
     properties: flowEdgeProperties(normalized),
   };
 }
@@ -344,12 +383,16 @@ function previewEdgeMetadata(edge) {
 export function previewFromFlow(nodes, edges, meta = {}) {
   return {
     description: typeof meta.description === 'string' ? meta.description.trim() : '',
+    localNodeTypeColors: normalizeFlowLocalNodeTypeColors(meta.localNodeTypeColors),
     nodes: (nodes ?? []).map((node) => ({
       id: node.id,
       x: node.position.x,
       y: node.position.y,
       type: node.type,
       title: flowNodeDisplayTitle(node),
+      localNodeType: node.type === 'local'
+        ? normalizeFlowLocalNodeType(node.data?.localNodeType)
+        : FLOW_LOCAL_NODE_TYPE_ARTIFACT,
       ...(node.type === 'artifact'
         ? {
             displayFilename: flowNodePreviewFilename(node),
@@ -396,7 +439,7 @@ export function removeFlowNodesById(nodes, edges, nodeIds) {
  */
 export function flowNodeDisplayTitle(node) {
   const title = node?.data?.title;
-  return typeof title === 'string' && title.trim() ? title.trim() : 'Untitled node';
+  return typeof title === 'string' && title.trim() ? title.trim() : UNTITLED_FLOW_STEP_TITLE;
 }
 
 /**
@@ -687,9 +730,10 @@ export function flowGraphFromPreview(preview) {
       position: { x: node.x, y: node.y },
     })),
     edges: (preview?.edges ?? []).map((edge, index) => {
-      const connectionTypeId = typeof edge.connectionTypeId === 'string' ? edge.connectionTypeId : '';
+      const connectionTypeId = normalizeFlowConnectionTypeId(edge.connectionTypeId);
       const connectionTypeCustom = typeof edge.connectionTypeCustom === 'string' ? edge.connectionTypeCustom : '';
       const label = typeof edge.label === 'string' ? edge.label : '';
+      const condition = normalizeFlowEdgeCondition(edge.condition);
       const data = {
         flowing: edge.flowing,
         flowDirection: edge.direction ?? FLOW_EDGE_DIRECTION.forward,
@@ -697,6 +741,9 @@ export function flowGraphFromPreview(preview) {
         connectionTypeCustom,
         properties: normalizeFlowEdgeProperties(edge.properties),
       };
+      if (condition) {
+        data.condition = condition;
+      }
       return {
         id: `${edge.source}-${edge.target}-${index}`,
         source: edge.source,
@@ -751,6 +798,7 @@ export function flowCardFromDocument(flow, position = { x: 100, y: 100 }) {
       filename: flow.snapshotPath || `${flow.title}.flow.json`,
       flowPreview: previewFromFlow(flow.nodes ?? [], flow.edges ?? [], {
         description: flow.description,
+        localNodeTypeColors: flow.localNodeTypeColors,
       }),
     }],
     pinnedVersion: 1,
@@ -766,7 +814,10 @@ export function patchFlowCard(card, flow, nodes, edges) {
             ...version,
             flowId: flow.id,
             filename: flow.snapshotPath || version.filename,
-            flowPreview: previewFromFlow(nodes, edges, { description: flow.description }),
+            flowPreview: previewFromFlow(nodes, edges, {
+              description: flow.description,
+              localNodeTypeColors: flow.localNodeTypeColors,
+            }),
           }
         : version),
   };

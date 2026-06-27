@@ -8,6 +8,11 @@ import { CardPreview } from './CardPreview.jsx';
 import { AudioSkinTrigger } from './AudioSkinPicker.jsx';
 import { MediaMinimalToggle } from './MediaMinimalToggle.jsx';
 import { resolveAudioSkinColor } from '../lib/audioSkin.js';
+import {
+  getUserTaskHeaderClass,
+  resolveUserTaskStatus,
+} from '../features/tasks/domain/taskCard.js';
+import { parseUserTask } from '../features/tasks/domain/userTaskContent.js';
 
 export function CanvasCard({
   card,
@@ -33,13 +38,16 @@ export function CanvasCard({
   onRehydratePreview,
   onInspectArtifact,
   onInlineSaveUserNote,
+  onInlineSaveUserTask,
   onInlineSaveMarkdown,
   onInlineSaveBookmark,
   onUpdateCard,
   userNoteSaving,
+  userTaskSaving,
   markdownSaving,
   bookmarkSaving,
   userNoteDisabled,
+  userTaskDisabled,
   markdownEditDisabled = false,
   bookmarkEditDisabled,
   isBeingDragged = false,
@@ -49,6 +57,7 @@ export function CanvasCard({
   agentChatThreadIndex = null,
   agentChatConnectorId = null,
   folderHandle = null,
+  projectId = null,
   cardsById = null,
 }) {
   const versions = card.versions ?? [];
@@ -68,6 +77,9 @@ export function CanvasCard({
   const displayFilename = cardDisplayFilename(card);
   const canEditUserNoteTitle =
     card.type === 'user_note' && isActive && !showSimplified && !userNoteDisabled;
+  const canEditUserTaskTitle =
+    card.type === 'user_task' && isActive && !showSimplified && !userTaskDisabled;
+  const canEditTextCardTitle = canEditUserNoteTitle || canEditUserTaskTitle;
   const [titleDraft, setTitleDraft] = useState({
     cardId: card.id,
     cardName: card.name,
@@ -86,12 +98,22 @@ export function CanvasCard({
   };
 
   const handleTitleBlur = () => {
-    if (!canEditUserNoteTitle || userNoteSaving || !onInlineSaveUserNote) return;
+    if (!canEditTextCardTitle || userNoteSaving || userTaskSaving) return;
+    if (card.type === 'user_note' && (!onInlineSaveUserNote || userNoteDisabled)) return;
+    if (card.type === 'user_task' && (!onInlineSaveUserTask || userTaskDisabled)) return;
     const name = editName.trim();
     if (name === card.name) return;
-    void onInlineSaveUserNote({
-      body: pinned?.content ?? '',
+    if (card.type === 'user_note') {
+      void onInlineSaveUserNote?.({
+        body: pinned?.content ?? '',
+        name,
+      });
+      return;
+    }
+    void onInlineSaveUserTask?.({
+      body: parseUserTask(pinned?.content ?? '').body,
       name,
+      taskStatus: resolveUserTaskStatus(card),
     });
   };
 
@@ -117,7 +139,9 @@ export function CanvasCard({
   const cardShellShape = isAgentArtifact ? 'canvas-card-agent-artifact rounded-lg' : 'rounded-lg bg-surface';
   const missingHeaderTint = missingFromFolder
     ? 'bg-danger-muted border-danger-border'
-    : isAgentArtifact
+    : card.type === 'user_task'
+      ? `${getUserTaskHeaderClass(resolveUserTaskStatus(card))} border-b`
+      : isAgentArtifact
       ? 'canvas-card-agent-artifact-header border-b'
       : 'border-border';
   const canDeleteFromCanvas =
@@ -174,7 +198,7 @@ export function CanvasCard({
                 </span>
               )}
             </div>
-            {canEditUserNoteTitle ? (
+            {canEditTextCardTitle ? (
               <input
                 type="text"
                 value={editName}
@@ -186,11 +210,11 @@ export function CanvasCard({
                     e.currentTarget.blur();
                   }
                 }}
-                disabled={userNoteSaving}
+                disabled={userNoteSaving || userTaskSaving}
                 className={`w-full min-w-0 serif bg-transparent border-0 border-b border-border-subtle focus:border-accent/50 focus:outline-none px-0 py-0.5 ${
                   missingFromFolder ? 'text-danger' : 'text-primary'
                 } ${showSimplified ? 'text-sm' : 'text-base'}`}
-                aria-label={strings.userNote.name}
+                aria-label={card.type === 'user_task' ? strings.userTask.name : strings.userNote.name}
                 title={strings.userNote.titleSaveHint}
                 onMouseDown={stopBubble}
                 onClick={stopBubble}
@@ -355,6 +379,15 @@ export function CanvasCard({
                 ? (payload) => onInlineSaveUserNote?.({ ...payload, name: editName })
                 : undefined
             }
+            onInlineSaveUserTask={
+              card.type === 'user_task' && isActive && !showSimplified
+                ? (payload) => onInlineSaveUserTask?.({
+                  ...payload,
+                  name: editName,
+                  taskStatus: resolveUserTaskStatus(card),
+                })
+                : undefined
+            }
             onInlineSaveMarkdown={
               card.type === 'markdown' && isActive && !showSimplified
                 ? onInlineSaveMarkdown
@@ -366,9 +399,11 @@ export function CanvasCard({
                 : undefined
             }
             userNoteSaving={userNoteSaving}
+            userTaskSaving={userTaskSaving}
             markdownSaving={markdownSaving}
             bookmarkSaving={bookmarkSaving}
             userNoteDisabled={userNoteDisabled}
+            userTaskDisabled={userTaskDisabled}
             markdownEditDisabled={markdownEditDisabled}
             bookmarkEditDisabled={bookmarkEditDisabled}
             userNoteEditTitle={editName}
@@ -379,6 +414,8 @@ export function CanvasCard({
             agentChatThreadIndex={agentChatThreadIndex}
             agentChatConnectorId={agentChatConnectorId}
             folderHandle={folderHandle}
+            projectId={projectId}
+            onUpdateCard={onUpdateCard}
             cardsById={cardsById}
           />
         </div>

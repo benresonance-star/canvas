@@ -14,22 +14,24 @@ describe('flowLocalNodeTypeColors', () => {
     });
   });
 
-  it('merges custom colors with defaults and drops legacy keys on normalize', () => {
+  it('migrates retired step colors to decision and drops unknown keys', () => {
     const colors = normalizeFlowLocalNodeTypeColors({
       step: '#112233',
       agent: '#abcdef',
     });
-    expect(colors.step).toBe('#112233');
+    expect(colors.decision).toBe('#112233');
+    expect(colors.step).toBeUndefined();
     expect(colors.artifact).toBe(FLOW_LOCAL_NODE_TYPE_DEFAULT_COLORS.artifact);
     expect(colors.agent).toBeUndefined();
   });
 
   it('patches a single type color', () => {
-    const next = patchFlowLocalNodeTypeColor({}, 'step', '#abcdef');
-    expect(next.step).toBe('#abcdef');
+    const next = patchFlowLocalNodeTypeColor({}, 'decision', '#abcdef');
+    expect(next.decision).toBe('#abcdef');
   });
 
   it('resolves color for a type id and maps legacy types to artifact color', () => {
+    expect(resolveFlowLocalNodeTypeColor({ decision: '#101010' }, 'decision')).toBe('#101010');
     expect(resolveFlowLocalNodeTypeColor({ step: '#101010' }, 'step')).toBe('#101010');
     expect(resolveFlowLocalNodeTypeColor({}, 'decision')).toBe(FLOW_LOCAL_NODE_TYPE_DEFAULT_COLORS.decision);
     expect(resolveFlowLocalNodeTypeColor({ artifact: '#222222' }, 'agent')).toBe('#222222');
@@ -38,6 +40,6 @@ describe('flowLocalNodeTypeColors', () => {
   it('validates color maps and ignores legacy keys', () => {
     expect(() => validateFlowLocalNodeTypeColors({ step: '#123456' })).not.toThrow();
     expect(() => validateFlowLocalNodeTypeColors({ agent: '#123456' })).not.toThrow();
-    expect(() => validateFlowLocalNodeTypeColors({ step: 'not-a-color' })).toThrow(/invalid flow local node type color/);
+    expect(() => validateFlowLocalNodeTypeColors({ decision: 'not-a-color' })).toThrow(/invalid flow local node type color/);
   });
 });

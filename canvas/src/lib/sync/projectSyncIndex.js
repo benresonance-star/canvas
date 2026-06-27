@@ -52,6 +52,11 @@ import {
 let lastServerWorkspaceIndexUpdatedAt = 0;
 let indexPullChain = null;
 let indexPullPendingOptions = null;
+let indexPullRetryTimer = null;
+let indexPullConsecutiveTimeouts = 0;
+let indexPushRetryTimer = null;
+let indexPushConsecutiveFailures = 0;
+let indexPushChain = Promise.resolve();
 
 export function getLastServerWorkspaceIndexUpdatedAt() {
   return lastServerWorkspaceIndexUpdatedAt;
@@ -65,6 +70,13 @@ export function resetProjectSyncIndexState() {
   lastServerWorkspaceIndexUpdatedAt = 0;
   indexPullChain = null;
   indexPullPendingOptions = null;
+  if (indexPullRetryTimer) clearTimeout(indexPullRetryTimer);
+  indexPullRetryTimer = null;
+  indexPullConsecutiveTimeouts = 0;
+  if (indexPushRetryTimer) clearTimeout(indexPushRetryTimer);
+  indexPushRetryTimer = null;
+  indexPushConsecutiveFailures = 0;
+  indexPushChain = Promise.resolve();
 }
 
 registerProjectSyncResetHook(resetProjectSyncIndexState);
@@ -86,16 +98,69 @@ export async function healProjectsMissingServerDocuments(index) {
   const candidateIds = index.projects
     .filter((p) => p?.id && !p.archived)
     .map((p) => p.id);
-  const missing = [];
-  for (const projectId of candidateIds) {
-    const meta = await fetchCanvasProjectMeta(projectId);
-    if (!meta) missing.push(projectId);
-  }
+  const missing = await collectMissingServerProjectIds(candidateIds);
   if (missing.length === 0) return 0;
-  return uploadLocalOnlyProjects(missing, index);
+  return uploadLocalOnlyProjects(missing, index, { pushIndex: false });
 }
 
-async function pushIndexToServer(index, options = {}) {
+async function collectMissingServerProjectIds(candidateIds) {
+  const missing = [];
+  const concurrency = 8;
+  let cursor = 0;
+  async function worker() {
+    while (cursor < candidateIds.length) {
+      const projectId = candidateIds[cursor];
+      cursor += 1;
+      try {
+        const meta = await fetchCanvasProjectMeta(projectId);
+        if (!meta) missing.push(projectId);
+      } catch {
+        missing.push(projectId);
+      }
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, candidateIds.length) }, () => worker()),
+  );
+  return missing;
+}
+
+function isTimeoutError(error) {
+  return error?.name === 'TimeoutError'
+    || error?.code === 'ABORT_ERR'
+    || /signal timed out|timeout/i.test(String(error?.message ?? error));
+}
+
+function scheduleIndexPushRetry(index, options = {}) {
+  if (!getServerSyncEnabled() || !index) return;
+  if (indexPushRetryTimer) clearTimeout(indexPushRetryTimer);
+  const delayMs = Math.min(30_000, 5_000 * Math.max(1, indexPushConsecutiveFailures));
+  indexPushRetryTimer = setTimeout(() => {
+    indexPushRetryTimer = null;
+    scheduleIndexRemoteSavePending(index, (payload) => {
+      void pushIndexToServer(payload, options);
+    });
+  }, delayMs);
+}
+
+function scheduleIndexPullRetry(options = {}) {
+  if (!getServerSyncEnabled()) return;
+  if (indexPullRetryTimer) clearTimeout(indexPullRetryTimer);
+  const delayMs = Math.min(30_000, 5_000 * Math.max(1, indexPullConsecutiveTimeouts));
+  indexPullRetryTimer = setTimeout(() => {
+    indexPullRetryTimer = null;
+    void pullAndMergeProjectIndex(options).catch(() => {});
+  }, delayMs);
+}
+
+function pushIndexToServer(index, options = {}) {
+  indexPushChain = indexPushChain
+    .catch(() => {})
+    .then(() => pushIndexToServerBody(index, options));
+  return indexPushChain;
+}
+
+async function pushIndexToServerBody(index, options = {}) {
   if (!getServerSyncEnabled() || !index) return;
   flushIndexTimer();
   setPendingIndexPayload(null);
@@ -114,8 +179,10 @@ async function pushIndexToServer(index, options = {}) {
       { deletedProjectIds: options.deletedProjectIds ?? [] },
     );
     if (result.conflict && result.index) {
+      applyServerWorkspaceIndexRevision(result.revision);
       const localIndex = index;
       const { index: merged } = mergeProjectIndices(localIndex, result.index, {});
+      await writeLocalIndex(merged);
       result = await saveCanvasIndex(merged, result.revision, getProjectSyncClientId(), {
         deletedProjectIds: options.deletedProjectIds ?? [],
       });
@@ -123,8 +190,17 @@ async function pushIndexToServer(index, options = {}) {
     }
     if (result.ok) {
       applyServerWorkspaceIndexRevision(result.revision);
+      indexPushConsecutiveFailures = 0;
     }
   } catch (e) {
+    indexPushConsecutiveFailures += 1;
+    if (isTimeoutError(e)) {
+      console.warn('Canvas index sync timed out; will retry in background.', {
+        attempts: indexPushConsecutiveFailures,
+      });
+      scheduleIndexPushRetry(index, options);
+      return;
+    }
     console.error('Canvas index sync failed:', e);
   }
 }
@@ -137,7 +213,7 @@ async function collectLocalProjectIdsWithCards(localProjects) {
   }
   return ids;
 }
-export async function patchIndexDocumentRevision(projectId, revision, updatedAt) {
+export async function patchIndexDocumentRevision(projectId, revision, updatedAt, options = {}) {
   if (!projectId) return;
   const index = await readLocalIndex();
   if (!index?.projects?.length) return;
@@ -160,7 +236,7 @@ export async function patchIndexDocumentRevision(projectId, revision, updatedAt)
         delete pendingRow.syncState;
       }
     }
-  } else if (getServerSyncEnabled()) {
+  } else if (getServerSyncEnabled() && options.remoteSave !== false) {
     scheduleIndexRemoteSave(index);
   }
 }
@@ -201,7 +277,7 @@ export async function applyWorkspaceIntegrityRepair(index, options = {}) {
   }
   return result;
 }
-async function uploadLocalOnlyProjects(localOnlyIds, index) {
+async function uploadLocalOnlyProjects(localOnlyIds, index, options = {}) {
   if (!getServerSyncEnabled() || localOnlyIds.length === 0) return 0;
   let uploaded = 0;
   for (const projectId of localOnlyIds) {
@@ -247,7 +323,9 @@ async function uploadLocalOnlyProjects(localOnlyIds, index) {
       const serialised = raw ?? JSON.stringify(doc);
       await writeLocalProjectSerialised(projectId, serialised);
       applyServerProjectRevision(projectId, result.updatedAt, result.revision);
-      await patchIndexDocumentRevision(projectId, result.revision, result.updatedAt);
+      await patchIndexDocumentRevision(projectId, result.revision, result.updatedAt, {
+        remoteSave: false,
+      });
       uploaded += 1;
     } catch (e) {
       console.error(`Failed to upload project ${projectId}:`, e);
@@ -261,7 +339,7 @@ async function uploadLocalOnlyProjects(localOnlyIds, index) {
       }
     }
   }
-  if (uploaded > 0 || index) {
+  if ((uploaded > 0 || index) && options.pushIndex !== false) {
     await pushIndexToServer(index);
   }
   return uploaded;
@@ -300,11 +378,18 @@ async function pullAndMergeProjectIndexBody(options = {}) {
     const remote = await fetchCanvasIndexDocument();
     serverIndex = remote.index;
     serverIndexUpdatedAt = remote.updatedAt;
+    indexPullConsecutiveTimeouts = 0;
     if (remote.revision != null) {
       applyServerWorkspaceIndexRevision(remote.revision);
     }
   } catch (e) {
-    console.warn('Could not refresh project index from server:', e.message);
+    if (isTimeoutError(e)) {
+      indexPullConsecutiveTimeouts += 1;
+      console.warn('Could not refresh project index from server; using local index and retrying:', e.message);
+      scheduleIndexPullRetry(options);
+    } else {
+      console.warn('Could not refresh project index from server:', e.message);
+    }
     return readLocalIndex();
   }
 

@@ -97,7 +97,8 @@ describe('flow document isolation', () => {
       { x: 0, y: 0, zoom: 1 },
     );
     expect(snapshot.expectedRevision).toBe(4);
-    expect(snapshot.localNodeTypeColors.step).toBe('#112233');
+    expect(snapshot.localNodeTypeColors.decision).toBe('#112233');
+    expect(snapshot.localNodeTypeColors.step).toBeUndefined();
     expect(snapshot.nodes[0].artifactId).toBe('artifact-1');
     expect(JSON.stringify(snapshot)).not.toContain('must not leak');
   });
@@ -173,10 +174,10 @@ describe('flow document isolation', () => {
     ]);
   });
 
-  it('flowNodeDisplayTitle falls back to Untitled node', () => {
+  it('flowNodeDisplayTitle falls back to Untitled step', () => {
     expect(flowNodeDisplayTitle({ data: { title: ' Step ' } })).toBe('Step');
-    expect(flowNodeDisplayTitle({ data: { title: '   ' } })).toBe('Untitled node');
-    expect(flowNodeDisplayTitle(null)).toBe('Untitled node');
+    expect(flowNodeDisplayTitle({ data: { title: '   ' } })).toBe('Untitled step');
+    expect(flowNodeDisplayTitle(null)).toBe('Untitled step');
   });
 
   it('defaultFlowNodePreviewSize uses card type defaults for artifact nodes', () => {
@@ -285,6 +286,21 @@ describe('flow document isolation', () => {
     expect(snapshot.nodes[0].data.localNodeType).toBe('artifact');
   });
 
+  it('snapshotForSave migrates retired step localNodeType to decision', () => {
+    const snapshot = snapshotForSave(
+      { revision: 1, title: 'Flow', description: '' },
+      [{
+        id: 'node-1',
+        type: 'local',
+        position: { x: 0, y: 0 },
+        data: { title: 'IDEA', localNodeType: 'step' },
+      }],
+      [],
+      { x: 0, y: 0, zoom: 1 },
+    );
+    expect(snapshot.nodes[0].data.localNodeType).toBe('decision');
+  });
+
   it('snapshotForSave normalizes node actors', () => {
     const snapshot = snapshotForSave(
       { revision: 1, title: 'Flow', description: '' },
@@ -310,9 +326,20 @@ describe('flow document isolation', () => {
       { description: '  Onboarding overview  ' },
     );
     expect(preview.description).toBe('Onboarding overview');
-    expect(preview.nodes[0].title).toBe('Step one');
-    expect(preview.nodes[1].title).toBe('Untitled node');
-    expect(preview.nodes[1].displayFilename).toBe('Untitled node');
+    expect(preview.localNodeTypeColors).toEqual({
+      artifact: '#2563eb',
+      decision: '#059669',
+      external_resource: '#dc2626',
+    });
+    expect(preview.nodes[0]).toMatchObject({
+      title: 'Step one',
+      localNodeType: 'artifact',
+    });
+    expect(preview.nodes[1]).toMatchObject({
+      title: 'Untitled step',
+      localNodeType: 'artifact',
+      displayFilename: 'Untitled step',
+    });
     expect(preview.edges).toEqual([{
       source: 'n1',
       target: 'n2',
@@ -331,7 +358,7 @@ describe('flow document isolation', () => {
       [],
     );
     expect(preview.description).toBe('');
-    expect(preview.nodes[0].title).toBe('Untitled node');
+    expect(preview.nodes[0].title).toBe('Untitled step');
   });
 
   it('patchFlowCard embeds description in flowPreview', () => {
@@ -347,12 +374,18 @@ describe('flow document isolation', () => {
     );
     expect(updates.versions[0].flowPreview).toEqual({
       description: 'High-level steps',
+      localNodeTypeColors: {
+        artifact: '#2563eb',
+        decision: '#059669',
+        external_resource: '#dc2626',
+      },
       nodes: [{
         id: 'n1',
         x: 0,
         y: 0,
         type: 'local',
         title: 'Start',
+        localNodeType: 'artifact',
       }],
       edges: [],
     });
@@ -673,9 +706,9 @@ describe('flow document isolation', () => {
       { x: 0, y: 0, zoom: 1 },
     );
     expect(snapshot.edges[0]).toMatchObject({
-      label: 'Driven by',
+      label: 'Depends on',
       data: {
-        connectionTypeId: 'driven_by',
+        connectionTypeId: 'depends_on',
         connectionTypeCustom: '',
         properties: { format: 'json' },
       },
@@ -695,16 +728,61 @@ describe('flow document isolation', () => {
     expect(edge.data.properties).toEqual({ weight: '0.8' });
   });
 
-  it('patchFlowEdge retains detail for schema types and builds two-part labels', () => {
+  it('patchFlowEdge does not infer a decision condition from connection type alone', () => {
     const edge = patchFlowEdge(
-      { id: 'e1', source: 'a', target: 'b', data: { connectionTypeId: 'driven_by' } },
-      { connectionTypeCustom: 'Love' },
+      { id: 'e1', source: 'a', target: 'b', data: {} },
+      { connectionTypeId: 'approves' },
     );
-    expect(edge.label).toBe('Driven by: Love');
-    expect(edge.data.connectionTypeCustom).toBe('Love');
+    expect(edge.label).toBe('Approves');
+    expect(edge.data.condition).toBeUndefined();
   });
 
-  it('snapshotForSave persists detail with schema connection types', () => {
+  it('patchFlowEdge applies decision conditions and normalizes properties', () => {
+    const edge = patchFlowEdge(
+      { id: 'e1', source: 'a', target: 'b', data: { connectionTypeId: 'approves' } },
+      {
+        condition: { type: 'decision', value: 'approved' },
+        properties: { weight: '0.8', bad: 1 },
+      },
+    );
+    expect(edge.label).toBe('Approves · Approved');
+    expect(edge.data.condition).toEqual({ type: 'decision', value: 'approved' });
+    expect(edge.data.properties).toEqual({ weight: '0.8' });
+  });
+
+  it('patchFlowEdge ignores custom text for schema types', () => {
+    const edge = patchFlowEdge(
+      { id: 'e1', source: 'a', target: 'b', data: { connectionTypeId: 'depends_on' } },
+      { connectionTypeCustom: 'Love' },
+    );
+    expect(edge.label).toBe('Depends on');
+    expect(edge.data.connectionTypeCustom).toBe('');
+  });
+
+  it('patchFlowEdge clears label and condition when connection type returns to unspecified', () => {
+    const edge = patchFlowEdge(
+      {
+        id: 'e1',
+        source: 'a',
+        target: 'b',
+        label: 'Approves · Approved',
+        data: {
+          connectionTypeId: 'approves',
+          condition: { type: 'decision', value: 'approved' },
+        },
+      },
+      { connectionTypeId: '' },
+    );
+    expect(edge.label).toBe('');
+    expect(edge.data).toMatchObject({
+      connectionTypeId: '',
+      connectionTypeCustom: '',
+    });
+    expect(edge.data.condition).toBeUndefined();
+    expect(normalizeFlowEdgeForEditor(edge).label).toBeUndefined();
+  });
+
+  it('snapshotForSave persists decision conditions', () => {
     const snapshot = snapshotForSave(
       { revision: 1, title: 'Flow', description: '' },
       [
@@ -716,19 +794,42 @@ describe('flow document isolation', () => {
         source: 'n1',
         target: 'n2',
         data: {
-          connectionTypeId: 'driven_by',
-          connectionTypeCustom: 'Love',
+          connectionTypeId: 'approves',
+          condition: { type: 'decision', value: 'approved' },
         },
       }],
       { x: 0, y: 0, zoom: 1 },
     );
     expect(snapshot.edges[0]).toMatchObject({
-      label: 'Driven by: Love',
+      label: 'Approves · Approved',
       data: {
-        connectionTypeId: 'driven_by',
-        connectionTypeCustom: 'Love',
+        connectionTypeId: 'approves',
+        condition: { type: 'decision', value: 'approved' },
       },
     });
+  });
+
+  it('snapshotForSave persists flow paths', () => {
+    const snapshot = snapshotForSave(
+      { revision: 1, title: 'Flow', description: '' },
+      [
+        { id: 'n1', type: 'local', position: { x: 0, y: 0 }, data: { title: 'A' } },
+        { id: 'n2', type: 'local', position: { x: 100, y: 0 }, data: { title: 'B' } },
+      ],
+      [],
+      { x: 0, y: 0, zoom: 1 },
+      [{ id: 'p1', name: 'Path 1', stepIds: ['n1', 'n2'], createdAt: 't1', updatedAt: 't1' }],
+    );
+    expect(snapshot.paths).toEqual([
+      {
+        id: 'p1',
+        name: 'Path 1',
+        stepIds: ['n1', 'n2'],
+        stepRunStates: {},
+        createdAt: 't1',
+        updatedAt: 't1',
+      },
+    ]);
   });
 
   it('formatFlowDiagramForAgent includes connection label and properties', () => {
@@ -748,10 +849,10 @@ describe('flow document isolation', () => {
         },
       }],
     );
-    expect(text).toContain('[Output type] mime=text/plain');
+    expect(text).toContain('[Produces] mime=text/plain');
   });
 
-  it('formatFlowDiagramForAgent includes two-part schema labels', () => {
+  it('formatFlowDiagramForAgent includes condition suffix in connection labels', () => {
     const text = formatFlowDiagramForAgent(
       { title: 'Plan' },
       [
@@ -763,12 +864,12 @@ describe('flow document isolation', () => {
         source: 'n1',
         target: 'n2',
         data: {
-          connectionTypeId: 'driven_by',
-          connectionTypeCustom: 'Love',
+          connectionTypeId: 'approves',
+          condition: { type: 'decision', value: 'approved' },
         },
       }],
     );
-    expect(text).toContain('[Driven by: Love]');
+    expect(text).toContain('[Approves · Approved]');
   });
 
   it('exportFlowRelationships includes connection metadata and direction', () => {
@@ -791,7 +892,7 @@ describe('flow document isolation', () => {
     });
   });
 
-  it('exportFlowRelationships includes detail for schema types', () => {
+  it('exportFlowRelationships migrates legacy schema types without detail', () => {
     const relationships = exportFlowRelationships(
       [{ id: 'n1' }, { id: 'n2' }],
       [{
@@ -802,12 +903,12 @@ describe('flow document isolation', () => {
       }],
     );
     expect(relationships[0]).toMatchObject({
-      label: 'Driven by: Love',
-      detail: 'Love',
+      label: 'Depends on',
+      detail: '',
     });
   });
 
-  it('flowGraphFromPreview round-trips connection metadata', () => {
+  it('flowGraphFromPreview round-trips connection metadata and conditions', () => {
     const graph = flowGraphFromPreview({
       nodes: [{ id: 'n1', x: 0, y: 0, type: 'local', title: 'A' }],
       edges: [{
@@ -815,28 +916,36 @@ describe('flow document isolation', () => {
         target: 'n1',
         flowing: false,
         direction: FLOW_EDGE_DIRECTION.forward,
-        label: 'Driven by',
-        connectionTypeId: 'driven_by',
+        label: 'Approves · Approved',
+        connectionTypeId: 'approves',
         connectionTypeCustom: '',
+        condition: { type: 'decision', value: 'approved' },
         properties: { scope: 'local' },
       }],
     });
     expect(graph.edges[0]).toMatchObject({
-      label: 'Driven by',
+      label: 'Approves · Approved',
       data: {
-        connectionTypeId: 'driven_by',
+        connectionTypeId: 'approves',
+        condition: { type: 'decision', value: 'approved' },
         properties: { scope: 'local' },
       },
     });
   });
 
-  it('validateFlowEdgeMetadata rejects unknown types and invalid custom labels', () => {
+  it('validateFlowEdgeMetadata rejects unknown types, invalid custom labels, and bad conditions', () => {
     expect(() => validateFlowEdgeMetadata({
       data: { connectionTypeId: 'unknown' },
     })).toThrow(/invalid flow edge connection type/);
     expect(() => validateFlowEdgeMetadata({
       data: { connectionTypeId: 'custom', connectionTypeCustom: '' },
     })).toThrow(/custom flow edge connection requires/);
+    expect(() => validateFlowEdgeMetadata({
+      data: {
+        connectionTypeId: 'approves',
+        condition: { type: 'decision', value: 'maybe' },
+      },
+    })).toThrow(/invalid flow edge connection condition/);
     expect(normalizeFlowEdgeProperties({ ok: 'yes', bad: 2 })).toEqual({ ok: 'yes' });
   });
 });

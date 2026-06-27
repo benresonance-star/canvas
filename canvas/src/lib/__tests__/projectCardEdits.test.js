@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { saveUserNoteToProject, saveBookmarkToProject, saveTextContentToProject } from '../projectCardEdits.js';
+import { saveUserNoteToProject, saveUserTaskToProject, saveBookmarkToProject, saveTextContentToProject } from '../projectCardEdits.js';
 
 describe('saveTextContentToProject', () => {
   it('updates pinned version content without renaming', () => {
@@ -41,6 +41,32 @@ describe('saveUserNoteToProject', () => {
     expect(result.ok).toBe(true);
     expect(result.cardUpdates.name).toBe('renamed');
     expect(result.cardUpdates.versions[0].content).toBe('new body');
+  });
+});
+
+describe('saveUserTaskToProject', () => {
+  it('updates task content, title, and status in project JSON', () => {
+    const card = {
+      id: 't1',
+      key: 'tasks__todo',
+      name: 'todo',
+      type: 'user_task',
+      prefix: 'tasks',
+      taskStatus: 'general',
+      pinnedVersion: 1,
+      versions: [{ version: 1, content: 'old', filename: 'tasks__todo-v1.md' }],
+    };
+    const result = saveUserTaskToProject(card, {
+      body: 'new body',
+      name: 'renamed',
+      taskStatus: 'important',
+      versionNum: 1,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.cardUpdates.name).toBe('renamed');
+    expect(result.cardUpdates.taskStatus).toBe('important');
+    expect(result.cardUpdates.versions[0].content).toContain('taskStatus: important');
+    expect(result.cardUpdates.versions[0].content).toContain('new body');
   });
 });
 

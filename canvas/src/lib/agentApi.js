@@ -1,4 +1,7 @@
-const API_BASE = import.meta.env.VITE_PRIMITIVES_API || '/api';
+import { resolveApiBase } from './apiBase.js';
+
+const API_BASE = resolveApiBase();
+const REQUEST_TIMEOUT_MS = 15_000;
 
 export class AgentApiError extends Error {
   /**
@@ -16,10 +19,12 @@ export class AgentApiError extends Error {
 
 async function request(path, options = {}) {
   let res;
+  const { timeoutMs = REQUEST_TIMEOUT_MS, ...fetchOptions } = options;
   try {
     res = await fetch(`${API_BASE}${path}`, {
-      headers: { 'Content-Type': 'application/json', ...options.headers },
-      ...options,
+      headers: { 'Content-Type': 'application/json', ...fetchOptions.headers },
+      signal: fetchOptions.signal ?? AbortSignal.timeout(timeoutMs),
+      ...fetchOptions,
     });
   } catch {
     throw new AgentApiError(
@@ -53,8 +58,9 @@ export async function listAgentConnectors() {
   return request('/agent/connectors');
 }
 
-export async function getArtifact(artifactId) {
-  return request(`/artifacts/${encodeURIComponent(artifactId)}`);
+export async function getArtifact(artifactId, { optional = false } = {}) {
+  const query = optional ? '?optional=1' : '';
+  return request(`/artifacts/${encodeURIComponent(artifactId)}${query}`);
 }
 
 export async function saveAgentCredential(provider, apiKey) {

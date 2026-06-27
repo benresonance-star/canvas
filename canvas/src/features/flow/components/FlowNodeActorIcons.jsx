@@ -12,17 +12,16 @@ export function FlowNodeActorIcons({ actors, headerColor }) {
     : 'text-secondary';
 
   return (
-    <div className="flex flex-wrap items-center gap-1 mb-1" aria-label="Node actors">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1" aria-label="Node actors">
       {metas.map((actor) => {
         const Icon = actor.icon;
         return (
           <span
             key={actor.id}
-            title={actor.label}
-            className={`inline-flex items-center justify-center rounded-full border border-current/20 px-1 py-0.5 ${iconClass}`}
+            className={`inline-flex items-center gap-0.5 rounded-full border border-current/20 px-1 py-0.5 ${iconClass}`}
           >
             <Icon size={11} strokeWidth={1.75} aria-hidden />
-            <span className="sr-only">{actor.label}</span>
+            <span className="sans text-[9px] uppercase tracking-wide">{actor.label}</span>
           </span>
         );
       })}

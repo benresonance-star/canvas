@@ -1,11 +1,17 @@
-const API_BASE = import.meta.env.VITE_PRIMITIVES_API || '/api';
-const REQUEST_TIMEOUT_MS = 15_000;
+import { resolveApiBase } from './apiBase.js';
+import { BOOT_API_REQUEST_TIMEOUT_MS } from './bootSync.js';
+
+const API_BASE = resolveApiBase();
+const READ_REQUEST_TIMEOUT_MS = BOOT_API_REQUEST_TIMEOUT_MS;
+const WRITE_REQUEST_TIMEOUT_MS = 60_000;
 
 async function request(path, options = {}) {
+  const timeoutMs = options.timeoutMs ?? READ_REQUEST_TIMEOUT_MS;
+  const { timeoutMs: _timeoutMs, ...fetchOptions } = options;
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    ...options,
+    headers: { 'Content-Type': 'application/json', ...fetchOptions.headers },
+    signal: fetchOptions.signal ?? AbortSignal.timeout(timeoutMs),
+    ...fetchOptions,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -48,7 +54,7 @@ export async function saveAgentChatThreadIndexRemote(
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ index, expectedRevision }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(WRITE_REQUEST_TIMEOUT_MS),
     },
   );
   const data = await res.json().catch(() => ({}));
@@ -95,7 +101,7 @@ export async function saveAgentChatSessionRemote(
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session, expectedRevision }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(WRITE_REQUEST_TIMEOUT_MS),
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 409) {
@@ -120,11 +126,11 @@ export async function deleteAgentChatSessionRemote(
   if (!threadId) {
     return request(
       `/canvas/agent-chat/${enc(projectId)}/${enc(connectorId)}`,
-      { method: 'DELETE' },
+      { method: 'DELETE', timeoutMs: WRITE_REQUEST_TIMEOUT_MS },
     );
   }
   return request(
     `/canvas/agent-chat/${enc(projectId)}/${enc(connectorId)}/${enc(threadId)}`,
-    { method: 'DELETE' },
+    { method: 'DELETE', timeoutMs: WRITE_REQUEST_TIMEOUT_MS },
   );
 }

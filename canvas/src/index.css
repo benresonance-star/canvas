@@ -43,6 +43,8 @@
   --color-cluster-hull-stroke-nested-active: rgb(180 83 9 / 0.58);
   --color-link: #b45309;
   --color-link-hover: #92400e;
+  --color-diagnostics-edge: color-mix(in srgb, var(--color-secondary) 72%, var(--color-muted));
+  --color-diagnostics-path: #38bdf8;
   --color-inspector-highlight-bg: rgb(180 83 9 / 0.1);
   --color-inspector-highlight-ring: rgb(180 83 9 / 0.4);
   --color-agent-selection-ring: var(--color-accent);
@@ -56,6 +58,7 @@
   --color-agent-artifact-muted: #a78bfa;
   --color-agent-artifact-icon-bg: rgb(139 92 246 / 0.2);
   --color-agent-artifact-icon-border: rgb(167 139 250 / 0.38);
+  --canvas-header-height: 3.5rem;
 }
 
 [data-theme='dark'] {
@@ -98,6 +101,8 @@
   --color-cluster-hull-stroke-nested-active: rgb(245 158 11 / 0.58);
   --color-link: #fbbf24;
   --color-link-hover: #fde68a;
+  --color-diagnostics-edge: rgb(214 211 209 / 0.82);
+  --color-diagnostics-path: #38bdf8;
   --color-inspector-highlight-bg: rgb(245 158 11 / 0.1);
   --color-inspector-highlight-ring: rgb(245 158 11 / 0.4);
   --color-agent-selection-ring: #ffffff;
@@ -167,6 +172,8 @@
   --color-muted: #78716c;
   --color-border: #e7e5e4;
   --color-border-subtle: #f5f5f4;
+  --color-border-markdown: color-mix(in srgb, var(--color-muted) 30%, var(--color-border));
+  --color-border-markdown-faint: color-mix(in srgb, var(--color-border-markdown) 40%, transparent);
   --color-preview-bg: #ffffff;
 }
 
@@ -202,16 +209,16 @@
   --shadow-card-active: 0 4px 28px rgb(0 0 0 / 0.35), 0 0 0 1px rgb(245 158 11 / 0.45);
   --dot-grid: rgb(255 255 255 / 0.12);
   --scrollbar-thumb: rgb(255 255 255 / 0.22);
-  --color-cluster-hull-fill: rgb(245 158 11 / 0.14);
-  --color-cluster-hull-fill-active: rgb(245 158 11 / 0.22);
+  --color-cluster-hull-fill: color-mix(in srgb, var(--color-surface-muted) 50%, var(--color-canvas));
+  --color-cluster-hull-fill-active: color-mix(in srgb, var(--color-surface-muted) 62%, var(--color-canvas));
   --color-cluster-hull-stroke: rgb(180 83 9 / 0.45);
   --color-cluster-hull-stroke-active: rgb(180 83 9 / 0.6);
   --color-inspector-highlight-bg: rgb(255 255 255 / 0.14);
   --color-inspector-highlight-ring: rgb(255 255 255 / 0.42);
   --color-agent-selection-ring: #ffffff;
   --color-agent-selection-glow: rgb(255 255 255 / 0.34);
-  --color-cluster-hull-fill-nested: rgb(245 158 11 / 0.18);
-  --color-cluster-hull-fill-nested-active: rgb(245 158 11 / 0.28);
+  --color-cluster-hull-fill-nested: color-mix(in srgb, var(--color-surface-muted) 56%, var(--color-canvas));
+  --color-cluster-hull-fill-nested-active: color-mix(in srgb, var(--color-surface-muted) 68%, var(--color-canvas));
   --color-cluster-hull-stroke-nested: rgb(180 83 9 / 0.5);
   --color-cluster-hull-stroke-nested-active: rgb(180 83 9 / 0.65);
 }
@@ -224,6 +231,8 @@
   --color-muted: #78716c;
   --color-border: #e7e5e4;
   --color-border-subtle: #f5f5f4;
+  --color-border-markdown: color-mix(in srgb, var(--color-muted) 30%, var(--color-border));
+  --color-border-markdown-faint: color-mix(in srgb, var(--color-border-markdown) 40%, transparent);
   --color-preview-bg: #ffffff;
 }
 
@@ -236,8 +245,8 @@
   --color-muted: var(--color-muted);
   --color-border: var(--color-border);
   --color-border-subtle: var(--color-border-subtle);
-  --color-border-markdown: color-mix(in srgb, var(--color-border-subtle) 50%, var(--color-border));
-  --color-border-markdown-faint: color-mix(in srgb, var(--color-border-markdown) 72%, transparent);
+  --color-border-markdown: color-mix(in srgb, var(--color-muted) 30%, var(--color-border));
+  --color-border-markdown-faint: color-mix(in srgb, var(--color-border-markdown) 40%, transparent);
   --color-accent: var(--color-accent);
   --color-accent-hover: var(--color-accent-hover);
   --color-on-accent: var(--color-on-accent);
@@ -356,6 +365,47 @@ html[data-theme='blue'] {
   outline-offset: 3px;
 }
 
+#flow-editor-canvas .react-flow__node.selected .flow-node-shell {
+  border-color: var(--color-accent) !important;
+  border-width: 2px !important;
+}
+
+#flow-editor-canvas .react-flow__viewport > .react-flow__edges {
+  z-index: 2;
+}
+
+#flow-editor-canvas .react-flow__viewport > .react-flow__nodes {
+  z-index: 3;
+}
+
+.flow-path-hull-layer--paths {
+  z-index: 1;
+  pointer-events: none;
+}
+
+.flow-path-hull-layer--chrome {
+  z-index: 10;
+  pointer-events: none;
+}
+
+.flow-path-hull-path {
+  fill: var(--color-cluster-hull-fill);
+  stroke: var(--color-cluster-hull-stroke);
+}
+
+.flow-path-hull-path--active {
+  fill: var(--color-cluster-hull-fill-active);
+  stroke: var(--color-cluster-hull-stroke-active);
+}
+
+.flow-path-hull-path.pointer-events-auto {
+  pointer-events: auto;
+}
+
+.flow-path-hull-layer--chrome > * {
+  pointer-events: auto;
+}
+
 @keyframes flow-preview-dashdraw {
   from {
     stroke-dashoffset: 10;
@@ -457,6 +507,63 @@ html[data-theme='blue'] {
 .cluster-hull-path--nested.cluster-hull-path--active {
   fill: var(--color-cluster-hull-fill-nested-active);
   stroke: var(--color-cluster-hull-stroke-nested-active);
+}
+
+.canvas-edge-path {
+  stroke: color-mix(in srgb, var(--color-accent) 70%, transparent);
+}
+
+.canvas-edge-path--supersedes {
+  stroke: color-mix(in srgb, var(--color-secondary) 60%, transparent);
+}
+
+.canvas-edge-path--drag {
+  stroke: var(--color-muted);
+  stroke-dasharray: 6 4;
+}
+
+[data-theme='blue'] .canvas-edge-path {
+  stroke: var(--color-cluster-hull-stroke);
+}
+
+[data-theme='blue'] .canvas-edge-path--supersedes {
+  stroke: var(--color-cluster-hull-stroke-active);
+}
+
+[data-theme='blue'] .canvas-edge-path--drag {
+  stroke: var(--color-cluster-hull-stroke);
+}
+
+.agent-control-room-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 1280px) {
+  .agent-control-room-grid {
+    grid-template-columns: minmax(240px, 1fr) minmax(320px, 1.6fr) minmax(260px, 1.1fr);
+    align-items: start;
+  }
+}
+
+.agent-control-room-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.agent-control-room-run-footer {
+  margin-top: auto;
+  padding-top: 0.25rem;
+}
+
+@media (min-width: 1280px) {
+  .agent-control-room-run-footer {
+    position: sticky;
+    bottom: 1.25rem;
+  }
 }
 
 .inspector-member-highlight {
@@ -611,4 +718,85 @@ html[data-theme='blue'] {
   border: 0;
   border-top: 1px solid var(--color-border-markdown);
   margin: 0.75rem 0;
+}
+
+#diagnostics-flow-canvas {
+  --color-diagnostics-grid-dot: color-mix(in srgb, var(--color-border) 50%, var(--color-canvas));
+}
+
+#diagnostics-flow-canvas .react-flow__background circle {
+  fill: var(--color-diagnostics-grid-dot);
+}
+
+#diagnostics-flow-canvas .react-flow__node-diagnostics-node {
+  font-family: inherit;
+}
+
+#diagnostics-flow-canvas .react-flow__node[data-id^="layer-"] {
+  z-index: 0 !important;
+}
+
+#diagnostics-flow-canvas .diagnostics-layer {
+  background-color: color-mix(in srgb, var(--color-surface) 71%, transparent);
+}
+
+#diagnostics-flow-canvas .diagnostics-layer-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+#diagnostics-flow-canvas .diagnostics-node {
+  position: relative;
+  z-index: 1;
+  background-color: var(--color-surface);
+}
+
+#diagnostics-flow-canvas .react-flow__edge-path.diagnostics-edge-quiet {
+  filter: drop-shadow(0 0 1px rgb(0 0 0 / 0.35));
+  stroke-dasharray: 5 5;
+  stroke-linecap: round;
+}
+
+#diagnostics-flow-canvas .react-flow__edge-path.diagnostics-edge-active {
+  stroke-linecap: round;
+}
+
+#diagnostics-flow-canvas .react-flow__edge-path.diagnostics-edge-path-slow {
+  animation-duration: 1.4s;
+}
+
+.diagnostics-edge-label {
+  z-index: 1000;
+  background-color: color-mix(in srgb, var(--color-surface) 96%, transparent);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--color-surface) 92%, transparent),
+    0 2px 8px rgb(0 0 0 / 0.4);
+  backdrop-filter: blur(4px);
+}
+
+.diagnostics-edge-label--current {
+  background-color: color-mix(in srgb, var(--color-accent) 22%, var(--color-surface));
+  border-color: var(--color-accent);
+  color: var(--color-primary);
+}
+
+.diagnostics-edge-label--path {
+  background-color: color-mix(in srgb, var(--color-diagnostics-path) 20%, var(--color-surface));
+  border-color: var(--color-diagnostics-path);
+  color: var(--color-primary);
+}
+
+.diagnostics-edge-label--quiet {
+  border-color: color-mix(in srgb, var(--color-secondary) 45%, var(--color-border));
+  color: var(--color-secondary);
+}
+
+.diagnostics-edge-label--draggable {
+  cursor: grab;
+  user-select: none;
+}
+
+.diagnostics-edge-label--draggable:active {
+  cursor: grabbing;
 }

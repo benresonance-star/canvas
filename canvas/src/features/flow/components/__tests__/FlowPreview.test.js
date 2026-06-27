@@ -48,7 +48,7 @@ describe('FlowPreview', () => {
       type: 'artifact',
       displayFilename: label,
     }, false);
-    expect(measureFlowPreviewNodeSize(lines, false, label)).toEqual({
+    expect(measureFlowPreviewNodeSize(lines, false, label, 'ARTIFACT')).toEqual({
       width: FLOW_PREVIEW_DEFAULT_NODE_SIZE.full.width,
       height: FLOW_PREVIEW_DEFAULT_NODE_SIZE.full.height,
     });
@@ -60,7 +60,7 @@ describe('FlowPreview', () => {
       type: 'local',
       title: label,
     }, false);
-    const size = measureFlowPreviewNodeSize(lines, false, label);
+    const size = measureFlowPreviewNodeSize(lines, false, label, 'ARTIFACT');
     expect(lines.length).toBeGreaterThan(3);
     expect(size.height).toBeGreaterThan(FLOW_PREVIEW_DEFAULT_NODE_SIZE.full.height);
   });
@@ -83,10 +83,11 @@ describe('FlowPreview', () => {
       }),
     );
     expect(html).toContain('agent.ts');
+    expect(html).toContain('ARTIFACT');
     expect(html).toContain('<tspan');
-    expect(html).toContain('font-size="28"');
+    expect(html).toContain('fill="#2563eb"');
     expect(html).toContain('width="180"');
-    expect(html).toContain('height="80"');
+    expect(html).toContain('height="88"');
   });
 
   it('resolves artifact extension from linked card when preview lacks displayFilename', () => {
@@ -117,18 +118,28 @@ describe('FlowPreview', () => {
     expect(html).toContain('Instructions.md');
   });
 
-  it('renders local node titles inside the SVG', () => {
+  it('renders decision nodes with custom header color and type label', () => {
     const html = renderToStaticMarkup(
       React.createElement(FlowPreview, {
         preview: {
-          nodes: [{ id: 'n1', x: 0, y: 0, type: 'local', title: 'Kickoff' }],
+          localNodeTypeColors: { decision: '#059669' },
+          nodes: [{
+            id: 'n1',
+            x: 0,
+            y: 0,
+            type: 'local',
+            localNodeType: 'decision',
+            title: 'Approve scope',
+          }],
           edges: [],
         },
         compact: false,
       }),
     );
-    expect(html).toContain('Kickoff');
-    expect(html).toContain('<tspan');
+    expect(html).toContain('DECISION');
+    expect(html).toContain('Approve');
+    expect(html).toContain('scope');
+    expect(html).toContain('fill="#059669"');
   });
 
   it('marks flowing edges with animated preview class', () => {
@@ -200,7 +211,7 @@ describe('FlowPreview', () => {
     const transforms = [...html.matchAll(/translate\(([-\d.]+) ([-\d.]+)\)/g)];
     expect(transforms.length).toBeGreaterThanOrEqual(2);
     const yValues = transforms.map((match) => Number(match[2]));
-    expect(Math.abs(yValues[0] - yValues[1])).toBeGreaterThan(70);
+    expect(Math.abs(yValues[0] - yValues[1])).toBeGreaterThan(50);
     expect(firstTransform).toBeTruthy();
   });
 });

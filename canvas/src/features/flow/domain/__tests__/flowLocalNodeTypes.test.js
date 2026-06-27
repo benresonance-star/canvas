@@ -17,13 +17,17 @@ describe('flowLocalNodeTypes', () => {
     expect(normalizeFlowLocalNodeType('general')).toBe('artifact');
   });
 
-  it('preserves the four current type ids', () => {
+  it('migrates retired step type to decision', () => {
+    expect(normalizeFlowLocalNodeType('step')).toBe('decision');
+    expect(LEGACY_FLOW_LOCAL_NODE_TYPE_IDS.has('step')).toBe(true);
+  });
+
+  it('preserves the three current type ids', () => {
     for (const type of FLOW_LOCAL_NODE_TYPES) {
       expect(normalizeFlowLocalNodeType(type.id)).toBe(type.id);
     }
     expect(FLOW_LOCAL_NODE_TYPES.map((type) => type.id)).toEqual([
       'artifact',
-      'step',
       'decision',
       'external_resource',
     ]);
@@ -35,8 +39,8 @@ describe('flowLocalNodeTypes', () => {
 
   it('returns metadata with default titles', () => {
     expect(flowLocalNodeTypeMeta('step')).toMatchObject({
-      id: 'step',
-      defaultTitle: 'Step',
+      id: 'decision',
+      defaultTitle: 'Decision',
     });
     expect(flowLocalNodeTypeMeta('agent')).toMatchObject({
       id: 'artifact',
@@ -44,9 +48,10 @@ describe('flowLocalNodeTypes', () => {
     });
   });
 
-  it('defaults new nodes to step unless a current type is requested', () => {
-    expect(resolveNewFlowLocalNodeType()).toBe('step');
+  it('defaults new steps to decision unless another current type is requested', () => {
+    expect(resolveNewFlowLocalNodeType()).toBe('decision');
     expect(resolveNewFlowLocalNodeType('decision')).toBe('decision');
-    expect(resolveNewFlowLocalNodeType('agent')).toBe('step');
+    expect(resolveNewFlowLocalNodeType('agent')).toBe('artifact');
+    expect(resolveNewFlowLocalNodeType('step')).toBe('decision');
   });
 });

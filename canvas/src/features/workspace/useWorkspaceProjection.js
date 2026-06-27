@@ -95,6 +95,7 @@ export function useWorkspaceProjection({
     clearStaleSyncBanners,
     flushPendingPlacementCommit,
     flushPendingPlacementCommitForSwitch,
+    refreshProjectClusterState,
   },
 }) {
   const loadProjectIntoStateStableRef = useRef(loadProjectIntoState);
@@ -465,6 +466,11 @@ export function useWorkspaceProjection({
           setIndexActiveProjectId?.(refreshedIndex?.activeProjectId ?? targetId);
           alignProjectTitleFromIndex(targetId, refreshedIndex);
           syncActiveProjectNameFromIndex(refreshedIndex);
+          void refreshProjectClusterState?.({
+            projectId: targetId,
+            projectName: stateRef.current.projectName,
+            force: true,
+          });
           void continueProjectSwitchBackground(targetId, switchSeq, {
             projectId: outgoingProjectId,
             state: outgoingState,
@@ -580,6 +586,7 @@ export function useWorkspaceProjection({
       restoreWorkspaceProject,
       flushPendingPlacementCommit,
       flushPendingPlacementCommitForSwitch,
+      refreshProjectClusterState,
     ],
   );
 
@@ -711,6 +718,11 @@ export function useWorkspaceProjection({
           stateRef.current = { ...stateRef.current, projectName: displayName };
           setState((prev) => ({ ...prev, projectName: displayName }));
           syncActiveProjectNameFromIndex(index);
+          void refreshProjectClusterState?.({
+            projectId: targetId,
+            projectName: displayName,
+            force: true,
+          });
           flowTrace('project:boot-activate-done', { projectId: targetId });
         } else {
           flowTrace('project:boot-load-failed', { projectId: targetId });
@@ -749,6 +761,7 @@ export function useWorkspaceProjection({
       loadAgentChatThreadIndexEarly,
       singleConnectorId,
       projectList.length,
+      refreshProjectClusterState,
     ],
   );
 

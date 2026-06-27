@@ -1,17 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
+  Bot,
   Search,
   RefreshCw,
-  StickyNote,
-  Link2,
-  Bot,
   ZoomIn,
   ZoomOut,
   Network,
   CircuitBoard,
   Upload,
-  Workflow,
-  RadioTower,
 } from 'lucide-react';
 import { strings } from '../content/strings.js';
 import { resolveSyncBanner, shouldShowRefreshFromServer } from '../lib/syncUi.js';
@@ -19,6 +15,8 @@ import { clampZoomPercent, parseZoomPercentInput } from '../lib/canvasView.js';
 import { ThemeToggle } from './ThemeToggle.jsx';
 import { ProjectSwitcher } from './ProjectSwitcher.jsx';
 import { ProjectUpdateFlag } from '../features/live/components/ProjectUpdateFlag.jsx';
+import { TaskFlag } from '../features/tasks/components/TaskFlag.jsx';
+import { AddMenu } from './AddMenu.jsx';
 
 function ZoomPercentInput({ canvasView, onZoomPercentCommit }) {
   const inputRef = useRef(null);
@@ -126,12 +124,14 @@ export function CanvasChrome({
   folderLinked,
   showChangeFolder = false,
   onChangeFolder,
-  onNewNote,
-  onAddLink,
-  onAddFlow,
-  onAddLive,
-  onAddAgent,
+  addMenuOpen = false,
+  addMenuAnchor = null,
+  onOpenAddMenuButton,
+  onCloseAddMenu,
+  onAddMenuSelect,
   onOpenLiveArtifact,
+  userTaskCards = [],
+  onOpenTaskCard,
   onImportFiles,
   onSync,
   onReconnectFolder,
@@ -167,23 +167,30 @@ export function CanvasChrome({
 
   return (
     <div className="fixed inset-0 z-30 pointer-events-none" aria-hidden={false}>
-      <header className="fixed top-0 left-0 right-0 px-6 py-4 flex items-center justify-between pointer-events-none">
+      <header className="fixed top-0 left-0 right-0 z-50 h-[var(--canvas-header-height)] px-6 flex items-center justify-between pointer-events-none">
         <div className="pointer-events-auto flex items-center gap-2">
-          <ProjectSwitcher
-            projects={projectList}
-            activeProjectId={activeProjectId}
-            switchDisabled={projectSwitchLoading}
-            onSwitch={onSwitchProject}
-            onCreate={onCreateProject}
-            onRefreshProjects={onRefreshProjects}
-            onArchive={onArchiveProject}
-            onUnarchive={onUnarchiveProject}
-            onDeleteRequest={onDeleteProjectRequest}
-            onViewPrimitives={onViewPrimitives}
-            onCreateTask={onCreateTask}
-            onOpenAgentMode={onOpenAgentMode}
-          />
-          <ProjectUpdateFlag projectId={activeProjectId} onOpenLiveArtifact={onOpenLiveArtifact} />
+          <div className="flex items-center gap-1">
+            <ProjectSwitcher
+              projects={projectList}
+              activeProjectId={activeProjectId}
+              switchDisabled={projectSwitchLoading}
+              onSwitch={onSwitchProject}
+              onCreate={onCreateProject}
+              onRefreshProjects={onRefreshProjects}
+              onArchive={onArchiveProject}
+              onUnarchive={onUnarchiveProject}
+              onDeleteRequest={onDeleteProjectRequest}
+              onViewPrimitives={onViewPrimitives}
+              onCreateTask={onCreateTask}
+              onOpenAgentMode={onOpenAgentMode}
+            />
+            <ProjectUpdateFlag projectId={activeProjectId} onOpenLiveArtifact={onOpenLiveArtifact} />
+            <TaskFlag
+              projectName={projectName}
+              tasks={userTaskCards}
+              onOpenTaskCard={onOpenTaskCard}
+            />
+          </div>
           <input
             value={projectName}
             disabled={!activeProjectId}
@@ -192,7 +199,7 @@ export function CanvasChrome({
             className="sans bg-transparent text-xs uppercase tracking-[0.18em] text-secondary focus:text-primary focus:outline-none w-64 disabled:opacity-40"
           />
         </div>
-        <div className="pointer-events-auto flex items-center gap-2">
+        <div className="pointer-events-auto flex items-center gap-1">
           <ThemeToggle />
           {onOpenArchitecture && (
             <button
@@ -200,9 +207,9 @@ export function CanvasChrome({
               onClick={onOpenArchitecture}
               aria-label={strings.architecture.open}
               title={strings.architecture.open}
-              className="sans text-xs text-muted hover:text-secondary transition flex items-center gap-1.5"
+              className="sans p-1 text-muted hover:text-secondary transition rounded-md hover:bg-surface-muted/80 flex items-center"
             >
-              <CircuitBoard size={13} strokeWidth={1.5} />
+              <CircuitBoard size={15} strokeWidth={1.5} />
             </button>
           )}
           {showDesktopControls && (
@@ -210,32 +217,32 @@ export function CanvasChrome({
               type="button"
               onClick={onToggleWorkspaceTree}
               aria-label={strings.workspaceTree.toggle}
-              className={`sans text-xs transition flex items-center gap-1.5 ${
+              className={`sans p-1 transition rounded-md hover:bg-surface-muted/80 flex items-center ${
                 workspaceTreeOpen ? 'text-accent' : 'text-muted hover:text-secondary'
               }`}
             >
-              <Network size={13} strokeWidth={1.5} />
+              <Network size={15} strokeWidth={1.5} />
             </button>
           )}
           {showDesktopControls && (
             <button
               type="button"
               onClick={onToggleAgentPanel}
-              className={`sans text-xs transition flex items-center gap-1.5 ${
+              aria-label={strings.agent.toggleAgent}
+              className={`sans p-1 transition rounded-md hover:bg-surface-muted/80 flex items-center ${
                 agentPanelOpen ? 'text-accent' : 'text-muted hover:text-secondary'
               }`}
             >
-              <Bot size={13} strokeWidth={1.5} />
-              <span className="hidden sm:inline">{strings.agent.toggleAgent}</span>
+              <Bot size={15} strokeWidth={1.5} />
             </button>
           )}
           <button
             type="button"
             onClick={onOpenSearch}
             aria-label={strings.search.label}
-            className="sans text-xs text-muted hover:text-secondary transition flex items-center gap-1.5"
+            className="sans p-1 text-muted hover:text-secondary transition rounded-md hover:bg-surface-muted/80 flex items-center"
           >
-            <Search size={13} strokeWidth={1.5} />
+            <Search size={15} strokeWidth={1.5} />
           </button>
         </div>
       </header>
@@ -443,53 +450,17 @@ export function CanvasChrome({
           </div>
         )}
         <div className="pointer-events-auto flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onAddAgent}
-            disabled={syncLock !== 'live' || !activeProjectId}
-            className="sans flex items-center gap-2 bg-surface border border-border hover:bg-surface-muted text-primary text-xs px-4 py-2.5 rounded-full transition shadow-lg disabled:opacity-50"
-          >
-            <Bot size={13} strokeWidth={1.8} />
-            Add Agent
-          </button>
-          <button
-            type="button"
-            onClick={onAddLive}
-            disabled={syncLock !== 'live' || !activeProjectId}
-            className="sans flex items-center gap-2 bg-surface border border-border hover:bg-surface-muted text-primary text-xs px-4 py-2.5 rounded-full transition shadow-lg disabled:opacity-50"
-          >
-            <RadioTower size={13} strokeWidth={1.8} />
-            Add Live
-          </button>
-          <button
-            type="button"
-            onClick={onAddFlow}
-            disabled={syncLock !== 'live' || !activeProjectId}
-            className="sans flex items-center gap-2 bg-surface border border-border hover:bg-surface-muted text-primary text-xs px-4 py-2.5 rounded-full transition shadow-lg disabled:opacity-50"
-          >
-            <Workflow size={13} strokeWidth={1.8} />
-            Add Flow
-          </button>
-          <button
-            type="button"
-            onClick={onAddLink}
-            disabled={syncLock !== 'live'}
-            className="sans flex items-center gap-2 bg-surface border border-border hover:bg-surface-muted text-primary text-xs px-4 py-2.5 rounded-full transition shadow-lg disabled:opacity-50"
-          >
-            <Link2 size={13} strokeWidth={1.8} />
-            {strings.projects.addLink}
-          </button>
-          {folderLinked && (
-            <button
-              type="button"
-              onClick={onNewNote}
-              disabled={syncLock !== 'live'}
-              className="sans flex items-center gap-2 bg-surface border border-border hover:bg-surface-muted text-primary text-xs px-4 py-2.5 rounded-full transition shadow-lg disabled:opacity-50"
-            >
-              <StickyNote size={13} strokeWidth={1.8} />
-              {strings.projects.newNote}
-            </button>
-          )}
+          <AddMenu
+            variant="button"
+            open={addMenuOpen}
+            anchor={addMenuAnchor}
+            onOpenButton={onOpenAddMenuButton}
+            onClose={onCloseAddMenu}
+            onSelect={onAddMenuSelect}
+            syncLock={syncLock}
+            activeProjectId={activeProjectId}
+            folderLinked={folderLinked}
+          />
         </div>
         <div className="pointer-events-auto flex items-center gap-0.5 bg-surface/80 backdrop-blur border border-border rounded-full pl-2 pr-1 py-1 max-w-[min(100vw-3rem,22rem)]">
           {onImportFiles && (

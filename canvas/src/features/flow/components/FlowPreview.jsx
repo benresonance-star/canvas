@@ -1,12 +1,17 @@
 import React, { useMemo } from 'react';
 import { strings } from '../../../content/strings.js';
-import { flowPreviewArtifactNodeLabel } from '../domain/flowDocument.js';
+import { UNTITLED_FLOW_STEP_TITLE } from '../domain/flowDocument.js';
+import {
+  flowPreviewColors,
+  flowPreviewNodePresentation,
+  flowPreviewNodeTitle,
+} from '../domain/flowPreviewNodes.js';
 import { resolveFlowPreviewOverlaps } from '../domain/flowPreviewLayout.js';
 import { buildFlowPreviewEdgePath } from '../domain/flowPreviewEdges.js';
 
 export const FLOW_PREVIEW_DEFAULT_NODE_SIZE = {
-  compact: { width: 150, height: 60 },
-  full: { width: 180, height: 80 },
+  compact: { width: 150, height: 72 },
+  full: { width: 180, height: 88 },
 };
 
 const FLOW_PREVIEW_MAX_NODE_WIDTH = {
@@ -15,13 +20,17 @@ const FLOW_PREVIEW_MAX_NODE_WIDTH = {
 };
 
 function flowPreviewMetrics(compact) {
-  const fontSize = compact ? 24 : 28;
+  const titleFontSize = compact ? 22 : 24;
+  const typeFontSize = compact ? 16 : 18;
   return {
-    fontSize,
-    lineHeight: fontSize + 6,
+    titleFontSize,
+    typeFontSize,
+    titleLineHeight: titleFontSize + 6,
+    typeLineHeight: typeFontSize + 4,
+    typeTitleGap: compact ? 4 : 6,
     paddingX: compact ? 14 : 16,
-    paddingY: compact ? 12 : 14,
-    charWidth: fontSize * 0.58,
+    paddingY: compact ? 10 : 12,
+    titleCharWidth: titleFontSize * 0.58,
     defaults: FLOW_PREVIEW_DEFAULT_NODE_SIZE[compact ? 'compact' : 'full'],
     maxW: FLOW_PREVIEW_MAX_NODE_WIDTH[compact ? 'compact' : 'full'],
   };
@@ -38,9 +47,9 @@ function lineTextWidth(text, charWidth) {
  * @param {number} charWidth
  */
 export function wrapLabelWordsOnly(label, innerWidth, charWidth) {
-  const text = typeof label === 'string' && label.trim() ? label.trim() : 'Untitled node';
+  const text = typeof label === 'string' && label.trim() ? label.trim() : UNTITLED_FLOW_STEP_TITLE;
   const words = text.split(/\s+/).filter(Boolean);
-  if (!words.length) return ['Untitled node'];
+  if (!words.length) return [UNTITLED_FLOW_STEP_TITLE];
 
   const lines = [];
   let current = '';
@@ -62,33 +71,33 @@ export function wrapLabelWordsOnly(label, innerWidth, charWidth) {
     }
   }
   pushCurrent();
-  return lines.length ? lines : ['Untitled node'];
+  return lines.length ? lines : [UNTITLED_FLOW_STEP_TITLE];
 }
 
 function longestWordWidth(label, charWidth) {
   const words = (label || '').trim().split(/\s+/).filter(Boolean);
-  if (!words.length) return lineTextWidth('Untitled node', charWidth);
+  if (!words.length) return lineTextWidth(UNTITLED_FLOW_STEP_TITLE, charWidth);
   return Math.max(...words.map((word) => lineTextWidth(word, charWidth)));
 }
 
 export function flowPreviewNodeLabel(node, cardsById = null) {
-  return flowPreviewArtifactNodeLabel(node, cardsById);
+  return flowPreviewNodeTitle(node, cardsById);
 }
 
 export function buildFlowPreviewLabelLines(node, compact = false, cardsById = null) {
-  const label = flowPreviewNodeLabel(node, cardsById);
-  const { charWidth, paddingX, defaults, maxW } = flowPreviewMetrics(compact);
-  const longestWordW = longestWordWidth(label, charWidth);
+  const label = flowPreviewNodeTitle(node, cardsById);
+  const { titleCharWidth, paddingX, defaults, maxW } = flowPreviewMetrics(compact);
+  const longestWordW = longestWordWidth(label, titleCharWidth);
   const minWidth = Math.max(defaults.width, longestWordW + paddingX * 2);
   const widthCap = Math.max(maxW, minWidth);
 
   let width = minWidth;
-  let lines = wrapLabelWordsOnly(label, width - paddingX * 2, charWidth);
+  let lines = wrapLabelWordsOnly(label, width - paddingX * 2, titleCharWidth);
 
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const innerW = width - paddingX * 2;
-    lines = wrapLabelWordsOnly(label, innerW, charWidth);
-    const contentW = Math.max(...lines.map((line) => lineTextWidth(line, charWidth)), 0) + paddingX * 2;
+    lines = wrapLabelWordsOnly(label, innerW, titleCharWidth);
+    const contentW = Math.max(...lines.map((line) => lineTextWidth(line, titleCharWidth)), 0) + paddingX * 2;
     const nextWidth = Math.min(Math.max(contentW, minWidth), widthCap);
     if (nextWidth === width) break;
     width = nextWidth;
@@ -97,59 +106,108 @@ export function buildFlowPreviewLabelLines(node, compact = false, cardsById = nu
   return lines;
 }
 
-export function measureFlowPreviewNodeSize(lines, compact = false, label = '') {
-  const { charWidth, lineHeight, paddingX, paddingY, defaults, maxW } = flowPreviewMetrics(compact);
-  const longestWordW = longestWordWidth(label, charWidth);
-  const minWidth = Math.max(defaults.width, longestWordW + paddingX * 2);
+export function measureFlowPreviewNodeSize(lines, compact = false, label = '', typeLabel = '') {
+  const {
+    titleCharWidth,
+    titleLineHeight,
+    typeLineHeight,
+    typeTitleGap,
+    paddingX,
+    paddingY,
+    defaults,
+    maxW,
+    typeFontSize,
+  } = flowPreviewMetrics(compact);
+  const longestWordW = longestWordWidth(label, titleCharWidth);
+  const typeWidth = lineTextWidth(typeLabel, typeFontSize * 0.62);
+  const minWidth = Math.max(defaults.width, longestWordW + paddingX * 2, typeWidth + paddingX * 2);
   const widthCap = Math.max(maxW, minWidth);
-  const contentW = Math.max(...lines.map((line) => lineTextWidth(line, charWidth)), 0) + paddingX * 2;
-  const contentH = lines.length * lineHeight + paddingY * 2;
+  const contentW = Math.max(...lines.map((line) => lineTextWidth(line, titleCharWidth)), 0) + paddingX * 2;
+  const contentH = typeLineHeight + typeTitleGap + lines.length * titleLineHeight + paddingY * 2;
   return {
     width: Math.min(Math.max(contentW, minWidth), widthCap),
     height: Math.max(contentH, defaults.height),
   };
 }
 
-function layoutFlowPreviewNodes(nodes, compact, cardsById = null) {
+function layoutFlowPreviewNodes(nodes, compact, cardsById = null, colors) {
   const sized = nodes.map((node) => {
-    const label = flowPreviewNodeLabel(node, cardsById);
+    const presentation = flowPreviewNodePresentation(node, colors);
+    const label = flowPreviewNodeTitle(node, cardsById);
     const lines = buildFlowPreviewLabelLines(node, compact, cardsById);
-    const size = measureFlowPreviewNodeSize(lines, compact, label);
-    return { ...node, lines, ...size };
+    const size = measureFlowPreviewNodeSize(lines, compact, label, presentation.typeLabel);
+    return {
+      ...node,
+      ...presentation,
+      lines,
+      ...size,
+    };
   });
   return resolveFlowPreviewOverlaps(sized, { gap: compact ? 12 : 16 });
 }
 
-function FlowPreviewNodeLabel({ lines, width, height, compact }) {
-  const { fontSize, lineHeight } = flowPreviewMetrics(compact);
-  const startY = height / 2 - ((lines.length - 1) * lineHeight) / 2;
+function FlowPreviewNodeContent({
+  typeLabel,
+  lines,
+  width,
+  height,
+  compact,
+  titleColor,
+  typeColor,
+}) {
+  const {
+    titleFontSize,
+    typeFontSize,
+    titleLineHeight,
+    typeLineHeight,
+    typeTitleGap,
+    paddingY,
+  } = flowPreviewMetrics(compact);
+  const contentHeight = typeLineHeight + typeTitleGap + lines.length * titleLineHeight;
+  const startY = (height - contentHeight) / 2 + typeLineHeight / 2;
 
   return (
-    <text
-      x={width / 2}
-      y={startY}
-      textAnchor="middle"
-      dominantBaseline="middle"
-      fill="var(--color-primary)"
-      fontSize={fontSize}
-      fontFamily="var(--font-sans, sans-serif)"
-      pointerEvents="none"
-    >
-      {lines.map((line, index) => (
-        <tspan key={`${line}-${index}`} x={width / 2} dy={index === 0 ? 0 : lineHeight}>
-          {line}
-        </tspan>
-      ))}
-    </text>
+    <>
+      <text
+        x={width / 2}
+        y={startY}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill={typeColor}
+        fontSize={typeFontSize}
+        fontFamily="var(--font-sans, sans-serif)"
+        letterSpacing="0.08em"
+        pointerEvents="none"
+      >
+        {typeLabel}
+      </text>
+      <text
+        x={width / 2}
+        y={startY + typeLineHeight / 2 + typeTitleGap + titleLineHeight / 2}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill={titleColor}
+        fontSize={titleFontSize}
+        fontFamily="var(--font-serif, serif)"
+        pointerEvents="none"
+      >
+        {lines.map((line, index) => (
+          <tspan key={`${line}-${index}`} x={width / 2} dy={index === 0 ? 0 : titleLineHeight}>
+            {line}
+          </tspan>
+        ))}
+      </text>
+    </>
   );
 }
 
 export function FlowPreview({ preview, compact = false, cardsById = null }) {
   const nodes = preview?.nodes ?? [];
   const edges = preview?.edges ?? [];
+  const colors = flowPreviewColors(preview);
   const nodeLayout = useMemo(
-    () => layoutFlowPreviewNodes(nodes, compact, cardsById),
-    [nodes, compact, cardsById],
+    () => layoutFlowPreviewNodes(nodes, compact, cardsById, colors),
+    [nodes, compact, cardsById, colors],
   );
 
   if (!nodes.length) {
@@ -212,15 +270,18 @@ export function FlowPreview({ preview, compact = false, cardsById = null }) {
             width={node.width}
             height={node.height}
             rx="10"
-            fill="var(--color-surface)"
-            stroke={node.type === 'artifact' ? 'var(--color-accent)' : 'var(--color-border)'}
+            fill={node.headerColor}
+            stroke="rgba(0,0,0,0.12)"
             strokeWidth="2"
           />
-          <FlowPreviewNodeLabel
+          <FlowPreviewNodeContent
+            typeLabel={node.typeLabel}
             lines={node.lines}
             width={node.width}
             height={node.height}
             compact={compact}
+            titleColor={node.titleColor}
+            typeColor={node.typeColor}
           />
         </g>
       ))}

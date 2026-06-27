@@ -3,8 +3,9 @@ import { strings } from '../content/strings.js';
 import { getPrimitiveDetail } from '../lib/primitivesApi.js';
 import { formatDurationSec } from '../lib/audio/parseAudioTags.js';
 import { FieldRow } from './FieldRow.jsx';
+import { ImageArtifactMetadataFields } from './ImageArtifactMetadataFields.jsx';
 
-export function ArtifactPrimitiveSection({ artifactRef, variant = 'sidebar' }) {
+export function ArtifactPrimitiveSection({ artifactRef, version = null, variant = 'sidebar' }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -60,6 +61,7 @@ export function ArtifactPrimitiveSection({ artifactRef, variant = 'sidebar' }) {
           <FieldRow label="Hash" value={p.content_hash} />
           <FieldRow label="Type" value={p.type} />
           <FieldRow label="File" value={meta?.filename} />
+          <ImageArtifactMetadataFields meta={meta} version={version} />
           {meta?.canvas_kind === 'audio' && meta?.audio && (
             <>
               <FieldRow label={strings.audio.title} value={meta.audio.title} />

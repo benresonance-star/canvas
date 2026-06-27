@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
+import { MusicKernelProvider } from './features/music/kernel/MusicKernelProvider.jsx'
 
 // Host / extension API compatibility: map to localStorage in the browser.
 if (typeof window !== 'undefined' && !window.storage) {
@@ -18,6 +19,8 @@ if (typeof window !== 'undefined' && !window.storage) {
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <App />
+    <MusicKernelProvider>
+      <App />
+    </MusicKernelProvider>
   </StrictMode>,
 )

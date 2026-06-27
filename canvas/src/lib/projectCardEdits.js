@@ -5,6 +5,9 @@ import {
 } from './bookmarkUrl.js';
 import { buildBookmarkPreviewState } from './ingest/createBookmarkArtifact.js';
 import { validateUserNoteName } from './ingest/saveUserNote.js';
+import { serializeUserTask } from '../features/tasks/domain/userTaskContent.js';
+import { DEFAULT_USER_TASK_STATUS } from '../features/tasks/domain/userTaskContent.js';
+import { resolveUserTaskStatus } from '../features/tasks/domain/taskCard.js';
 
 /**
  * Update pinned version body in project JSON (no folder write, no rename).
@@ -43,6 +46,35 @@ export function saveUserNoteToProject(card, { body, name, versionNum }) {
     cardUpdates: {
       ...contentResult.cardUpdates,
       name: nameValidation.name,
+    },
+  };
+}
+
+/**
+ * Update task body/title/status in project JSON (no folder write).
+ * @param {object} card
+ * @param {{ body: string, name?: string, taskStatus?: string, versionNum: number }} input
+ */
+export function saveUserTaskToProject(card, {
+  body,
+  name,
+  taskStatus,
+  versionNum,
+}) {
+  const nameValidation = validateUserNoteName(name ?? card.name);
+  if (!nameValidation.ok) {
+    return { ok: false, reason: nameValidation.reason };
+  }
+  const resolvedStatus = taskStatus ?? resolveUserTaskStatus(card) ?? DEFAULT_USER_TASK_STATUS;
+  const serialized = serializeUserTask({ taskStatus: resolvedStatus, body });
+  const contentResult = saveTextContentToProject(card, { body: serialized, versionNum });
+  if (!contentResult.ok) return contentResult;
+  return {
+    ...contentResult,
+    cardUpdates: {
+      ...contentResult.cardUpdates,
+      name: nameValidation.name,
+      taskStatus: resolvedStatus,
     },
   };
 }

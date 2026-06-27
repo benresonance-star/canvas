@@ -25,4 +25,26 @@ describe('readFileEntry', () => {
       inline: true,
     });
   });
+
+  it('reads JSON and Python files as inline text content', async () => {
+    const json = Object.assign(
+      new Blob(['{"name":"canvas"}\n'], { type: 'application/json' }),
+      { name: 'data__settings-v1.json', lastModified: 123 },
+    );
+    const python = Object.assign(
+      new Blob(['def run():\n    return True\n'], { type: 'text/x-python' }),
+      { name: 'scripts__run-v1.py', lastModified: 123 },
+    );
+
+    await expect(readFileEntry(json)).resolves.toMatchObject({
+      filename: 'data__settings-v1.json',
+      content: '{"name":"canvas"}\n',
+      inline: true,
+    });
+    await expect(readFileEntry(python)).resolves.toMatchObject({
+      filename: 'scripts__run-v1.py',
+      content: 'def run():\n    return True\n',
+      inline: true,
+    });
+  });
 });

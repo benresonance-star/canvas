@@ -53,6 +53,7 @@ import {
 } from '../../lib/artifactPlacement.js';
 import { collectKnownAgentChatKeys } from '../../lib/agentChatThreads.js';
 import { backfillMissingAgentChatTranscripts } from '../../lib/agentChatFolderBackfill.js';
+import { backfillMissingGeneratedImages } from '../../lib/generatedImageFolderBackfill.js';
 import { readSuppressedSyncKeys, readSuppressedBookmarkUrls } from '../../lib/syncSuppressedKeys.js';
 import { resolveScanExitStatus } from '../../lib/syncScanning.js';
 import {
@@ -175,6 +176,7 @@ export function useFolderLinkScan({
     flushPendingPlacementCommit,
     applySyncChangesFromList,
     refreshGraph,
+    refreshProjectClusterState,
     syncCanvasFromServerAfterFolderConnect,
     pullActiveProjectFromServer,
     invalidateFolderScan,
@@ -658,6 +660,32 @@ export function useFolderLinkScan({
         });
       }
     }
+
+    const missingGeneratedImages = cardsForScan.filter((card) => {
+      const relativePath = card?.versions?.[0]?.relativePath;
+      return card?.type === 'image'
+        && typeof relativePath === 'string'
+        && relativePath.startsWith('generated/');
+    });
+    if (missingGeneratedImages.length > 0 && handle) {
+      const generatedBackfill = await backfillMissingGeneratedImages({
+        folderHandle: handle,
+        folderPresentKeys: nextPresentKeys,
+        cards: cardsForScan,
+      });
+      if (generatedBackfill.written > 0) {
+        nextPresentKeys = [
+          ...new Set([
+            ...nextPresentKeys,
+            ...generatedBackfill.writtenKeys.map((key) => toCanonicalSyncKey(key)).filter(Boolean),
+          ]),
+        ];
+        flowTrace('folder:generated-image-backfill', {
+          attempted: generatedBackfill.attempted,
+          written: generatedBackfill.written,
+        });
+      }
+    }
     setFolderPresentKeys(nextPresentKeys);
 
     let stagedBaseline = stagedForScan;
@@ -931,10 +959,20 @@ export function useFolderLinkScan({
       } catch (e) {
         console.warn('Folder scan action sync failed:', e);
       }
+      try {
+        await refreshProjectClusterState?.({
+          projectId: folderScanProjectId,
+          projectName: stateRef.current.projectName,
+          force: true,
+        });
+      } catch (e) {
+        console.warn('Folder scan cluster refresh failed:', e);
+      }
     }
   }, [
     commitPlacementState,
     refreshGraph,
+    refreshProjectClusterState,
     invalidateFolderScan,
     applySyncChangesFromList,
   ]);
@@ -1006,6 +1044,12 @@ export function useFolderLinkScan({
             baseCards: liveBaseline,
             projectId,
           });
+        } else if (projectId === activeProjectIdRef.current) {
+          await refreshProjectClusterState?.({
+            projectId,
+            projectName: stateRef.current.projectName,
+            force: true,
+          });
         }
       } catch {
         try {
@@ -1033,7 +1077,13 @@ export function useFolderLinkScan({
         }
       }
     },
-    [linkProjectFolder, scanFolder, warnFolderNameMismatch, folderRestoreHandledSeqRef],
+    [
+      linkProjectFolder,
+      scanFolder,
+      warnFolderNameMismatch,
+      refreshProjectClusterState,
+      folderRestoreHandledSeqRef,
+    ],
   );
 
   useEffect(() => {

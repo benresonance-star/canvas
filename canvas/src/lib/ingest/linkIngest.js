@@ -1,5 +1,19 @@
 import { createRelationship } from '../primitivesApi.js';
 
+/** Canvas card types that can originate relationship links (UI + wikilink ingest). */
+export const LINK_SOURCE_CARD_TYPES = new Set(['user_note', 'user_task', 'markdown', 'code']);
+
+export function isLinkSourceCardType(cardType) {
+  return LINK_SOURCE_CARD_TYPES.has(cardType);
+}
+
+/** Artifact DB types (and code metadata) that support inspector / relationship linking. */
+export function isLinkableArtifactType(artifactType, metadata = {}) {
+  if (artifactType === 'user_note' || artifactType === 'user_task') return true;
+  if (artifactType === 'doc' && metadata?.canvas_kind === 'code') return true;
+  return false;
+}
+
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---/;
 const WIKILINK_RE = /\[\[([^\]]+)\]\]/g;
 
@@ -70,7 +84,7 @@ export async function ingestLinksFromVersions({
 
   let created = 0;
   for (const v of flatVersions) {
-    if (v.cardType !== 'user_note' && v.cardType !== 'markdown') continue;
+    if (!isLinkSourceCardType(v.cardType)) continue;
     const sourceRef = v.artifactRef || cardKeyToRef.get(v.cardKey);
     if (!sourceRef?.id || sourceRef.type !== 'artifact') continue;
 

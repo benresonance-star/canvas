@@ -41,7 +41,7 @@ export function RightDock({
       : 'flex-1 min-h-0';
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end pointer-events-none">
+    <div className="fixed left-0 right-0 bottom-0 top-[var(--canvas-header-height)] z-40 flex justify-end pointer-events-none">
       {showBackdrop && (
         <button
           type="button"

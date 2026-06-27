@@ -171,6 +171,19 @@ describe('normalizeAgentMarkdownContent', () => {
 });
 
 describe('parseInlineMarkdown', () => {
+  it('renders bare URLs and markdown links as link segments', () => {
+    expect(parseInlineMarkdown('See https://www.theurbandeveloper.com/ for updates.')).toEqual([
+      { type: 'text', text: 'See ' },
+      { type: 'link', text: 'https://www.theurbandeveloper.com/', href: 'https://www.theurbandeveloper.com/' },
+      { type: 'text', text: ' for updates.' },
+    ]);
+    expect(parseInlineMarkdown('Read [Urban Developer](https://www.theurbandeveloper.com/) today.')).toEqual([
+      { type: 'text', text: 'Read ' },
+      { type: 'link', text: 'Urban Developer', href: 'https://www.theurbandeveloper.com/' },
+      { type: 'text', text: ' today.' },
+    ]);
+  });
+
   it('parses bold and inline code spans', () => {
     expect(parseInlineMarkdown('Use **fresh beans**, *RDT*, and `filtered water`.')).toEqual([
       { type: 'text', text: 'Use ' },

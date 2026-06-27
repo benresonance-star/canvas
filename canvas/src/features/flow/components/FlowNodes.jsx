@@ -1,6 +1,6 @@
-import React, { useCallback } from 'react';
-import { Handle, NodeResizer, Position } from '@xyflow/react';
-import { Eye, EyeOff, FileText } from 'lucide-react';
+import React, { useCallback, useLayoutEffect } from 'react';
+import { Handle, NodeResizer, Position, useUpdateNodeInternals } from '@xyflow/react';
+import { Eye, EyeOff } from 'lucide-react';
 import { strings } from '../../../content/strings.js';
 import {
   CARD_RESIZE_MAX_H,
@@ -8,24 +8,41 @@ import {
   CARD_RESIZE_MIN_H,
   CARD_RESIZE_MIN_W,
 } from '../../../lib/constants.js';
-import { defaultFlowNodePreviewSize, flowArtifactNodeDisplayTitle } from '../domain/flowDocument.js';
+import { defaultFlowNodePreviewSize, flowArtifactNodeDisplayTitle, UNTITLED_FLOW_STEP_TITLE } from '../domain/flowDocument.js';
 import { flowLocalNodeHeaderUsesDarkText, resolveFlowLocalNodeTypeColor } from '../domain/flowLocalNodeTypeColors.js';
 import { flowLocalNodeTypeMeta } from '../domain/flowLocalNodeTypes.js';
+import { flowNodeActorMetas } from '../domain/flowNodeActors.js';
 import { useFlowEditorContext } from './FlowEditorContext.jsx';
 import { FlowNodeActorIcons } from './FlowNodeActorIcons.jsx';
 import { FlowNodePreview } from './FlowNodePreview.jsx';
+import { FlowStepRunStateGlyph } from './FlowStepRunStateMenu.jsx';
 
 function stopBubble(event) {
   event.stopPropagation();
 }
 
-function NodeShell({ children, accent = false, agentScoped = false, expanded = false }) {
-  const highlighted = accent || agentScoped;
+function useCollapsedNodeInternals(nodeId, showContent, syncKey) {
+  const updateNodeInternals = useUpdateNodeInternals();
+
+  useLayoutEffect(() => {
+    if (showContent) return;
+    updateNodeInternals(nodeId);
+  }, [nodeId, showContent, syncKey, updateNodeInternals]);
+}
+
+function NodeShell({ children, selected = false, agentScoped = false, expanded = false }) {
+  let borderClass = 'border-2 border-border';
+  if (selected) {
+    borderClass = 'border-2 border-accent';
+  } else if (agentScoped) {
+    borderClass = 'border-2 border-accent/70';
+  }
+
   return (
     <div
-      className={`rounded-xl border-2 bg-surface shadow-lg flex flex-col min-h-0 w-full overflow-hidden ${
-        expanded ? 'h-full' : 'min-w-44 max-w-64'
-      } ${highlighted && !expanded ? 'border-accent' : 'border-border'}`}
+      className={`flow-node-shell rounded-xl bg-surface shadow-lg flex flex-col min-h-0 overflow-hidden ${
+        expanded ? 'h-full w-full' : 'min-w-44 w-max'
+      } ${borderClass}`}
     >
       <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-surface !bg-accent" />
       {children}
@@ -113,7 +130,7 @@ function ExpandedNodeBody({ nodeId, nodeType, data, selected }) {
 
 function LocalFlowNodeTitle({ nodeId, data, selected, readOnly, headerColor }) {
   const { updateNode, checkpoint } = useFlowEditorContext();
-  const title = data.title || 'Untitled node';
+  const title = data.title || UNTITLED_FLOW_STEP_TITLE;
   const canEditInline = selected && !readOnly;
   const textClass = headerTextClass(headerColor);
   const darkHeaderText = flowLocalNodeHeaderUsesDarkText(headerColor);
@@ -128,6 +145,7 @@ function LocalFlowNodeTitle({ nodeId, data, selected, readOnly, headerColor }) {
     <input
       type="text"
       value={data.title ?? ''}
+      size={Math.max(12, (data.title ?? '').length || UNTITLED_FLOW_STEP_TITLE.length)}
       onChange={(event) => updateNode(nodeId, { data: { title: event.target.value } })}
       onBlur={() => checkpoint()}
       onKeyDown={(event) => {
@@ -138,11 +156,49 @@ function LocalFlowNodeTitle({ nodeId, data, selected, readOnly, headerColor }) {
       }}
       onPointerDown={stopBubble}
       onClick={stopBubble}
-      className={`nodrag w-full min-w-0 serif text-sm bg-transparent border-0 border-b focus:outline-none px-0 py-0.5 ${textClass} ${
+      className={`nodrag serif text-sm bg-transparent border-0 border-b focus:outline-none px-0 py-0.5 ${textClass} ${
         darkHeaderText ? 'border-border-subtle focus:border-accent/50' : 'border-white/30 focus:border-white/70'
       }`}
-      aria-label="Node name"
+      aria-label="Step name"
     />
+  );
+}
+
+function FlowNodeTypeBadge({ typeMeta, headerColor }) {
+  const TypeIcon = typeMeta.icon;
+  const textClass = headerTextClass(headerColor);
+
+  return (
+    <span className={`inline-flex items-center gap-1 shrink-0 ${textClass}`}>
+      <TypeIcon size={12} strokeWidth={1.5} aria-hidden />
+      <span className="sans text-[9px] uppercase tracking-wider">{typeMeta.label}</span>
+    </span>
+  );
+}
+
+function StepRunStateBadge({ nodeId, headerColor }) {
+  const { pathRunStateByStepId } = useFlowEditorContext();
+  if (!pathRunStateByStepId?.has(nodeId)) return null;
+  const textClass = headerTextClass(headerColor);
+  return (
+    <FlowStepRunStateGlyph
+      stateId={pathRunStateByStepId.get(nodeId)}
+      className={`w-4 text-sm leading-none ${textClass}`}
+    />
+  );
+}
+
+function NodeHeaderMetaRow({ typeMeta, actors, headerColor }) {
+  const actorMetas = flowNodeActorMetas(actors);
+  if (!typeMeta && !actorMetas.length) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
+      {typeMeta ? <FlowNodeTypeBadge typeMeta={typeMeta} headerColor={headerColor} /> : null}
+      {actorMetas.length > 0 ? (
+        <FlowNodeActorIcons actors={actors} headerColor={headerColor} />
+      ) : null}
+    </div>
   );
 }
 
@@ -164,17 +220,23 @@ export function ArtifactFlowNode({ id, data, selected }) {
   const onToggle = useShowContentToggle(id, 'artifact', data, card);
   const displayTitle = flowArtifactNodeDisplayTitle(data, card);
   const agentScoped = Boolean(agentScopedNodeIds?.has(id));
+  const typeMeta = flowLocalNodeTypeMeta('artifact');
   const headerColor = resolveFlowLocalNodeTypeColor(localNodeTypeColors, 'artifact');
   const textClass = headerTextClass(headerColor);
   const mutedClass = headerMutedTextClass(headerColor);
+  const internalsKey = `${displayTitle}:${JSON.stringify(data.actors ?? [])}:${showContent}`;
+
+  useCollapsedNodeInternals(id, showContent, internalsKey);
 
   return (
-    <NodeShell accent={selected} agentScoped={agentScoped} expanded={showContent}>
+    <NodeShell selected={selected} agentScoped={agentScoped} expanded={showContent}>
       <ColoredNodeHeader headerColor={headerColor}>
-        <FileText size={14} className={`mt-0.5 shrink-0 ${textClass}`} />
-        <div className="min-w-0 flex-1">
-          <FlowNodeActorIcons actors={data.actors} headerColor={headerColor} />
-          <div className={`serif text-sm truncate ${textClass}`} title={displayTitle}>{displayTitle}</div>
+        <div className="flex-1">
+          <NodeHeaderMetaRow typeMeta={typeMeta} actors={data.actors} headerColor={headerColor} />
+          <div className={`flex items-start gap-1.5 serif text-sm ${textClass}`}>
+            <StepRunStateBadge nodeId={id} headerColor={headerColor} />
+            <span className="break-words" title={displayTitle}>{displayTitle}</span>
+          </div>
           <div className={`sans text-[9px] uppercase tracking-wider mt-1 ${mutedClass}`}>Live artifact reference</div>
         </div>
         <ContentToggleButton
@@ -195,23 +257,28 @@ export function LocalFlowNode({ id, data, selected }) {
   const onToggle = useShowContentToggle(id, 'local', data, null);
   const agentScoped = Boolean(agentScopedNodeIds?.has(id));
   const typeMeta = flowLocalNodeTypeMeta(data.localNodeType);
-  const TypeIcon = typeMeta.icon;
   const headerColor = resolveFlowLocalNodeTypeColor(localNodeTypeColors, data.localNodeType);
-  const textClass = headerTextClass(headerColor);
+  const internalsKey = `${data.title ?? ''}:${JSON.stringify(data.actors ?? [])}:${data.description ?? ''}:${showContent}`;
+
+  useCollapsedNodeInternals(id, showContent, internalsKey);
 
   return (
-    <NodeShell accent={selected} agentScoped={agentScoped} expanded={showContent}>
+    <NodeShell selected={selected} agentScoped={agentScoped} expanded={showContent}>
       <ColoredNodeHeader headerColor={headerColor}>
-        <TypeIcon size={14} strokeWidth={1.5} className={`mt-0.5 shrink-0 ${textClass}`} />
-        <div className="min-w-0 flex-1">
-          <FlowNodeActorIcons actors={data.actors} headerColor={headerColor} />
-          <LocalFlowNodeTitle
-            nodeId={id}
-            data={data}
-            selected={selected}
-            readOnly={readOnly}
-            headerColor={headerColor}
-          />
+        <div className="flex-1">
+          <NodeHeaderMetaRow typeMeta={typeMeta} actors={data.actors} headerColor={headerColor} />
+          <div className="flex items-start gap-1.5">
+            <StepRunStateBadge nodeId={id} headerColor={headerColor} />
+            <div className="flex-1 min-w-0">
+              <LocalFlowNodeTitle
+                nodeId={id}
+                data={data}
+                selected={selected}
+                readOnly={readOnly}
+                headerColor={headerColor}
+              />
+            </div>
+          </div>
           {!showContent && data.description && (
             <div className={`sans text-[10px] mt-1 max-w-52 break-words ${headerMutedTextClass(headerColor)}`}>
               {data.description}

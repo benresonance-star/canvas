@@ -22,6 +22,7 @@ const ARTIFACT_TYPE_COLORS = {
   video: '#f97316',
   transcript: '#a855f7',
   user_note: '#eab308',
+  user_task: '#ea580c',
   agent_chat: '#0ea5e9',
   flow: '#b45309',
   other: '#64748b',

@@ -16,6 +16,8 @@ function collectEdges(canvasEdges, linkDrag) {
       fromY: linkDrag.fromY,
       toX: linkDrag.toX,
       toY: linkDrag.toY,
+      sourcePosition: linkDrag.sourcePosition,
+      targetPosition: linkDrag.targetPosition,
       type: 'references',
       dashed: true,
     });
@@ -24,9 +26,9 @@ function collectEdges(canvasEdges, linkDrag) {
 }
 
 function edgeStrokeClass(e) {
-  if (e.dashed) return 'stroke-muted stroke-dasharray-[6,4]';
-  if (e.type === 'supersedes') return 'stroke-secondary/60';
-  return 'stroke-accent/70';
+  if (e.dashed) return 'canvas-edge-path canvas-edge-path--drag';
+  if (e.type === 'supersedes') return 'canvas-edge-path canvas-edge-path--supersedes';
+  return 'canvas-edge-path';
 }
 
 function openLabelForEdge(edge) {
@@ -87,40 +89,43 @@ export function CanvasEdgeLayer({
       style={{ width: 1, height: 1, pointerEvents: 'none' }}
       aria-hidden={variant === 'paths'}
     >
-      {variant === 'paths' && (
-        <defs>
-          <marker
-            id="canvas-arrow"
-            markerWidth="8"
-            markerHeight="8"
-            refX="7"
-            refY="4"
-            orient="auto"
-          >
-            <path d="M0,0 L8,4 L0,8 Z" className="fill-accent/70" />
-          </marker>
-        </defs>
-      )}
-
       {variant === 'paths' &&
         all.map((e) => (
           <g key={e.id}>
             <path
-              d={edgePath(e.fromX, e.fromY, e.toX, e.toY)}
+              d={edgePath(
+                e.fromX,
+                e.fromY,
+                e.toX,
+                e.toY,
+                e.sourcePosition,
+                e.targetPosition,
+              )}
               fill="none"
               strokeWidth={e.id === '__drag__' ? 2 : 1.5}
               className={edgeStrokeClass(e)}
-              markerEnd={
-                e.dashed && e.id === '__drag__' ? undefined : 'url(#canvas-arrow)'
-              }
             />
           </g>
         ))}
 
       {variant === 'interactive' &&
         deletable.map((e) => {
-          const d = edgePath(e.fromX, e.fromY, e.toX, e.toY);
-          const mid = edgeMidpoint(e.fromX, e.fromY, e.toX, e.toY);
+          const d = edgePath(
+            e.fromX,
+            e.fromY,
+            e.toX,
+            e.toY,
+            e.sourcePosition,
+            e.targetPosition,
+          );
+          const mid = edgeMidpoint(
+            e.fromX,
+            e.fromY,
+            e.toX,
+            e.toY,
+            e.sourcePosition,
+            e.targetPosition,
+          );
           const showControls = hoveredEdgeId === e.id;
           const isDeleting = deletingEdgeId === e.id;
           const openLabel = openLabelForEdge(e);

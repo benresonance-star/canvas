@@ -82,8 +82,8 @@ export async function updateArtifactContent(id, { content_hash, payload_text }) 
   if (!existing) {
     throw new Error('artifact not found');
   }
-  if (existing.type !== 'user_note' && existing.type !== 'agent_chat') {
-    throw new Error('only user_note or agent_chat artifacts can be updated in place');
+  if (existing.type !== 'user_note' && existing.type !== 'user_task' && existing.type !== 'agent_chat') {
+    throw new Error('only user_note, user_task, or agent_chat artifacts can be updated in place');
   }
   const retrieved_at = new Date().toISOString();
   await query(

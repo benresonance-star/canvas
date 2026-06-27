@@ -24,6 +24,7 @@ export async function fetchLiveArtifact(id) { return (await request(`/live-artif
 export async function updateLiveArtifact(id, patch) { return (await request(`/live-artifacts/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) })).live; }
 export async function runLiveArtifact(id) { return request(`/live-artifacts/${encodeURIComponent(id)}/run`, { method: 'POST', body: JSON.stringify({ triggerType: 'manual' }) }); }
 export async function fetchLiveHistory(id) { return (await request(`/live-artifacts/${encodeURIComponent(id)}/history`)).versions; }
+export async function fetchLiveRuns(id) { return (await request(`/live-artifacts/${encodeURIComponent(id)}/runs`)).runs; }
 export async function fetchLiveSources(id) { return (await request(`/live-artifacts/${encodeURIComponent(id)}/sources`)).sources; }
 export async function addLiveSource(id, input) { return (await request(`/live-artifacts/${encodeURIComponent(id)}/sources`, { method: 'POST', body: JSON.stringify(input) })).source; }
 export async function updateLiveSource(id, patch) { return (await request(`/live-sources/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) })).source; }

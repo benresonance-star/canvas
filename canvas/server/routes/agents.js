@@ -11,6 +11,8 @@ import {
   executeAgent,
 } from '../services/agentExecutionRunner.js';
 import { listExecutionsForAgent } from '../repositories/executions.js';
+import { getDecryptedApiKey } from '../repositories/agent-credentials.js';
+import { listAgentImageModelOptions } from '../services/agentImageModelOptions.js';
 
 function sendError(res, error) {
   res.status(error.status || (error.message?.includes('not found') ? 404 : 400))
@@ -21,7 +23,7 @@ function projectIdFromReq(req) {
   return req.params.projectId || req.query.projectId || req.body?.projectId;
 }
 
-export function registerAgentsRoutes(app, { requireDb }) {
+export function registerAgentsRoutes(app, { requireDb, isDbReady }) {
   app.get(['/agents', '/api/agents', '/projects/:projectId/agents'], async (req, res) => {
     if (!requireDb(res)) return;
     try {
@@ -39,6 +41,31 @@ export function registerAgentsRoutes(app, { requireDb }) {
       const projectId = projectIdFromReq(req);
       if (!projectId) return res.status(400).json({ error: 'projectId required' });
       res.status(201).json({ agent: await createAgentArtifact(projectId, req.body ?? {}) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.get(['/agents/model-options', '/api/agents/model-options'], async (req, res) => {
+    try {
+      const provider = String(req.query.provider || 'local').toLowerCase();
+      let apiKey = null;
+      if (provider === 'openai' || provider === 'gemini') {
+        if (isDbReady?.()) {
+          try {
+            apiKey = await getDecryptedApiKey(provider);
+          } catch {
+            apiKey = null;
+          }
+        }
+        if (!apiKey && provider === 'openai') {
+          apiKey = process.env.OPENAI_API_KEY || null;
+        }
+        if (!apiKey && provider === 'gemini') {
+          apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || null;
+        }
+      }
+      res.json(await listAgentImageModelOptions(provider, { apiKey }));
     } catch (error) {
       sendError(res, error);
     }

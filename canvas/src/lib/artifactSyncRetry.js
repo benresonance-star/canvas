@@ -1,4 +1,4 @@
-import { cardKeyFromFilename, normalizeFolderRelativePath } from './filename.js';
+import { cardKeyFromFilename, normalizeFolderRelativePath, parseFilename } from './filename.js';
 import {
   ensureClusterForProject,
   ingestArtifacts,
@@ -6,6 +6,7 @@ import {
 } from './primitivesApi.js';
 import { artifactTypeFromFile } from './ingest/artifactType.js';
 import { createLinksFromSource } from './ingest/linkIngest.js';
+import { resolveCodeLanguage } from './codeHighlight.js';
 
 function baseMetadata(entry) {
   const relativePath = normalizeFolderRelativePath(entry.relativePath ?? entry.filename);
@@ -18,6 +19,18 @@ function baseMetadata(entry) {
 
 function entryRelativePath(entry) {
   return normalizeFolderRelativePath(entry.relativePath ?? entry.filename);
+}
+
+function codeMetadata(entry) {
+  if (entry.cardType !== 'code') return {};
+  const ext = entry.ext ?? parseFilename(entry.filename ?? '').ext;
+  const language = resolveCodeLanguage({ filename: entry.filename, ext });
+  return {
+    canvas_kind: 'code',
+    file_kind: 'code',
+    ...(ext ? { ext } : {}),
+    ...(language ? { language } : {}),
+  };
 }
 
 function fileForOutboxEntry(entry) {
@@ -72,6 +85,7 @@ function fileForOutboxEntry(entry) {
       ...baseMetadata(entry),
       prefix: entry.prefix ?? null,
       name: entry.name ?? null,
+      ...codeMetadata(entry),
       ...(entry.cardType === 'user_note' || entry.kind === 'user_note'
         ? { canvas_kind: 'user_note' }
         : {}),

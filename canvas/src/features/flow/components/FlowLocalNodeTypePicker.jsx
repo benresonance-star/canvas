@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Plus } from 'lucide-react';
 import { strings } from '../../../content/strings.js';
-import { FLOW_LOCAL_NODE_TYPE_STEP } from '../domain/flowLocalNodeTypes.js';
+import { FLOW_LOCAL_NODE_TYPE_DECISION } from '../domain/flowLocalNodeTypes.js';
 import { FlowLocalNodeTypeMenu } from './FlowLocalNodeTypeMenu.jsx';
 
 function stopBubble(event) {
@@ -37,10 +37,10 @@ export function FlowLocalNodeTypePicker({ onSelectType }) {
   };
 
   return (
-    <div ref={rootRef} className="relative mt-2 flex gap-1">
+    <div ref={rootRef} className="relative flex w-full gap-1">
       <button
         type="button"
-        onClick={() => selectType(FLOW_LOCAL_NODE_TYPE_STEP)}
+        onClick={() => selectType(FLOW_LOCAL_NODE_TYPE_DECISION)}
         className="sans flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full bg-accent text-on-accent px-3 py-2 text-xs"
       >
         <Plus size={13} />

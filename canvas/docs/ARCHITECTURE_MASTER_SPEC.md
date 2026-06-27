@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.06.27.1
-**Version label:** exploration-display-name
+**Version:** 2026.06.27.2
+**Version label:** exploration-path-groups
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -124,6 +124,9 @@ Extracted from `App.jsx` to reduce the god-component. Each hook owns effects + c
 - `features/flow/hooks/useFlowDocument.js` — flow load/save, revision CAS, SSE apply
 - `features/flow/hooks/useFlowAgentContext.js` — agent context from flow nodes/edges
 - `features/flow/hooks/useFlowAgentChatPreviewContext.js` — flow preview in agent chat
+- `features/flow/domain/flowPaths.js` — path groups (`flow_document.paths`), hull layout, membership CRUD
+- `features/flow/domain/flowStepRunState.js` — per-path-member run tags (`not_started`, `current`, `complete`, `needs_revision`, `failed`)
+- `FlowPathHullLayer.jsx`, `FlowPathInspectorFields.jsx`, `FlowPathControls.jsx` — path hulls, inspector, sidebar controls
 
 **Done (Phase 1b):**
 - `useClusterContext.js` — cluster/inspector/graph, hulls, card selection
@@ -534,11 +537,33 @@ Cleanup rules:
 
 Exploration cards are a separate artifact type (`flow`) with their own revisioned Postgres document, distinct from the project canvas layout JSON.
 
-Tables (`server/migrations/0014_flow_artifacts.sql`):
+Tables (`server/migrations/0014_flow_artifacts.sql`, `0020_flow_paths.sql`):
 
-- `flow_document` — title, description, viewport, revision CAS, optional `snapshot_path`
+- `flow_document` — title, description, viewport, revision CAS, optional `snapshot_path`, `paths` JSONB (named step groups)
 - `flow_node` — `artifact` nodes (linked primitive) or `local` nodes (inline title/description)
 - `flow_edge` — directed connections with typed presentation metadata
+
+`flow_document.paths` entries:
+
+```json
+{
+  "id": "uuid",
+  "name": "Path 1",
+  "stepIds": ["node-id-1", "node-id-2"],
+  "stepRunStates": { "node-id-1": "current", "node-id-2": "not_started" },
+  "createdAt": "ISO-8601",
+  "updatedAt": "ISO-8601"
+}
+```
+
+Rules for path groups:
+
+- Each step belongs to at most one path; paths with zero valid members are dropped on normalize
+- `stepRunStates` keys are pruned to current members; only grouped steps carry run state (ungrouped steps do not)
+- Path member lists and “current active step” resolve in flow-sequence order (internal edges), not selection order
+- Domain helpers: `createFlowPathFromSelection`, `addStepsToFlowPath`, `duplicateFlowPath`, `deleteFlowPath`, `removeStepsFromFlowPath`, `patchPathStepRunState`
+- Deleting a path only removes metadata; deleting a path and its steps removes member nodes via the same `removeFlowNodesById` path as single-step delete
+- Removing the last member from a path drops the path; steps remain on the canvas
 
 API (`server/routes/flows.js`):
 
@@ -552,8 +577,12 @@ API (`server/routes/flows.js`):
 
 Client (`src/features/flow/`):
 
-- `FlowEditor.jsx` — `@xyflow/react` editor; artifact nodes embed live `CardPreview`
-- `FlowPreview.jsx` — compact canvas-card preview from `flowPreview` snapshot on pinned version
+- `FlowEditor.jsx` — `@xyflow/react` editor; artifact nodes embed live `CardPreview`; collapsible left sidebar (Steps & paths, Canvas artifacts — section bodies collapsed by default); toolbar toggle to hide/show the entire left sidebar (`PanelLeft` / `PanelLeftClose`)
+- `FlowPathHullLayer.jsx` — convex-hull path chrome on canvas with path label and `CURRENT STEP: {title}` under the pill
+- `FlowPathInspectorFields.jsx` — path name, current active step, flow-ordered member list with run-state menu, per-step remove, delete path / delete path and steps (confirm dialogs)
+- `FlowPathControls.jsx` — New path / Duplicate path / Add to path aligned with the New step button row
+- `FlowStepRunStateMenu.jsx` — manual run-state tags on path members and in the step inspector
+- `FlowPreview.jsx` — compact canvas-card preview from `flowPreview` snapshot on pinned version; matches fullscreen node type colors and shows uppercase type + title per node
 - `useFlowDocument.js` — load, dirty tracking, debounced autosave (`flowAutosave.js`), manual `flushSave`, SSE apply with `clientId` skip; `save()` clears pending timers and skips when clean unless forced
 - `flowSnapshot.js` — optional linked-folder snapshot file at `flows/<slug>--<id>.flow.json`
 - Exploration cards on the main canvas use the internal `flow` card type; opening the modal launches the exploration editor
@@ -566,9 +595,9 @@ Rules:
 - Exploration layout authority is `flow_document` + nodes/edges tables, not `canvas_project_document` cards layout
 - Artifact nodes reference existing primitive `artifact_id`; local nodes are exploration-local only
 - On `PUT /flows/:flowId`, `replaceFlow` auto-registers referenced artifact IDs into the project workspace `cluster_member` when the artifact row exists (canvas cards may carry `artifactRef` before cluster membership)
-- Exploration editor artifact palette lists only canvas cards with a synced `artifactRef` (`artifactRefIdForClusterCard`)
+- Exploration editor artifact palette lists only canvas cards with a synced `artifactRef` (`artifactRefIdForClusterCard`); artifact titles use the same `sans` label style as the New step button
 - Save failures surface in the exploration toolbar; close does not silently discard dirty edits when flush returns `ok: false`
-- Edge connection types and custom labels live in edge `presentation` JSON (`flowConnectionTypes.js`)
+- Edge connection types (schema v2: `depends_on`, `produces`, `approves`, `revises`, `rejects`, `loops_to`, plus `custom`), optional decision `condition` (`{ type: "decision", value: "approved" | "revise" | "reject" }`), and custom labels live in edge `presentation` JSON (`flowConnectionTypes.js`); legacy ids `driven_by` / `output_type` migrate on load/save
 - Local node types (Artifact, Step, Decision, External Resource), per-type header colors (`local_node_type_colors` JSONB, migration `0019`), and multi-actor tags (`human`, `agent`, `process`, `tool`) persist in node `presentation`
 - Agent context can include selected exploration nodes via `useFlowAgentContext`
 - Exploration agent mode UI (`flowAgentUiPersistence.js`) persists per-card last thread and panel section layout; restored when agent mode is re-enabled on that exploration card
@@ -1121,6 +1150,15 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-06-27 — Exploration path groups + sidebar chrome (implemented)
+
+- Bumped the active spec to `2026.06.27.2`.
+- Added `flow_document.paths` JSONB (`0020_flow_paths.sql`) for named step groups inside explorations.
+- Path hulls on the canvas (`FlowPathHullLayer`), path inspector, run-state tags per path member, and current-step labels on hull + inspector.
+- Path lifecycle in the inspector: delete path only, delete path and steps, remove individual steps from membership (domain: `deleteFlowPath`, `removeStepsFromFlowPath`).
+- Left sidebar sections (**Steps & paths**, **Canvas artifacts**) are collapsible with bodies hidden by default; toolbar button hides or reveals the entire left sidebar.
+- Flow card preview nodes show type colors and uppercase type + title; path member lists follow flow-sequence order.
 
 ### 2026-06-27 — Explorations display name + flow editor polish (implemented)
 

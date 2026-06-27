@@ -80,8 +80,8 @@ describe('fileTypeFromExt audio', () => {
 });
 
 describe('fileTypeFromExt code', () => {
-  it('maps TypeScript and JavaScript extensions to code', () => {
-    for (const ext of ['ts', 'tsx', 'js', 'jsx']) {
+  it('maps TypeScript, JavaScript, JSON, and Python extensions to code', () => {
+    for (const ext of ['ts', 'tsx', 'js', 'jsx', 'json', 'py']) {
       expect(fileTypeFromExt(ext)).toBe('code');
     }
   });
@@ -123,6 +123,12 @@ describe('isTextMarkdownPreviewType', () => {
     expect(
       cardHeaderLabel({ type: 'agent_chat', prefix: 'notes' }),
     ).toBe('thread | CHAT');
+  });
+
+  it('cardHeaderLabel shows MUSIC | SONIC STUDIO for sonic studio cards', () => {
+    expect(
+      cardHeaderLabel({ type: 'sonic_studio', prefix: 'sonic' }),
+    ).toBe('music | SONIC STUDIO');
   });
 
   it('cardHeaderLabel omits file extension from header', () => {

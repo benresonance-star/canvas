@@ -21,6 +21,8 @@ describe('artifactTypeFromCardType', () => {
 
   it('maps code cards to document artifacts', () => {
     expect(artifactTypeFromCardType('code', 'ts')).toBe('doc');
+    expect(artifactTypeFromCardType('code', 'json')).toBe('doc');
+    expect(artifactTypeFromCardType('code', 'py')).toBe('doc');
   });
 });
 
@@ -30,5 +32,7 @@ describe('artifactTypeFromFile', () => {
     expect(artifactTypeFromFile('clip.mp4')).toBe('video');
     expect(artifactTypeFromFile('photo.png')).toBe('image');
     expect(artifactTypeFromFile('source.ts')).toBe('doc');
+    expect(artifactTypeFromFile('settings.json')).toBe('doc');
+    expect(artifactTypeFromFile('script.py')).toBe('doc');
   });
 });

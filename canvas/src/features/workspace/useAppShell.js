@@ -68,6 +68,10 @@ export function useAppShell() {
   const clusterContextProjectIdRef = useRef(null);
   const refreshGraphRef = useRef(async () => {});
   const applyClusterContextForProjectRef = useRef(async () => null);
+  const refreshProjectClusterStateRef = useRef(async () => ({
+    ok: false,
+    clusterId: null,
+  }));
   const refreshClusterApiHealthRef = useRef(async () => ({
     available: false,
     reason: 'db_unavailable',
@@ -134,6 +138,7 @@ export function useAppShell() {
   const [folderLinkInProgress, setFolderLinkInProgress] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [architectureOpen, setArchitectureOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const stagedSyncCardsRef = useRef([]);
   const userAdjustedViewRef = useRef(false);
@@ -164,6 +169,7 @@ export function useAppShell() {
   const folderPresentKeysRef = useRef(null);
   const [primitiveTableOpen, setPrimitiveTableOpen] = useState(false);
   const [newNoteOpen, setNewNoteOpen] = useState(false);
+  const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [addLinkOpen, setAddLinkOpen] = useState(false);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [createClusterOpen, setCreateClusterOpen] = useState(false);
@@ -229,6 +235,7 @@ export function useAppShell() {
       clusterContextProjectIdRef,
       refreshGraphRef,
       applyClusterContextForProjectRef,
+      refreshProjectClusterStateRef,
       refreshClusterApiHealthRef,
     },
     deps: {
@@ -274,10 +281,12 @@ export function useAppShell() {
     canvasViewportSize,
     setCanvasViewportSize,
     savingNote,
+    savingTask,
     savingLink,
     savingFlow,
     savingLive,
     savingAgent,
+    savingSonicStudio,
     savingCardId,
     setCanvasView,
     fitCanvasViewToCards,
@@ -300,14 +309,20 @@ export function useAppShell() {
     handleNoteSaveStatus,
     persistCardEdits,
     handleInlineSaveUserNote,
+    handleInlineSaveUserTask,
     handleInlineSaveMarkdown,
     handleInlineSaveBookmark,
     handleSaveNoteToProject,
+    handleSaveTaskToProject,
     handleSaveNewNote,
+    handleSaveNewTask,
     handleSaveNewLink,
     handleSaveNewFlow,
     handleSaveNewLive,
     handleSaveNewAgent,
+    handleSaveNewBeatAgent,
+    handleSaveNewSonicStudio,
+    handleUpdateSonicStudioCard,
     appendGeneratedCards,
     handleFlowCardRefresh,
     removeCard,
@@ -351,6 +366,7 @@ export function useAppShell() {
       setFolderPresentKeys,
       setClusterId,
       setNewNoteOpen,
+      setNewTaskOpen,
       setAddLinkOpen,
     },
   });
@@ -692,6 +708,8 @@ export function useAppShell() {
       flushPendingPlacementCommit,
       applySyncChangesFromList,
       refreshGraph,
+      refreshProjectClusterState: (...args) =>
+        refreshProjectClusterStateRef.current(...args),
       syncCanvasFromServerAfterFolderConnect,
       loadProjectIntoStateRef,
       pullActiveProjectFromServer,
@@ -725,6 +743,7 @@ export function useAppShell() {
     setSearchQuery('');
     setShowSearch(false);
     setArchitectureOpen(false);
+    setDiagnosticsOpen(false);
     setAgentPanelOpen(false);
     setAgentMessages([]);
     setActiveThreadId(null);
@@ -806,6 +825,8 @@ export function useAppShell() {
       clearStaleSyncBanners: clearStaleSyncBannersForProjection,
       flushPendingPlacementCommit,
       flushPendingPlacementCommitForSwitch,
+      refreshProjectClusterState: (...args) =>
+        refreshProjectClusterStateRef.current(...args),
     },
   });
 
@@ -996,6 +1017,8 @@ export function useAppShell() {
       setSearchQuery,
       architectureOpen,
       setArchitectureOpen,
+      diagnosticsOpen,
+      setDiagnosticsOpen,
     },
     deps: {
       loaded,
@@ -1100,6 +1123,8 @@ export function useAppShell() {
     folderLinkInProgress,
     folderLinkProbeComplete,
     folderKeySet,
+    folderPresentKeys,
+    setFolderPresentKeys,
     connectedFolderName,
     folderDisplayName,
     syncStatus,
@@ -1125,10 +1150,12 @@ export function useAppShell() {
     setCanvasElement,
     canvasViewportSize,
     savingNote,
+    savingTask,
     savingLink,
     savingFlow,
     savingLive,
     savingAgent,
+    savingSonicStudio,
     savingCardId,
     setCanvasView,
     fitCanvasViewToCards,
@@ -1148,14 +1175,20 @@ export function useAppShell() {
     handleUpdateVersion,
     handleNoteSaveStatus,
     handleInlineSaveUserNote,
+    handleInlineSaveUserTask,
     handleInlineSaveMarkdown,
     handleInlineSaveBookmark,
     handleSaveNoteToProject,
+    handleSaveTaskToProject,
     handleSaveNewNote,
+    handleSaveNewTask,
     handleSaveNewLink,
     handleSaveNewFlow,
     handleSaveNewLive,
     handleSaveNewAgent,
+    handleSaveNewBeatAgent,
+    handleSaveNewSonicStudio,
+    handleUpdateSonicStudioCard,
     appendGeneratedCards,
     handleFlowCardRefresh,
     removeCard,
@@ -1271,6 +1304,8 @@ export function useAppShell() {
     setSearchQuery,
     architectureOpen,
     setArchitectureOpen,
+    diagnosticsOpen,
+    setDiagnosticsOpen,
     changeFolderDialog,
     setChangeFolderDialog,
     projectDeleteTarget,
@@ -1283,6 +1318,8 @@ export function useAppShell() {
     setPrimitiveTableOpen,
     newNoteOpen,
     setNewNoteOpen,
+    newTaskOpen,
+    setNewTaskOpen,
     addLinkOpen,
     setAddLinkOpen,
     createTaskOpen,
