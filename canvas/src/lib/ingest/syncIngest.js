@@ -23,6 +23,8 @@ function codeMetadata(version) {
 function threeDMetadata(version) {
   if (version.cardType !== '3d-model') return {};
   const format = version.ext ?? detectThreeDFormat(version.filename ?? '');
+  const displayMode = version.threeDDisplayMode
+    ?? (version.previewFeasible === false ? 'folder_on_demand' : 'inline');
   return {
     canvas_kind: '3d-model',
     file_kind: '3d-model',
@@ -36,9 +38,15 @@ function threeDMetadata(version) {
         contentHash: version.content_hash,
       },
       status: format === 'glb' || format === 'gltf' ? 'ready' : 'unsupported',
+      displayMode,
+      previewFeasible: version.previewFeasible !== false,
+      packageRoot: version.threeDPackageRoot ?? null,
+      isPackage: Boolean(version.threeDIsPackage),
+      rootFile: version.relativePath ?? null,
       metadata: version.threeD?.metadata ?? {},
       viewerState: version.threeD?.viewerState ?? null,
       annotations: version.threeD?.annotations ?? [],
+      measurements: version.threeD?.measurements ?? [],
     },
   };
 }

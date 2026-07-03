@@ -1,7 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getPreview } from '../../../lib/previewStore.js';
 import { getFileHandleAtPath } from '../../../lib/folderWrite.js';
 import { detectThreeDFormat, isSupportedThreeDFormat } from '../utils/fileFormat.js';
+import {
+  assessThreeDPreviewFeasibility,
+  canAutoLoadThreeDSource,
+  canRequestFolderLoad,
+} from '../utils/previewFeasibility.js';
 
 /** @type {Map<string, { sourceUrl: string, objectUrls: string[] }>} */
 const gltfRewriteCache = new Map();
@@ -117,71 +122,148 @@ export function resolveThreeDSourceInfo(version) {
   };
 }
 
-export function useThreeDModelSource(version, { folderHandle = null } = {}) {
+export async function resolveThreeDSourceUrl({
+  version,
+  folderHandle,
+  format,
+  loadFromFolder = false,
+}) {
+  let nextSourceUrl = version?.objectUrl || version?.dataUrl || null;
+  /** @type {string[]} */
+  const ephemeralUrls = [];
+
+  if (!nextSourceUrl && version?.previewCacheKey) {
+    const blob = await getPreview(version.previewCacheKey);
+    if (blob) {
+      nextSourceUrl = URL.createObjectURL(blob);
+      ephemeralUrls.push(nextSourceUrl);
+    }
+  }
+
+  if (
+    !nextSourceUrl
+    && loadFromFolder
+    && folderHandle
+    && version?.relativePath
+  ) {
+    const blob = await blobFromFolderPath(folderHandle, version.relativePath);
+    nextSourceUrl = URL.createObjectURL(blob);
+    ephemeralUrls.push(nextSourceUrl);
+  }
+
+  if (
+    nextSourceUrl
+    && format === 'gltf'
+    && folderHandle
+    && version?.relativePath
+  ) {
+    const cacheKey = getGltfRewriteCacheKey(version);
+    const cached = gltfRewriteCache.get(cacheKey);
+    if (cached?.sourceUrl) {
+      nextSourceUrl = cached.sourceUrl;
+    } else {
+      const rewritten = await rewriteGltfDependencies({
+        sourceUrl: nextSourceUrl,
+        folderHandle,
+        relativePath: version.relativePath,
+      });
+      gltfRewriteCache.set(cacheKey, {
+        sourceUrl: rewritten.sourceUrl,
+        objectUrls: rewritten.objectUrls,
+      });
+      nextSourceUrl = rewritten.sourceUrl;
+    }
+  }
+
+  return { sourceUrl: nextSourceUrl, ephemeralUrls };
+}
+
+export function useThreeDModelSource(version, { folderHandle = null, folderLinked = null } = {}) {
+  const linked = folderLinked ?? Boolean(folderHandle);
+  const feasibility = useMemo(
+    () => assessThreeDPreviewFeasibility(version, { folderLinked: linked }),
+    [linked, version],
+  );
+  const sourceInfo = resolveThreeDSourceInfo(version);
   const [sourceUrl, setSourceUrl] = useState(version?.objectUrl || version?.dataUrl || null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const sourceInfo = resolveThreeDSourceInfo(version);
+  const [folderLoadRequested, setFolderLoadRequested] = useState(false);
+  const ephemeralUrlsRef = useRef([]);
+
+  useEffect(() => () => {
+    ephemeralUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    ephemeralUrlsRef.current = [];
+  }, []);
+
+  const loadSource = useCallback(async ({ fromFolder = false } = {}) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const resolved = await resolveThreeDSourceUrl({
+        version,
+        folderHandle,
+        format: sourceInfo.format,
+        loadFromFolder: fromFolder,
+      });
+      ephemeralUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      ephemeralUrlsRef.current = resolved.ephemeralUrls;
+      setSourceUrl(resolved.sourceUrl);
+      return resolved.sourceUrl;
+    } catch (e) {
+      setSourceUrl(null);
+      setError(e?.message || 'Could not prepare model source');
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, [folderHandle, sourceInfo.format, version]);
 
   useEffect(() => {
+    if (!canAutoLoadThreeDSource(feasibility.mode)) {
+      setSourceUrl(version?.objectUrl || version?.dataUrl || null);
+      setLoading(false);
+      return undefined;
+    }
+
     let cancelled = false;
-    /** Preview-only blob URLs — revoked when this viewer unmounts. */
+    /** @type {string[]} */
     let ephemeralUrls = [];
 
-    async function load() {
+    async function autoLoad() {
       setLoading(true);
       setError(null);
       try {
-        let nextSourceUrl = version?.objectUrl || version?.dataUrl || null;
-        if (!nextSourceUrl && version?.previewCacheKey) {
-          const blob = await getPreview(version.previewCacheKey);
-          if (blob) {
-            nextSourceUrl = URL.createObjectURL(blob);
-            ephemeralUrls.push(nextSourceUrl);
-          }
+        const resolved = await resolveThreeDSourceUrl({
+          version,
+          folderHandle,
+          format: sourceInfo.format,
+          loadFromFolder: false,
+        });
+        if (cancelled) {
+          resolved.ephemeralUrls.forEach((url) => URL.revokeObjectURL(url));
+          return;
         }
-        if (
-          nextSourceUrl
-          && sourceInfo.format === 'gltf'
-          && folderHandle
-          && version?.relativePath
-        ) {
-          const cacheKey = getGltfRewriteCacheKey(version);
-          const cached = gltfRewriteCache.get(cacheKey);
-          if (cached?.sourceUrl) {
-            nextSourceUrl = cached.sourceUrl;
-          } else {
-            const rewritten = await rewriteGltfDependencies({
-              sourceUrl: nextSourceUrl,
-              folderHandle,
-              relativePath: version.relativePath,
-            });
-            gltfRewriteCache.set(cacheKey, {
-              sourceUrl: rewritten.sourceUrl,
-              objectUrls: rewritten.objectUrls,
-            });
-            nextSourceUrl = rewritten.sourceUrl;
-          }
-        }
-        if (!cancelled) {
-          setSourceUrl(nextSourceUrl);
-        }
+        ephemeralUrls = resolved.ephemeralUrls;
+        ephemeralUrlsRef.current = ephemeralUrls;
+        setSourceUrl(resolved.sourceUrl);
       } catch (e) {
         if (!cancelled) {
           setSourceUrl(null);
-          setError(e?.message || 'Could not prepare GLTF dependencies');
+          setError(e?.message || 'Could not prepare model source');
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
-    void load();
+    void autoLoad();
     return () => {
       cancelled = true;
       ephemeralUrls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, [
+    feasibility.mode,
     folderHandle,
     sourceInfo.format,
     version?.dataUrl,
@@ -190,10 +272,19 @@ export function useThreeDModelSource(version, { folderHandle = null } = {}) {
     version?.relativePath,
   ]);
 
+  const requestFolderLoad = useCallback(async () => {
+    if (!canRequestFolderLoad(feasibility.mode)) return null;
+    setFolderLoadRequested(true);
+    return loadSource({ fromFolder: true });
+  }, [feasibility.mode, loadSource]);
+
   return {
     ...sourceInfo,
     sourceUrl,
     loading,
     error,
+    feasibility,
+    folderLoadRequested,
+    requestFolderLoad,
   };
 }

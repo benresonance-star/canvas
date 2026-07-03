@@ -27,6 +27,11 @@ import { SonicStudioPreview } from '../features/sonicStudio/components/SonicStud
 import { StudioPreview } from '../features/studio/components/StudioPreview.jsx';
 import { Bot } from 'lucide-react';
 import { ThreeDModelSummary } from '../features/threeDArtifact/components/ThreeDModelSummary.jsx';
+import { ThreeDSnapshotPreview } from '../features/threeDArtifact/components/ThreeDSnapshotPreview.jsx';
+import { canAutoLoadThreeDSource, assessThreeDPreviewFeasibility } from '../features/threeDArtifact/utils/previewFeasibility.js';
+import { threeDSnapshotIsCurrent } from '../features/threeDArtifact/utils/snapshotCache.js';
+import { resolveEnvironmentPreset } from '../features/threeDArtifact/utils/environmentConfig.js';
+import { normalizeThreeDViewerState } from '../features/threeDArtifact/utils/viewerState.js';
 
 const ThreeDInlineViewerLazy = lazy(() =>
   import('../features/threeDArtifact/components/ThreeDArtifactView.jsx').then((mod) => ({
@@ -420,8 +425,46 @@ export function CardPreview({
   }
 
   if (cardType === '3d-model') {
-    if (!isActive || compact) {
-      return <ThreeDModelSummary card={card} version={pinned} compact={compact} />;
+    const threeDFeasibility = assessThreeDPreviewFeasibility(pinned, {
+      folderLinked: Boolean(folderHandle),
+    });
+    const canInlinePreview = canAutoLoadThreeDSource(threeDFeasibility.mode);
+    if (compact || !canInlinePreview) {
+      return (
+        <ThreeDModelSummary
+          card={card}
+          version={pinned}
+          compact={compact}
+          feasibility={threeDFeasibility}
+          warnHeavy={threeDFeasibility.warnHeavy}
+        />
+      );
+    }
+    const snapshotEnvironmentPreset = resolveEnvironmentPreset(
+      normalizeThreeDViewerState(card?.threeDViewerState ?? pinned?.threeD?.viewerState),
+    );
+    if (!isActive && threeDSnapshotIsCurrent(pinned, snapshotEnvironmentPreset)) {
+      return (
+        <ThreeDSnapshotPreview
+          cacheKey={pinned.threeDSnapshotCacheKey}
+          card={card}
+          version={pinned}
+          compact={compact}
+          feasibility={threeDFeasibility}
+          warnHeavy={threeDFeasibility.warnHeavy}
+        />
+      );
+    }
+    if (!isActive) {
+      return (
+        <ThreeDModelSummary
+          card={card}
+          version={pinned}
+          compact={compact}
+          feasibility={threeDFeasibility}
+          warnHeavy={threeDFeasibility.warnHeavy}
+        />
+      );
     }
     return (
       <div className="h-full w-full min-h-0">
@@ -430,9 +473,11 @@ export function CardPreview({
             card={card}
             version={pinned}
             folderHandle={folderHandle}
+            folderLinked={Boolean(folderHandle)}
             projectId={projectId}
             layoutKey={`${card.width ?? 0}x${card.height ?? 0}`}
             onUpdateCard={onUpdateCard}
+            showToolbar
           />
         </Suspense>
       </div>

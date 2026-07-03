@@ -21,4 +21,9 @@ describe('normalizeThreeDViewerState', () => {
     expect(normalized.cameraSaved).toBe(true);
     expect(normalized.camera.position).toEqual([1, 2, 3]);
   });
+
+  it('derives environmentPreset from lightingMode for legacy viewer state', () => {
+    expect(normalizeThreeDViewerState({ lightingMode: 'soft' }).environmentPreset).toBe('sunset');
+    expect(normalizeThreeDViewerState({ environmentPreset: 'city' }).lightingMode).toBe('bright');
+  });
 });

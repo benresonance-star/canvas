@@ -45,6 +45,10 @@ export const SLIM_PROJECT_PERSIST_ENABLED = true;
 /** In-session preview max bytes for image/PDF; over STORAGE_LIMIT uses blob URL only until re-sync */
 export const PREVIEW_MAX_BYTES_IMAGE_PDF = 32 * 1024 * 1024;
 export const PREVIEW_MAX_BYTES_3D_MODEL = 100 * 1024 * 1024;
+/** Safety ceiling for on-demand folder load of large 3D models (fullscreen only). */
+export const THREE_D_HARD_MAX_BYTES = 500 * 1024 * 1024;
+/** Max glTF JSON size to read as text during folder scan (companion path parsing). */
+export const GLTF_JSON_TEXT_MAX_BYTES = 2 * 1024 * 1024;
 /** dataUrl strings longer than this are omitted from localStorage (~4MB raw file as base64) */
 export const DATA_URL_PERSIST_MAX_CHARS = 5_500_000;
 /** Very long data: URLs often render as a blank PDF in iframes; use a blob URL for display above this length */

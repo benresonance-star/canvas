@@ -1,7 +1,7 @@
 /** Bump when architecture or shipped load behavior changes. */
 import { getArchitectureGraphManifest } from './architecture/index.js';
 
-export const ARCHITECTURE_SPEC_VERSION = '2026-07-03-3d-viewer';
+export const ARCHITECTURE_SPEC_VERSION = '2026-07-03-3d-measurements';
 
 export const ARCHITECTURE_LAYERS = [
   {
@@ -243,7 +243,7 @@ export const ARCHITECTURE_FEATURES = [
     id: 'three-d-viewer',
     title: '3D model viewer artifact',
     shortDescription:
-      '`3d-model` cards (`.glb`/`.gltf`) render via lazy `ThreeDArtifactView` (`src/features/threeDArtifact/*`) in `CardPreview` and `ModalContent`. Viewer toolbar toggles and saved camera persist on `card.threeDViewerState` + `version.threeD.viewerState` through `structuralChange` sync. Fit preserves orbit angle; Reset restores defaults + default 3/4 framing; Save view sets `cameraSaved`. Preview resizes via `ResizeObserver` + explicit canvas buffer sizing.',
+      '`3d-model` cards (`.glb`/`.gltf`) render via lazy `ThreeDArtifactView` (`src/features/threeDArtifact/*`) in `CardPreview` and `ModalContent`. Unpacked GLTF folders collapse at scan (`gltfPackageScan.js`) so bin/textures/license companions stay out of the sync dock; package cards use the folder name. Files ≤100 MB auto-load from preview cache; 100–500 MB use **Load from folder** in fullscreen when linked.',
     layerIds: ['client'],
     tags: ['media', 'ux', '3d'],
     status: 'current',

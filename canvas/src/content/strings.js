@@ -90,6 +90,17 @@ export const strings = {
     modalResyncHint: 'Re-sync the connected folder to load this file again for a full preview.',
     modalTooLarge: 'File too large to preview inline',
   },
+  threeD: {
+    tooLargeForInline: 'File exceeds inline preview limit (100 MB)',
+    loadFromFolderHint: 'Open fullscreen to load from linked folder',
+    connectFolderHint: 'Connect folder to view this model',
+    hardLimit: 'File exceeds viewer safety limit (500 MB)',
+    loadFromFolder: 'Load from folder',
+    loadFromFolderNote: 'Large models load into memory. Loading may take a moment.',
+    loadingFromFolder: 'Loading from folder…',
+    noSource: 'Model file unavailable',
+    heavyModelWarning: 'This model is very complex and may be slow to render.',
+  },
   spreadsheet: {
     viewerLabel: 'Viewer',
     viewerSimple: 'Simple table',

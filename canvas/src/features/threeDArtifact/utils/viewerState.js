@@ -1,3 +1,8 @@
+import {
+  environmentPresetForLightingMode,
+  lightingModeForEnvironmentPreset,
+} from './environmentConfig.js';
+
 export const DEFAULT_THREE_D_VIEWER_STATE = {
   camera: {
     position: [4, 3, 6],
@@ -11,13 +16,14 @@ export const DEFAULT_THREE_D_VIEWER_STATE = {
   showBounds: false,
   showAnnotations: true,
   lightingMode: 'studio',
+  environmentPreset: 'studio',
   showEnvironment: true,
   /** When true, restore `camera` from persisted viewer state instead of auto-fitting. */
   cameraSaved: false,
 };
 
 export function normalizeThreeDViewerState(state) {
-  return {
+  const merged = {
     ...DEFAULT_THREE_D_VIEWER_STATE,
     ...(state ?? {}),
     camera: {
@@ -26,6 +32,14 @@ export function normalizeThreeDViewerState(state) {
     },
     cameraSaved: Boolean(state?.cameraSaved),
   };
+
+  if (!state?.environmentPreset) {
+    merged.environmentPreset = environmentPresetForLightingMode(merged.lightingMode);
+  } else if (!state?.lightingMode) {
+    merged.lightingMode = lightingModeForEnvironmentPreset(merged.environmentPreset);
+  }
+
+  return merged;
 }
 
 export function cameraStateFromControls(camera, controls) {

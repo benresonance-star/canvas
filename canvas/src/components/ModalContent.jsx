@@ -115,6 +115,7 @@ export function ModalContent({
             card={card}
             version={version}
             folderHandle={folderHandle}
+            folderLinked={Boolean(folderHandle)}
             projectId={projectId ?? card.projectId}
             onUpdateCard={onUpdateCard}
           />

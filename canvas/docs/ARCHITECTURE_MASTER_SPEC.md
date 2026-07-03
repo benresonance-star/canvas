@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.07.03.3
-**Version label:** 3d-viewer
+**Version:** 2026.07.03.5
+**Version label:** gltf-package-scan
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -747,14 +747,39 @@ Canvas card toolbar clicks and artifact scroll regions are excluded from card dr
 
 | Module | Role |
 |--------|------|
-| `src/features/threeDArtifact/components/ThreeDArtifactView.jsx` | React Three Fiber viewer — orbit controls, toolbar, fit/reset/save |
+| `src/features/threeDArtifact/components/ThreeDArtifactView.jsx` | React Three Fiber viewer — orbit controls, toolbar, fit/reset/save, measurements (full viewer) |
+| `src/features/threeDArtifact/components/ThreeDMeasurementLayer.jsx` | Vertex/edge snap picking, preview line, measurement markers |
+| `src/features/threeDArtifact/utils/measureSnap.js` | Raycast snap, edge cache, unit conversion, distance formatting |
+| `src/features/threeDArtifact/utils/detectModelUnits.js` | Extract `modelUnits` from glTF; resolve display unit defaults |
+| `src/features/threeDArtifact/utils/environmentConfig.js` | HDRI preset mapping (`studio` / `city` / `sunset`) |
+| `src/features/threeDArtifact/loaders/captureThreeDSnapshot.js` | Offscreen snapshot with HDRI environment parity |
+| `src/features/threeDArtifact/components/ThreeDSnapshotCapture.jsx` | Debounced card snapshot capture when model/preset changes |
 | `src/features/threeDArtifact/utils/cameraFit.js` | Corner-based frustum fit; **Fit** preserves current orbit angle; **Reset** restores default 3/4 view |
 | `src/features/threeDArtifact/utils/viewerState.js` | Defaults + `cameraSaved` flag (Save view vs auto-fit on load) |
-| `src/features/threeDArtifact/hooks/useThreeDModelSource.js` | Loads model bytes from linked folder / artifact ref |
+| `src/features/threeDArtifact/hooks/useThreeDModelSource.js` | Loads model bytes from preview cache or on-demand linked folder |
+| `src/features/threeDArtifact/utils/previewFeasibility.js` | Size-tier feasibility: inline, folder-on-demand, blocked |
+| `src/lib/gltfPackageScan.js` | Collapses unpacked GLTF package companions at folder scan |
+
+**GLTF package folders:** unpacked models (`scene.gltf` + `scene.bin` + `textures/`) are collapsed at folder scan via `collapseGltfPackageFiles` (`useFolderLinkScan.js`). Companion files (buffers, textures, license sidecars) are excluded from the sync dock; one `3d-model` chip remains, named from the folder (e.g. `vino/scene.gltf` → card name **vino**). Runtime loading uses existing `rewriteGltfDependencies` in `useThreeDModelSource.js`.
+
+**Size tiers:**
+
+| Tier | Behavior |
+|------|----------|
+| ≤ 100 MB | Auto-load preview blob into IndexedDB at ingest; WebGL in active card + fullscreen |
+| 100–500 MB, folder linked | Card shows summary + hint; fullscreen **Load from folder** reads file on demand |
+| 100–500 MB, no folder | Summary + connect/resync hint |
+| > 500 MB | Blocked with safety limit message (`THREE_D_HARD_MAX_BYTES`) |
+
+Ingest sets `previewFeasible: false` and `threeDDisplayMode: 'folder_on_demand'` for files over 100 MB (`readFile.js`); artifact metadata mirrors via `syncIngest.js`.
 
 **Surfaces:** lazy-loaded in `CardPreview` (compact) and `ModalContent` (fullscreen). Card resize refits via `layoutKey` + viewport `ResizeObserver` with explicit canvas pixel sizing (avoids buffer/CSS mismatch).
 
-**Persistence:** toolbar display toggles and saved camera write to `card.threeDViewerState` and `version.threeD.viewerState`; slim project payloads preserve `threeDViewerState` (`projectSlim.js`, `syncStaging.js`, `specDataPlane.js`). Changes sync through existing `structuralChange` project document commits — no dedicated 3D API route.
+**Persistence:** toolbar display toggles and saved camera write to `card.threeDViewerState` and `version.threeD.viewerState`; measurements and `metadata.measureUnits` write to `version.threeD` only (do not reset live camera). Slim project payloads preserve `threeDViewerState` (`projectSlim.js`, `syncStaging.js`, `specDataPlane.js`). Changes sync through existing `structuralChange` project document commits — no dedicated 3D API route.
+
+**Measurements (full viewer):** two-click vertex/edge snap; distances stored in model world units; display converts via `measureSnap.convertMeasurementDistance`. Floating overlay panel — does not resize viewport. Camera stays put after measure save (no viewport refit in full viewer; viewer-state resync scoped to card/version identity).
+
+**HDRI lighting:** toolbar sun cycles `lightingMode` → drei `<Environment>` preset. Card snapshots use matching HDRI in `captureThreeDSnapshot.js`; cache key includes preset.
 
 **Camera semantics:**
 
@@ -1253,6 +1278,27 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-07-03 — 3D measurements, HDRI lighting, camera stability (implemented)
+
+- Bumped app architecture spec to `2026-07-03-3d-measurements` in `systemArchitectureSpec.js`.
+- Full viewer measurement tool: vertex/edge snap, two-click workflow, persisted `version.threeD.measurements[]`, unit conversion (`modelUnits` → display `measureUnits`).
+- HDRI environment presets (`studio` / `city` / `sunset`) via `environmentConfig.js`; snapshot capture matches active preset.
+- Camera no longer resets when saving measurements: measurements panel is a viewport overlay; full viewer skips viewport-resize refit; viewer-state resync scoped to card/version identity.
+
+### 2026-07-03 — GLTF package folder scan (implemented)
+
+- Bumped app architecture spec to `2026-07-03-gltf-package-scan` in `systemArchitectureSpec.js`.
+- Added `gltfPackageScan.js`: parse GLTF companion paths, collapse bin/textures/license from folder scan output, name package cards from folder basename.
+- Wired `collapseGltfPackageFiles` into `useFolderLinkScan.js` before grouping; `readFile.js` reads small `.gltf` JSON for companion detection.
+- Artifact metadata includes `threeD.packageRoot`, `isPackage`, `rootFile`; staged dock shows one `3d-model` chip per package.
+
+### 2026-07-03 — Large 3D model handling (implemented)
+
+- Bumped app architecture spec to `2026-07-03-3d-large-files` in `systemArchitectureSpec.js`.
+- Added `previewFeasibility.js` size-tier assessment (inline ≤100 MB, folder-on-demand 100–500 MB, hard limit 500 MB).
+- Oversized ingest skips preview blob but records `previewFeasible: false` / `threeDDisplayMode: 'folder_on_demand'`.
+- Fullscreen modal exposes **Load from folder** via `useThreeDModelSource.requestFolderLoad()`; card preview stays summary-only for 100 MB+ files.
 
 ### 2026-07-03 — 3D model viewer artifact + camera fit (implemented)
 

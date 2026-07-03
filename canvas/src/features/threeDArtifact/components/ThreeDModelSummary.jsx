@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box } from 'lucide-react';
+import { strings } from '../../../content/strings.js';
 import { detectThreeDFormat, formatThreeDSize, isSupportedThreeDFormat } from '../utils/fileFormat.js';
 
 function triangleLabel(count) {
@@ -9,7 +10,34 @@ function triangleLabel(count) {
   return `${count} tris`;
 }
 
-export function ThreeDModelSummary({ card, version, compact = false }) {
+function feasibilityMessage(mode, { compact = false } = {}) {
+  switch (mode) {
+    case 'hard_limit':
+      return strings.threeD.hardLimit;
+    case 'no_folder':
+      return compact
+        ? strings.threeD.connectFolderHint
+        : `${strings.threeD.connectFolderHint} ${strings.preview.modalResyncHint}`;
+    case 'folder_on_demand':
+      return compact
+        ? strings.threeD.loadFromFolderHint
+        : strings.threeD.tooLargeForInline;
+    case 'no_source':
+      return strings.threeD.noSource;
+    case 'unsupported':
+      return null;
+    default:
+      return null;
+  }
+}
+
+export function ThreeDModelSummary({
+  card,
+  version,
+  compact = false,
+  feasibility = null,
+  warnHeavy = false,
+}) {
   const filename = version?.filename ?? version?.relativePath ?? '';
   const format = String(version?.ext || detectThreeDFormat(filename) || '').toLowerCase();
   const stats = version?.threeD?.metadata ?? {};
@@ -19,6 +47,9 @@ export function ThreeDModelSummary({ card, version, compact = false }) {
     formatThreeDSize(source.sizeBytes ?? version?.size),
     triangleLabel(stats.triangleCount),
   ].filter(Boolean);
+  const message = feasibility?.mode
+    ? feasibilityMessage(feasibility.mode, { compact })
+    : null;
 
   return (
     <div className="h-full w-full min-h-0 flex flex-col items-center justify-center text-center px-3">
@@ -31,6 +62,16 @@ export function ThreeDModelSummary({ card, version, compact = false }) {
       <div className="sans text-[10px] uppercase tracking-wider text-muted mt-1">
         {labels.length ? labels.join(' · ') : '3D MODEL'}
       </div>
+      {message && (
+        <div className="sans text-[10px] text-muted mt-2 max-w-[240px] leading-relaxed">
+          {message}
+        </div>
+      )}
+      {warnHeavy && (
+        <div className="sans text-[10px] text-warning mt-2 max-w-[240px]">
+          {strings.threeD.heavyModelWarning}
+        </div>
+      )}
       {format && !isSupportedThreeDFormat(format) && (
         <div className="sans text-[10px] text-warning mt-2">Unsupported 3D format</div>
       )}

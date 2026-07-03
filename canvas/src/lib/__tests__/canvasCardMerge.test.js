@@ -295,6 +295,25 @@ describe('migrateFolderBackedCardKeys', () => {
     expect(changed).toBe(false);
     expect(cards[0].key).toBe('links__example');
   });
+
+  it('rewrites GLTF package cards to package sync keys', () => {
+    const { cards, changed } = migrateFolderBackedCardKeys([{
+      key: '3D gltf/vino/scene',
+      name: 'vino',
+      type: '3d-model',
+      threeDIsPackage: true,
+      threeDPackageRoot: '3D gltf/vino',
+      versions: [{
+        version: 1,
+        filename: 'scene.gltf',
+        relativePath: '3D gltf/vino/scene.gltf',
+        cardKey: '3D gltf/vino/general__vino',
+        threeDIsPackage: true,
+      }],
+    }]);
+    expect(changed).toBe(true);
+    expect(cards[0].key).toBe('3D gltf/vino/general__vino');
+  });
 });
 
 describe('dedupeAgentChatCardsForConnector', () => {

@@ -207,6 +207,11 @@ export interface ThreeDAnnotation {
 }
 
 export interface ThreeDModelMetadata {
+  /** Unit system declared by the model file (e.g. glTF asset extras). */
+  modelUnits?: "mm" | "cm" | "m" | "in" | "ft" | "unknown";
+  /** User override for measurement display units. */
+  measureUnits?: "mm" | "cm" | "m" | "in" | "ft";
+  /** @deprecated Legacy alias for `measureUnits`. */
   units?: "mm" | "cm" | "m" | "in" | "ft" | "unknown";
   sourceApp?: ThreeDSourceApp;
   bounds?: ThreeDModelBounds;
@@ -230,6 +235,12 @@ export interface ThreeDViewerState {
   showAxes: boolean;
   showBounds: boolean;
   showAnnotations: boolean;
+  showEnvironment?: boolean;
+  lightingMode?: "studio" | "bright" | "soft";
+  /** HDRI preset used by drei `<Environment>` and snapshot capture. */
+  environmentPreset?: "studio" | "city" | "sunset";
+  /** When true, restore `camera` from persisted viewer state instead of auto-fitting. */
+  cameraSaved?: boolean;
   selectedObjectId?: string;
   clippingPlanes?: Array<{
     id: string;
@@ -237,6 +248,20 @@ export interface ThreeDViewerState {
     constant: number;
     enabled: boolean;
   }>;
+}
+
+export interface ThreeDMeasurementPoint {
+  position: Vector3Tuple;
+}
+
+export interface ThreeDMeasurement {
+  id: string;
+  snapMode: "vertex" | "edge";
+  start: ThreeDMeasurementPoint;
+  end: ThreeDMeasurementPoint;
+  /** Euclidean distance in model world units (see `metadata.modelUnits`). */
+  distance: number;
+  createdAt: string;
 }
 
 export interface ThreeDRelationship {
@@ -267,6 +292,8 @@ export interface ThreeDModelArtifact {
   metadata: ThreeDModelMetadata;
   viewerState: ThreeDViewerState;
   annotations: ThreeDAnnotation[];
+  /** Persisted edge/vertex measurements (full viewer only). */
+  measurements?: ThreeDMeasurement[];
   relationships: ThreeDRelationship[];
 
   status: "uploading" | "processing" | "ready" | "failed" | "unsupported";
@@ -410,16 +437,18 @@ The full viewer should support:
 - bottom run/history/relationship strip later;
 - top toolbar.
 
-MVP full viewer toolbar:
+MVP full viewer toolbar (shipped):
 
 ```txt
-[Reset View] [Fit] [Grid] [Axes] [Wireframe] [Annotations] [Save View]
+[Reset] [Fit] [Grid] [Axes] [Lighting] [Wireframe] [Measure] [Unit ▾] [Save View]
 ```
+
+When measure mode is active, a **Vertex / Edge** snap toggle appears. Measurements list as a floating overlay at the bottom-left of the viewport (does not resize the canvas).
 
 Later toolbar:
 
 ```txt
-[Section] [Measure] [Explode] [Materials] [Compare] [Export] [Ask Agent]
+[Section] [Explode] [Materials] [Compare] [Export] [Ask Agent]
 ```
 
 ---
@@ -632,6 +661,75 @@ Save state on:
 
 Avoid writing to the DB on every camera movement without debouncing.
 
+**Camera stability (shipped):** the live orbit camera is owned by `OrbitControls` after initial fit. Do not bind `Canvas` `camera.position` to persisted viewer state on every render — only restore position when `cameraSaved` is true (via `ViewportCameraBridge`) or on explicit **Reset**. Saving measurements or unit changes must **not** reset the camera. The full viewer disables viewport-resize refit (`refitOnViewportResize` is inline-card only). Viewer-state resync runs only on card/version identity change, not on measurement writes.
+
+---
+
+## 12.1 HDRI environment lighting (shipped)
+
+The viewer cycles three lighting modes via the sun toolbar button. Each maps to a drei HDRI preset:
+
+| `lightingMode` | `environmentPreset` | HDRI |
+|---|---|---|
+| `studio` | `studio` | studio_small_03_1k |
+| `bright` | `city` | potsdamer_platz_1k |
+| `sunset` | `sunset` | venice_sunset_1k |
+
+Implementation: `environmentConfig.js` + drei `<Environment preset=…>`. Snapshot capture (`captureThreeDSnapshot.js`) applies the same HDRI via `RGBELoader` + `PMREMGenerator` so card thumbnails match the active preset. Cache key includes environment preset (`snapshotCache.js`).
+
+---
+
+## 12.2 Measurement tool (shipped, full viewer only)
+
+### Scope
+
+- Available in `ThreeDFullViewer` (modal fullscreen), not inline card preview.
+- Two-click workflow: pick start point, pick end point; **Escape** cancels draft.
+- Snap modes: **vertex** (nearest mesh vertex) or **edge** (nearest triangle edge).
+- OrbitControls: left-click disabled in measure mode; right-drag still rotates; middle-drag zooms.
+
+### Stored shape
+
+Persist on `version.threeD.measurements[]`:
+
+```ts
+{
+  id: string;
+  snapMode: "vertex" | "edge";
+  start: { position: [x, y, z] };
+  end: { position: [x, y, z] };
+  distance: number; // raw world-space distance in model units
+  createdAt: string; // ISO
+}
+```
+
+Also persist display preference on `version.threeD.metadata.measureUnits` (user override).
+
+### Units and conversion (shipped)
+
+| Field | Meaning |
+|---|---|
+| `metadata.modelUnits` | Unit system of model world space, extracted from glTF `asset.extras` / root `extras` / `userData`; glTF defaults to **meters** when absent |
+| `metadata.measureUnits` | User-selected display unit (dropdown in toolbar) |
+
+**Stored distances stay in model world units.** Display converts via meters as base (`measureSnap.convertMeasurementDistance`). Example: distance `0.15` with model units `m` and display `mm` → **150.00 mm**.
+
+Supported units: `mm`, `cm`, `m`, `in`, `ft`. Default display unit when metadata is absent: `cm` for non-glTF, `m` for glTF.
+
+### UI
+
+- Measurement markers scale with model bounds (`computeMeasurementMarkerRadius`).
+- Floating measurements panel lists saved measurements with delete actions.
+- Unit `<select>` uses theme surface colors (`.three-d-measure-unit-select` in `index.css`).
+
+### Modules
+
+| Module | Role |
+|---|---|
+| `utils/measureSnap.js` | Raycast pick, vertex/edge snap, edge cache, distance formatting/conversion |
+| `utils/detectModelUnits.js` | Extract `modelUnits` from glTF; resolve display defaults |
+| `components/ThreeDMeasurementLayer.jsx` | R3F picking, preview line, saved measurement rendering |
+
 ---
 
 ## 13. Annotations
@@ -835,14 +933,19 @@ MVP only needs enough metadata and schema stability to support this later.
 
 ### Could Have
 
-- `.fbx` support.
-- `.ply` support.
 - Draco compression support.
 - KTX2 texture support.
 - Model simplification warning.
 - Material override mode.
 - Section clipping.
-- Measurement tool.
+
+### Shipped beyond MVP
+
+- `.fbx` support (loader path exists; parity with GLB pending).
+- HDRI environment lighting presets (`studio` / `city` / `sunset`).
+- Card snapshot capture with environment parity (`ThreeDSnapshotCapture`, `captureThreeDSnapshot.js`).
+- **Measurement tool** (full viewer): vertex/edge snap, unit conversion, persisted measurements.
+- Large-file folder-on-demand loading and GLTF package folder collapse.
 
 ### Not Yet
 
@@ -1021,11 +1124,16 @@ Recommended MVP limits:
 
 | Limit | Value |
 |---|---|
-| Max upload size | 100 MB |
+| Max inline preview size | 100 MB (`PREVIEW_MAX_BYTES_3D_MODEL`) |
+| Max on-demand folder load | 500 MB (`THREE_D_HARD_MAX_BYTES`) |
 | Preferred size | under 50 MB |
 | Triangle warning | over 500k |
 | Triangle danger warning | over 2M |
 | Active inline viewers | 1 |
+
+**Large file flow (shipped):** files over 100 MB ingest with metadata only. Canvas cards show `ThreeDModelSummary` with a feasibility message. Fullscreen/modal shows **Load from folder** when a project folder is linked; the viewer reads the file on demand via `useThreeDModelSource.requestFolderLoad()` without storing a preview blob in IndexedDB.
+
+**GLTF package folders (shipped):** folder sync treats unpacked GLTF directories as one artifact. `gltfPackageScan.collapseGltfPackageFiles` removes companion files (`.bin`, `textures/`, `images/`, `materials/`, root `license.txt` when a single `.gltf` owns the folder) from the sync dock before staging. The surviving `.gltf` row stages as one `3d-model` chip named from the folder (e.g. `vino/` → **vino**). On-disk layout is unchanged; `rewriteGltfDependencies` loads companions at view time.
 
 ---
 
@@ -1074,13 +1182,21 @@ Recommended MVP limits:
 - Thumbnail shown on card.
 - Missing thumbnail falls back to icon.
 
-### Annotation Tests
+### Measurement Tests (shipped)
 
-- Add annotation.
-- Annotation marker appears.
-- Annotation persists.
-- Annotation can link to another artifact.
-- Annotation can be deleted.
+- Vertex snap picks nearest vertex within snap radius.
+- Edge snap picks nearest edge within snap radius.
+- Distance stored in model world units.
+- Display converts between mm/cm/m/in/ft correctly.
+- Measurements persist on `version.threeD.measurements` through sync round-trip.
+- Adding/removing measurements does not reset camera position.
+- Unit dropdown change converts displayed values, not stored distances.
+
+### Environment / Snapshot Tests (shipped)
+
+- Lighting mode maps to distinct HDRI presets.
+- Snapshot cache key includes environment preset.
+- Snapshot recapture when preset changes.
 
 ---
 
@@ -1098,6 +1214,8 @@ The implementation is acceptable when:
 8. The viewer disposes resources when closed.
 9. Unsupported or failed imports show clear errors.
 10. The schema leaves room for annotations, relationships, conversions, and future BIM support.
+11. Full viewer supports vertex/edge measurements with unit conversion and persisted camera during measure saves.
+12. HDRI lighting presets apply in viewer and card snapshot capture.
 
 ---
 

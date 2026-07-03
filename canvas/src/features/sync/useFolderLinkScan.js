@@ -19,6 +19,7 @@ import {
   pickProjectDirectoryHandle,
 } from '../../lib/folderPicker.js';
 import { scanFolderFiles } from '../../lib/folderScan.js';
+import { collapseGltfPackageFiles } from '../../lib/gltfPackageScan.js';
 import {
   isCardMissingFromFolder,
   normalizeCardType,
@@ -477,13 +478,21 @@ export function useFolderLinkScan({
       exitStatus = { error: e.message };
       return;
     }
+    found = collapseGltfPackageFiles(found);
     // Group by base (prefix__name) to build version stacks
     const grouped = {};
     found.forEach(f => {
       const parsed = parseFilename(f.filename);
       const key = f.cardKey || toCanonicalSyncKey(f.relativePath || f.filename);
-      if (!grouped[key]) grouped[key] = { parsed, versions: [] };
-      grouped[key].versions.push({ ...f, ...parsed });
+      if (!grouped[key]) {
+        grouped[key] = {
+          parsed: f.threeDIsPackage
+            ? { ...parsed, prefix: f.prefix ?? parsed.prefix, name: f.name ?? parsed.name, ext: 'gltf' }
+            : parsed,
+          versions: [],
+        };
+      }
+      grouped[key].versions.push({ ...parsed, ...f });
     });
     Object.values(grouped).forEach(g => g.versions.sort((a, b) => b.version - a.version));
 

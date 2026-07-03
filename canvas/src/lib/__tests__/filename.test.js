@@ -16,6 +16,8 @@ import {
   noteRequiresProjectOnlySave,
   computeUserNoteDisabled,
   isCardMissingFromFolder,
+  folderBackedSyncKeyForEntry,
+  gltfPackageSyncKey,
 } from '../filename.js';
 
 describe('sync key helpers', () => {
@@ -260,6 +262,49 @@ describe('isCardMissingFromFolder', () => {
     expect(keys).toContain('notes__on_canvas');
     expect(keys).toContain('img__staged');
     expect(collectFolderBackedKeys([], [])).toEqual([]);
+  });
+
+  it('does not flag GLTF package cards missing when scan uses package card key', () => {
+    const scanKey = gltfPackageSyncKey('3D gltf/vino', 'vino');
+    expect(
+      isCardMissingFromFolder({
+        folderConnected: true,
+        folderKeySet: new Set([scanKey]),
+        card: {
+          key: '3D gltf/vino/scene',
+          name: 'vino',
+          type: '3d-model',
+          prefix: 'general',
+          threeDIsPackage: true,
+          threeDPackageRoot: '3D gltf/vino',
+          versions: [{
+            version: 1,
+            filename: 'scene.gltf',
+            relativePath: '3D gltf/vino/scene.gltf',
+            cardKey: '3D gltf/vino/general__vino',
+            threeDIsPackage: true,
+            threeDPackageRoot: '3D gltf/vino',
+          }],
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it('folderBackedSyncKeyForEntry prefers GLTF package cardKey over scene filename', () => {
+    expect(
+      folderBackedSyncKeyForEntry({
+        key: '3D gltf/vino/scene',
+        name: 'vino',
+        threeDIsPackage: true,
+        threeDPackageRoot: '3D gltf/vino',
+        versions: [{
+          version: 1,
+          relativePath: '3D gltf/vino/scene.gltf',
+          cardKey: '3D gltf/vino/general__vino',
+          threeDIsPackage: true,
+        }],
+      }),
+    ).toBe('3D gltf/vino/general__vino');
   });
 });
 

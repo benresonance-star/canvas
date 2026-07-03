@@ -118,6 +118,32 @@ describe('buildStagedSyncCardFromChange', () => {
       pinnedVersion: 1,
     });
   });
+
+  it('uses package folder name for collapsed GLTF packages', () => {
+    const staged = buildStagedSyncCardFromChange({
+      key: '3D gltf/vino/general__vino',
+      group: {
+        parsed: { ext: 'gltf', prefix: 'general', name: 'scene' },
+        versions: [{
+          version: 1,
+          ext: 'gltf',
+          prefix: 'general',
+          name: 'vino',
+          filename: 'scene.gltf',
+          relativePath: '3D gltf/vino/scene.gltf',
+          threeDIsPackage: true,
+          threeDPackageRoot: '3D gltf/vino',
+        }],
+      },
+    });
+    expect(staged).toMatchObject({
+      key: '3D gltf/vino/general__vino',
+      name: 'vino',
+      type: '3d-model',
+      threeDIsPackage: true,
+      relativePath: '3D gltf/vino/scene.gltf',
+    });
+  });
 });
 
 describe('mergeNewlyStaged', () => {

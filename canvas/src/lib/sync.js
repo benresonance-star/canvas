@@ -52,6 +52,17 @@ export function mergeDiskPreviewIntoCardVersions(cardVersions, diskVersions) {
   return cardList.map((ev) => {
     const diskV = diskBy.get(ev.version);
     if (!diskV || !shouldRefreshVersionFromDisk(ev, diskV)) return ev;
-    return { ...ev, ...pickPreviewFieldsFromDisk(diskV) };
+    const contentChanged = Boolean(
+      ev.content_hash
+      && diskV.content_hash
+      && ev.content_hash !== diskV.content_hash,
+    );
+    const merged = { ...ev, ...pickPreviewFieldsFromDisk(diskV) };
+    if (contentChanged) {
+      merged.threeDSnapshotCacheKey = null;
+      merged.threeDSnapshotContentHash = null;
+      merged.threeDSnapshotEnvironmentPreset = null;
+    }
+    return merged;
   });
 }

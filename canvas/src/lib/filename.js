@@ -170,13 +170,57 @@ export function cardHasNestedFolderPath(card) {
   });
 }
 
+function pinnedVersionForEntry(entry) {
+  if (!entry) return null;
+  return (entry.versions ?? []).find((v) => v.version === entry.pinnedVersion)
+    ?? entry.versions?.[0]
+    ?? null;
+}
+
+/** Matches `gltfPackageCardKey` in gltfPackageScan.js (kept inline to avoid circular imports). */
+export function gltfPackageSyncKey(packageRoot, displayName) {
+  const normalizedRoot = normalizeFolderRelativePath(packageRoot);
+  const baseKey = `general__${displayName}`;
+  return normalizedRoot ? `${normalizedRoot}/${baseKey}` : baseKey;
+}
+
+export function isThreeDPackageEntry(entry) {
+  if (!entry) return false;
+  if (entry.threeDIsPackage) return true;
+  return Boolean(pinnedVersionForEntry(entry)?.threeDIsPackage);
+}
+
+/**
+ * Primary folder-sync key for a canvas or dock entry.
+ * GLTF package folders use package card keys, not scene.gltf filename keys.
+ * @param {{ key?: string, name?: string, threeDIsPackage?: boolean, threeDPackageRoot?: string, versions?: Array<{ cardKey?: string, threeDIsPackage?: boolean, threeDPackageRoot?: string, name?: string, version?: number, filename?: string, relativePath?: string }> }} entry
+ */
+export function folderBackedSyncKeyForEntry(entry) {
+  if (!entry) return '';
+  const pinned = pinnedVersionForEntry(entry);
+  if (pinned?.cardKey) return toCanonicalSyncKey(pinned.cardKey);
+  if (isThreeDPackageEntry(entry)) {
+    const root = entry.threeDPackageRoot ?? pinned?.threeDPackageRoot;
+    const name = entry.name ?? pinned?.name;
+    if (root && name) return toCanonicalSyncKey(gltfPackageSyncKey(root, name));
+  }
+  for (const v of entry.versions ?? []) {
+    const relativePath = folderRelativePathFromVersion(v);
+    if (relativePath) return cardKeyFromFilename(relativePath);
+  }
+  return toCanonicalSyncKey(entry.key);
+}
+
 /**
  * @param {{ key?: string, type?: string, prefix?: string, name?: string, versions?: Array<{ filename?: string }> }} card
  */
 function cardCanonicalKeysForPresence(card) {
   const keys = new Set();
+  const primary = folderBackedSyncKeyForEntry(card);
+  if (primary) keys.add(primary);
   if (card?.key) keys.add(toCanonicalSyncKey(card.key));
   for (const v of card.versions ?? []) {
+    if (v?.cardKey) keys.add(toCanonicalSyncKey(v.cardKey));
     const relativePath = folderRelativePathFromVersion(v);
     if (relativePath) keys.add(cardKeyFromFilename(relativePath));
   }
@@ -315,6 +359,7 @@ export function cardFileExtension(card) {
 export function cardDisplayFilename(card, { name = card?.name } = {}) {
   const baseName = String(name ?? '').trim();
   if (!baseName) return '';
+  if (card?.threeDIsPackage) return baseName;
   const ext = cardFileExtension(card);
   if (!ext) return baseName;
   const suffix = `.${ext}`;

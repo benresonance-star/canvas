@@ -33,4 +33,21 @@ describe('mergeDiskPreviewIntoCardVersions', () => {
     expect(merged[0].content).toBe('new transcript');
     expect(merged[0].content_hash).toBe('h2');
   });
+
+  it('clears stale 3D snapshot metadata when content hash changes', () => {
+    const merged = mergeDiskPreviewIntoCardVersions(
+      [{
+        version: 1,
+        ext: 'gltf',
+        content_hash: 'old-hash',
+        threeDSnapshotCacheKey: 'proj:card:v1:3d-snapshot',
+        threeDSnapshotContentHash: 'old-hash',
+      }],
+      [{ version: 1, content_hash: 'new-hash', ext: 'gltf', objectUrl: 'blob:new' }],
+    );
+    expect(merged[0].content_hash).toBe('new-hash');
+    expect(merged[0].threeDSnapshotCacheKey).toBeNull();
+    expect(merged[0].threeDSnapshotContentHash).toBeNull();
+    expect(merged[0].threeDSnapshotEnvironmentPreset).toBeNull();
+  });
 });

@@ -46,6 +46,26 @@ describe('fitPerspectiveCameraToDefaultView', () => {
 
     expect(fitPerspectiveCameraToDefaultView(camera, null, group)).toBe(false);
   });
+
+  it('frames an offset model using its bounding-sphere center', () => {
+    const geometry = new THREE.BoxGeometry(2, 2, 2);
+    const material = new THREE.MeshBasicMaterial();
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(10, -5, 3);
+    const group = new THREE.Group();
+    group.add(mesh);
+    group.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(group);
+    const camera = new THREE.PerspectiveCamera(45, 340 / 188, 0.1, 1000);
+    const controls = { target: new THREE.Vector3(), update: () => {} };
+
+    fitPerspectiveCameraToDefaultView(camera, controls, group, { viewportAspect: 340 / 188 });
+
+    expect(allBoxCornersInsideCameraView(camera, box)).toBe(true);
+    expect(controls.target.x).toBeCloseTo(10, 3);
+    expect(controls.target.y).toBeCloseTo(-5, 3);
+    expect(controls.target.z).toBeCloseTo(3, 3);
+  });
 });
 
 describe('fitPerspectiveCameraToCurrentView', () => {

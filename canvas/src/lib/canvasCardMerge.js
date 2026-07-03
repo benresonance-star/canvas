@@ -1,5 +1,6 @@
 import {
   cardKeyFromFilename,
+  folderBackedSyncKeyForEntry,
   folderRelativePathFromVersion,
   isFolderBackedCanvasCard,
   toCanonicalSyncKey,
@@ -190,11 +191,7 @@ export function dedupeAgentChatStagedForConnector(stagedCards, connectorId) {
 }
 
 function canonicalKeyFromVersions(entry) {
-  for (const v of entry?.versions ?? []) {
-    const relativePath = folderRelativePathFromVersion(v);
-    if (relativePath) return cardKeyFromFilename(relativePath);
-  }
-  return toCanonicalSyncKey(entry?.key);
+  return folderBackedSyncKeyForEntry(entry);
 }
 
 function isAgentChatForConnector(entry, connectorId) {

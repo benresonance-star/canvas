@@ -13,6 +13,8 @@ import {
   resolveUserTaskStatus,
 } from '../features/tasks/domain/taskCard.js';
 import { parseUserTask } from '../features/tasks/domain/userTaskContent.js';
+import { ThreeDSnapshotCapture } from '../features/threeDArtifact/components/ThreeDSnapshotCapture.jsx';
+import { canAutoLoadThreeDSource, assessThreeDPreviewFeasibility } from '../features/threeDArtifact/utils/previewFeasibility.js';
 
 export function CanvasCard({
   card,
@@ -419,6 +421,19 @@ export function CanvasCard({
             cardsById={cardsById}
           />
         </div>
+        {card.type === '3d-model'
+          && pinned
+          && canAutoLoadThreeDSource(
+            assessThreeDPreviewFeasibility(pinned, { folderLinked: Boolean(folderHandle) }).mode,
+          ) && (
+            <ThreeDSnapshotCapture
+              card={card}
+              version={pinned}
+              projectId={projectId}
+              folderHandle={folderHandle}
+              onUpdateCard={onUpdateCard}
+            />
+          )}
       </div>
 
       {showResizeHandles && (

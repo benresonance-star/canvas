@@ -44,17 +44,29 @@ export function computeFitDistanceForBox(box, center, camera, direction, margin 
   let distance = 0;
   for (const corner of getBoxCorners(box)) {
     _offset.copy(corner).sub(center);
-    const alongDir = _offset.dot(viewDir);
+    const depthComp = _offset.dot(viewDir);
     const rightComp = _offset.dot(right);
     const upComp = _offset.dot(actualUp);
-    const reqDepth = Math.max(
+    const required = Math.max(
       Math.abs(rightComp) / halfTanH,
       Math.abs(upComp) / halfTanV,
     );
-    distance = Math.max(distance, alongDir + reqDepth);
+    distance = Math.max(distance, depthComp + required);
   }
 
   return Math.max(distance * margin, 1e-3);
+}
+
+/** Distance from orbit target so a bounding sphere fits the camera frustum. */
+export function computeFitDistanceForSphere(radius, camera, margin = THREE_D_CAMERA_FIT_MARGIN) {
+  if (!Number.isFinite(radius) || radius <= 0) return 1e-3;
+  const fovRad = THREE.MathUtils.degToRad(camera.fov);
+  const aspect = Math.max(camera.aspect, Number.EPSILON);
+  const halfTanV = Math.tan(fovRad * 0.5);
+  const halfTanH = halfTanV * aspect;
+  const distanceV = radius / halfTanV;
+  const distanceH = radius / halfTanH;
+  return Math.max(distanceV, distanceH, 1e-3) * margin;
 }
 
 export function syncOrbitControlsAfterCameraFit(controls) {
@@ -104,14 +116,15 @@ export function fitPerspectiveCameraToDefaultView(
   const box = new THREE.Box3().setFromObject(object);
   if (box.isEmpty()) return false;
 
-  const center = box.getCenter(new THREE.Vector3());
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  const center = sphere.center;
   const viewDir = direction.clone().normalize();
 
   if (Number.isFinite(viewportAspect) && viewportAspect > 0) {
     camera.aspect = viewportAspect;
   }
 
-  const distance = computeFitDistanceForBox(box, center, camera, viewDir, margin);
+  const distance = computeFitDistanceForSphere(sphere.radius, camera, margin);
 
   camera.position.copy(center).addScaledVector(viewDir, distance);
   camera.up.set(0, 1, 0);
@@ -147,7 +160,8 @@ export function fitPerspectiveCameraToCurrentView(
   const box = new THREE.Box3().setFromObject(object);
   if (box.isEmpty()) return false;
 
-  const center = box.getCenter(new THREE.Vector3());
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  const center = sphere.center;
   const orbitTarget = controls?.target?.clone?.() ?? center;
   const viewDir = camera.position.clone().sub(orbitTarget);
   if (viewDir.lengthSq() < 1e-12) {
@@ -160,7 +174,7 @@ export function fitPerspectiveCameraToCurrentView(
     camera.aspect = viewportAspect;
   }
 
-  const distance = computeFitDistanceForBox(box, center, camera, viewDir, margin);
+  const distance = computeFitDistanceForSphere(sphere.radius, camera, margin);
 
   if (controls?.target) {
     controls.target.copy(center);

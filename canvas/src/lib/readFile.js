@@ -1,6 +1,7 @@
 import {
   PREVIEW_MAX_BYTES_IMAGE_PDF,
   PREVIEW_MAX_BYTES_3D_MODEL,
+  GLTF_JSON_TEXT_MAX_BYTES,
   STORAGE_LIMIT,
 } from './constants.js';
 import { fileTypeFromExt } from './filename.js';
@@ -40,6 +41,9 @@ export async function readFileEntry(entry, options = {}) {
   let previewCacheKey = null;
   let audioMeta = null;
   let imageMeta = null;
+  let previewFeasible = true;
+  let threeDDisplayMode = null;
+  let gltfJsonText = null;
 
   if (
     type === 'markdown'
@@ -80,12 +84,21 @@ export async function readFileEntry(entry, options = {}) {
   } else if (isThreeDModel) {
     if (file.size <= PREVIEW_MAX_BYTES_3D_MODEL) {
       const buf = await file.arrayBuffer();
-      const blob = new Blob([buf], { type: file.type || 'model/gltf-binary' });
+      if (ext === 'gltf' && file.size <= GLTF_JSON_TEXT_MAX_BYTES) {
+        gltfJsonText = new TextDecoder().decode(buf);
+      }
+      const blob = new Blob([buf], { type: file.type || (ext === 'gltf' ? 'model/gltf+json' : 'model/gltf-binary') });
       if (cacheKey) {
         await putPreview(cacheKey, blob);
         previewCacheKey = cacheKey;
       }
       objectUrl = URL.createObjectURL(blob);
+    } else {
+      if (ext === 'gltf' && file.size <= GLTF_JSON_TEXT_MAX_BYTES) {
+        gltfJsonText = await file.text();
+      }
+      previewFeasible = false;
+      threeDDisplayMode = 'folder_on_demand';
     }
   } else if (isImageOrPdf) {
     if (file.size <= PREVIEW_MAX_BYTES_IMAGE_PDF) {
@@ -130,6 +143,9 @@ export async function readFileEntry(entry, options = {}) {
     inline,
     previewStripped: false,
     previewCacheKey,
+    previewFeasible,
+    ...(threeDDisplayMode ? { threeDDisplayMode } : {}),
+    ...(gltfJsonText ? { gltfJsonText } : {}),
     audioMeta,
     imageMeta,
   };

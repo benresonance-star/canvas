@@ -2,6 +2,7 @@ import { cardTypeFromSync } from './ingest/artifactType.js';
 import {
   cardKeyFromFilename,
   cardPrefixFromRow,
+  folderBackedSyncKeyForEntry,
   folderRelativePathFromVersion,
   normalizeCardType,
   syncKeysMatch,
@@ -19,26 +20,33 @@ import { normalizeBookmarkUrl } from './bookmarkUrl.js';
  * @param {{ key: string, group: { parsed: { ext: string, prefix: string, name: string }, versions: unknown[] } }} change
  */
 export function buildStagedSyncCardFromChange(change) {
+  const primaryVersion = change.group.versions?.[0];
+  const parsed = change.group.parsed;
   const type = cardTypeFromSync({
-    ext: change.group.parsed.ext,
-    prefix: change.group.parsed.prefix,
-    name: change.group.parsed.name,
+    ext: primaryVersion?.ext || parsed.ext,
+    prefix: primaryVersion?.prefix || parsed.prefix,
+    name: primaryVersion?.name || parsed.name,
   });
   const defaultSkin = type === 'audio' ? getDefaultAudioSkinColor() : null;
+  const displayName = primaryVersion?.threeDIsPackage
+    ? primaryVersion.name
+    : parsed.name;
   return {
     stagingId: crypto.randomUUID(),
     key: change.key,
-    ...(change.group.versions?.[0]?.relativePath
+    ...(primaryVersion?.relativePath
       ? {
-          relativePath: change.group.versions[0].relativePath,
-          folderPath: change.group.versions[0].relativePath,
+          relativePath: primaryVersion.relativePath,
+          folderPath: primaryVersion.relativePath,
         }
       : {}),
-    prefix: change.group.parsed.prefix,
-    name: change.group.parsed.name,
+    prefix: primaryVersion?.prefix || parsed.prefix,
+    name: displayName,
     type,
     versions: change.group.versions,
-    pinnedVersion: change.group.versions[0].version,
+    pinnedVersion: primaryVersion.version,
+    ...(primaryVersion?.threeDIsPackage ? { threeDIsPackage: true } : {}),
+    ...(primaryVersion?.threeDPackageRoot ? { threeDPackageRoot: primaryVersion.threeDPackageRoot } : {}),
     ...(defaultSkin ? { audioSkinColor: defaultSkin } : {}),
   };
 }
@@ -67,12 +75,7 @@ export function mergeNewlyStaged(stagedCards, newlyStaged) {
  * @param {{ key?: string, prefix?: string, name?: string, versions?: Array<{ filename?: string }> }} entry
  */
 export function canonicalKeyForSyncEntry(entry) {
-  if (!entry) return '';
-  for (const v of entry.versions ?? []) {
-    const relativePath = folderRelativePathFromVersion(v);
-    if (relativePath) return cardKeyFromFilename(relativePath);
-  }
-  return toCanonicalSyncKey(entry.key);
+  return folderBackedSyncKeyForEntry(entry);
 }
 
 export function artifactRefFromSyncEntry(entry) {
@@ -662,6 +665,8 @@ export function stagedSyncCardToCanvasCard(staged, worldX, worldY) {
     pinnedVersion: staged.pinnedVersion,
     x: worldX - w / 2,
     y: worldY - h / 2,
+    ...(staged.threeDIsPackage ? { threeDIsPackage: true } : {}),
+    ...(staged.threeDPackageRoot ? { threeDPackageRoot: staged.threeDPackageRoot } : {}),
     ...(staged.audioSkinColor ? { audioSkinColor: staged.audioSkinColor } : {}),
     ...(staged.minimalPreview ? { minimalPreview: true } : {}),
     ...(staged.threeDViewerState ? { threeDViewerState: staged.threeDViewerState } : {}),
@@ -702,6 +707,8 @@ export function canvasCardToStaged(card) {
     ...(card.audioSkinColor ? { audioSkinColor: card.audioSkinColor } : {}),
     ...(card.minimalPreview ? { minimalPreview: true } : {}),
     ...(card.threeDViewerState ? { threeDViewerState: card.threeDViewerState } : {}),
+    ...(card.threeDIsPackage ? { threeDIsPackage: true } : {}),
+    ...(card.threeDPackageRoot ? { threeDPackageRoot: card.threeDPackageRoot } : {}),
   };
 }
 
