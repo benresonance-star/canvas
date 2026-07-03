@@ -1,10 +1,20 @@
 import { getOrCreateClusterForProject } from '../repositories/clusters.js';
 import {
+  listArtifactsByProject,
   upsertArtifactByHash,
   getArtifactById,
-  updateArtifactContent,
+  listArtifactRelationships,
 } from '../repositories/artifacts.js';
+import { appendArtifactEvent, listEventsForArtifact } from '../repositories/artifact-events.js';
 import {
+  archiveArtifactWithEvents,
+  createArtifactWithEvents,
+  transitionArtifactStateWithEvents,
+  updateArtifactWithEvents,
+} from '../services/artifactService.js';
+import {
+  createArtifactRelationship,
+  getRelationshipById,
   insertRelationship,
   insertRelationshipIfAbsent,
   deleteRelationship,
@@ -20,6 +30,19 @@ import {
 import { insertTask } from '../repositories/tasks.js';
 import { primitiveRef } from '../../src/primitives/shared/primitive-ref.js';
 import { fetchBookmarkEmbedHtml, fetchBookmarkPreview } from '../services/urlPreview.js';
+import {
+  archiveArtifactRequestSchema,
+  createArtifactRelationshipRequestSchema,
+  createArtifactRequestSchema,
+  parseRequest,
+  transitionArtifactStateRequestSchema,
+  updateArtifactRequestSchema,
+} from '../schemas/artifacts.js';
+
+function sendError(res, error) {
+  const status = error.status || (error.message?.includes('not found') ? 404 : 400);
+  res.status(status).json({ error: error.message });
+}
 
 /** @param {import('express').Express} app */
 export function registerArtifactRoutes(app) {
@@ -58,6 +81,16 @@ export function registerArtifactRoutes(app) {
     }
   });
 
+  app.post('/artifacts', async (req, res) => {
+    try {
+      const input = parseRequest(createArtifactRequestSchema, req.body);
+      const artifact = await createArtifactWithEvents(input);
+      res.status(201).json({ artifact });
+    } catch (e) {
+      sendError(res, e);
+    }
+  });
+
   app.post('/artifacts/ingest', async (req, res) => {
     try {
       const { projectId, clusterId: bodyClusterId, files, relationships } = req.body;
@@ -87,6 +120,18 @@ export function registerArtifactRoutes(app) {
     }
   });
 
+  app.get('/projects/:projectId/artifacts', async (req, res) => {
+    try {
+      const artifacts = await listArtifactsByProject(req.params.projectId, {
+        includeArchived: req.query.includeArchived === 'true',
+        limit: req.query.limit,
+      });
+      res.json({ artifacts });
+    } catch (e) {
+      sendError(res, e);
+    }
+  });
+
   app.get('/artifacts/:id', async (req, res) => {
     try {
       const artifact = await getArtifactById(req.params.id);
@@ -100,16 +145,49 @@ export function registerArtifactRoutes(app) {
 
   app.patch('/artifacts/:id', async (req, res) => {
     try {
-      const { content_hash, payload_text } = req.body;
-      if (!content_hash) return res.status(400).json({ error: 'content_hash required' });
-      const artifact = await updateArtifactContent(req.params.id, {
-        content_hash,
-        payload_text,
-      });
+      const input = parseRequest(updateArtifactRequestSchema, req.body);
+      const artifact = await updateArtifactWithEvents(req.params.id, input);
       res.json({ artifact });
     } catch (e) {
-      const status = e.message.includes('not found') ? 404 : 400;
-      res.status(status).json({ error: e.message });
+      sendError(res, e);
+    }
+  });
+
+  app.post('/artifacts/:id/archive', async (req, res) => {
+    try {
+      const input = parseRequest(archiveArtifactRequestSchema, req.body);
+      const artifact = await archiveArtifactWithEvents(req.params.id, input);
+      res.json({ artifact });
+    } catch (e) {
+      sendError(res, e);
+    }
+  });
+
+  app.post('/artifacts/:id/transition', async (req, res) => {
+    try {
+      const input = parseRequest(transitionArtifactStateRequestSchema, req.body);
+      const result = await transitionArtifactStateWithEvents(req.params.id, input);
+      res.json(result);
+    } catch (e) {
+      sendError(res, e);
+    }
+  });
+
+  app.get('/artifacts/:id/events', async (req, res) => {
+    try {
+      const events = await listEventsForArtifact(req.params.id, { limit: req.query.limit });
+      res.json({ events });
+    } catch (e) {
+      sendError(res, e);
+    }
+  });
+
+  app.get('/artifacts/:id/relationships', async (req, res) => {
+    try {
+      const relationships = await listArtifactRelationships(req.params.id);
+      res.json({ relationships });
+    } catch (e) {
+      sendError(res, e);
     }
   });
 
@@ -119,6 +197,56 @@ export function registerArtifactRoutes(app) {
       res.json(edges);
     } catch (e) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/artifact-relationships', async (req, res) => {
+    try {
+      const input = parseRequest(createArtifactRelationshipRequestSchema, req.body);
+      const result = await createArtifactRelationship(input);
+      await appendArtifactEvent({
+        artifactId: input.sourceArtifactId,
+        projectId: input.projectId ?? null,
+        type: 'RelationshipAdded',
+        payload: {
+          relationshipId: result.relationship.id,
+          sourceArtifactId: input.sourceArtifactId,
+          targetArtifactId: input.targetArtifactId,
+          relationshipType: input.relationshipType,
+        },
+        actorType: 'user',
+        actorId: input.createdBy || 'user:local',
+      });
+      res.status(result.created ? 201 : 200).json(result);
+    } catch (e) {
+      sendError(res, e);
+    }
+  });
+
+  app.delete('/artifact-relationships/:id', async (req, res) => {
+    try {
+      const existing = await getRelationshipById(req.params.id);
+      if (!existing) return res.status(404).json({ error: 'Relationship not found' });
+      const deleted = await deleteRelationship(req.params.id);
+      if (!deleted) return res.status(404).json({ error: 'Relationship not found' });
+      if (existing.from_ref?.type === 'artifact') {
+        await appendArtifactEvent({
+          artifactId: existing.from_ref.id,
+          projectId: existing.project_id ?? null,
+          type: 'RelationshipRemoved',
+          payload: {
+            relationshipId: req.params.id,
+            sourceArtifactId: existing.from_ref.id,
+            targetArtifactId: existing.to_ref?.id ?? null,
+            relationshipType: existing.type,
+          },
+          actorType: 'user',
+          actorId: req.query.actorId || 'user:local',
+        });
+      }
+      res.json({ ok: true });
+    } catch (e) {
+      sendError(res, e);
     }
   });
 

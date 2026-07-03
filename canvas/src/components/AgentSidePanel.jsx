@@ -142,6 +142,51 @@ function ContextCardList({
   );
 }
 
+function FlowContextStepList({
+  steps = [],
+  onRemoveStep,
+  maxRows = 8,
+}) {
+  if (!steps.length) return null;
+  const shown = steps.slice(0, maxRows);
+  const rest = steps.length - shown.length;
+  return (
+    <ul className="mt-1 ml-3 max-h-24 overflow-y-auto space-y-0.5 border-l border-border-subtle pl-1.5">
+      {shown.map((step) => {
+        const canRemove = typeof onRemoveStep === 'function';
+        return (
+          <li key={step.id} className="sans text-[10px] text-secondary min-w-0" title={step.title}>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <button
+                type="button"
+                disabled={!canRemove}
+                className="shrink-0 inline-flex h-3 w-3 items-center justify-center rounded-full border border-white/80 bg-red-600 text-white shadow-sm transition hover:scale-105 hover:bg-red-500 focus:outline-none focus:ring-2 focus:ring-danger-ring disabled:opacity-70"
+                aria-label={`${strings.agent.contextRemoveStep}: ${step.title}`}
+                title={strings.agent.contextRemoveStep}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onRemoveStep?.(step.id);
+                }}
+              >
+                <X size={9} strokeWidth={2.5} aria-hidden />
+              </button>
+              <span className="block truncate min-w-0 flex-1">{step.title}</span>
+            </div>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="shrink-0 w-3" aria-hidden />
+              <span className="block truncate text-[9px] text-muted">{step.typeLabel}</span>
+            </div>
+          </li>
+        );
+      })}
+      {rest > 0 && (
+        <li className="sans text-[10px] text-muted">+{rest} more</li>
+      )}
+    </ul>
+  );
+}
+
 function ApiKeyPillMenu({
   keyHint,
   onReplace,
@@ -864,6 +909,8 @@ export function AgentSidePanel({
   flowIncludeNetwork = true,
   onFlowIncludeNetworkChange,
   flowSelectionSummary = null,
+  flowContextSteps = [],
+  onRemoveFlowContextStep,
   initialCollapsedSections = null,
   onCollapsedSectionsChange = null,
   chatScrollResetKey = 0,
@@ -1506,6 +1553,23 @@ export function AgentSidePanel({
                         flowSelectionSummary?.edgeCount ?? 0,
                       )}
                 </p>
+                {!flowSelectionSummary?.isFullFlow && (
+                  <>
+                    <p className="sans text-[9px] uppercase tracking-wider text-muted mt-2 ml-3">
+                      {strings.agent.contextFlowStepsHeading}
+                    </p>
+                    {flowContextSteps.length > 0 ? (
+                      <FlowContextStepList
+                        steps={flowContextSteps}
+                        onRemoveStep={onRemoveFlowContextStep}
+                      />
+                    ) : (
+                      <p className="sans text-[9px] text-muted mt-1 ml-3 leading-snug">
+                        {strings.agent.contextFlowStepsEmpty}
+                      </p>
+                    )}
+                  </>
+                )}
                 <label className="sans mt-2 ml-3 flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"

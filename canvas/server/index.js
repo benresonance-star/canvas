@@ -19,6 +19,7 @@ import { registerLiveArtifactRoutes } from './routes/liveArtifacts.js';
 import { registerAgentTypeRoutes } from './routes/agentTypes.js';
 import { registerAgentsRoutes } from './routes/agents.js';
 import { registerMusicRoutes } from './routes/music.js';
+import { registerStateMachineRoutes } from './routes/stateMachines.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -42,6 +43,7 @@ registerArtifactRoutes(app);
 registerPrimitiveRoutes(app, routeDeps);
 registerFlowRoutes(app, routeDeps);
 registerLiveArtifactRoutes(app, routeDeps);
+registerStateMachineRoutes(app, routeDeps);
 registerAgentTypeRoutes(app, routeDeps);
 registerAgentsRoutes(app, routeDeps);
 registerMusicRoutes(app, routeDeps);

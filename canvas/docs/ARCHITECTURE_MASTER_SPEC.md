@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.06.28.1
-**Version label:** production-readiness-gates
+**Version:** 2026.07.03.1
+**Version label:** base-artifact-schema
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -525,6 +525,35 @@ Cleanup rules:
 - `deleteProjectArtifactRef` removes project cluster membership and deletes the artifact row only when no project scope still references it.
 - `scripts/purge-orphan-workspace-items.mjs` is a one-off dev/admin purge for primitives not mapped to active or archived projects; dry run is default.
 
+### Base artifact schema (shipped)
+
+Migration `0021_artifact_base_schema.sql` extends the existing singular `artifact` primitive with lifecycle fields, adds append-only `artifact_event` history, and introduces `state_machine` lifecycle definitions. This implements Phase 1–2 of `Specs/artifact_schema_spec.md` without a parallel artifacts table.
+
+New / extended `artifact` columns: `project_id`, `title`, `description`, `current_state_id`, `state_machine_id`, `capabilities`, `created_by`, `updated_by`, `created_at`, `updated_at`, `schema_version`, `content_schema_version`, `archived_at`.
+
+History model: **current-state row + append-only event log** (not full event sourcing). Material writes go through `server/services/artifactService.js`, which runs in a transaction and appends typed events (`ArtifactCreated`, `ContentUpdated`, `StateTransitioned`, `ArtifactArchived`, etc.).
+
+Built-in lifecycle machines (global, `project_id` null): `builtin_exploration_lifecycle` (`flow` / `exploration`), `builtin_artifact_review_lifecycle` (`note`, `user_note`, `image`, `report`, `design_option`), `builtin_run_lifecycle` (`run`).
+
+API additions on existing routers:
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/artifacts` | Create artifact + creation event |
+| GET | `/projects/:projectId/artifacts` | List project artifacts |
+| PATCH | `/artifacts/:id` | Update artifact + content event |
+| POST | `/artifacts/:id/archive` | Archive artifact |
+| POST | `/artifacts/:id/transition` | Validated state transition |
+| GET | `/artifacts/:id/events` | Artifact event timeline |
+| GET | `/artifacts/:id/relationships` | Typed relationship list |
+| POST | `/artifact-relationships` | Create relationship + event |
+| DELETE | `/artifact-relationships/:id` | Delete relationship + event |
+| POST/GET/PATCH | `/state-machines`, `/projects/:projectId/state-machines` | Lifecycle CRUD |
+
+Client: `PrimitiveInspectorPanel.jsx` exposes Identity, Lifecycle, State, Capabilities, Events, and Relationships for workspace artifacts; `primitivesApi.fetchArtifactEvents` loads event history. Transition UI and permissions are deferred.
+
+Exploration agent context (same release): `useFlowAgentContext.js` derives selection scope (optional connected-network expansion), builds `flowContextSteps` for the agent sidebar, and formats subgraph markdown for agent sends; `FlowEditorSelection.js` handles shift-click additive node selection in the exploration editor.
+
 ### Bookmark previews and open behavior (shipped)
 
 - `GET /bookmarks/preview` fetches metadata and uses server-side screenshot fallback for Amazon links whose Open Graph image is a generic Amazon logo.
@@ -827,7 +856,8 @@ Until layout is fully authoritative in `spec_canvas_state`, the client keeps `ca
 | `routes/canvasAgentChat.js` | `/canvas/agent-chat/*` |
 | `routes/spec.js` | `/canvas/projects/:id/spec-*`, `/spec/*` |
 | `routes/clusters.js` | `/clusters/*`, `DELETE /projects/:projectId/artifacts/:artifactId` |
-| `routes/artifacts.js` | `/artifacts/*`, `/bookmarks/preview`, `/bookmarks/embed` |
+| `routes/artifacts.js` | `/artifacts/*`, `/artifact-relationships/*`, `/bookmarks/preview`, `/bookmarks/embed` |
+| `routes/stateMachines.js` | `/state-machines/*`, `/projects/:projectId/state-machines` |
 | `routes/primitives.js` | `/primitives/*`, `/relationships/*`, `/notes/*`, `/assertions/*`, `/tasks/*`, `/workspace/primitives`, `/workspace/events` |
 | `routes/agent.js` | `/agent/chat`, `/agent/ollama/pull`, provider-aware completion |
 | `routes/agentTemplates.js` | `/agent/templates/*` |
@@ -1162,6 +1192,15 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-07-03 — Base artifact schema + exploration agent selection context (implemented)
+
+- Bumped the active spec to `2026.07.03.1`.
+- Added `Specs/artifact_schema_spec.md` and `Specs/artifact_schema_implementation_brief.md` as the design authority for the base artifact model.
+- Migration `0021_artifact_base_schema.sql` extends singular `artifact`, adds `artifact_event` and `state_machine`, backfills titles/capabilities/events, and seeds three built-in lifecycle machines.
+- `artifactService.js` enforces transactional create/update/archive/transition flows with append-only typed events; routes in `artifacts.js` and `stateMachines.js`; Zod schemas in `server/schemas/artifacts.js`.
+- Workspace inspector (`PrimitiveInspectorPanel.jsx`) surfaces identity, lifecycle, state, capabilities, events, and relationships; `primitivesApi.fetchArtifactEvents` loads history.
+- Exploration agent context: `useFlowAgentContext.js` selection scope + network expansion, `FlowEditorSelection.js` shift-click multi-select, agent sidebar `flowContextSteps` in `AgentSidePanel.jsx`.
 
 ### 2026-06-28 — Production readiness gates + exploration node polish (implemented)
 

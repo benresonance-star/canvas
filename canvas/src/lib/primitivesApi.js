@@ -195,6 +195,13 @@ export async function fetchArtifactEdges(artifactId) {
   return request(`/artifacts/${artifactId}/edges`);
 }
 
+export async function fetchArtifactEvents(artifactId, { limit } = {}) {
+  const params = new URLSearchParams();
+  if (limit) params.set('limit', String(limit));
+  const q = params.toString();
+  return request(`/artifacts/${artifactId}/events${q ? `?${q}` : ''}`);
+}
+
 export async function createAssertion(clusterId, fields) {
   return request('/assertions', {
     method: 'POST',

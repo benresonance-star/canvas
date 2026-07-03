@@ -13,6 +13,7 @@ function rowToRelationship(row) {
     from_ref: { id: row.from_id, type: row.from_type },
     to_ref: { id: row.to_id, type: row.to_type },
     type: row.type,
+    project_id: row.project_id ?? null,
     confidence: row.confidence,
     bidirectional: row.bidirectional,
     created_at: row.created_at,
@@ -36,8 +37,11 @@ export async function insertRelationship(clusterId, fields) {
 
   try {
     await query(
-      `INSERT INTO relationship (id, from_id, from_type, to_id, to_type, type, confidence, bidirectional, created_at, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9)`,
+      `INSERT INTO relationship (
+         id, from_id, from_type, to_id, to_type, type, confidence,
+         bidirectional, created_at, metadata, project_id
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10)`,
       [
         id,
         rel.from_ref.id,
@@ -48,6 +52,7 @@ export async function insertRelationship(clusterId, fields) {
         rel.confidence ? JSON.stringify(rel.confidence) : null,
         rel.bidirectional,
         JSON.stringify(rel.metadata),
+        fields.projectId ?? fields.project_id ?? null,
       ],
     );
   } catch (err) {
@@ -106,6 +111,11 @@ export async function findRelationship({ from_ref, to_ref, type }) {
   return res.rows[0] ?? null;
 }
 
+export async function getRelationshipById(id) {
+  const res = await query('SELECT * FROM relationship WHERE id = $1', [id]);
+  return rowToRelationship(res.rows[0]);
+}
+
 export async function insertRelationshipIfAbsent(clusterId, fields) {
   const existing = await findRelationship({
     from_ref: fields.from_ref,
@@ -121,6 +131,32 @@ export async function insertRelationshipIfAbsent(clusterId, fields) {
   }
   const relationship = await insertRelationship(clusterId, fields);
   return { relationship, created: true };
+}
+
+export async function createArtifactRelationship(fields, { clusterId = null } = {}) {
+  if (!fields.sourceArtifactId || !fields.targetArtifactId) {
+    throw new Error('sourceArtifactId and targetArtifactId are required');
+  }
+  const result = await insertRelationshipIfAbsent(clusterId, {
+    projectId: fields.projectId ?? null,
+    from_ref: { id: fields.sourceArtifactId, type: 'artifact' },
+    to_ref: { id: fields.targetArtifactId, type: 'artifact' },
+    type: fields.relationshipType,
+    metadata: fields.metadata ?? {},
+    provenance: fields.provenance ?? [{ id: fields.sourceArtifactId, type: 'artifact' }],
+  });
+  return {
+    relationship: {
+      id: result.relationship.id,
+      projectId: fields.projectId ?? null,
+      sourceArtifactId: fields.sourceArtifactId,
+      targetArtifactId: fields.targetArtifactId,
+      relationshipType: fields.relationshipType,
+      metadata: result.relationship.metadata ?? {},
+      createdBy: fields.createdBy ?? null,
+    },
+    created: result.created,
+  };
 }
 
 export async function deleteRelationship(id) {

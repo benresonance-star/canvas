@@ -351,6 +351,8 @@ export function CardModal({
       flowIncludeNetwork: flowAgent.includeNetwork,
       onFlowIncludeNetworkChange: flowAgent.setIncludeNetwork,
       flowSelectionSummary: flowAgent.selectionSummary,
+      flowContextSteps: flowAgent.flowContextSteps,
+      onRemoveFlowContextStep: flowAgent.removeNodeFromContext,
       initialCollapsedSections: flowAgentCollapsedSections,
       onCollapsedSectionsChange: handleFlowCollapsedSectionsChange,
       onSingleConnectorChange: (connectorId) => {

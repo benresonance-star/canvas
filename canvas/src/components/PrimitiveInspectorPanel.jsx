@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { X } from 'lucide-react';
+import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import { strings } from '../content/strings.js';
 import { isLinkableArtifactType } from '../lib/ingest/linkIngest.js';
 import {
   getPrimitiveDetail,
   fetchArtifactEdges,
+  fetchArtifactEvents,
   deleteRelationship,
   listPrimitives,
 } from '../lib/primitivesApi.js';
@@ -37,6 +38,319 @@ function buildPrimitiveLabelMap(items = []) {
   return labels;
 }
 
+function parseMaybeJson(value, fallback = null) {
+  if (value == null) return fallback;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return fallback;
+    }
+  }
+  return value;
+}
+
+function formatDateTime(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
+
+function prettyJson(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'string') {
+    const parsed = parseMaybeJson(value);
+    return parsed == null ? value : JSON.stringify(parsed, null, 2);
+  }
+  return JSON.stringify(value, null, 2);
+}
+
+function CollapsibleSchemaSection({ title, open, onToggle, children }) {
+  return (
+    <section className="border-b border-border-subtle last:border-0 py-2">
+      <button
+        type="button"
+        className={`flex w-full items-center gap-1.5 rounded border px-2.5 py-2 text-left sans text-[10px] uppercase tracking-wider transition-colors ${
+          open
+            ? 'border-border bg-surface-muted/70 text-primary'
+            : 'border-border-subtle bg-canvas/35 text-muted hover:bg-surface-muted/45 hover:text-primary'
+        }`}
+        onClick={onToggle}
+        aria-expanded={open}
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <span>{title}</span>
+      </button>
+      {open && <div className="pt-2">{children}</div>}
+    </section>
+  );
+}
+
+function JsonBlock({ value, maxHeight = 'max-h-72' }) {
+  const text = prettyJson(value);
+  if (!text) return null;
+  return (
+    <pre className={`sans text-[10px] text-secondary whitespace-pre-wrap font-mono ${maxHeight} overflow-y-auto rounded border border-border-subtle bg-canvas/40 p-2`}>
+      {text}
+    </pre>
+  );
+}
+
+function TextBlock({ value }) {
+  if (value == null || value === '') return null;
+  return (
+    <pre className="sans text-xs text-secondary whitespace-pre-wrap font-serif max-h-[28rem] overflow-y-auto rounded border border-border-subtle bg-canvas/40 p-2">
+      {String(value)}
+    </pre>
+  );
+}
+
+function CapabilityList({ capabilities }) {
+  if (!Array.isArray(capabilities) || capabilities.length === 0) {
+    return <p className="sans text-xs text-muted italic">No capabilities recorded.</p>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {capabilities.map((capability) => (
+        <span
+          key={capability}
+          className="sans text-[10px] text-secondary rounded border border-border-subtle px-1.5 py-0.5 bg-canvas/40"
+        >
+          {capability}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ArtifactSchemaInspector({
+  p,
+  meta,
+  capabilities,
+  artifactEdges,
+  artifactEvents,
+  detail,
+  openSections,
+  onToggleSection,
+  canLinkFrom,
+  clusterId,
+  onOpenLink,
+  onSelectPrimitive,
+  onUnlink,
+  labelForArtifact,
+  labelForEdgeEndpoint,
+}) {
+  return (
+    <>
+      <CollapsibleSchemaSection
+        title="Identity"
+        open={openSections.identity}
+        onToggle={() => onToggleSection('identity')}
+      >
+        <FieldRow label="ID" value={p.id} />
+        <FieldRow label="Project" value={p.project_id} />
+        <FieldRow label="Type" value={p.type} />
+        <FieldRow label="Title" value={p.title} />
+        <FieldRow label="Description" value={p.description} />
+        <FieldRow label="URI" value={p.uri} />
+        <FieldRow label="Source" value={p.source_authority} />
+        <FieldRow label="Created by" value={p.created_by} />
+        <FieldRow label="Updated by" value={p.updated_by} />
+      </CollapsibleSchemaSection>
+
+      <CollapsibleSchemaSection
+        title="Lifecycle"
+        open={openSections.lifecycle}
+        onToggle={() => onToggleSection('lifecycle')}
+      >
+        <FieldRow label="Created" value={formatDateTime(p.created_at)} />
+        <FieldRow label="Updated" value={formatDateTime(p.updated_at)} />
+        <FieldRow label="Retrieved" value={formatDateTime(p.retrieved_at)} />
+        <FieldRow label="Archived" value={formatDateTime(p.archived_at)} />
+        <FieldRow label="Schema version" value={p.schema_version} />
+        <FieldRow label="Content schema version" value={p.content_schema_version} />
+      </CollapsibleSchemaSection>
+
+      <CollapsibleSchemaSection
+        title="State"
+        open={openSections.state}
+        onToggle={() => onToggleSection('state')}
+      >
+        <FieldRow label="Current state" value={p.current_state_id} />
+        <FieldRow label="State machine" value={p.state_machine_id} />
+        {!p.current_state_id && !p.state_machine_id && (
+          <p className="sans text-xs text-muted italic">No lifecycle state recorded.</p>
+        )}
+      </CollapsibleSchemaSection>
+
+      <CollapsibleSchemaSection
+        title="Content"
+        open={openSections.content}
+        onToggle={() => onToggleSection('content')}
+      >
+        <FieldRow label="Hash" value={p.content_hash} />
+        <FieldRow label="Version" value={p.version} />
+        <FieldRow label="File" value={meta?.filename} />
+        <ImageArtifactMetadataFields meta={meta} />
+        {meta?.canvas_kind === 'audio' && meta?.audio && (
+          <>
+            <FieldRow label={strings.audio.title} value={meta.audio.title} />
+            <FieldRow label={strings.audio.artist} value={meta.audio.artist} />
+            <FieldRow label={strings.audio.album} value={meta.audio.album} />
+            <FieldRow
+              label={strings.audio.duration}
+              value={
+                meta.audio.durationSec != null
+                  ? formatDurationSec(meta.audio.durationSec)
+                  : null
+              }
+            />
+            <FieldRow label={strings.audio.genre} value={meta.audio.genre} />
+            <FieldRow label={strings.audio.year} value={meta.audio.year} />
+            <FieldRow label={strings.audio.track} value={meta.audio.track} />
+          </>
+        )}
+        {p.type === 'agent_chat' && (
+          <FieldRow label="Connector" value={meta?.connectorLabel || meta?.connectorId} />
+        )}
+        {p.payload_text ? (
+          <div className="pt-2">
+            <div className="sans text-[10px] uppercase tracking-wider text-muted mb-1">
+              {p.type === 'agent_chat' ? 'Chat transcript' : strings.inspector.payloadPreview}
+            </div>
+            <TextBlock value={p.payload_text} />
+          </div>
+        ) : (
+          <p className="sans text-xs text-muted italic">No text payload stored.</p>
+        )}
+      </CollapsibleSchemaSection>
+
+      <CollapsibleSchemaSection
+        title="Capabilities"
+        open={openSections.capabilities}
+        onToggle={() => onToggleSection('capabilities')}
+      >
+        <CapabilityList capabilities={capabilities} />
+      </CollapsibleSchemaSection>
+
+      <CollapsibleSchemaSection
+        title="Metadata"
+        open={openSections.metadata}
+        onToggle={() => onToggleSection('metadata')}
+      >
+        <JsonBlock value={meta} />
+      </CollapsibleSchemaSection>
+
+      <CollapsibleSchemaSection
+        title="Relationships"
+        open={openSections.relationships}
+        onToggle={() => onToggleSection('relationships')}
+      >
+        {canLinkFrom && clusterId && (
+          <button
+            type="button"
+            className="mb-2 sans text-xs text-link hover:text-link-hover hover:underline"
+            onClick={onOpenLink}
+          >
+            {strings.linkArtifact.link}
+          </button>
+        )}
+        {artifactEdges?.incoming?.length > 0 && (
+          <div className="mb-3">
+            <div className="sans text-[10px] uppercase tracking-wider text-muted mb-2">
+              {strings.graph.referencedBy}
+            </div>
+            <ul className="space-y-1">
+              {artifactEdges.incoming.map((e) => (
+                <li key={e.id} className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    className="sans text-xs text-link hover:text-link-hover hover:underline text-left"
+                    onClick={() => onSelectPrimitive?.({ id: e.from_id, type: e.from_type })}
+                  >
+                    {labelForArtifact(e.from_id)} → {e.type}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {detail.edges?.length > 0 ? (
+          <ul className="space-y-1">
+            {detail.edges.map((e) => (
+              <li key={e.id} className="flex items-start justify-between gap-2">
+                <button
+                  type="button"
+                  className="text-left sans text-xs text-link hover:text-link-hover hover:underline flex-1"
+                  onClick={() => {
+                    const other =
+                      e.from_id === p.id && e.from_type === 'artifact'
+                        ? { id: e.to_id, type: e.to_type }
+                        : { id: e.from_id, type: e.from_type };
+                    onSelectPrimitive?.(other);
+                  }}
+                >
+                  {e.type} {e.from_id === p.id ? '→' : '←'}{' '}
+                  {e.from_id === p.id
+                    ? labelForEdgeEndpoint(e, false)
+                    : labelForEdgeEndpoint(e, true)}
+                </button>
+                {e.type !== 'note_attachment' && (
+                  <button
+                    type="button"
+                    className="sans text-[10px] text-danger shrink-0"
+                    onClick={() => void onUnlink(e.id)}
+                  >
+                    {strings.graph.unlink}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="sans text-xs text-muted italic">No relationships recorded.</p>
+        )}
+      </CollapsibleSchemaSection>
+
+      <CollapsibleSchemaSection
+        title="History"
+        open={openSections.history}
+        onToggle={() => onToggleSection('history')}
+      >
+        {artifactEvents.length > 0 ? (
+          <ul className="space-y-2">
+            {artifactEvents.map((event) => (
+              <li key={event.id} className="rounded border border-border-subtle bg-canvas/30 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="sans text-xs text-primary">{event.type}</span>
+                  <span className="sans text-[10px] text-muted">
+                    {formatDateTime(event.createdAt)}
+                  </span>
+                </div>
+                <div className="sans text-[10px] text-muted mt-0.5">
+                  {event.actorType}:{event.actorId}
+                </div>
+                <JsonBlock value={event.payload} maxHeight="max-h-36" />
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="sans text-xs text-muted italic">No artifact events recorded.</p>
+        )}
+      </CollapsibleSchemaSection>
+
+      <CollapsibleSchemaSection
+        title="Raw"
+        open={openSections.raw}
+        onToggle={() => onToggleSection('raw')}
+      >
+        <JsonBlock value={p} maxHeight="max-h-[32rem]" />
+      </CollapsibleSchemaSection>
+    </>
+  );
+}
+
 export function PrimitiveInspectorPanel({
   variant = 'overlay',
   selection,
@@ -57,11 +371,23 @@ export function PrimitiveInspectorPanel({
   const embedded = variant === 'embedded';
   const [detail, setDetail] = useState(null);
   const [artifactEdges, setArtifactEdges] = useState(null);
+  const [artifactEvents, setArtifactEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [primitiveLabels, setPrimitiveLabels] = useState(() => new Map());
+  const [schemaSectionsOpen, setSchemaSectionsOpen] = useState({
+    identity: true,
+    lifecycle: true,
+    state: true,
+    content: true,
+    capabilities: true,
+    metadata: true,
+    relationships: true,
+    history: true,
+    raw: false,
+  });
 
   const artifactMap = useMemo(() => buildArtifactToCardMap(cards), [cards]);
 
@@ -118,10 +444,15 @@ export function PrimitiveInspectorPanel({
         const data = await getPrimitiveDetail(selection.type, selection.id);
         if (!cancelled) setDetail(data);
         if (!cancelled && selection.type === 'artifact') {
-          const edges = await fetchArtifactEdges(selection.id);
+          const [edges, events] = await Promise.all([
+            fetchArtifactEdges(selection.id),
+            fetchArtifactEvents(selection.id, { limit: 50 }),
+          ]);
           if (!cancelled) setArtifactEdges(edges);
+          if (!cancelled) setArtifactEvents(events.events || []);
         } else if (!cancelled) {
           setArtifactEdges(null);
+          setArtifactEvents([]);
         }
       } catch (e) {
         if (!cancelled) setError(e.message);
@@ -138,7 +469,17 @@ export function PrimitiveInspectorPanel({
 
   const p = detail?.primitive;
   const meta =
-    p?.metadata && typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p?.metadata;
+    p?.metadata && typeof p.metadata === 'string'
+      ? parseMaybeJson(p.metadata, {})
+      : p?.metadata;
+  const capabilities = Array.isArray(p?.capabilities) ? p.capabilities : [];
+
+  const toggleSchemaSection = (sectionId) => {
+    setSchemaSectionsOpen((current) => ({
+      ...current,
+      [sectionId]: !current[sectionId],
+    }));
+  };
 
   const fromRef =
     selection.type === 'artifact' ? { id: selection.id, type: 'artifact' } : null;
@@ -217,84 +558,23 @@ export function PrimitiveInspectorPanel({
               {!loading && !error && p && (
                 <>
                   {selection.type === 'artifact' && (
-                    <>
-                      <FieldRow label="URI" value={p.uri} />
-                      <FieldRow label="Hash" value={p.content_hash} />
-                      <FieldRow label="Type" value={p.type} />
-                      <FieldRow label="File" value={meta?.filename} />
-                      <ImageArtifactMetadataFields meta={meta} />
-                      {meta?.canvas_kind === 'audio' && meta?.audio && (
-                        <>
-                          <FieldRow label={strings.audio.title} value={meta.audio.title} />
-                          <FieldRow label={strings.audio.artist} value={meta.audio.artist} />
-                          <FieldRow label={strings.audio.album} value={meta.audio.album} />
-                          <FieldRow
-                            label={strings.audio.duration}
-                            value={
-                              meta.audio.durationSec != null
-                                ? formatDurationSec(meta.audio.durationSec)
-                                : null
-                            }
-                          />
-                          <FieldRow label={strings.audio.genre} value={meta.audio.genre} />
-                          <FieldRow label={strings.audio.year} value={meta.audio.year} />
-                          <FieldRow label={strings.audio.track} value={meta.audio.track} />
-                        </>
-                      )}
-                      {p.type === 'agent_chat' && (
-                        <FieldRow
-                          label="Connector"
-                          value={meta?.connectorLabel || meta?.connectorId}
-                        />
-                      )}
-                      {(p.type === 'user_note'
-                        || p.type === 'user_task'
-                        || p.type === 'agent_chat'
-                        || (p.type === 'doc' && meta?.canvas_kind === 'code'))
-                        && p.payload_text && (
-                        <section className="py-2">
-                          <div className="sans text-[10px] uppercase tracking-wider text-muted mb-1">
-                            {p.type === 'agent_chat'
-                              ? 'Chat transcript'
-                              : strings.inspector.payloadPreview}
-                          </div>
-                          <pre className="sans text-xs text-secondary whitespace-pre-wrap font-serif max-h-48 overflow-y-auto">
-                            {p.payload_text}
-                          </pre>
-                        </section>
-                      )}
-                      {canLinkFrom && clusterId && (
-                        <button
-                          type="button"
-                          className="mt-2 sans text-xs text-link hover:text-link-hover hover:underline"
-                          onClick={() => setLinkOpen(true)}
-                        >
-                          {strings.linkArtifact.link}
-                        </button>
-                      )}
-                      {artifactEdges?.incoming?.length > 0 && (
-                        <section className="mt-4">
-                          <div className="sans text-[10px] uppercase tracking-wider text-muted mb-2">
-                            {strings.graph.referencedBy}
-                          </div>
-                          <ul className="space-y-1">
-                            {artifactEdges.incoming.map((e) => (
-                              <li key={e.id} className="flex items-center justify-between gap-2">
-                                <button
-                                  type="button"
-                                  className="sans text-xs text-link hover:text-link-hover hover:underline text-left"
-                                  onClick={() =>
-                                    onSelectPrimitive?.({ id: e.from_id, type: e.from_type })
-                                  }
-                                >
-                                  {labelForArtifact(e.from_id)} → {e.type}
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        </section>
-                      )}
-                    </>
+                    <ArtifactSchemaInspector
+                      p={p}
+                      meta={meta}
+                      capabilities={capabilities}
+                      artifactEdges={artifactEdges}
+                      artifactEvents={artifactEvents}
+                      detail={detail}
+                      openSections={schemaSectionsOpen}
+                      onToggleSection={toggleSchemaSection}
+                      canLinkFrom={canLinkFrom}
+                      clusterId={clusterId}
+                      onOpenLink={() => setLinkOpen(true)}
+                      onSelectPrimitive={onSelectPrimitive}
+                      onUnlink={handleUnlink}
+                      labelForArtifact={labelForArtifact}
+                      labelForEdgeEndpoint={labelForEdgeEndpoint}
+                    />
                   )}
                   {selection.type === 'note' && (
                     <>
@@ -354,7 +634,7 @@ export function PrimitiveInspectorPanel({
                     </>
                   )}
 
-                  {detail.edges?.length > 0 && (
+                  {selection.type !== 'artifact' && detail.edges?.length > 0 && (
                     <section className="mt-4">
                       <div className="sans text-[10px] uppercase tracking-wider text-muted mb-2">
                         {strings.inspector.edges}
@@ -394,7 +674,7 @@ export function PrimitiveInspectorPanel({
                     </section>
                   )}
 
-                  {detail.provenance?.length > 0 && (
+                  {selection.type !== 'artifact' && detail.provenance?.length > 0 && (
                     <section className="mt-4">
                       <div className="sans text-[10px] uppercase tracking-wider text-muted mb-2">
                         {strings.inspector.provenance}

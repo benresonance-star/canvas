@@ -1,12 +1,82 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
   artifactCardIdsFromFlowNodes,
-  expandFlowNodeNetwork,
   filterFlowSubgraph,
+  flowNodeDisplayTitle,
   formatFlowDiagramForAgent,
   formatFlowSubgraphForAgent,
   UNTITLED_EXPLORATION_TITLE,
 } from '../domain/flowDocument.js';
+
+function expandFlowNodeNetworkExcluding(nodeIds, edges, excludedNodeIds) {
+  const excluded = excludedNodeIds instanceof Set
+    ? excludedNodeIds
+    : new Set(excludedNodeIds ?? []);
+  const seeds = [...nodeIds].filter((id) => id && !excluded.has(id));
+  if (!seeds.length) return new Set();
+  const visited = new Set(seeds);
+  const queue = [...seeds];
+  while (queue.length) {
+    const current = queue.shift();
+    for (const edge of edges ?? []) {
+      const neighbors = [];
+      if (edge.source === current) neighbors.push(edge.target);
+      if (edge.target === current) neighbors.push(edge.source);
+      for (const neighbor of neighbors) {
+        if (!neighbor || excluded.has(neighbor) || visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+  }
+  return visited;
+}
+
+export function resolveFlowAgentScope({
+  nodes = [],
+  edges = [],
+  selectedNodeIds = [],
+  excludedNodeIds = new Set(),
+  includeNetwork = true,
+} = {}) {
+  const allNodeIds = (nodes ?? []).map((node) => node.id).filter(Boolean);
+  if (!selectedNodeIds.length) {
+    return new Set(allNodeIds);
+  }
+
+  const excluded = excludedNodeIds instanceof Set
+    ? excludedNodeIds
+    : new Set(excludedNodeIds ?? []);
+  const seedIds = selectedNodeIds.filter((id) => id && !excluded.has(id));
+  if (!seedIds.length) return new Set();
+  return includeNetwork
+    ? expandFlowNodeNetworkExcluding(seedIds, edges, excluded)
+    : new Set(seedIds);
+}
+
+function flowContextStepKind(node) {
+  return node?.type === 'artifact' ? 'artifact' : 'local';
+}
+
+function flowContextStepTypeLabel(node) {
+  if (node?.type === 'artifact') return 'Artifact';
+  const raw = node?.data?.localNodeType ?? 'step';
+  return String(raw)
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+export function buildFlowContextSteps(nodes = [], scopeNodeIds = new Set()) {
+  const ids = scopeNodeIds instanceof Set ? scopeNodeIds : new Set(scopeNodeIds ?? []);
+  return (nodes ?? [])
+    .filter((node) => ids.has(node.id))
+    .map((node) => ({
+      id: node.id,
+      title: flowNodeDisplayTitle(node),
+      typeLabel: flowContextStepTypeLabel(node),
+      kind: flowContextStepKind(node),
+    }));
+}
 
 /**
  * Flow-modal agent context: node selection, optional network expansion, context cards.
@@ -20,18 +90,29 @@ import {
 export function useFlowAgentContext({ flowCard, canvasCards = [], getFlowSnapshot }) {
   const [includeNetwork, setIncludeNetwork] = useState(true);
   const [selectedNodeIds, setSelectedNodeIds] = useState([]);
+  const [excludedNodeIds, setExcludedNodeIds] = useState(() => new Set());
+
+  const setSelectedNodeIdsForContext = useCallback((nodeIds) => {
+    setSelectedNodeIds(nodeIds);
+    setExcludedNodeIds(new Set());
+  }, []);
 
   const scopeNodeIds = useMemo(() => {
     const snap = getFlowSnapshot();
     const allNodes = snap?.nodes ?? [];
-    if (!selectedNodeIds.length) {
-      return new Set(allNodes.map((node) => node.id));
-    }
-    if (includeNetwork) {
-      return expandFlowNodeNetwork(selectedNodeIds, snap?.edges ?? []);
-    }
-    return new Set(selectedNodeIds);
-  }, [selectedNodeIds, includeNetwork, getFlowSnapshot]);
+    return resolveFlowAgentScope({
+      nodes: allNodes,
+      edges: snap?.edges ?? [],
+      selectedNodeIds,
+      excludedNodeIds,
+      includeNetwork,
+    });
+  }, [selectedNodeIds, excludedNodeIds, includeNetwork, getFlowSnapshot]);
+
+  const flowContextSteps = useMemo(() => {
+    const snap = getFlowSnapshot();
+    return buildFlowContextSteps(snap?.nodes ?? [], scopeNodeIds);
+  }, [getFlowSnapshot, scopeNodeIds]);
 
   const selectionSummary = useMemo(() => {
     const snap = getFlowSnapshot();
@@ -67,6 +148,20 @@ export function useFlowAgentContext({ flowCard, canvasCards = [], getFlowSnapsho
     });
   }, [flowCard, canvasCards, scopeNodeIds, getFlowSnapshot]);
 
+  const removeNodeFromContext = useCallback((nodeId) => {
+    if (!nodeId || !selectedNodeIds.length) return;
+    setExcludedNodeIds((current) => {
+      if (current.has(nodeId)) return current;
+      const next = new Set(current);
+      next.add(nodeId);
+      return next;
+    });
+  }, [selectedNodeIds.length]);
+
+  const clearFlowContextExclusions = useCallback(() => {
+    setExcludedNodeIds(new Set());
+  }, []);
+
   const loadFlowContextText = useCallback(async (card) => {
     if (!card || card.type !== 'flow') return null;
     const snap = getFlowSnapshot();
@@ -86,10 +181,14 @@ export function useFlowAgentContext({ flowCard, canvasCards = [], getFlowSnapsho
     includeNetwork,
     setIncludeNetwork,
     selectedNodeIds,
-    setSelectedNodeIds,
+    setSelectedNodeIds: setSelectedNodeIdsForContext,
+    excludedNodeIds,
     scopeNodeIds,
+    flowContextSteps,
     selectionSummary,
     contextCards,
+    removeNodeFromContext,
+    clearFlowContextExclusions,
     loadFlowContextText,
   };
 }

@@ -58,8 +58,14 @@ import {
 import { resolvePathCurrentActiveStepTitle } from '../domain/flowPathStepDisplay.js';
 import { buildPathRunStateByStepId, resolvePathStepRunState } from '../domain/flowStepRunState.js';
 import { FlowStepRunStateMenu } from './FlowStepRunStateMenu.jsx';
+import {
+  buildFlowNodeSelectionChanges,
+  resolveFlowNodeClickSelection,
+  selectionsHaveSameNodeIds,
+} from './FlowEditorSelection.js';
 
 const NODE_TYPES = { artifact: ArtifactFlowNode, local: LocalFlowNode };
+const FLOW_PENDING_SELECTION_GUARD_MS = 300;
 
 function FlowPathHullOverlay(props) {
   const { zoom } = useViewport();
@@ -128,6 +134,7 @@ function FlowEditorInner({
   const redoRef = useRef([]);
   const viewportSyncedRef = useRef(false);
   const draggingPathRef = useRef(null);
+  const pendingNodeSelectionRef = useRef(null);
 
   const handleSave = useCallback(async () => {
     await document.flushSave();
@@ -254,6 +261,36 @@ function FlowEditorInner({
       edge.selected ? { ...edge, selected: false } : edge
     )));
   }, [instance]);
+
+  const applyNodeSelectionToFlow = useCallback((nodeIds) => {
+    const nodeChanges = buildFlowNodeSelectionChanges(document.nodes, nodeIds);
+    if (nodeChanges.length) {
+      document.onNodesChange(nodeChanges);
+    }
+    const edgeChanges = document.edges
+      .filter((edge) => edge.selected)
+      .map((edge) => ({
+        id: edge.id,
+        type: 'select',
+        selected: false,
+      }));
+    if (edgeChanges.length) {
+      document.onEdgesChange(edgeChanges);
+    }
+  }, [document]);
+
+  const commitSelectedNodeIds = useCallback((nodeIds) => {
+    const nextIds = [...new Set(nodeIds.filter(Boolean))];
+    pendingNodeSelectionRef.current = { ids: nextIds, startedAt: Date.now() };
+    setSelectedEdgeId(null);
+    setSelectedNodeId(nextIds[0] ?? null);
+    setSelectedNodeIds(nextIds);
+    onSelectedNodeIdsChange?.(nextIds);
+    if (nextIds.length > 0) {
+      setSelectedPathId(null);
+    }
+    applyNodeSelectionToFlow(nextIds);
+  }, [applyNodeSelectionToFlow, onSelectedNodeIdsChange]);
 
   const selectPath = useCallback((pathId) => {
     if (!pathId) return;
@@ -572,7 +609,9 @@ function FlowEditorInner({
   }, [removeEdgesById]);
 
   const handleSelectionChange = useCallback(({ nodes, edges }) => {
+    const pendingSelection = pendingNodeSelectionRef.current;
     if (edges.length > 0) {
+      pendingNodeSelectionRef.current = null;
       setSelectedPathId(null);
       setSelectedEdgeId(edges[0]?.id ?? null);
       setSelectedNodeId(null);
@@ -582,6 +621,15 @@ function FlowEditorInner({
     }
     setSelectedEdgeId(null);
     const nodeIds = nodes.map((node) => node.id);
+    if (pendingSelection) {
+      if (selectionsHaveSameNodeIds(pendingSelection.ids, nodeIds)) {
+        pendingNodeSelectionRef.current = null;
+      } else if (Date.now() - pendingSelection.startedAt < FLOW_PENDING_SELECTION_GUARD_MS) {
+        return;
+      } else {
+        pendingNodeSelectionRef.current = null;
+      }
+    }
     setSelectedNodeId(nodeIds[0] ?? null);
     setSelectedNodeIds(nodeIds);
     onSelectedNodeIdsChange?.(nodeIds);
@@ -596,6 +644,14 @@ function FlowEditorInner({
       setSelectedPathId(null);
     }
   }, [document.paths, onSelectedNodeIdsChange, selectedPathId]);
+
+  const handleNodeClick = useCallback((event, node) => {
+    const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+    if (!additive) return;
+    event.preventDefault();
+    event.stopPropagation();
+    commitSelectedNodeIds(resolveFlowNodeClickSelection(selectedNodeIds, node.id, true));
+  }, [commitSelectedNodeIds, selectedNodeIds]);
 
   const revealInspectorForNode = useCallback((node) => {
     if (agentModeActive || !node?.id) return;
@@ -803,6 +859,7 @@ function FlowEditorInner({
             onEdgesDelete={handleEdgesDelete}
             onConnect={(connection) => { checkpoint(); document.onConnect(connection); }}
             onSelectionChange={handleSelectionChange}
+            onNodeClick={handleNodeClick}
             onNodeDoubleClick={(_, node) => revealInspectorForNode(node)}
             onEdgeDoubleClick={(_, edge) => revealInspectorForEdge(edge)}
             onMoveEnd={(_, viewport) => document.setViewport(viewport)}

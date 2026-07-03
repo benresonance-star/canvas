@@ -1,7 +1,7 @@
 /** Bump when architecture or shipped load behavior changes. */
 import { getArchitectureGraphManifest } from './architecture/index.js';
 
-export const ARCHITECTURE_SPEC_VERSION = '2026-06-28-production-readiness';
+export const ARCHITECTURE_SPEC_VERSION = '2026-07-03-base-artifact-schema';
 
 export const ARCHITECTURE_LAYERS = [
   {
