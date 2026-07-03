@@ -35,6 +35,8 @@ describe('flowLocalNodeTypeColors', () => {
     expect(resolveFlowLocalNodeTypeColor({ step: '#101010' }, 'step')).toBe('#101010');
     expect(resolveFlowLocalNodeTypeColor({}, 'decision')).toBe(FLOW_LOCAL_NODE_TYPE_DEFAULT_COLORS.decision);
     expect(resolveFlowLocalNodeTypeColor({ artifact: '#222222' }, 'agent')).toBe('#222222');
+    expect(resolveFlowLocalNodeTypeColor({}, 'child_studio')).toBe('#7c3aed');
+    expect(resolveFlowLocalNodeTypeColor({ child_studio: '#aabbcc' }, 'child_studio')).toBe('#aabbcc');
   });
 
   it('validates color maps and ignores legacy keys', () => {

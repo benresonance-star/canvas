@@ -24,6 +24,7 @@ import { FlowPreview } from '../features/flow/components/FlowPreview.jsx';
 import { LiveArtifactView } from '../features/live/components/LiveArtifactView.jsx';
 import { BeatAgentPreview } from '../features/music/agents/beat/components/BeatAgentPreview.jsx';
 import { SonicStudioPreview } from '../features/sonicStudio/components/SonicStudioPreview.jsx';
+import { StudioPreview } from '../features/studio/components/StudioPreview.jsx';
 import { Bot } from 'lucide-react';
 
 export function CardPreview({
@@ -145,6 +146,9 @@ export function CardPreview({
   }
   if (cardType === 'sonic_studio') {
     return <SonicStudioPreview card={card} compact={compact} />;
+  }
+  if (cardType === 'studio') {
+    return <StudioPreview card={card} compact={compact} />;
   }
   if (cardType === 'agent') {
     return (

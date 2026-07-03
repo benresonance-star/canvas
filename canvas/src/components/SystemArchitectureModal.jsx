@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { X, Copy, Check } from 'lucide-react';
+import { X, Copy, Check, Waypoints } from 'lucide-react';
 import { strings } from '../content/strings.js';
 import {
   ARCHITECTURE_SPEC_VERSION,
@@ -68,17 +68,40 @@ export function SystemArchitectureModal({ onClose, onOpenDiagnostics, runtime })
               {strings.architecture.subtitle(ARCHITECTURE_SPEC_VERSION)}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-muted hover:text-primary p-1"
-            aria-label={strings.architecture.close}
-          >
-            <X size={16} />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {onOpenDiagnostics && (
+              <button
+                type="button"
+                onClick={onOpenDiagnostics}
+                className="sans text-[10px] text-accent hover:text-primary flex items-center gap-1.5 border border-border hover:border-accent/50 rounded-md px-2 py-1 transition-colors"
+              >
+                <Waypoints size={14} />
+                {strings.architecture.openDiagnostics}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-muted hover:text-primary p-1"
+              aria-label={strings.architecture.close}
+            >
+              <X size={16} />
+            </button>
+          </div>
         </header>
 
         <div className="overflow-y-auto flex-1 px-4 py-4 space-y-5">
+          {runtime && (
+            <section className="rounded-md border border-border bg-black/10 px-3 py-2">
+              <h3 className="sans text-[10px] uppercase tracking-wider text-muted mb-1">
+                {strings.architecture.runtimeTitle}
+              </h3>
+              <p className="sans text-[10px] text-secondary leading-snug">
+                {strings.architecture.runtimeSummary(runtime)}
+              </p>
+            </section>
+          )}
+
           <section>
             <h3 className="sans text-[10px] uppercase tracking-wider text-muted mb-2">
               {strings.architecture.diagramTitle}
@@ -178,15 +201,9 @@ export function SystemArchitectureModal({ onClose, onOpenDiagnostics, runtime })
         </div>
 
         <footer className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border shrink-0">
-          {onOpenDiagnostics && (
-            <button
-              type="button"
-              onClick={onOpenDiagnostics}
-              className="sans text-xs mr-auto text-accent hover:underline"
-            >
-              {strings.architecture.openDiagnostics}
-            </button>
-          )}
+          <span className="sans text-[10px] text-muted mr-auto">
+            {strings.architecture.nestedStudioSpec}
+          </span>
           <button
             type="button"
             onClick={() => void handleCopy()}

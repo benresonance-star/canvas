@@ -153,6 +153,7 @@ export function isFolderBackedCanvasCard(card) {
   const type = normalizeCardType(card?.type);
   if (type === 'bookmark') return false;
   if (type === 'flow') return false;
+  if (type === 'studio') return false;
   if (type === 'live') return false;
   if (type === 'agent') return false;
   if (type === 'music-agent') return false;
@@ -289,6 +290,7 @@ export function cardHeaderPrefix(card) {
   if (!card) return '';
   if (normalizeCardType(card.type) === 'agent_chat') return 'thread';
   if (normalizeCardType(card.type) === 'live') return 'live';
+  if (normalizeCardType(card.type) === 'studio') return 'studios';
   if (normalizeCardType(card.type) === 'sonic_studio') return 'music';
   return card.prefix ?? '';
 }
@@ -326,6 +328,12 @@ export function cardExtensionLabel(card) {
 
 /** Full header line: `prefix | TYPE` */
 export function cardHeaderLabel(card) {
+  if (normalizeCardType(card?.type) === 'studio' && card?.parentStudioId) {
+    return [
+      cardHeaderPrefix(card),
+      'CHILD STUDIO',
+    ].filter(Boolean).join(' | ');
+  }
   return [
     cardHeaderPrefix(card),
     cardTypeLabel(card.type),
@@ -348,6 +356,7 @@ export function cardTypeLabel(type) {
   if (t === 'spreadsheet') return 'EXCEL';
   if (t === 'bookmark') return 'LINK';
   if (t === 'flow') return 'EXPLORATION';
+  if (t === 'studio') return 'STUDIO';
   if (t === 'live') return 'AGENT FEED';
   if (t === 'agent') return 'AGENT';
   if (t === 'music-agent') return 'BEAT';

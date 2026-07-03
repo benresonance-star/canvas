@@ -29,6 +29,9 @@ export function flowAgentUiStorageKey(projectId) {
 export function agentPanelUiStorageKey(projectId) {
   return `canvas:agent-panel-ui:${projectId}`;
 }
+export function diagnosticsConcentrateLayoutStorageKey(actionId, specVersion) {
+  return `canvas-diagnostics-concentrate-layout:${actionId}:${specVersion}`;
+}
 export const SPREADSHEET_VIEWER_STORAGE_KEY = 'canvas:spreadsheet-viewer';
 export const SPREADSHEET_VIEWER_MODES = ['simple', 'extend'];
 /** Max file size (bytes) to load fully as text or base64 dataUrl */

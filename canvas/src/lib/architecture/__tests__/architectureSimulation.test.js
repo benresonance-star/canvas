@@ -7,7 +7,7 @@ import {
   getSimulationPathHighlight,
 } from '../architectureSimulation.js';
 import { ARCHITECTURE_ACTIONS, SYSTEM_OVERVIEW_ACTION_ID, getArchitectureActionById } from '../architectureActions.js';
-import { ARCHITECTURE_PIPES, getArchitectureNeighborhood, getOverviewHighlight } from '../architectureGraph.js';
+import { ARCHITECTURE_PIPES, getArchitectureInputFeedSequences, getArchitectureNeighborhood, getArchitectureNodeById, getArchitectureUpstreamFeed, getOverviewHighlight } from '../architectureGraph.js';
 
 describe('architectureSimulation', () => {
   const addTaskAction = getArchitectureActionById('add_task');
@@ -52,6 +52,38 @@ describe('architectureSimulation', () => {
     expect(highlight.pathEdgeIds.has(pipe.id)).toBe(true);
   });
 
+  it('extended feed-in adds upstream feeders beyond direct neighbors', () => {
+    const pipe = ARCHITECTURE_PIPES.find((entry) => entry.id === 'pipe-flowEditor-apiStudios');
+    expect(pipe).toBeTruthy();
+    const base = getOverviewHighlight(pipe.target, ARCHITECTURE_PIPES);
+    const extended = getOverviewHighlight(pipe.target, ARCHITECTURE_PIPES, { extendedFeedIn: true });
+    expect(extended.pathNodeIds.size).toBeGreaterThanOrEqual(base.pathNodeIds.size);
+    expect(extended.pathNodeIds.has('studioDashboard')).toBe(true);
+    expect(extended.pathNodeIds.has('canvas')).toBe(true);
+  });
+
+  it('upstream feed follows pipe direction only', () => {
+    const upstream = getArchitectureUpstreamFeed('apiStudios', ARCHITECTURE_PIPES, { minDepth: 1 });
+    expect(upstream.nodeIds.has('flowEditor')).toBe(true);
+    expect(upstream.nodeIds.has('dbStudio')).toBe(false);
+  });
+
+  it('input feed sequences list upstream paths per incoming pipe', () => {
+    const sequences = getArchitectureInputFeedSequences(
+      'apiStudios',
+      ARCHITECTURE_PIPES,
+      getArchitectureNodeById,
+    );
+    expect(sequences).toHaveLength(1);
+    expect(sequences[0].input.name).toBe('studioInput');
+    expect(sequences[0].paths.length).toBeGreaterThanOrEqual(3);
+    const invokePath = sequences[0].paths.find((path) => path.pipeId === 'pipe-flowEditor-apiStudios');
+    expect(invokePath).toBeTruthy();
+    const labels = invokePath.steps.map((step) => step.nodeId);
+    expect(labels[labels.length - 1]).toBe('apiStudios');
+    expect(labels).toContain('flowEditor');
+  });
+
   it('neighborhood returns incident pipes only', () => {
     const pipe = ARCHITECTURE_PIPES[0];
     const neighborhood = getArchitectureNeighborhood(pipe.source, ARCHITECTURE_PIPES);
@@ -65,5 +97,13 @@ describe('architectureSimulation', () => {
     expect(state.status).toBe('idle');
     state = reduceSimulation(state, 'step', { maxSteps: 1 });
     expect(state.stepIndex).toBe(0);
+  });
+
+  it('selectPipe keeps the selected node', () => {
+    let state = createInitialSimulationState(SYSTEM_OVERVIEW_ACTION_ID);
+    state = reduceSimulation(state, 'selectNode', { nodeId: 'apiStudios' });
+    state = reduceSimulation(state, 'selectPipe', { pipeId: 'pipe-apiStudios-dbStudio' });
+    expect(state.selectedNodeId).toBe('apiStudios');
+    expect(state.selectedPipeId).toBe('pipe-apiStudios-dbStudio');
   });
 });

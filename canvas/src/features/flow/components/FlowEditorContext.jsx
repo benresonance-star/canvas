@@ -12,6 +12,7 @@ import React, { createContext, useContext } from 'react';
  *   localNodeTypeColors: Record<string, string>,
  *   setLocalNodeTypeColor: (typeId: string, color: string) => void,
  *   pathRunStateByStepId: Map<string, string>,
+ *   focusGhostedNodeIds: Set<string> | null,
  * }>} */
 const FlowEditorContext = createContext(null);
 

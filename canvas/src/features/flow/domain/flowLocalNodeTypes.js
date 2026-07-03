@@ -2,12 +2,14 @@ import {
   ExternalLink,
   FileText,
   GitBranch,
+  Network,
   Zap,
 } from 'lucide-react';
 
 export const FLOW_LOCAL_NODE_TYPE_ARTIFACT = 'artifact';
 export const FLOW_LOCAL_NODE_TYPE_ACTION = 'action';
 export const FLOW_LOCAL_NODE_TYPE_DECISION = 'decision';
+export const FLOW_LOCAL_NODE_TYPE_CHILD_STUDIO = 'child_studio';
 
 /** @deprecated Stored as `step` in older documents; migrates to decision. */
 export const FLOW_LOCAL_NODE_TYPE_STEP = 'step';
@@ -57,7 +59,20 @@ export const FLOW_LOCAL_NODE_TYPES = Object.freeze([
   },
 ]);
 
+/** Color keys for exploration nodes, including non-creatable artifact variants. */
+export const FLOW_NODE_COLOR_TYPES = Object.freeze([
+  ...FLOW_LOCAL_NODE_TYPES,
+  {
+    id: FLOW_LOCAL_NODE_TYPE_CHILD_STUDIO,
+    label: 'Child Studio',
+    icon: Network,
+    defaultTitle: 'Child Studio',
+    iconClassName: 'text-secondary',
+  },
+]);
+
 const FLOW_LOCAL_NODE_TYPE_IDS = new Set(FLOW_LOCAL_NODE_TYPES.map((entry) => entry.id));
+const FLOW_NODE_COLOR_TYPE_IDS = new Set(FLOW_NODE_COLOR_TYPES.map((entry) => entry.id));
 
 /**
  * Maps legacy/unknown node types to Artifact; migrates retired `step` to Evaluation.
@@ -84,6 +99,17 @@ export function flowLocalNodeTypeMeta(value) {
   const typeId = normalizeFlowLocalNodeType(value);
   return FLOW_LOCAL_NODE_TYPES.find((entry) => entry.id === typeId)
     ?? FLOW_LOCAL_NODE_TYPES[0];
+}
+
+/**
+ * @param {unknown} value
+ */
+export function flowNodeColorTypeMeta(value) {
+  if (typeof value === 'string' && FLOW_NODE_COLOR_TYPE_IDS.has(value)) {
+    return FLOW_NODE_COLOR_TYPES.find((entry) => entry.id === value)
+      ?? FLOW_LOCAL_NODE_TYPES[0];
+  }
+  return flowLocalNodeTypeMeta(value);
 }
 
 /**

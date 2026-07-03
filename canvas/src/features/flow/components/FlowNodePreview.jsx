@@ -32,9 +32,12 @@ function ArtifactFlowNodePreview({ data, selected }) {
   const agentChatCtx = useFlowAgentChatPreviewContext(card, projectId);
 
   if (!card) {
+    const fallbackText = data?.artifactType === 'studio'
+      ? (data?.description === 'Child Studio' ? 'Child Studio workspace' : 'Studio reference')
+      : strings.flow.previewUnavailable;
     return (
       <div className="h-full flex items-center justify-center px-3 text-center">
-        <p className="sans text-xs text-muted">{strings.flow.previewUnavailable}</p>
+        <p className="sans text-xs text-muted">{fallbackText}</p>
       </div>
     );
   }

@@ -12,6 +12,7 @@ import {
 export function FlowPathHullLayer({
   hulls = [],
   highlightedPathId = null,
+  ghostedPathIds = null,
   onHullSelect,
   onStartPathMove,
   zoom = 1,
@@ -37,11 +38,14 @@ export function FlowPathHullLayer({
       >
         {hulls.map((hull) => {
           const isActive = highlightedPathId === hull.pathId;
+          const isGhosted = Boolean(ghostedPathIds?.has(hull.pathId));
           return (
             <path
               key={hull.pathId}
               d={hull.pathD}
               className={`flow-path-hull-path${isActive ? ' flow-path-hull-path--active' : ''}${
+                isGhosted ? ' flow-path-hull-path--ghosted' : ''
+              }${
                 onHullSelect ? ' pointer-events-auto cursor-pointer' : ''
               }`}
               onPointerDown={
@@ -59,6 +63,7 @@ export function FlowPathHullLayer({
       </svg>
       {hulls.map((hull) => {
         const isActive = highlightedPathId === hull.pathId;
+        const isGhosted = Boolean(ghostedPathIds?.has(hull.pathId));
         if (!showChromeForHull(hull.pathId)) return null;
 
         const gapWorld = CLUSTER_CHROME_GAP / zoom;
@@ -69,7 +74,9 @@ export function FlowPathHullLayer({
         return (
           <div
             key={`${hull.pathId}-chrome`}
-            className="flow-path-hull-layer flow-path-hull-layer--chrome absolute flex flex-col items-center pointer-events-auto"
+            className={`flow-path-hull-layer flow-path-hull-layer--chrome absolute flex flex-col items-center pointer-events-auto${
+              isGhosted ? ' flow-path-hull-layer--chrome-ghosted' : ''
+            }`}
             style={{
               left: hull.centerX,
               top: chromeTop,

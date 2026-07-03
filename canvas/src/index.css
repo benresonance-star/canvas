@@ -370,6 +370,32 @@ html[data-theme='blue'] {
   border-width: 2px !important;
 }
 
+#flow-editor-canvas .flow-node-focus-wrapper {
+  transition: opacity 140ms ease, filter 140ms ease;
+}
+
+#flow-editor-canvas .flow-node-focus-wrapper--ghosted {
+  opacity: 0.18;
+  filter: grayscale(0.8) saturate(0.35);
+}
+
+#flow-editor-canvas .flow-node-focus-wrapper--ghosted .flow-node-shell {
+  box-shadow: none;
+}
+
+#flow-editor-canvas .react-flow__edge.flow-edge-focus-ghost {
+  opacity: 0.14;
+}
+
+#flow-editor-canvas .react-flow__edge.flow-edge-focus-ghost path:not(.react-flow__edge-interaction) {
+  stroke: var(--color-muted) !important;
+  stroke-width: 1 !important;
+}
+
+#flow-editor-canvas .react-flow__edge.flow-edge-focus-active path:not(.react-flow__edge-interaction) {
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-accent) 35%, transparent));
+}
+
 #flow-editor-canvas .react-flow__viewport > .react-flow__edges {
   z-index: 2;
 }
@@ -400,12 +426,21 @@ html[data-theme='blue'] {
   fill-opacity: 0.5;
 }
 
+.flow-path-hull-path--ghosted {
+  fill-opacity: 0.1;
+}
+
 .flow-path-hull-path.pointer-events-auto {
   pointer-events: auto;
 }
 
 .flow-path-hull-layer--chrome > * {
   pointer-events: auto;
+}
+
+.flow-path-hull-layer--chrome-ghosted {
+  opacity: 0.28;
+  filter: grayscale(0.75);
 }
 
 @keyframes flow-preview-dashdraw {
@@ -724,6 +759,64 @@ html[data-theme='blue'] {
 
 #diagnostics-flow-canvas {
   --color-diagnostics-grid-dot: color-mix(in srgb, var(--color-border) 50%, var(--color-canvas));
+  --diagnostics-layer-client-ui: #818cf8;
+  --diagnostics-layer-client-hooks: #38bdf8;
+  --diagnostics-layer-client-sync: #fbbf24;
+  --diagnostics-layer-client-storage: #34d399;
+  --diagnostics-layer-api: #a78bfa;
+  --diagnostics-layer-postgres: #f472b6;
+  --diagnostics-layer-external: #94a3b8;
+}
+
+#diagnostics-flow-canvas .diagnostics-view-layer {
+  position: absolute;
+  inset: 0;
+}
+
+#diagnostics-flow-canvas .diagnostics-view-layer--active {
+  z-index: 2;
+}
+
+#diagnostics-flow-canvas .diagnostics-view-layer--inactive {
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+
+#diagnostics-flow-canvas .diagnostics-webgl-shell {
+  position: absolute;
+  inset: 0;
+}
+
+#diagnostics-flow-canvas .diagnostics-webgl-canvas {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 1;
+}
+
+#diagnostics-flow-canvas .diagnostics-webgl-shell canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#diagnostics-flow-canvas .diagnostics-canvas-zoom-controls {
+  position: absolute;
+  bottom: 15px;
+  left: 15px;
+  z-index: 20;
+  margin: 0;
+  pointer-events: auto;
+}
+
+#diagnostics-flow-canvas .react-flow__edgelabel-renderer {
+  z-index: 20;
+  pointer-events: none;
+}
+
+#diagnostics-flow-canvas.diagnostics-overview-mode .diagnostics-edge-label--draggable {
+  padding: 2px 6px;
+  min-height: 0;
 }
 
 #diagnostics-flow-canvas .react-flow__background circle {
@@ -754,10 +847,112 @@ html[data-theme='blue'] {
   background-color: var(--color-surface);
 }
 
+#diagnostics-flow-canvas .diagnostics-node .react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+  background: transparent !important;
+  border: none !important;
+}
+
+#diagnostics-flow-canvas .diagnostics-node--highlighted.diagnostics-node--layer-client-ui {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-client-ui) 7%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-client-ui) 28%, var(--color-border));
+}
+
+#diagnostics-flow-canvas .diagnostics-node--focus.diagnostics-node--layer-client-ui {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-client-ui) 34%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-client-ui) 58%, var(--color-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--diagnostics-layer-client-ui) 35%, transparent);
+}
+
+#diagnostics-flow-canvas .diagnostics-node--highlighted.diagnostics-node--layer-client-hooks {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-client-hooks) 7%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-client-hooks) 28%, var(--color-border));
+}
+
+#diagnostics-flow-canvas .diagnostics-node--focus.diagnostics-node--layer-client-hooks {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-client-hooks) 34%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-client-hooks) 58%, var(--color-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--diagnostics-layer-client-hooks) 35%, transparent);
+}
+
+#diagnostics-flow-canvas .diagnostics-node--highlighted.diagnostics-node--layer-client-sync {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-client-sync) 7%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-client-sync) 28%, var(--color-border));
+}
+
+#diagnostics-flow-canvas .diagnostics-node--focus.diagnostics-node--layer-client-sync {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-client-sync) 34%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-client-sync) 58%, var(--color-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--diagnostics-layer-client-sync) 35%, transparent);
+}
+
+#diagnostics-flow-canvas .diagnostics-node--highlighted.diagnostics-node--layer-client-storage {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-client-storage) 7%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-client-storage) 28%, var(--color-border));
+}
+
+#diagnostics-flow-canvas .diagnostics-node--focus.diagnostics-node--layer-client-storage {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-client-storage) 34%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-client-storage) 58%, var(--color-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--diagnostics-layer-client-storage) 35%, transparent);
+}
+
+#diagnostics-flow-canvas .diagnostics-node--highlighted.diagnostics-node--layer-api {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-api) 7%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-api) 28%, var(--color-border));
+}
+
+#diagnostics-flow-canvas .diagnostics-node--focus.diagnostics-node--layer-api {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-api) 34%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-api) 58%, var(--color-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--diagnostics-layer-api) 35%, transparent);
+}
+
+#diagnostics-flow-canvas .diagnostics-node--highlighted.diagnostics-node--layer-postgres {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-postgres) 7%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-postgres) 28%, var(--color-border));
+}
+
+#diagnostics-flow-canvas .diagnostics-node--focus.diagnostics-node--layer-postgres {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-postgres) 34%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-postgres) 58%, var(--color-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--diagnostics-layer-postgres) 35%, transparent);
+}
+
+#diagnostics-flow-canvas .diagnostics-node--highlighted.diagnostics-node--layer-external {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-external) 7%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-external) 28%, var(--color-border));
+}
+
+#diagnostics-flow-canvas .diagnostics-node--focus.diagnostics-node--layer-external {
+  background-color: color-mix(in srgb, var(--diagnostics-layer-external) 34%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--diagnostics-layer-external) 58%, var(--color-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--diagnostics-layer-external) 35%, transparent);
+}
+
+#diagnostics-flow-canvas .diagnostics-node--ghosted {
+  opacity: 0.16;
+}
+
+#diagnostics-flow-canvas .react-flow__edge-path.diagnostics-edge-ghosted {
+  opacity: 0.1;
+}
+
+.diagnostics-edge-label--ghosted {
+  opacity: 0.12;
+  border-color: color-mix(in srgb, var(--color-border) 70%, transparent);
+  color: var(--color-muted);
+}
+
 #diagnostics-flow-canvas .react-flow__edge-path.diagnostics-edge-quiet {
   filter: drop-shadow(0 0 1px rgb(0 0 0 / 0.35));
   stroke-dasharray: 5 5;
   stroke-linecap: round;
+}
+
+#diagnostics-flow-canvas.diagnostics-overview-mode .react-flow__edge-path.diagnostics-edge-quiet {
+  stroke-dasharray: none;
 }
 
 #diagnostics-flow-canvas .react-flow__edge-path.diagnostics-edge-active {
@@ -770,6 +965,13 @@ html[data-theme='blue'] {
 
 .diagnostics-edge-label {
   z-index: 1000;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.25;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
   background-color: color-mix(in srgb, var(--color-surface) 96%, transparent);
   box-shadow:
     0 0 0 2px color-mix(in srgb, var(--color-surface) 92%, transparent),

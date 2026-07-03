@@ -11,7 +11,7 @@ import {
   useViewport,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Plus, Redo2, Save, Search, Trash2, Undo2, Workflow, Eye, EyeOff, ArrowLeftRight, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Map as MapIcon, Minimize2, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Redo2, Save, Search, Trash2, Undo2, Workflow, Eye, EyeOff, ArrowLeftRight, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Map as MapIcon, Minimize2, ChevronDown, ChevronRight, Play, Pause, StepForward, RotateCcw, Network, FileText } from 'lucide-react';
 import { strings } from '../../../content/strings.js';
 import { artifactRefIdForClusterCard } from '../../../lib/clusterMembers.js';
 import { getMutedStagingStyleForType } from '../../../lib/stagingColors.js';
@@ -34,6 +34,15 @@ import {
   stripFlowNodeDimensions,
 } from '../domain/flowDocument.js';
 import { patchFlowLocalNodeTypeColor, normalizeFlowLocalNodeTypeColors } from '../domain/flowLocalNodeTypeColors.js';
+import { buildFlowNeighborhoodFocus, buildGhostedFlowPathIds } from '../domain/flowNeighborhoodFocus.js';
+import {
+  buildChildStudioEdge,
+  buildChildStudioNode,
+  childStudioNodePosition,
+  findStudioNodeForCard,
+  flowNodeStudioArtifactId,
+  studioCardLikeFromOverview,
+} from '../domain/flowStudioProjection.js';
 import { ArtifactFlowNode, LocalFlowNode } from './FlowNodes.jsx';
 import { FlowConnectionInspectorFields } from './FlowConnectionInspectorFields.jsx';
 import { FlowEditorProvider } from './FlowEditorContext.jsx';
@@ -57,6 +66,7 @@ import {
 } from '../domain/flowPaths.js';
 import { resolvePathCurrentActiveStepTitle } from '../domain/flowPathStepDisplay.js';
 import { buildPathRunStateByStepId, resolvePathStepRunState } from '../domain/flowStepRunState.js';
+import { buildFlowPlaybackSequence, nextFlowPlaybackIndex } from '../domain/flowPlayback.js';
 import { FlowStepRunStateMenu } from './FlowStepRunStateMenu.jsx';
 import {
   buildFlowNodeSelectionChanges,
@@ -66,6 +76,7 @@ import {
 
 const NODE_TYPES = { artifact: ArtifactFlowNode, local: LocalFlowNode };
 const FLOW_PENDING_SELECTION_GUARD_MS = 300;
+const FLOW_PLAYBACK_TICK_MS = 1200;
 
 function FlowPathHullOverlay(props) {
   const { zoom } = useViewport();
@@ -114,6 +125,18 @@ function FlowEditorInner({
   flowAgentScopeNodeIds = null,
   agentModeActive = false,
   flowClosing = false,
+  studioContext = null,
+  onCreateStudioContextPacket = null,
+  onInvokeChildStudio = null,
+  onOpenStudioCard = null,
+  onRenameStudioNode = null,
+  onArchiveStudioNode = null,
+  pendingRevealStudioId = null,
+  onStudioNodeRevealed = null,
+  pendingRestoreStudio = null,
+  onRestoreStudioComplete = null,
+  pendingPromotedArtifactId = null,
+  onPromotedArtifactProjected = null,
 }) {
   const flowId = card?.versions?.find((version) => version.version === card.pinnedVersion)?.flowId
     ?? card?.versions?.[0]?.artifactRef?.id;
@@ -126,6 +149,18 @@ function FlowEditorInner({
   const [selectedPathId, setSelectedPathId] = useState(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [minimapOpen, setMinimapOpen] = useState(false);
+  const [neighborhoodFocusEnabled, setNeighborhoodFocusEnabled] = useState(false);
+  const [playback, setPlayback] = useState({
+    active: false,
+    isPlaying: false,
+    stepIndex: 0,
+    pathId: null,
+  });
+  const [studioActionStatus, setStudioActionStatus] = useState(null);
+  const [childStudioDialogOpen, setChildStudioDialogOpen] = useState(false);
+  const [childStudioDraft, setChildStudioDraft] = useState({ title: '', goal: '', useSelection: true });
+  const [studioRenameDialog, setStudioRenameDialog] = useState(null);
+  const [nodeContextMenu, setNodeContextMenu] = useState(null);
   const [stepsSectionOpen, setStepsSectionOpen] = useState(false);
   const [artifactsSectionOpen, setArtifactsSectionOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -135,6 +170,7 @@ function FlowEditorInner({
   const viewportSyncedRef = useRef(false);
   const draggingPathRef = useRef(null);
   const pendingNodeSelectionRef = useRef(null);
+  const playbackTimerRef = useRef(null);
 
   const handleSave = useCallback(async () => {
     await document.flushSave();
@@ -149,7 +185,15 @@ function FlowEditorInner({
     setSelectedNodeIds([]);
     setSelectedEdgeId(null);
     setSelectedPathId(null);
+    setNeighborhoodFocusEnabled(false);
+    setPlayback({ active: false, isPlaying: false, stepIndex: 0, pathId: null });
   }, [flowId]);
+
+  useEffect(() => () => {
+    if (playbackTimerRef.current) {
+      clearInterval(playbackTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (agentModeActive) {
@@ -214,11 +258,150 @@ function FlowEditorInner({
   const selectedEdgeFlowTitles = selectedEdge
     ? flowEdgeEndpointTitles(selectedEdge, nodesById)
     : null;
+  const playbackPathId = playback.active ? playback.pathId : selectedPathId;
+  const playbackSequence = useMemo(
+    () => buildFlowPlaybackSequence({
+      paths: document.paths,
+      nodes: document.nodes,
+      edges: document.edges,
+      nodesById,
+      selectedPathId: playbackPathId,
+      selectedNodeId,
+    }),
+    [document.edges, document.nodes, document.paths, nodesById, playbackPathId, selectedNodeId],
+  );
+  const playbackStepCount = playbackSequence.stepIds.length;
+  const playbackStepIndex = playbackStepCount
+    ? Math.min(playback.stepIndex, playbackStepCount - 1)
+    : 0;
+  const playbackActiveStepId = playback.active
+    ? playbackSequence.stepIds[playbackStepIndex] ?? null
+    : null;
+  const effectivePathRunStateByStepId = useMemo(() => {
+    if (!playbackActiveStepId) return pathRunStateByStepId;
+    const next = new Map(pathRunStateByStepId);
+    next.set(playbackActiveStepId, 'current');
+    return next;
+  }, [pathRunStateByStepId, playbackActiveStepId]);
+  const neighborhoodFocus = useMemo(
+    () => ((neighborhoodFocusEnabled || playbackActiveStepId)
+      ? buildFlowNeighborhoodFocus({
+          nodes: document.nodes,
+          edges: document.edges,
+          selectedNodeIds: playbackActiveStepId ? [playbackActiveStepId] : selectedNodeIds,
+        })
+      : buildFlowNeighborhoodFocus()),
+    [document.edges, document.nodes, neighborhoodFocusEnabled, playbackActiveStepId, selectedNodeIds],
+  );
+  const focusGhostedNodeIds = neighborhoodFocus.active ? neighborhoodFocus.ghostedNodeIds : null;
+  const focusGhostedPathIds = useMemo(
+    () => (neighborhoodFocus.active
+      ? buildGhostedFlowPathIds(document.paths, neighborhoodFocus.visibleNodeIds)
+      : null),
+    [document.paths, neighborhoodFocus],
+  );
+  const focusModeCanActivate = selectedNodeIds.length > 0;
+  const focusModeActive = neighborhoodFocusEnabled && neighborhoodFocus.active;
+  const studioSelectionIds = selectedPath?.stepIds?.length ? selectedPath.stepIds : selectedNodeIds;
+  const studioSelectionNodes = useMemo(() => {
+    if (!studioSelectionIds?.length) return [];
+    const ids = new Set(studioSelectionIds);
+    return document.nodes.filter((node) => ids.has(node.id));
+  }, [document.nodes, studioSelectionIds]);
+  const studioSelectionEdges = useMemo(() => {
+    if (!studioSelectionIds?.length) return [];
+    const ids = new Set(studioSelectionIds);
+    return document.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target));
+  }, [document.edges, studioSelectionIds]);
+  const studioSelectedArtifactIds = useMemo(() => [...new Set(studioSelectionNodes
+    .map((node) => node.artifactId ?? node.data?.artifactId)
+    .filter(Boolean))],
+  [studioSelectionNodes]);
+  const studioSelectionTitle = selectedPath?.name
+    || studioSelectionNodes.map((node) => flowNodeDisplayTitle(node, cardsById)).filter(Boolean).slice(0, 2).join(', ')
+    || 'Selected exploration context';
+  const studioSelectionReady = Boolean(studioContext?.studioId && studioSelectionNodes.length);
+  const childStudioCreationReady = Boolean(studioContext?.studioId);
 
   const displayEdges = useMemo(
-    () => document.edges.map((edge) => normalizeFlowEdgeForEditor(edge)),
-    [document.edges],
+    () => document.edges.map((edge) => {
+      const normalized = normalizeFlowEdgeForEditor(edge);
+      if (!neighborhoodFocus.active) return normalized;
+      const focusClass = neighborhoodFocus.activeEdgeIds.has(edge.id)
+        ? 'flow-edge-focus-active'
+        : 'flow-edge-focus-ghost';
+      return {
+        ...normalized,
+        className: [normalized.className, focusClass].filter(Boolean).join(' '),
+        data: {
+          ...normalized.data,
+          focusGhosted: neighborhoodFocus.ghostedEdgeIds.has(edge.id),
+        },
+      };
+    }),
+    [document.edges, neighborhoodFocus],
   );
+
+  useEffect(() => {
+    if (!selectedNodeIds.length) {
+      setNeighborhoodFocusEnabled(false);
+    }
+  }, [selectedNodeIds.length]);
+
+  const stopPlaybackTimer = useCallback(() => {
+    if (playbackTimerRef.current) {
+      clearInterval(playbackTimerRef.current);
+      playbackTimerRef.current = null;
+    }
+  }, []);
+
+  const advancePlayback = useCallback((mode = 'step') => {
+    if (!playbackStepCount) return;
+    setPlayback((current) => {
+      const currentIndex = current.active ? current.stepIndex : null;
+      const next = nextFlowPlaybackIndex(currentIndex, playbackStepCount);
+      return {
+        active: true,
+        isPlaying: mode === 'play' && !next.complete,
+        stepIndex: next.index,
+        pathId: playbackSequence.pathId,
+      };
+    });
+  }, [playbackSequence.pathId, playbackStepCount]);
+
+  const playFlow = useCallback(() => {
+    if (!playbackStepCount) return;
+    setPlayback((current) => ({
+      active: true,
+      isPlaying: true,
+      stepIndex: current.active ? Math.min(current.stepIndex, playbackStepCount - 1) : 0,
+      pathId: playbackSequence.pathId,
+    }));
+  }, [playbackSequence.pathId, playbackStepCount]);
+
+  const pauseFlow = useCallback(() => {
+    stopPlaybackTimer();
+    setPlayback((current) => ({ ...current, isPlaying: false }));
+  }, [stopPlaybackTimer]);
+
+  const resetFlowPlayback = useCallback(() => {
+    stopPlaybackTimer();
+    setPlayback({ active: false, isPlaying: false, stepIndex: 0, pathId: null });
+  }, [stopPlaybackTimer]);
+
+  const stepFlow = useCallback(() => {
+    stopPlaybackTimer();
+    advancePlayback('step');
+  }, [advancePlayback, stopPlaybackTimer]);
+
+  useEffect(() => {
+    stopPlaybackTimer();
+    if (!playback.isPlaying || !playbackStepCount) return undefined;
+    playbackTimerRef.current = setInterval(() => {
+      advancePlayback('play');
+    }, FLOW_PLAYBACK_TICK_MS);
+    return stopPlaybackTimer;
+  }, [advancePlayback, playback.isPlaying, playbackStepCount, stopPlaybackTimer]);
 
   useEffect(() => {
     if (!onRegisterContextSnapshot || !document.flow) return undefined;
@@ -380,6 +563,247 @@ function FlowEditorInner({
     }
   }, [checkpoint, document, selectPath, selectedNodeIds, selectedPathId]);
 
+  const viewportCenter = useCallback(() => {
+    if (!instance) return { x: 80, y: 80 };
+    const rect = globalThis.document?.getElementById('flow-editor-canvas')?.getBoundingClientRect();
+    return instance.screenToFlowPosition({
+      x: (rect?.left ?? 0) + (rect?.width ?? 600) / 2,
+      y: (rect?.top ?? 0) + (rect?.height ?? 400) / 2,
+    });
+  }, [instance]);
+
+  const revealFlowNode = useCallback((nodeId, position = null) => {
+    if (!nodeId) return;
+    commitSelectedNodeIds([nodeId]);
+    setInspectorOpen(true);
+    if (position && instance?.setCenter) {
+      const x = position.x + 120;
+      const y = position.y + 60;
+      void instance.setCenter(x, y, {
+        zoom: Math.max(instance.getZoom?.() ?? 1, 0.85),
+        duration: 400,
+      });
+    }
+  }, [commitSelectedNodeIds, instance]);
+
+  useEffect(() => {
+    if (!pendingRevealStudioId) return;
+    const existingNode = document.nodes.find((node) =>
+      node.type === 'artifact'
+      && node.data?.artifactType === 'studio'
+      && (node.artifactId === pendingRevealStudioId || node.data?.artifactId === pendingRevealStudioId));
+    if (existingNode) {
+      revealFlowNode(existingNode.id, existingNode.position);
+      setStudioActionStatus('Child Studio node revealed');
+    } else {
+      setStudioActionStatus('Child Studio is not on this exploration yet');
+    }
+    onStudioNodeRevealed?.(pendingRevealStudioId);
+  }, [document.nodes, onStudioNodeRevealed, pendingRevealStudioId, revealFlowNode]);
+
+  const buildStudioSelectionPayload = useCallback(() => ({
+    title: studioSelectionTitle,
+    focalQuestion: studioContext?.focalQuestion ?? '',
+    artifactIds: studioSelectedArtifactIds,
+    summary: studioSelectionNodes
+      .map((node) => flowNodeDisplayTitle(node, cardsById))
+      .filter(Boolean)
+      .join('\n'),
+    constraints: [{
+      source: 'flow_selection',
+      flowId,
+      selectedPathId: selectedPath?.id ?? null,
+      selectedNodeIds: studioSelectionNodes.map((node) => node.id),
+      nodes: studioSelectionNodes.map((node) => ({
+        id: node.id,
+        type: node.type,
+        title: flowNodeDisplayTitle(node, cardsById),
+        artifactId: node.artifactId ?? node.data?.artifactId ?? null,
+        localNodeType: node.data?.localNodeType ?? null,
+      })),
+      edges: studioSelectionEdges.map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        label: edge.label ?? edge.data?.label ?? null,
+      })),
+    }],
+    expectedOutputs: studioContext?.expectedOutputs ?? [],
+  }), [
+    cardsById,
+    flowId,
+    selectedPath?.id,
+    studioContext,
+    studioSelectedArtifactIds,
+    studioSelectionEdges,
+    studioSelectionNodes,
+    studioSelectionTitle,
+  ]);
+
+  const projectChildStudioNode = useCallback((childCard, childOverview = null) => {
+    const cardForNode = childCard ?? studioCardLikeFromOverview(childOverview);
+    if (!cardForNode) {
+      return {
+        status: 'failed',
+        reason: 'Child Studio created, but no canvas card or overview was returned.',
+      };
+    }
+    const existingNode = findStudioNodeForCard(document.nodes, cardForNode);
+    if (existingNode) {
+      return {
+        status: 'existing',
+        nodeId: existingNode.id,
+        position: existingNode.position,
+      };
+    }
+    const sourceId = selectedPath?.stepIds?.at?.(-1) ?? studioSelectionNodes[0]?.id ?? null;
+    const sourceNode = sourceId ? nodesById.get(sourceId) : null;
+    const position = childStudioNodePosition(sourceNode, viewportCenter());
+    const childNode = buildChildStudioNode(cardForNode, position);
+    if (!childNode) {
+      return {
+        status: 'failed',
+        reason: 'Child Studio created, but the Flow node could not be built.',
+      };
+    }
+    checkpoint();
+    document.setNodes((nodes) => [...nodes, childNode]);
+    const edge = buildChildStudioEdge(sourceId, childNode.id);
+    if (edge) {
+      document.setEdges((edges) => [...edges, edge]);
+    }
+    return {
+      status: childCard ? 'inserted' : 'inserted_from_overview',
+      nodeId: childNode.id,
+      position: childNode.position,
+    };
+  }, [
+    checkpoint,
+    document,
+    nodesById,
+    selectedPath,
+    studioSelectionNodes,
+    viewportCenter,
+  ]);
+
+  useEffect(() => {
+    if (!pendingRestoreStudio?.studioId || document.status.loading) return;
+    let cancelled = false;
+    const { studioId, childCard = null, childOverview = null } = pendingRestoreStudio;
+    const finish = () => {
+      if (!cancelled) onRestoreStudioComplete?.(studioId);
+    };
+    const existingNode = document.nodes.find((node) =>
+      node.type === 'artifact'
+      && node.data?.artifactType === 'studio'
+      && flowNodeStudioArtifactId(node) === studioId);
+    if (existingNode) {
+      revealFlowNode(existingNode.id, existingNode.position);
+      setStudioActionStatus('Child Studio node revealed');
+      finish();
+      return () => { cancelled = true; };
+    }
+    const projection = projectChildStudioNode(childCard, childOverview);
+    if (projection?.nodeId) {
+      revealFlowNode(projection.nodeId, projection.position);
+      setStudioActionStatus('Child Studio restored on this exploration');
+      void document.flushSave().finally(finish);
+    } else {
+      setStudioActionStatus(projection?.reason || 'Child Studio could not be restored on this exploration');
+      finish();
+    }
+    return () => { cancelled = true; };
+  }, [
+    document.nodes,
+    document.status.loading,
+    document.flushSave,
+    onRestoreStudioComplete,
+    pendingRestoreStudio,
+    projectChildStudioNode,
+    revealFlowNode,
+  ]);
+
+  const handleCreateStudioContextPacket = useCallback(async () => {
+    if (!studioSelectionReady || !onCreateStudioContextPacket) return;
+    setStudioActionStatus('Saving context...');
+    try {
+      await onCreateStudioContextPacket(buildStudioSelectionPayload());
+      setStudioActionStatus('Context saved');
+    } catch (error) {
+      setStudioActionStatus(error.message || 'Context failed');
+    }
+  }, [buildStudioSelectionPayload, onCreateStudioContextPacket, studioSelectionReady]);
+
+  const handleInvokeChildStudio = useCallback(async (draft = {}) => {
+    if (!childStudioCreationReady || !onInvokeChildStudio) return;
+    setStudioActionStatus('Creating child Studio...');
+    try {
+      const useSelection = draft.useSelection !== false;
+      const selectionPayload = useSelection ? buildStudioSelectionPayload() : {
+        title: 'New child Studio',
+        focalQuestion: '',
+        artifactIds: [],
+        summary: '',
+        constraints: [{
+          source: 'flow_selection',
+          flowId,
+          selectedPathId: null,
+          selectedNodeIds: [],
+          nodes: [],
+          edges: [],
+        }],
+        expectedOutputs: [],
+      };
+      const title = String(draft.title ?? '').trim()
+        || (useSelection ? `${studioSelectionTitle} Studio` : `${studioContext?.studioTitle ?? 'Child'} Studio`);
+      const result = await onInvokeChildStudio({
+        ...selectionPayload,
+        title,
+        contextTitle: useSelection ? studioSelectionTitle : title,
+        goal: String(draft.goal ?? '').trim()
+          || studioContext?.focalQuestion
+          || (useSelection ? studioSelectionTitle : title),
+      });
+      const projection = projectChildStudioNode(result?.childCard, result?.childOverview);
+      if (projection.status === 'failed') {
+        setStudioActionStatus(projection.reason || 'Child Studio created; recover it from the dashboard.');
+        return;
+      }
+      revealFlowNode(projection.nodeId, projection.position);
+      setStudioActionStatus(projection.status === 'existing'
+        ? 'Child Studio node revealed'
+        : projection.status === 'inserted_from_overview'
+          ? 'Child Studio node created; card recoverable from dashboard'
+          : 'Child Studio node created');
+    } catch (error) {
+      setStudioActionStatus(error.message || 'Child Studio failed');
+    }
+  }, [
+    buildStudioSelectionPayload,
+    childStudioCreationReady,
+    flowId,
+    onInvokeChildStudio,
+    projectChildStudioNode,
+    revealFlowNode,
+    studioContext,
+    studioSelectionTitle,
+  ]);
+
+  const openChildStudioDialog = useCallback(() => {
+    setChildStudioDraft({
+      title: studioSelectionNodes.length ? `${studioSelectionTitle} Studio` : `${studioContext?.studioTitle ?? 'Child'} Studio`,
+      goal: studioContext?.focalQuestion ?? '',
+      useSelection: studioSelectionNodes.length > 0,
+    });
+    setChildStudioDialogOpen(true);
+  }, [studioContext, studioSelectionNodes.length, studioSelectionTitle]);
+
+  const submitChildStudioDialog = useCallback((event) => {
+    event.preventDefault();
+    setChildStudioDialogOpen(false);
+    void handleInvokeChildStudio(childStudioDraft);
+  }, [childStudioDraft, handleInvokeChildStudio]);
+
   const handleDuplicatePath = useCallback(() => {
     const path = document.paths.find((candidate) => candidate.id === selectedPathId);
     if (!path) return;
@@ -478,6 +902,36 @@ function FlowEditorInner({
     checkpoint();
     document.setNodes((nodes) => [...nodes, node]);
   }, [checkpoint, document]);
+
+  useEffect(() => {
+    if (!pendingPromotedArtifactId) return;
+    const existing = document.nodes.find((node) =>
+      node.type === 'artifact'
+      && (node.artifactId === pendingPromotedArtifactId || node.data?.artifactId === pendingPromotedArtifactId));
+    if (existing) {
+      revealFlowNode(existing.id, existing.position);
+      onPromotedArtifactProjected?.(pendingPromotedArtifactId);
+      return;
+    }
+    const cardToAdd = artifactCandidates.find((candidate) =>
+      artifactRefIdForClusterCard(candidate) === pendingPromotedArtifactId);
+    if (!cardToAdd) return;
+    const position = viewportCenter();
+    const node = newArtifactFlowNode(cardToAdd, position);
+    if (!node) return;
+    checkpoint();
+    document.setNodes((nodes) => [...nodes, node]);
+    revealFlowNode(node.id, node.position);
+    onPromotedArtifactProjected?.(pendingPromotedArtifactId);
+  }, [
+    artifactCandidates,
+    checkpoint,
+    document,
+    onPromotedArtifactProjected,
+    pendingPromotedArtifactId,
+    revealFlowNode,
+    viewportCenter,
+  ]);
 
   const removeEdgesById = useCallback((edgeIds) => {
     const ids = new Set(Array.isArray(edgeIds) ? edgeIds : [edgeIds]);
@@ -663,6 +1117,96 @@ function FlowEditorInner({
     onSelectedNodeIdsChange?.([node.id]);
   }, [agentModeActive, onSelectedNodeIdsChange]);
 
+  const openStudioNode = useCallback(async (node, options = {}) => {
+    if (node?.type !== 'artifact' || node.data?.artifactType !== 'studio') return false;
+    const studioId = node.data?.artifactId ?? node.artifactId;
+    if (!studioId || !onOpenStudioCard) return false;
+    const opened = await onOpenStudioCard(studioId, options);
+    if (!opened) {
+      setStudioActionStatus('Studio card could not be opened');
+      return false;
+    }
+    setStudioActionStatus(options.openPrimary === false ? 'Studio dashboard opened' : 'Child canvas opened');
+    return true;
+  }, [onOpenStudioCard]);
+
+  const handleNodeContextMenu = useCallback((event, node) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setNodeContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      nodeId: node.id,
+      isStudio: node.type === 'artifact' && node.data?.artifactType === 'studio',
+    });
+  }, []);
+
+  const beginRenameStudioNode = useCallback((node) => {
+    if (node?.type !== 'artifact' || node.data?.artifactType !== 'studio') return;
+    const studioId = flowNodeStudioArtifactId(node);
+    if (!studioId || !onRenameStudioNode) {
+      setStudioActionStatus(strings.flow.renameChildStudioUnavailable);
+      return;
+    }
+    const currentTitle = flowArtifactNodeDisplayTitle(node.data, cardsById.get(node.data?.cardId));
+    setStudioRenameDialog({ nodeId: node.id, title: currentTitle });
+  }, [cardsById, onRenameStudioNode]);
+
+  const submitRenameStudioDialog = useCallback(async (event) => {
+    event.preventDefault();
+    if (!studioRenameDialog) return;
+    const node = document.nodes.find((candidate) => candidate.id === studioRenameDialog.nodeId);
+    const title = studioRenameDialog.title.trim();
+    const currentTitle = node
+      ? flowArtifactNodeDisplayTitle(node.data, cardsById.get(node.data?.cardId))
+      : '';
+    if (!node || !title || title === currentTitle) {
+      setStudioRenameDialog(null);
+      return;
+    }
+    const studioId = flowNodeStudioArtifactId(node);
+    if (!studioId || !onRenameStudioNode) {
+      setStudioActionStatus(strings.flow.renameChildStudioUnavailable);
+      setStudioRenameDialog(null);
+      return;
+    }
+    try {
+      await onRenameStudioNode(studioId, title);
+      updateNode(node.id, {
+        data: {
+          title,
+          displayFilename: title,
+        },
+      }, { checkpoint: true });
+      setStudioActionStatus('Child Studio renamed');
+    } catch (error) {
+      setStudioActionStatus(error.message || strings.flow.renameChildStudioFailed);
+    } finally {
+      setStudioRenameDialog(null);
+    }
+  }, [
+    cardsById,
+    document.nodes,
+    onRenameStudioNode,
+    studioRenameDialog,
+    updateNode,
+  ]);
+
+  const archiveStudioNode = useCallback(async (node) => {
+    if (node?.type !== 'artifact' || node.data?.artifactType !== 'studio') return;
+    const studioId = node.data?.artifactId ?? node.artifactId;
+    if (!studioId || !onArchiveStudioNode) return;
+    const currentTitle = flowArtifactNodeDisplayTitle(node.data, cardsById.get(node.data?.cardId));
+    if (!window.confirm(`Archive ${currentTitle}?`)) return;
+    await onArchiveStudioNode(studioId);
+    checkpoint();
+    document.setNodes((nodes) => nodes.filter((candidate) => candidate.id !== node.id));
+    document.setEdges((edges) => edges.filter((edge) => edge.source !== node.id && edge.target !== node.id));
+    commitSelectedNodeIds([]);
+    setInspectorOpen(false);
+    setStudioActionStatus('Child Studio archived');
+  }, [cardsById, checkpoint, commitSelectedNodeIds, document, onArchiveStudioNode]);
+
   const revealInspectorForEdge = useCallback((edge) => {
     if (agentModeActive || !edge?.id) return;
     setSelectedPathId(null);
@@ -672,15 +1216,6 @@ function FlowEditorInner({
     setInspectorOpen(true);
     onSelectedNodeIdsChange?.([]);
   }, [agentModeActive, onSelectedNodeIdsChange]);
-
-  const viewportCenter = useCallback(() => {
-    if (!instance) return { x: 80, y: 80 };
-    const rect = globalThis.document?.getElementById('flow-editor-canvas')?.getBoundingClientRect();
-    return instance.screenToFlowPosition({
-      x: (rect?.left ?? 0) + (rect?.width ?? 600) / 2,
-      y: (rect?.top ?? 0) + (rect?.height ?? 400) / 2,
-    });
-  }, [instance]);
 
   const undo = () => {
     const previous = undoRef.current.pop();
@@ -721,7 +1256,8 @@ function FlowEditorInner({
     readOnly: agentModeActive,
     localNodeTypeColors: normalizeFlowLocalNodeTypeColors(document.flow?.localNodeTypeColors),
     setLocalNodeTypeColor,
-    pathRunStateByStepId,
+    pathRunStateByStepId: effectivePathRunStateByStepId,
+    focusGhostedNodeIds,
   };
 
   return (
@@ -731,6 +1267,144 @@ function FlowEditorInner({
       onPointerDown={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
     >
+      {childStudioDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <form
+            onSubmit={submitChildStudioDialog}
+            className="w-full max-w-sm rounded-lg border border-border bg-surface p-4 shadow-xl"
+          >
+            <div className="sans text-[10px] uppercase tracking-wider text-muted">Create child Studio</div>
+            <label className="sans mt-3 block text-[10px] uppercase tracking-wider text-muted">
+              Name
+              <input
+                value={childStudioDraft.title}
+                onChange={(event) => setChildStudioDraft((draft) => ({ ...draft, title: event.target.value }))}
+                autoFocus
+                className="mt-1 w-full rounded-md border border-border bg-canvas px-3 py-2 text-sm normal-case tracking-normal text-primary focus:outline-none focus:border-accent"
+              />
+            </label>
+            <label className="sans mt-3 block text-[10px] uppercase tracking-wider text-muted">
+              Goal / brief
+              <textarea
+                value={childStudioDraft.goal}
+                onChange={(event) => setChildStudioDraft((draft) => ({ ...draft, goal: event.target.value }))}
+                rows={3}
+                className="mt-1 w-full resize-none rounded-md border border-border bg-canvas px-3 py-2 text-sm normal-case tracking-normal text-primary focus:outline-none focus:border-accent"
+              />
+            </label>
+            <label className="sans mt-3 flex items-center gap-2 text-xs text-secondary">
+              <input
+                type="checkbox"
+                checked={childStudioDraft.useSelection && studioSelectionNodes.length > 0}
+                disabled={!studioSelectionNodes.length}
+                onChange={(event) => setChildStudioDraft((draft) => ({ ...draft, useSelection: event.target.checked }))}
+              />
+              Use current selection as context
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setChildStudioDialogOpen(false)}
+                className="sans rounded-full border border-border px-3 py-1.5 text-xs text-secondary hover:text-primary"
+              >
+                Cancel
+              </button>
+              <button type="submit" className="sans rounded-full bg-accent px-3 py-1.5 text-xs text-on-accent">
+                Create Studio
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {studioRenameDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <form
+            onSubmit={submitRenameStudioDialog}
+            className="w-full max-w-sm rounded-lg border border-border bg-surface p-4 shadow-xl"
+          >
+            <div className="sans text-[10px] uppercase tracking-wider text-muted">
+              {strings.flow.renameChildStudioTitle}
+            </div>
+            <label className="sans mt-3 block text-[10px] uppercase tracking-wider text-muted">
+              Name
+              <input
+                value={studioRenameDialog.title}
+                onChange={(event) => setStudioRenameDialog((dialog) => (
+                  dialog ? { ...dialog, title: event.target.value } : dialog
+                ))}
+                autoFocus
+                className="mt-1 w-full rounded-md border border-border bg-canvas px-3 py-2 text-sm normal-case tracking-normal text-primary focus:outline-none focus:border-accent"
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setStudioRenameDialog(null)}
+                className="sans rounded-full border border-border px-3 py-1.5 text-xs text-secondary hover:text-primary"
+              >
+                Cancel
+              </button>
+              <button type="submit" className="sans rounded-full bg-accent px-3 py-1.5 text-xs text-on-accent">
+                Rename
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {nodeContextMenu?.isStudio && (
+        <div
+          className="fixed z-50 min-w-40 rounded-md border border-border bg-surface p-1 shadow-xl"
+          style={{ left: nodeContextMenu.x, top: nodeContextMenu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              const node = document.nodes.find((candidate) => candidate.id === nodeContextMenu.nodeId);
+              setNodeContextMenu(null);
+              void openStudioNode(node, { openPrimary: true });
+            }}
+            className="sans flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-primary hover:bg-surface-muted"
+          >
+            <Network size={13} />
+            Open Child Canvas
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const node = document.nodes.find((candidate) => candidate.id === nodeContextMenu.nodeId);
+              setNodeContextMenu(null);
+              void openStudioNode(node, { openPrimary: false });
+            }}
+            className="sans flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-secondary hover:bg-surface-muted hover:text-primary"
+          >
+            <FileText size={13} />
+            Open Studio Dashboard
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const node = document.nodes.find((candidate) => candidate.id === nodeContextMenu.nodeId);
+              setNodeContextMenu(null);
+              beginRenameStudioNode(node);
+            }}
+            className="sans flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-secondary hover:bg-surface-muted hover:text-primary"
+          >
+            Rename
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const node = document.nodes.find((candidate) => candidate.id === nodeContextMenu.nodeId);
+              setNodeContextMenu(null);
+              void archiveStudioNode(node);
+            }}
+            className="sans flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-danger hover:bg-danger-muted"
+          >
+            Archive
+          </button>
+        </div>
+      )}
       {sidebarOpen && (
       <aside id="flow-sidebar" className="w-64 shrink-0 border-r border-border bg-surface flex flex-col min-h-0">
         <FlowSidebarSection
@@ -803,6 +1477,86 @@ function FlowEditorInner({
           </div>
           <button type="button" onClick={undo} disabled={!undoRef.current.length} className="p-2 text-muted hover:text-primary disabled:opacity-30" aria-label="Undo"><Undo2 size={15} /></button>
           <button type="button" onClick={redo} disabled={!redoRef.current.length} className="p-2 text-muted hover:text-primary disabled:opacity-30" aria-label="Redo"><Redo2 size={15} /></button>
+          {studioContext?.studioId && (
+            <div className="flex items-center gap-1 border-l border-border pl-2 ml-1">
+              <button
+                type="button"
+                onClick={handleCreateStudioContextPacket}
+                disabled={!studioSelectionReady || !onCreateStudioContextPacket}
+                aria-label="Create Studio context packet"
+                title="Create Studio context packet"
+                className="p-2 rounded-md border border-border text-muted transition hover:text-primary hover:bg-surface-muted disabled:opacity-30 disabled:pointer-events-none"
+              >
+                <FileText size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={openChildStudioDialog}
+                disabled={!childStudioCreationReady || !onInvokeChildStudio}
+                aria-label="Create child Studio"
+                title="Create child Studio"
+                className="p-2 rounded-md border border-border text-muted transition hover:text-primary hover:bg-surface-muted disabled:opacity-30 disabled:pointer-events-none"
+              >
+                <Network size={14} />
+              </button>
+              {studioActionStatus && (
+                <span className="sans max-w-32 truncate text-[10px] text-muted" title={studioActionStatus}>
+                  {studioActionStatus}
+                </span>
+              )}
+            </div>
+          )}
+          <div className="flex items-center gap-1 border-l border-border pl-2 ml-1">
+            <button
+              type="button"
+              onClick={playback.isPlaying ? pauseFlow : playFlow}
+              disabled={!playbackStepCount}
+              aria-label={playback.isPlaying ? strings.flow.pausePlayback : strings.flow.playPlayback}
+              title={playback.isPlaying ? strings.flow.pausePlayback : strings.flow.playPlayback}
+              className={`p-2 rounded-md border border-border transition disabled:opacity-30 disabled:pointer-events-none ${
+                playback.isPlaying ? 'text-accent bg-accent-muted/30' : 'text-muted hover:text-primary hover:bg-surface-muted'
+              }`}
+            >
+              {playback.isPlaying ? <Pause size={14} /> : <Play size={14} />}
+            </button>
+            <button
+              type="button"
+              onClick={stepFlow}
+              disabled={!playbackStepCount}
+              aria-label={strings.flow.stepPlayback}
+              title={strings.flow.stepPlayback}
+              className="p-2 rounded-md border border-border text-muted transition hover:text-primary hover:bg-surface-muted disabled:opacity-30 disabled:pointer-events-none"
+            >
+              <StepForward size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={resetFlowPlayback}
+              disabled={!playback.active}
+              aria-label={strings.flow.resetPlayback}
+              title={strings.flow.resetPlayback}
+              className="p-2 rounded-md border border-border text-muted transition hover:text-primary hover:bg-surface-muted disabled:opacity-30 disabled:pointer-events-none"
+            >
+              <RotateCcw size={14} />
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => setNeighborhoodFocusEnabled((enabled) => !enabled)}
+            disabled={!focusModeCanActivate}
+            aria-pressed={focusModeActive}
+            aria-label={focusModeActive ? strings.flow.disableNeighborhoodFocus : strings.flow.enableNeighborhoodFocus}
+            title={
+              focusModeCanActivate
+                ? (focusModeActive ? strings.flow.disableNeighborhoodFocus : strings.flow.enableNeighborhoodFocus)
+                : strings.flow.neighborhoodFocusDisabled
+            }
+            className={`p-2 transition disabled:opacity-30 disabled:hover:text-muted ${
+              focusModeActive ? 'text-accent' : 'text-muted hover:text-primary'
+            }`}
+          >
+            <Search size={15} />
+          </button>
           <button
             type="button"
             onClick={() => setSidebarOpen((open) => !open)}
@@ -861,7 +1615,9 @@ function FlowEditorInner({
             onSelectionChange={handleSelectionChange}
             onNodeClick={handleNodeClick}
             onNodeDoubleClick={(_, node) => revealInspectorForNode(node)}
+            onNodeContextMenu={handleNodeContextMenu}
             onEdgeDoubleClick={(_, edge) => revealInspectorForEdge(edge)}
+            onPaneClick={() => setNodeContextMenu(null)}
             onMoveEnd={(_, viewport) => document.setViewport(viewport)}
             onDrop={(event) => {
               event.preventDefault();
@@ -876,14 +1632,13 @@ function FlowEditorInner({
             deleteKeyCode={['Backspace', 'Delete']}
             multiSelectionKeyCode="Shift"
             selectionOnDrag
-            nodesDeletable
-            edgesDeletable
             colorMode="system"
           >
             <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--color-border)" />
             <FlowPathHullOverlay
               hulls={pathHulls}
               highlightedPathId={selectedPathId}
+              ghostedPathIds={focusGhostedPathIds}
               onHullSelect={selectPath}
               onStartPathMove={startPathMove}
               readOnly={agentModeActive}
@@ -1067,6 +1822,41 @@ function FlowEditorInner({
           </>
         ) : selectedNode?.type === 'artifact' ? (
           <div>
+            {selectedNode.data?.artifactType === 'studio' && (
+              <div className="mb-3 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => { void openStudioNode(selectedNode, { openPrimary: true }); }}
+                  className="sans w-full flex items-center justify-center gap-1.5 rounded-full border border-accent-border bg-accent-muted text-accent px-3 py-2 text-xs hover:bg-accent-muted/70 transition"
+                >
+                  <Network size={13} />
+                  Open Child Canvas
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { void openStudioNode(selectedNode, { openPrimary: false }); }}
+                  className="sans w-full rounded-full border border-border px-3 py-1.5 text-xs text-secondary hover:text-primary"
+                >
+                  Open Studio Dashboard
+                </button>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { beginRenameStudioNode(selectedNode); }}
+                    className="sans rounded-full border border-border px-3 py-1.5 text-xs text-secondary hover:text-primary"
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { void archiveStudioNode(selectedNode); }}
+                    className="sans rounded-full border border-danger-border px-3 py-1.5 text-xs text-danger hover:bg-danger-muted"
+                  >
+                    Archive
+                  </button>
+                </div>
+              </div>
+            )}
             <button
               type="button"
               onClick={() => toggleNodeContent(selectedNode)}

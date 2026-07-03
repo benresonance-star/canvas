@@ -73,6 +73,12 @@ import { deleteProjectArtifactPrimitive } from '../../lib/primitivesApi.js';
 import { commitProjectDocument } from '../../lib/projectDocumentCommit.js';
 import { createFlowArtifact } from '../flow/api/flowApi.js';
 import { flowCardFromDocument } from '../flow/domain/flowDocument.js';
+import { createStudio } from '../studio/api/studioApi.js';
+import {
+  patchStudioCard,
+  studioCardFromOverview,
+  studioIdFromCard,
+} from '../studio/domain/studioCard.js';
 import { createLiveArtifact } from '../live/api/liveApi.js';
 import { liveArtifactCardFromRecord } from '../live/domain/liveArtifact.js';
 import { createAgent } from '../agents/api/agentsApi.js';
@@ -423,6 +429,7 @@ export function useCanvasDocument({ refs, deps }) {
   const [savingTask, setSavingTask] = useState(false);
   const [savingLink, setSavingLink] = useState(false);
   const [savingFlow, setSavingFlow] = useState(false);
+  const [savingStudio, setSavingStudio] = useState(false);
   const [savingLive, setSavingLive] = useState(false);
   const [savingAgent, setSavingAgent] = useState(false);
   const [savingSonicStudio, setSavingSonicStudio] = useState(false);
@@ -1756,6 +1763,133 @@ export function useCanvasDocument({ refs, deps }) {
     stateRef,
   ]);
 
+  const handleSaveNewStudio = useCallback(async ({
+    title,
+    description = '',
+    studioKind = 'domain',
+    playbookId = 'builtin_generic_domain_studio',
+    position,
+  }) => {
+    const projectId = activeProjectIdRef.current;
+    if (!projectId) {
+      setSyncStatus({ error: 'Select a project before creating a Studio.' });
+      setTimeout(() => setSyncStatus(null), 5000);
+      return null;
+    }
+    setSavingStudio(true);
+    try {
+      const overview = await createStudio({
+        projectId,
+        title,
+        description,
+        studioKind,
+        playbookId,
+        createPrimarySurface: true,
+      });
+      const fallbackPosition = {
+        x: 100 + (stateRef.current.cards.length % 4) * 360,
+        y: 100 + Math.floor(stateRef.current.cards.length / 4) * 260,
+      };
+      const newCard = studioCardFromOverview(overview, position ?? fallbackPosition);
+      const nextState = {
+        ...stateRef.current,
+        cards: [...stateRef.current.cards, newCard],
+      };
+      stateRef.current = nextState;
+      setState(nextState);
+      registerOptimisticCard(projectId, newCard.id);
+      await commitProjectDocument(projectId, {
+        state: nextState,
+        stagedSyncCards: stagedSyncCardsRef.current,
+        reason: 'studio:create',
+        pushRemote: true,
+      });
+      setOpenCardId(newCard.id);
+      return newCard;
+    } catch (error) {
+      setSyncStatus({ error: error.message });
+      setTimeout(() => setSyncStatus(null), 5000);
+      return null;
+    } finally {
+      setSavingStudio(false);
+    }
+  }, [
+    activeProjectIdRef,
+    setState,
+    setSyncStatus,
+    stagedSyncCardsRef,
+    stateRef,
+  ]);
+
+  const handleEnsureStudioCard = useCallback(async (overview, {
+    position = null,
+    parentStudioTitle = null,
+    open = true,
+    reason = 'studio:ensure-card',
+  } = {}) => {
+    const studio = overview?.studio;
+    const studioId = studio?.id;
+    if (!studioId) return null;
+    const projectId = activeProjectIdRef.current;
+    const cards = stateRef.current.cards ?? [];
+    const existing = cards.find((card) => studioIdFromCard(card) === studioId);
+    const enrichedOverview = parentStudioTitle
+      ? { ...overview, parentStudioTitle }
+      : overview;
+    if (existing) {
+      const updates = patchStudioCard(existing, enrichedOverview);
+      const nextCard = { ...existing, ...updates };
+      const nextState = {
+        ...stateRef.current,
+        cards: cards.map((card) => (card.id === existing.id ? nextCard : card)),
+      };
+      stateRef.current = nextState;
+      setState(nextState);
+      if (projectId) {
+        await commitProjectDocument(projectId, {
+          state: nextState,
+          stagedSyncCards: stagedSyncCardsRef.current,
+          reason,
+          pushRemote: true,
+        });
+      }
+      if (open) setOpenCardId(nextCard.id);
+      return nextCard;
+    }
+    const fallbackPosition = {
+      x: 140 + (cards.length % 4) * 360,
+      y: 140 + Math.floor(cards.length / 4) * 260,
+    };
+    const newCard = studioCardFromOverview(
+      enrichedOverview,
+      position ?? fallbackPosition,
+      { parentStudioTitle },
+    );
+    if (!newCard) return null;
+    const nextState = {
+      ...stateRef.current,
+      cards: [...cards, newCard],
+    };
+    stateRef.current = nextState;
+    setState(nextState);
+    if (projectId) {
+      registerOptimisticCard(projectId, newCard.id);
+      await commitProjectDocument(projectId, {
+        state: nextState,
+        stagedSyncCards: stagedSyncCardsRef.current,
+        reason,
+        pushRemote: true,
+      });
+    }
+    if (open) setOpenCardId(newCard.id);
+    return newCard;
+  }, [
+    activeProjectIdRef,
+    setState,
+    stagedSyncCardsRef,
+    stateRef,
+  ]);
+
   const handleSaveNewLive = useCallback(async ({ position, ...input }) => {
     const projectId = activeProjectIdRef.current;
     if (!projectId) return null;
@@ -2138,6 +2272,7 @@ export function useCanvasDocument({ refs, deps }) {
     savingTask,
     savingLink,
     savingFlow,
+    savingStudio,
     savingLive,
     savingAgent,
     savingSonicStudio,
@@ -2176,6 +2311,8 @@ export function useCanvasDocument({ refs, deps }) {
     handleSaveNewTask,
     handleSaveNewLink,
     handleSaveNewFlow,
+    handleSaveNewStudio,
+    handleEnsureStudioCard,
     handleSaveNewLive,
     handleSaveNewAgent,
     handleSaveNewBeatAgent,

@@ -131,6 +131,12 @@ describe('isTextMarkdownPreviewType', () => {
     ).toBe('music | SONIC STUDIO');
   });
 
+  it('cardHeaderLabel shows child studio context for child studio cards', () => {
+    expect(
+      cardHeaderLabel({ type: 'studio', prefix: 'studios', parentStudioId: 'parent-1' }),
+    ).toBe('studios | CHILD STUDIO');
+  });
+
   it('cardHeaderLabel omits file extension from header', () => {
     const card = {
       type: 'code',
@@ -193,6 +199,16 @@ describe('isCardMissingFromFolder', () => {
         folderConnected: true,
         folderKeySet: new Set(['notes__a']),
         card: { key: 'links__example-com', type: 'bookmark', prefix: 'links' },
+      }),
+    ).toBe(false);
+  });
+
+  it('does not flag studio cards when absent from folder scan', () => {
+    expect(
+      isCardMissingFromFolder({
+        folderConnected: true,
+        folderKeySet: new Set(['notes__a']),
+        card: { key: 'studios__studio-1', type: 'studio', prefix: 'studios' },
       }),
     ).toBe(false);
   });

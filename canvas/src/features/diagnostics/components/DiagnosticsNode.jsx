@@ -2,27 +2,38 @@ import React, { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 
 const NODE_VISUAL_CLASS = {
-  current: 'border-accent bg-surface shadow-md ring-1 ring-accent/30',
-  path: 'border-[var(--color-diagnostics-path)] bg-surface shadow-sm ring-1 ring-[color-mix(in_srgb,var(--color-diagnostics-path)_35%,transparent)]',
+  current: 'shadow-md',
+  path: 'shadow-sm',
   quiet: 'border-border bg-surface',
 };
 
+function layerToneClass(nodeDef, role) {
+  if (role !== 'current' && role !== 'path') return '';
+  const layer = `diagnostics-node--layer-${nodeDef.layer}`;
+  return role === 'current'
+    ? `${layer} diagnostics-node--focus`
+    : `${layer} diagnostics-node--highlighted`;
+}
+
+const HIDDEN_HANDLE_CLASS = '!opacity-0 !pointer-events-none !bg-transparent !border-0 !w-2 !h-2';
+
 function DiagnosticsNodeComponent({ data, selected }) {
-  const { nodeDef, visualRole, highlighted } = data;
+  const { nodeDef, visualRole, highlighted, ghosted } = data;
   const role = visualRole ?? (highlighted || selected ? 'current' : 'quiet');
   const active = role !== 'quiet' || selected;
+  const toneClass = layerToneClass(nodeDef, role);
   return (
     <div
       className={`diagnostics-node rounded-md border px-2 py-1.5 w-[200px] transition-shadow ${
         NODE_VISUAL_CLASS[role] ?? NODE_VISUAL_CLASS.quiet
-      } ${selected ? 'ring-2 ring-primary/30' : ''}`}
+      } ${toneClass} ${ghosted ? 'diagnostics-node--ghosted' : ''}`}
     >
-      <Handle type="target" position={Position.Top} id="top" className="!bg-muted !w-2 !h-2" />
-      <Handle type="source" position={Position.Top} id="top-source" className="!bg-muted !w-2 !h-2" />
-      <Handle type="target" position={Position.Left} id="left" className="!bg-muted !w-2 !h-2" />
-      <Handle type="source" position={Position.Left} id="left-source" className="!bg-muted !w-2 !h-2" />
+      <Handle type="target" position={Position.Top} id="top" className={HIDDEN_HANDLE_CLASS} />
+      <Handle type="source" position={Position.Top} id="top-source" className={HIDDEN_HANDLE_CLASS} />
+      <Handle type="target" position={Position.Left} id="left" className={HIDDEN_HANDLE_CLASS} />
+      <Handle type="source" position={Position.Left} id="left-source" className={HIDDEN_HANDLE_CLASS} />
       <p className={`sans text-[10px] uppercase tracking-wider ${
-        role === 'path' ? 'text-[var(--color-diagnostics-path)]' : 'text-muted'
+        role === 'current' ? 'text-primary' : role === 'path' ? 'text-secondary' : 'text-muted'
       }`}
       >
         {nodeDef.layer.replace('client-', '')}
@@ -34,10 +45,10 @@ function DiagnosticsNodeComponent({ data, selected }) {
         {nodeDef.label}
       </p>
       <p className="sans text-[10px] text-secondary line-clamp-2 mt-1 leading-snug">{nodeDef.purpose}</p>
-      <Handle type="source" position={Position.Bottom} id="bottom" className="!bg-muted !w-2 !h-2" />
-      <Handle type="target" position={Position.Bottom} id="bottom-target" className="!bg-muted !w-2 !h-2" />
-      <Handle type="source" position={Position.Right} id="right" className="!bg-muted !w-2 !h-2" />
-      <Handle type="target" position={Position.Right} id="right-target" className="!bg-muted !w-2 !h-2" />
+      <Handle type="source" position={Position.Bottom} id="bottom" className={HIDDEN_HANDLE_CLASS} />
+      <Handle type="target" position={Position.Bottom} id="bottom-target" className={HIDDEN_HANDLE_CLASS} />
+      <Handle type="source" position={Position.Right} id="right" className={HIDDEN_HANDLE_CLASS} />
+      <Handle type="target" position={Position.Right} id="right-target" className={HIDDEN_HANDLE_CLASS} />
     </div>
   );
 }

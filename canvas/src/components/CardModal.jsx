@@ -109,6 +109,15 @@ export function CardModal({
   const isBookmark = card?.type === 'bookmark';
   const isFlow = card?.type === 'flow';
   const isSpreadsheet = card?.type === 'spreadsheet';
+  const parentStudioCard = card?.type === 'studio' && card.parentStudioId
+    ? cards.find((candidate) => {
+      const pinned = candidate.versions?.find((candidateVersion) => candidateVersion.version === candidate.pinnedVersion)
+        ?? candidate.versions?.[0];
+      return candidate.studioId === card.parentStudioId
+        || pinned?.studioId === card.parentStudioId
+        || pinned?.artifactRef?.id === card.parentStudioId;
+    }) ?? null
+    : null;
   const noteEditBlocked = missingFromFolder && (userNoteDisabled || userTaskDisabled);
   const { viewer: spreadsheetViewer, setViewer: setSpreadsheetViewer } = useSpreadsheetViewerPreference();
 
@@ -498,9 +507,33 @@ export function CardModal({
             />
           ) : !isFlow ? (
             <div className={`serif text-xl truncate ${missingFromFolder ? 'text-danger' : ''}`}>
-              {cardDisplayFilename(card)}
+              {card.type === 'studio' && card.parentStudioId ? (
+                <span className="inline-flex min-w-0 max-w-full items-center gap-2">
+                  {parentStudioCard && onFocusCard ? (
+                    <button
+                      type="button"
+                      onClick={() => onFocusCard(parentStudioCard.id)}
+                      className="min-w-0 truncate text-on-overlay/70 hover:text-on-overlay"
+                      title={`Open ${card.parentStudioTitle ?? parentStudioCard.name}`}
+                    >
+                      {card.parentStudioTitle ?? parentStudioCard.name}
+                    </button>
+                  ) : (
+                    <span className="min-w-0 truncate text-on-overlay/70">
+                      {card.parentStudioTitle ?? 'Parent Studio'}
+                    </span>
+                  )}
+                  <span className="sans text-sm text-on-overlay/40">/</span>
+                  <span className="min-w-0 truncate">{card.name}</span>
+                </span>
+              ) : cardDisplayFilename(card)}
             </div>
           ) : null}
+          {card.type === 'studio' && card.parentStudioId && card.parentStudioTitle && (
+            <p className="sans text-[10px] text-on-overlay/60 mt-1">
+              Parent Studio: {card.parentStudioTitle}
+            </p>
+          )}
           {isUserNote && (
             <p className="sans text-[10px] text-on-overlay/60 mt-1">{strings.userNote.editHint}</p>
           )}

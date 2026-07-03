@@ -321,6 +321,238 @@ export const ARCHITECTURE_ACTIONS = [
       },
     ],
   },
+  {
+    id: 'image_agent_generation',
+    label: 'Image agent generation',
+    steps: [
+      {
+        edgeIds: ['pipe-agentControlRoom-resolveAgentReferenceImages'],
+        activeNodeIds: ['agentControlRoom', 'resolveAgentReferenceImages'],
+        label: 'Resolve references',
+        description: 'Control room loads reference image bytes from folder, cache, or artifacts.',
+        codeRef: 'src/features/agents/domain/referenceImages.js',
+      },
+      {
+        edgeIds: ['pipe-agentControlRoom-apiAgents'],
+        activeNodeIds: ['agentControlRoom', 'apiAgents'],
+        label: 'Run agent',
+        description: 'User clicks Run; client POSTs execute with prompt, references, and settings.',
+        codeRef: 'src/features/agents/api/agentsApi.js',
+      },
+      {
+        edgeIds: ['pipe-apiAgents-agentExecutionRunner', 'pipe-agentExecutionRunner-imageTransformer'],
+        activeNodeIds: ['apiAgents', 'agentExecutionRunner', 'imageTransformer'],
+        label: 'Server transform',
+        description: 'Execution runner records the run and invokes the image transformer.',
+        codeRef: 'server/services/agentExecutionRunner.js',
+      },
+      {
+        edgeIds: ['pipe-imageTransformer-gemini', 'pipe-imageTransformer-openaiImage'],
+        activeNodeIds: ['imageTransformer', 'gemini', 'openaiImage'],
+        label: 'Image provider',
+        description: 'Transformer routes to Gemini or OpenAI image APIs based on agent settings.',
+        codeRef: 'server/services/imageTransformer.js',
+      },
+      {
+        edgeIds: ['pipe-agentExecutionRunner-dbAgentExecution', 'pipe-agentExecutionRunner-dbArtifact'],
+        activeNodeIds: ['agentExecutionRunner', 'dbAgentExecution', 'dbArtifact'],
+        label: 'Persist outputs',
+        description: 'Execution row, relationships, and generated image artifacts saved in Postgres.',
+        codeRef: 'server/repositories/executions.js',
+      },
+      {
+        edgeIds: ['pipe-apiAgents-completeAgentImageGeneration'],
+        activeNodeIds: ['apiAgents', 'completeAgentImageGeneration'],
+        label: 'Client completion',
+        description: 'Execute response returns output artifacts to the control room handler.',
+        codeRef: 'src/features/agents/components/AgentControlRoom.jsx',
+      },
+      {
+        edgeIds: [
+          'pipe-completeAgentImageGeneration-userFolder',
+          'pipe-completeAgentImageGeneration-useCanvasDocument',
+        ],
+        activeNodeIds: ['completeAgentImageGeneration', 'userFolder', 'useCanvasDocument'],
+        label: 'Folder + cards',
+        description: 'Generated PNGs write to generated/ folder and image cards append to canvas.',
+        codeRef: 'src/features/agents/domain/completeAgentImageGeneration.js',
+      },
+      {
+        edgeIds: ['pipe-completeAgentImageGeneration-apiPrimitives'],
+        activeNodeIds: ['completeAgentImageGeneration', 'apiPrimitives'],
+        label: 'Graph wires',
+        description: 'created_by_agent relationships link agent artifact to each output image.',
+        codeRef: 'src/features/agents/domain/wireAgentOutputImages.js',
+      },
+    ],
+  },
+  {
+    id: 'create_studio',
+    label: 'Create studio',
+    steps: [
+      {
+        edgeIds: ['pipe-addMenu-createStudioDialog'],
+        activeNodeIds: ['addMenu', 'createStudioDialog'],
+        label: 'Open studio dialog',
+        description: 'User picks Add studio from the Add menu.',
+        codeRef: 'src/components/AddMenu.jsx',
+      },
+      {
+        edgeIds: ['pipe-createStudioDialog-useCanvasDocument'],
+        activeNodeIds: ['createStudioDialog', 'useCanvasDocument'],
+        label: 'Submit form',
+        description: 'Dialog passes title, playbook, and canvas position to handleSaveNewStudio.',
+        codeRef: 'src/features/canvas/useCanvasDocument.js',
+      },
+      {
+        edgeIds: ['pipe-useCanvasDocument-apiStudios-create'],
+        activeNodeIds: ['useCanvasDocument', 'apiStudios'],
+        label: 'POST /studios',
+        description: 'Server creates studio artifact, primary surface, and overview payload.',
+        codeRef: 'src/features/studio/api/studioApi.js',
+      },
+      {
+        edgeIds: ['pipe-apiStudios-dbStudio'],
+        activeNodeIds: ['apiStudios', 'dbStudio'],
+        label: 'Persist studio',
+        description: 'Inserts studio, artifact, surface, and playbook rows in Postgres.',
+        codeRef: 'server/repositories/studios.js',
+      },
+      {
+        edgeIds: ['pipe-useCanvasDocument-idbProjects', 'pipe-useCanvasDocument-actionSync'],
+        activeNodeIds: ['useCanvasDocument', 'idbProjects', 'actionSync'],
+        label: 'Cache + sync',
+        description: 'Appends studio card locally and requests structural sync push.',
+        codeRef: 'src/lib/persistence.js',
+      },
+      {
+        edgeIds: [
+          'pipe-actionSync-commitProjectDocument',
+          'pipe-commitProjectDocument-projectSyncDocument',
+          'pipe-projectSyncDocument-apiCanvasProjects',
+          'pipe-apiCanvasProjects-dbCanvasProjectDocument',
+        ],
+        activeNodeIds: ['actionSync', 'commitProjectDocument', 'projectSyncDocument', 'apiCanvasProjects', 'dbCanvasProjectDocument'],
+        label: 'Push to server',
+        description: 'Commit gate flushes project JSON with new studio card to Postgres.',
+        codeRef: 'src/lib/sync/projectSyncDocument.js',
+      },
+    ],
+  },
+  {
+    id: 'create_sonic_studio',
+    label: 'Create sonic studio',
+    steps: [
+      {
+        edgeIds: ['pipe-addMenu-createSonicStudioDialog'],
+        activeNodeIds: ['addMenu', 'createSonicStudioDialog'],
+        label: 'Open sonic dialog',
+        description: 'User picks Add Sonic Studio from the Add menu.',
+        codeRef: 'src/components/AddMenu.jsx',
+      },
+      {
+        edgeIds: ['pipe-createSonicStudioDialog-useCanvasDocument'],
+        activeNodeIds: ['createSonicStudioDialog', 'useCanvasDocument'],
+        label: 'Create card',
+        description: 'handleSaveNewSonicStudio builds default engine state and appends sonic_studio card.',
+        codeRef: 'src/features/sonicStudio/domain/sonicStudioCard.js',
+      },
+      {
+        edgeIds: ['pipe-useCanvasDocument-idbProjects', 'pipe-useCanvasDocument-actionSync'],
+        activeNodeIds: ['useCanvasDocument', 'idbProjects', 'actionSync'],
+        label: 'Cache + sync',
+        description: 'Saves project JSON to IDB and requests structural sync push.',
+        codeRef: 'src/lib/persistence.js',
+      },
+      {
+        edgeIds: [
+          'pipe-actionSync-commitProjectDocument',
+          'pipe-commitProjectDocument-projectSyncDocument',
+          'pipe-projectSyncDocument-apiCanvasProjects',
+          'pipe-apiCanvasProjects-dbCanvasProjectDocument',
+        ],
+        activeNodeIds: ['actionSync', 'commitProjectDocument', 'projectSyncDocument', 'apiCanvasProjects', 'dbCanvasProjectDocument'],
+        label: 'Push to server',
+        description: 'Commit gate flushes project JSON with new Sonic Studio card to Postgres.',
+        codeRef: 'src/lib/sync/projectSyncDocument.js',
+      },
+    ],
+  },
+  {
+    id: 'invoke_child_studio',
+    label: 'Invoke child studio',
+    steps: [
+      {
+        edgeIds: ['pipe-studioDashboard-flowEditor'],
+        activeNodeIds: ['studioDashboard', 'flowEditor'],
+        label: 'Open parent exploration',
+        description: 'Studio dashboard opens primary Exploration surface.',
+        codeRef: 'src/features/studio/components/StudioDashboard.jsx',
+      },
+      {
+        edgeIds: ['pipe-flowEditor-apiStudios'],
+        activeNodeIds: ['flowEditor', 'apiStudios'],
+        label: 'Invoke child',
+        description: 'Flow selection POSTs invoke-child with context packet payload.',
+        codeRef: 'src/features/flow/components/FlowEditor.jsx',
+      },
+      {
+        edgeIds: ['pipe-apiStudios-dbStudio'],
+        activeNodeIds: ['apiStudios', 'dbStudio'],
+        label: 'Persist child studio',
+        description: 'Server creates child studio, surface, context packet, and step rows.',
+        codeRef: 'server/repositories/studios.js',
+      },
+      {
+        edgeIds: ['pipe-useCanvasDocument-apiStudios-create'],
+        activeNodeIds: ['useCanvasDocument', 'apiStudios'],
+        label: 'Ensure child card',
+        description: 'Parent hook ensures child studio card on project canvas.',
+        codeRef: 'src/features/canvas/useCanvasDocument.js',
+      },
+      {
+        edgeIds: ['pipe-flowEditor-apiFlows', 'pipe-apiFlows-dbFlowDocument'],
+        activeNodeIds: ['flowEditor', 'apiFlows', 'dbFlowDocument'],
+        label: 'Project flow node',
+        description: 'Client projects child studio node and flushSave persists flow_document.',
+        codeRef: 'src/features/flow/domain/flowStudioProjection.js',
+      },
+    ],
+  },
+  {
+    id: 'restore_child_studio',
+    label: 'Restore child studio',
+    steps: [
+      {
+        edgeIds: ['pipe-studioDashboard-apiStudios'],
+        activeNodeIds: ['studioDashboard', 'apiStudios'],
+        label: 'Restore request',
+        description: 'Dashboard POST restore on archived child studio.',
+        codeRef: 'src/features/studio/components/StudioDashboard.jsx',
+      },
+      {
+        edgeIds: ['pipe-apiStudios-dbStudio'],
+        activeNodeIds: ['apiStudios', 'dbStudio'],
+        label: 'Clear archived_at',
+        description: 'Server clears archive flag and appends StateTransitioned event.',
+        codeRef: 'server/repositories/studios.js',
+      },
+      {
+        edgeIds: ['pipe-apiStudios-apiFlows-restore', 'pipe-apiFlows-dbFlowDocument'],
+        activeNodeIds: ['apiStudios', 'apiFlows', 'dbFlowDocument'],
+        label: 'Re-insert flow node',
+        description: 'Restore ensures child node exists on parent primary flow when missing.',
+        codeRef: 'server/repositories/studios.js',
+      },
+      {
+        edgeIds: ['pipe-studioDashboard-flowEditor', 'pipe-flowEditor-apiFlows'],
+        activeNodeIds: ['studioDashboard', 'flowEditor', 'apiFlows'],
+        label: 'Reveal on exploration',
+        description: 'Opens primary surface and client re-projects or reveals restored node.',
+        codeRef: 'src/features/flow/components/FlowEditor.jsx',
+      },
+    ],
+  },
 ];
 
 export function getArchitectureActionById(id) {
@@ -337,6 +569,16 @@ export function getActionTouchedNodeIds(action) {
   if (!action?.steps?.length) return ids;
   for (const step of action.steps) {
     for (const nodeId of step.activeNodeIds ?? []) ids.add(nodeId);
+  }
+  return ids;
+}
+
+/** @param {import('./architectureGraphSchema.js').ArchitectureActionDef | null | undefined} action */
+export function getActionTouchedEdgeIds(action) {
+  const ids = new Set();
+  if (!action?.steps?.length) return ids;
+  for (const step of action.steps) {
+    for (const edgeId of step.edgeIds ?? []) ids.add(edgeId);
   }
   return ids;
 }

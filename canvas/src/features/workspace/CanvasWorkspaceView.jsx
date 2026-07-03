@@ -59,6 +59,8 @@ import { RightDock } from '../../components/RightDock.jsx';
 import { CreateClusterDialog } from '../../components/CreateClusterDialog.jsx';
 import { CreateFlowDialog } from '../flow/components/CreateFlowDialog.jsx';
 import { patchFlowCard } from '../flow/domain/flowDocument.js';
+import { CreateStudioDialog } from '../studio/components/CreateStudioDialog.jsx';
+import { StudioDashboard } from '../studio/components/StudioDashboard.jsx';
 import { CreateLiveArtifactDialog } from '../live/components/CreateLiveArtifactDialog.jsx';
 import { CreateAgentDialog } from '../agents/components/CreateAgentDialog.jsx';
 import { AgentControlRoom } from '../agents/components/AgentControlRoom.jsx';
@@ -174,6 +176,7 @@ export function CanvasWorkspaceView({
     savingTask,
     savingLink,
     savingFlow,
+    savingStudio,
     savingLive,
     savingAgent,
     savingSonicStudio,
@@ -204,6 +207,8 @@ export function CanvasWorkspaceView({
     handleSaveNewTask,
     handleSaveNewLink,
     handleSaveNewFlow,
+    handleSaveNewStudio,
+    handleEnsureStudioCard,
     handleSaveNewLive,
     handleSaveNewAgent,
     handleSaveNewBeatAgent,
@@ -557,6 +562,7 @@ export function CanvasWorkspaceView({
   const [createAgentOpen, setCreateAgentOpen] = useState(false);
   const [createBeatAgentOpen, setCreateBeatAgentOpen] = useState(false);
   const [createSonicStudioOpen, setCreateSonicStudioOpen] = useState(false);
+  const [createStudioOpen, setCreateStudioOpen] = useState(false);
   const isMobile = useIsMobile();
   const [createFlowOpen, setCreateFlowOpen] = useState(false);
   const [deleteLinkTarget, setDeleteLinkTarget] = useState(null);
@@ -599,6 +605,9 @@ export function CanvasWorkspaceView({
       case 'sonic':
         setCreateSonicStudioOpen(true);
         break;
+      case 'studio':
+        setCreateStudioOpen(true);
+        break;
       case 'beat':
         setCreateBeatAgentOpen(true);
         break;
@@ -626,6 +635,7 @@ export function CanvasWorkspaceView({
   }, [
     setAddLinkOpen,
     setCreateBeatAgentOpen,
+    setCreateStudioOpen,
     setCreateSonicStudioOpen,
     setCreateAgentOpen,
     setCreateLiveOpen,
@@ -1553,6 +1563,21 @@ export function CanvasWorkspaceView({
         />
       )}
 
+      {createStudioOpen && (
+        <CreateStudioDialog
+          saving={savingStudio}
+          onClose={() => setCreateStudioOpen(false)}
+          onSave={async (values) => {
+            const position = consumeCardPosition({
+              mode: 'center',
+              offset: { x: -190, y: -140 },
+            });
+            const card = await handleSaveNewStudio({ ...values, position });
+            if (card) setCreateStudioOpen(false);
+          }}
+        />
+      )}
+
       {createSonicStudioOpen && (
         <CreateSonicStudioDialog
           saving={savingSonicStudio}
@@ -1732,6 +1757,36 @@ export function CanvasWorkspaceView({
             }
             updateCard(openCard.id, updates);
           }}
+          customContent={openCard.type === 'studio' ? (
+            <StudioDashboard
+              card={openCard}
+              artifactCandidates={state.cards}
+              folderHandle={folderHandle}
+              projectId={effectiveProjectId}
+              onRehydratePreview={rehydratePreview}
+              onEnsureStudioCard={handleEnsureStudioCard}
+              onOpenStudioCard={(studioId) => {
+                const card = state.cards.find((candidate) => {
+                  const pinned = candidate.versions?.find((version) => version.version === candidate.pinnedVersion)
+                    ?? candidate.versions?.[0];
+                  return candidate.studioId === studioId || pinned?.studioId === studioId || pinned?.artifactRef?.id === studioId;
+                });
+                if (card) {
+                  setOpenCardId(card.id);
+                  setActiveCardId(card.id);
+                }
+                return card ?? null;
+              }}
+              onRemoveStudioCard={(studioId) => {
+                const card = state.cards.find((candidate) => {
+                  const pinned = candidate.versions?.find((version) => version.version === candidate.pinnedVersion)
+                    ?? candidate.versions?.[0];
+                  return candidate.studioId === studioId || pinned?.studioId === studioId || pinned?.artifactRef?.id === studioId;
+                });
+                if (card) void removeCard(card.id);
+              }}
+            />
+          ) : null}
           onInspectArtifact={openInspector}
           onFocusCard={(id) => {
             setOpenCardId(id);

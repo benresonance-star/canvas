@@ -6,7 +6,9 @@ import {
 } from './flowLocalNodeTypeColors.js';
 import {
   FLOW_LOCAL_NODE_TYPE_ARTIFACT,
+  FLOW_LOCAL_NODE_TYPE_CHILD_STUDIO,
   flowLocalNodeTypeMeta,
+  flowNodeColorTypeMeta,
   normalizeFlowLocalNodeType,
 } from './flowLocalNodeTypes.js';
 
@@ -14,7 +16,12 @@ import {
  * @param {object | null | undefined} node
  */
 export function flowPreviewNodeTypeId(node) {
-  if (node?.type === 'artifact') return FLOW_LOCAL_NODE_TYPE_ARTIFACT;
+  if (node?.type === 'artifact') {
+    if (node?.artifactType === 'studio' || node?.data?.artifactType === 'studio') {
+      return FLOW_LOCAL_NODE_TYPE_CHILD_STUDIO;
+    }
+    return FLOW_LOCAL_NODE_TYPE_ARTIFACT;
+  }
   return normalizeFlowLocalNodeType(node?.localNodeType);
 }
 
@@ -31,7 +38,7 @@ export function flowPreviewColors(preview) {
  */
 export function flowPreviewNodePresentation(node, colors) {
   const typeId = flowPreviewNodeTypeId(node);
-  const meta = flowLocalNodeTypeMeta(typeId);
+  const meta = flowNodeColorTypeMeta(typeId);
   const headerColor = resolveFlowLocalNodeTypeColor(colors, typeId);
   const darkText = flowLocalNodeHeaderUsesDarkText(headerColor);
 

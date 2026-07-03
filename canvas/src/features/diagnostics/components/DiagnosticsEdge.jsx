@@ -49,24 +49,29 @@ export function DiagnosticsEdge({
   });
 
   const role = edgeVisualRole(data);
-  const flowing = data?.flowing === true;
+  const ghosted = data?.ghosted === true;
+  const flowing = data?.flowing === true && !ghosted;
   const activeEdgeClass = flowing
     ? [
       'flow-preview-edge--animated',
       'diagnostics-edge-active',
       data?.flowSpeed === 'slow' ? 'diagnostics-edge-path-slow' : null,
     ].filter(Boolean).join(' ')
-    : 'diagnostics-edge-quiet';
+    : ghosted
+      ? 'diagnostics-edge-ghosted'
+      : 'diagnostics-edge-quiet';
 
   const labelRoleClass = role === 'current'
     ? 'diagnostics-edge-label--current'
     : role === 'path'
       ? 'diagnostics-edge-label--path'
-      : 'diagnostics-edge-label--quiet';
+      : ghosted
+        ? 'diagnostics-edge-label--ghosted'
+        : 'diagnostics-edge-label--quiet';
 
   return (
     <>
-      {role === 'quiet' && (
+      {role === 'quiet' && !ghosted && (
         <BaseEdge
           id={`${id}-halo`}
           path={edgePath}
@@ -81,12 +86,12 @@ export function DiagnosticsEdge({
       <BaseEdge
         id={id}
         path={edgePath}
-        markerEnd={flowing ? markerEnd : undefined}
+        markerEnd={ghosted ? undefined : markerEnd}
         style={{
           ...style,
           stroke: EDGE_STROKE[role],
-          strokeWidth: EDGE_WIDTH[role],
-          opacity: role === 'quiet' ? 0.72 : 1,
+          strokeWidth: ghosted ? 0.75 : EDGE_WIDTH[role],
+          opacity: ghosted ? 0.1 : role === 'quiet' ? 0.25 : 1,
         }}
         className={activeEdgeClass}
       />
@@ -97,8 +102,10 @@ export function DiagnosticsEdge({
           labelY={labelY}
           label={label}
           className={labelRoleClass}
-          zIndex={1000 + (data?.busLane ?? 0)}
+          zIndex={1000 + (data?.busLane ?? 0) + (data?.overviewMode ? 2000 : 0)}
           onAnchorChange={data.onRouteAnchorChange}
+          onEdgeLabelDragStart={data.onEdgeLabelDragStart}
+          onEdgeLabelDragEnd={data.onEdgeLabelDragEnd}
         />
       )}
     </>

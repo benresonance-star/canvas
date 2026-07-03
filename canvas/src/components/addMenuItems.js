@@ -3,6 +3,7 @@ import {
   Link2,
   ListTodo,
   Music,
+  Network,
   RadioTower,
   SlidersHorizontal,
   StickyNote,
@@ -12,6 +13,7 @@ import { strings } from '../content/strings.js';
 
 export const ADD_MENU_ITEM_IDS = [
   'sonic',
+  'studio',
   'beat',
   'agent',
   'live',
@@ -51,6 +53,13 @@ export function buildAddMenuItems({
       id: 'sonic',
       label: strings.addMenu.addSonicStudio,
       icon: SlidersHorizontal,
+      disabled: projectDisabled,
+      disabledReason: projectReason,
+    },
+    {
+      id: 'studio',
+      label: strings.addMenu.addStudio,
+      icon: Network,
       disabled: projectDisabled,
       disabledReason: projectReason,
     },

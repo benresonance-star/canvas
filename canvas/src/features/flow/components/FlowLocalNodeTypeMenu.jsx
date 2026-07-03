@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   FLOW_LOCAL_NODE_TYPES,
+  FLOW_NODE_COLOR_TYPES,
   normalizeFlowLocalNodeType,
 } from '../domain/flowLocalNodeTypes.js';
 import { resolveFlowLocalNodeTypeColor } from '../domain/flowLocalNodeTypeColors.js';
@@ -21,10 +22,11 @@ export function FlowLocalNodeTypeMenu({
 }) {
   const normalizedSelected = normalizeFlowLocalNodeType(selectedTypeId);
   const showColors = Boolean(onColorChange);
+  const menuTypes = showColors ? FLOW_NODE_COLOR_TYPES : FLOW_LOCAL_NODE_TYPES;
 
   return (
     <div role="listbox" aria-label={ariaLabel} className="space-y-0.5">
-      {FLOW_LOCAL_NODE_TYPES.map((type) => {
+      {menuTypes.map((type) => {
         const Icon = type.icon;
         const selected = normalizedSelected === type.id;
         const color = resolveFlowLocalNodeTypeColor(localNodeTypeColors, type.id);

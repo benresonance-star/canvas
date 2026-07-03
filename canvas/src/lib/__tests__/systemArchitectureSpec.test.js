@@ -43,7 +43,7 @@ describe('systemArchitectureSpec', () => {
     expect(md).toContain('spec_canvas_state` is a secondary');
   });
 
-  it('documents entity storage for projects, graph, and agent chat', () => {
+  it('documents entity storage for projects, graph, agent chat, and studios', () => {
     const ids = ARCHITECTURE_ENTITY_STORAGE.map((e) => e.id);
     expect(ids).toContain('projects');
     expect(ids).toContain('clusters');
@@ -53,6 +53,8 @@ describe('systemArchitectureSpec', () => {
     expect(ids).toContain('urls');
     expect(ids).toContain('agent-chats');
     expect(ids).toContain('sync-dock');
+    expect(ids).toContain('flows');
+    expect(ids).toContain('studios');
 
     const md = buildArchitectureMarkdown();
     expect(md).toContain('## Entity storage');
@@ -60,6 +62,10 @@ describe('systemArchitectureSpec', () => {
     expect(md).toContain('artifactPlacements');
     expect(md).toContain('stageAgentChatCard');
     expect(md).toContain('canvas-previews');
+    expect(md).toContain('## Nested studios (current)');
+    expect(md).toContain('POST /studios/:studioId/restore');
+    expect(md).toContain('child_studio');
+    expect(md).toContain('canvas_nested_studio_system_spec_v1.md');
   });
 
   it('buildArchitectureMarkdown includes runtime when provided', () => {

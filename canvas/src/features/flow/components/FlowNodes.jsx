@@ -10,7 +10,12 @@ import {
 } from '../../../lib/constants.js';
 import { defaultFlowNodePreviewSize, flowArtifactNodeDisplayTitle, UNTITLED_FLOW_STEP_TITLE } from '../domain/flowDocument.js';
 import { flowLocalNodeHeaderUsesDarkText, resolveFlowLocalNodeTypeColor } from '../domain/flowLocalNodeTypeColors.js';
-import { flowLocalNodeTypeMeta } from '../domain/flowLocalNodeTypes.js';
+import {
+  FLOW_LOCAL_NODE_TYPE_ARTIFACT,
+  FLOW_LOCAL_NODE_TYPE_CHILD_STUDIO,
+  flowLocalNodeTypeMeta,
+  flowNodeColorTypeMeta,
+} from '../domain/flowLocalNodeTypes.js';
 import { flowNodeActorMetas } from '../domain/flowNodeActors.js';
 import { useFlowEditorContext } from './FlowEditorContext.jsx';
 import { FlowNodeActorIcons } from './FlowNodeActorIcons.jsx';
@@ -31,11 +36,12 @@ function useCollapsedNodeInternals(nodeId, showContent, syncKey) {
 }
 
 function FlowNodeWrapper({ nodeId, children }) {
-  const { pathRunStateByStepId } = useFlowEditorContext();
+  const { focusGhostedNodeIds, pathRunStateByStepId } = useFlowEditorContext();
   const isCurrent = pathRunStateByStepId?.get(nodeId) === 'current';
+  const isGhosted = Boolean(focusGhostedNodeIds?.has(nodeId));
 
   return (
-    <div className="relative">
+    <div className={`relative flow-node-focus-wrapper${isGhosted ? ' flow-node-focus-wrapper--ghosted' : ''}`}>
       {isCurrent ? (
         <div
           className="absolute right-full top-1/2 -translate-y-1/2 mr-1.5 pointer-events-none z-10"
@@ -241,11 +247,16 @@ export function ArtifactFlowNode({ id, data, selected }) {
   const onToggle = useShowContentToggle(id, 'artifact', data, card);
   const displayTitle = flowArtifactNodeDisplayTitle(data, card);
   const agentScoped = Boolean(agentScopedNodeIds?.has(id));
-  const typeMeta = flowLocalNodeTypeMeta('artifact');
-  const headerColor = resolveFlowLocalNodeTypeColor(localNodeTypeColors, 'artifact');
+  const isChildStudio = data.artifactType === 'studio';
+  const colorTypeId = isChildStudio ? FLOW_LOCAL_NODE_TYPE_CHILD_STUDIO : FLOW_LOCAL_NODE_TYPE_ARTIFACT;
+  const typeMeta = flowNodeColorTypeMeta(colorTypeId);
+  const headerColor = resolveFlowLocalNodeTypeColor(localNodeTypeColors, colorTypeId);
   const textClass = headerTextClass(headerColor);
   const mutedClass = headerMutedTextClass(headerColor);
   const internalsKey = `${displayTitle}:${JSON.stringify(data.actors ?? [])}:${showContent}`;
+  const artifactReferenceLabel = data.artifactType === 'studio'
+    ? (data.description === 'Child Studio' ? 'Child Studio' : 'Studio')
+    : 'Live artifact reference';
 
   useCollapsedNodeInternals(id, showContent, internalsKey);
 
@@ -259,7 +270,7 @@ export function ArtifactFlowNode({ id, data, selected }) {
             <StepRunStateBadge nodeId={id} headerColor={headerColor} />
             <span className="break-words" title={displayTitle}>{displayTitle}</span>
           </div>
-          <div className={`sans text-[9px] uppercase tracking-wider mt-1 ${mutedClass}`}>Live artifact reference</div>
+          <div className={`sans text-[9px] uppercase tracking-wider mt-1 ${mutedClass}`}>{artifactReferenceLabel}</div>
         </div>
         <ContentToggleButton
           showContent={showContent}

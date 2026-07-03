@@ -46,7 +46,7 @@ export function reduceSimulation(state, action, payload = {}) {
     case 'selectNode':
       return { ...state, selectedNodeId: payload.nodeId ?? null, selectedPipeId: null };
     case 'selectPipe':
-      return { ...state, selectedPipeId: payload.pipeId ?? null, selectedNodeId: null };
+      return { ...state, selectedPipeId: payload.pipeId ?? null };
     default:
       return state;
   }

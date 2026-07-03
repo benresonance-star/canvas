@@ -158,4 +158,19 @@ describe('ArtifactFlowNode', () => {
     expect(html).not.toContain('max-w-64');
     expect(html).toContain('w-max');
   });
+
+  it('labels child studio artifact nodes clearly', () => {
+    const html = renderArtifactNode({
+      data: {
+        title: 'Review Deep Dive',
+        cardId: 'card-1',
+        actors: ['human'],
+        artifactType: 'studio',
+        description: 'Child Studio',
+      },
+    });
+    expect(html).toContain('Child Studio');
+    expect(html).not.toContain('Live artifact reference');
+    expect(html).toContain('background-color:#7c3aed');
+  });
 });

@@ -20,6 +20,7 @@ function parseJson(value, fallback) {
 export function defaultCapabilitiesForArtifactType(type) {
   if (type === 'agent') return ['canRun', 'canProduceArtifacts', 'canReference'];
   if (type === 'flow') return ['canHaveState', 'canContain', 'canReference'];
+  if (type === 'studio') return ['canHaveState', 'canContain', 'canReference', 'canRun', 'canReview'];
   if (type === 'live') return ['canRun', 'canVersion', 'canHaveState'];
   if (type === 'image') return ['canReview', 'canTransform', 'canBranch', 'canReference'];
   if (type === 'audio' || type === 'video') return ['canReview', 'canTransform', 'canReference'];

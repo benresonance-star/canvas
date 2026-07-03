@@ -136,11 +136,108 @@ export function getArchitectureNeighborhood(nodeId, pipes) {
 }
 
 /**
+ * All upstream feeders (transitive) following pipe direction target ← source.
+ * @param {string | null | undefined} nodeId
+ * @param {import('./architectureGraphSchema.js').ArchitecturePipeDef[]} pipes
+ * @param {{ minDepth?: number }} [options]
+ */
+export function getArchitectureUpstreamFeed(nodeId, pipes, { minDepth = 1 } = {}) {
+  const nodeIds = new Set();
+  const edgeIds = new Set();
+  if (!nodeId) return { nodeIds, edgeIds };
+
+  /** @type {Map<string, number>} */
+  const depthByNode = new Map([[nodeId, 0]]);
+  /** @type {string[]} */
+  const queue = [nodeId];
+
+  while (queue.length) {
+    const current = queue.shift();
+    const currentDepth = depthByNode.get(current) ?? 0;
+    for (const pipe of pipes) {
+      if (pipe.target !== current) continue;
+      edgeIds.add(pipe.id);
+      const feeder = pipe.source;
+      const nextDepth = currentDepth + 1;
+      if (!depthByNode.has(feeder) || nextDepth < depthByNode.get(feeder)) {
+        depthByNode.set(feeder, nextDepth);
+        queue.push(feeder);
+      }
+      if (nextDepth >= minDepth) {
+        nodeIds.add(feeder);
+      }
+    }
+  }
+
+  return { nodeIds, edgeIds };
+}
+
+/**
+ * @typedef {{ nodeId: string, label: string }} ArchitectureFeedStep
+ * @typedef {{ pipeId: string, pipeLabel: string, steps: ArchitectureFeedStep[] }} ArchitectureFeedPath
+ * @typedef {{ input: import('./architectureGraphSchema.js').ArchitectureIO, paths: ArchitectureFeedPath[] }} ArchitectureInputFeedSequence
+ */
+
+/**
+ * Longest upstream chain ending at nodeId (pipe direction source → target).
+ * @param {string} nodeId
+ * @param {import('./architectureGraphSchema.js').ArchitecturePipeDef[]} pipes
+ * @param {(id: string) => import('./architectureGraphSchema.js').ArchitectureNodeDef | undefined} getNodeById
+ * @returns {ArchitectureFeedStep[]}
+ */
+function getLongestUpstreamChain(nodeId, pipes, getNodeById) {
+  const incoming = pipes.filter((pipe) => pipe.target === nodeId);
+  const node = getNodeById(nodeId);
+  const selfStep = { nodeId, label: node?.label ?? nodeId };
+
+  if (incoming.length === 0) return [selfStep];
+
+  let best = [];
+  for (const pipe of incoming) {
+    const chain = getLongestUpstreamChain(pipe.source, pipes, getNodeById);
+    if (chain.length > best.length) best = chain;
+  }
+  return [...best, selfStep];
+}
+
+/**
+ * Upstream feed paths for each declared input on a node (one path per incoming pipe).
+ * @param {string | null | undefined} nodeId
+ * @param {import('./architectureGraphSchema.js').ArchitecturePipeDef[]} pipes
+ * @param {(id: string) => import('./architectureGraphSchema.js').ArchitectureNodeDef | undefined} getNodeById
+ * @returns {ArchitectureInputFeedSequence[]}
+ */
+export function getArchitectureInputFeedSequences(nodeId, pipes, getNodeById) {
+  if (!nodeId) return [];
+  const node = getNodeById(nodeId);
+  if (!node?.inputs?.length) return [];
+
+  const incomingPipes = pipes.filter((pipe) => pipe.target === nodeId);
+  const targetNode = getNodeById(nodeId);
+  const targetStep = { nodeId, label: targetNode?.label ?? nodeId };
+
+  const paths = incomingPipes.map((pipe) => {
+    const feederChain = getLongestUpstreamChain(pipe.source, pipes, getNodeById);
+    return {
+      pipeId: pipe.id,
+      pipeLabel: pipe.pipeLabel,
+      steps: [...feederChain, targetStep],
+    };
+  });
+
+  return node.inputs.map((input) => ({
+    input,
+    paths,
+  }));
+}
+
+/**
  * System overview selection: focus node (current) + touched neighbors (path).
  * @param {string | null | undefined} selectedNodeId
  * @param {import('./architectureGraphSchema.js').ArchitecturePipeDef[]} pipes
+ * @param {{ extendedFeedIn?: boolean }} [options]
  */
-export function getOverviewHighlight(selectedNodeId, pipes) {
+export function getOverviewHighlight(selectedNodeId, pipes, { extendedFeedIn = false } = {}) {
   const empty = {
     currentNodeIds: new Set(),
     currentEdgeIds: new Set(),
@@ -149,11 +246,20 @@ export function getOverviewHighlight(selectedNodeId, pipes) {
   };
   if (!selectedNodeId) return empty;
   const neighborhood = getArchitectureNeighborhood(selectedNodeId, pipes);
+  const pathNodeIds = new Set(neighborhood.nodeIds);
+  const pathEdgeIds = new Set(neighborhood.edgeIds);
+
+  if (extendedFeedIn) {
+    const secondaryFeed = getArchitectureUpstreamFeed(selectedNodeId, pipes, { minDepth: 2 });
+    for (const id of secondaryFeed.nodeIds) pathNodeIds.add(id);
+    for (const id of secondaryFeed.edgeIds) pathEdgeIds.add(id);
+  }
+
   return {
     currentNodeIds: new Set([selectedNodeId]),
     currentEdgeIds: new Set(),
-    pathNodeIds: neighborhood.nodeIds,
-    pathEdgeIds: neighborhood.edgeIds,
+    pathNodeIds,
+    pathEdgeIds,
   };
 }
 

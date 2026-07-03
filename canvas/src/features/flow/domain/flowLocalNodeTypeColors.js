@@ -1,18 +1,20 @@
 import { audioSkinUsesDarkText, normalizeAudioSkinColor } from '../../../lib/audioSkin.js';
 import {
   FLOW_LOCAL_NODE_TYPE_ARTIFACT,
-  FLOW_LOCAL_NODE_TYPES,
+  FLOW_LOCAL_NODE_TYPE_CHILD_STUDIO,
+  FLOW_NODE_COLOR_TYPES,
   normalizeFlowLocalNodeType,
 } from './flowLocalNodeTypes.js';
 
 /** @type {Record<string, string>} */
 export const FLOW_LOCAL_NODE_TYPE_DEFAULT_COLORS = Object.freeze(
-  Object.fromEntries(FLOW_LOCAL_NODE_TYPES.map((type) => {
+  Object.fromEntries(FLOW_NODE_COLOR_TYPES.map((type) => {
     switch (type.id) {
       case 'artifact': return [type.id, '#2563eb'];
       case 'action': return [type.id, '#d97706'];
       case 'decision': return [type.id, '#059669'];
       case 'external_resource': return [type.id, '#dc2626'];
+      case 'child_studio': return [type.id, '#7c3aed'];
       default: return [type.id, '#2563eb'];
     }
   })),
@@ -35,7 +37,7 @@ export function normalizeFlowLocalNodeTypeColors(value) {
   if (!source || typeof source !== 'object' || Array.isArray(source)) {
     return { ...FLOW_LOCAL_NODE_TYPE_DEFAULT_COLORS };
   }
-  for (const type of FLOW_LOCAL_NODE_TYPES) {
+  for (const type of FLOW_NODE_COLOR_TYPES) {
     const raw = /** @type {Record<string, unknown>} */ (source)[type.id];
     const hex = normalizeAudioSkinColor(raw);
     normalized[type.id] = hex ?? FLOW_LOCAL_NODE_TYPE_DEFAULT_COLORS[type.id];
@@ -49,6 +51,10 @@ export function normalizeFlowLocalNodeTypeColors(value) {
  */
 export function resolveFlowLocalNodeTypeColor(colors, typeId) {
   const normalized = normalizeFlowLocalNodeTypeColors(colors);
+  if (typeId === FLOW_LOCAL_NODE_TYPE_CHILD_STUDIO) {
+    return normalized[FLOW_LOCAL_NODE_TYPE_CHILD_STUDIO]
+      ?? FLOW_LOCAL_NODE_TYPE_DEFAULT_COLORS[FLOW_LOCAL_NODE_TYPE_CHILD_STUDIO];
+  }
   const id = normalizeFlowLocalNodeType(typeId);
   return normalized[id] ?? FLOW_LOCAL_NODE_TYPE_DEFAULT_COLORS[FLOW_LOCAL_NODE_TYPE_ARTIFACT];
 }
@@ -59,7 +65,9 @@ export function resolveFlowLocalNodeTypeColor(colors, typeId) {
  * @param {unknown} nextColor
  */
 export function patchFlowLocalNodeTypeColor(colors, typeId, nextColor) {
-  const id = normalizeFlowLocalNodeType(typeId);
+  const id = typeId === FLOW_LOCAL_NODE_TYPE_CHILD_STUDIO
+    ? FLOW_LOCAL_NODE_TYPE_CHILD_STUDIO
+    : normalizeFlowLocalNodeType(typeId);
   const hex = normalizeAudioSkinColor(nextColor);
   if (!hex) return normalizeFlowLocalNodeTypeColors(colors);
   return {

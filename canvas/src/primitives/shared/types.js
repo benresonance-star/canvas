@@ -19,6 +19,7 @@ export const ARTIFACT_TYPES = [
   'agent',
   'agent_chat',
   'flow',
+  'studio',
   'live',
   'exploration',
   'run',

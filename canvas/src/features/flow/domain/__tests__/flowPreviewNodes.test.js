@@ -9,6 +9,7 @@ import {
 describe('flowPreviewNodes', () => {
   it('flowPreviewNodeTypeId maps artifact nodes to artifact type', () => {
     expect(flowPreviewNodeTypeId({ type: 'artifact' })).toBe('artifact');
+    expect(flowPreviewNodeTypeId({ type: 'artifact', artifactType: 'studio' })).toBe('child_studio');
     expect(flowPreviewNodeTypeId({ type: 'local', localNodeType: 'decision' })).toBe('decision');
   });
 

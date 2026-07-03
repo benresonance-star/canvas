@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.07.03.1
-**Version label:** base-artifact-schema
+**Version:** 2026.07.03.2
+**Version label:** concentrate-layouts
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -631,6 +631,39 @@ Rules:
 - Current path step shows a white left-pointing indicator on the node (`FlowNodeWrapper` in `FlowNodes.jsx`); path hull fills use 50% opacity with no stroke
 - Agent context can include selected exploration nodes via `useFlowAgentContext`
 - Exploration agent mode UI (`flowAgentUiPersistence.js`) persists per-card last thread and panel section layout; restored when agent mode is re-enabled on that exploration card
+- **`child_studio`** local node type (purple) and studio artifact nodes project nested child studios via `flowStudioProjection.js`; archive/restore syncs parent primary flow nodes server-side
+
+### Nested studios (shipped)
+
+Bounded sub-canvases with playbooks, primary Exploration surfaces, child invoke, archive/restore, and promotion queue. Design detail: [`Specs/canvas_nested_studio_system_spec_v1.md`](../../Specs/canvas_nested_studio_system_spec_v1.md).
+
+Tables (studio migrations + `artifact` rows typed `studio`):
+
+- `studio` — title, playbook, parent link, state, team config
+- `studio_surface` — links studio to primary/additional `flow_document` artifacts
+- `studio_context_packet`, `studio_step`, `studio_candidate`, `studio_promotion` — invoke context, run history, promotion workflow
+
+API (`server/routes/studios.js`):
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/studios` | Create studio + primary surface |
+| GET | `/studios/:studioId/overview` | Dashboard payload (surfaces, children, archived children) |
+| POST | `/studios/:studioId/invoke-child` | Create child studio from parent selection |
+| POST | `/studios/:studioId/archive` | Archive studio; removes child node from parent primary flow |
+| POST | `/studios/:studioId/restore` | Restore studio; re-inserts child node on parent primary flow when missing |
+
+Client (`src/features/studio/`):
+
+- `studio` cards on project canvas; `StudioDashboard.jsx` for surfaces, child list, archived restore, promotions
+- `FlowEditor.jsx` inside studio primary surface — invoke child, rename/archive studio nodes
+- `flowStudioProjection.js` — build/project child studio nodes; restore re-projects when node missing
+
+Rules:
+
+- Studio layout authority is `studio` + `flow_document` tables, not project canvas JSON (except studio card placement)
+- Archiving a child studio removes its node from the parent's primary Exploration (`flow_node` / `flow_edge`) and bumps flow revision
+- Restoring clears `artifact.archived_at`, lists child under active children again, and ensures parent flow node exists
 
 ### Agent templates (shipped)
 
@@ -1036,19 +1069,26 @@ node scripts/reset-workspace-db.mjs
 
 Fullscreen interactive architecture graph for humans and agents. Source: `src/lib/architecture/*`; UI: `src/features/diagnostics/*`.
 
+**Dual renderer:** React Flow **2D** (default) and WebGL **3D** (React Three Fiber) share `useDiagnosticsGraphProjection` — same simulation, selection, and focus modes. Overview wire routing uses global `sessionStorage` anchors (`canvas-diagnostics-edge-anchors`). **3D concentrate mode** persists per-action node positions and wire anchors to Postgres (`diagnostics_concentrate_layout`) with a localStorage cache (`diagnosticsConcentrateLayoutPersistence.js`); entering concentrate interpolates toward the saved layout. Toolbar **Box/Layers** toggle switches 2D/3D. The 3D view uses frosted glass node panels (`src/features/diagnostics/webgl/*`); 2D styling is unchanged.
+
 | Entry | Path |
 |-------|------|
 | Open | System architecture modal → **Open diagnostics canvas** |
 | Graph data | `lib/architecture/architectureGraphData.js` |
-| Actions | `lib/architecture/architectureActions.js` (7 user-flow simulations) |
-| Tests | `npm test -- --run src/lib/architecture` |
+| Projection | `features/diagnostics/hooks/useDiagnosticsGraphProjection.js` |
+| 3D layout | `lib/architecture/diagnosticsLayout3d.js`, `diagnosticsEdgeGeometry.js` |
+| Actions | `lib/architecture/architectureActions.js` (12 user-flow simulations including `system_overview`, `create_studio`, `create_sonic_studio`, `invoke_child_studio`, `restore_child_studio`) |
+| Route parity | `lib/architecture/architectureRouteParity.js` + `architectureRouteManifest.js` (must cover every `register*Routes` in `server/index.js`) |
+| Tests | `npm test -- --run src/lib/architecture src/features/diagnostics/hooks/__tests__/useDiagnosticsGraphProjection.test.js` |
 
 **Graph maintenance checklist (PR):**
 
-1. New API route → add graph node + `architectureRouteManifest.js` entry.
+1. New API route → add graph node + `architectureRouteManifest.js` entry (verified by `architectureRouteParity` test).
 2. New cross-module call → add pipe with `dataFlow`, `pipeLabel`, `trigger`, `why`.
 3. New user action path → add or extend action steps in `architectureActions.js`.
-4. Run architecture tests; bump `ARCHITECTURE_SPEC_VERSION` when behavior changes.
+4. Studio/flow/archive behavior → update nested studios section + `systemArchitectureSpec.js` feature copy.
+5. Highlight/focus behavior → update `useDiagnosticsGraphProjection` and verify **both** 2D and 3D renderers.
+6. Run architecture + diagnostics projection tests; bump `ARCHITECTURE_SPEC_VERSION` when behavior changes.
 
 ---
 
@@ -1192,6 +1232,21 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-07-03 — Diagnostics concentrate layout persistence (implemented)
+
+- Bumped app architecture spec to `2026-07-03-concentrate-layouts` in `systemArchitectureSpec.js` (invalidates prior concentrate layout rows keyed to older spec versions).
+- Migration `0023_diagnostics_concentrate_layouts.sql`: workspace-global `diagnostics_concentrate_layout` table (`action_id`, `spec_version`, `node_overrides`, `edge_anchors`).
+- API `GET|PUT /canvas/diagnostics/concentrate-layouts/:actionId` (+ list by `specVersion`); graph nodes `apiDiagnosticsConcentrateLayouts` / `dbDiagnosticsConcentrateLayout`.
+- Client: `diagnosticsConcentrateLayoutPersistence.js` (localStorage cache + debounced server sync), `useConcentrateActionLayout` hook; 3D concentrate enter/exit interpolates toward saved node positions; action-scoped wire anchors overlay global sessionStorage anchors in concentrate mode.
+
+### 2026-07-03 — Architecture docs + nested studios graph (implemented)
+
+- Bumped app architecture spec to `2026-07-03-nested-studios` in `systemArchitectureSpec.js`.
+- Documented nested studios in master spec, entity storage, API routes, and diagnostics graph (studio dashboard, flow editor, `/studios/*`).
+- Extended route manifest to all 18 mounted routers; added `architectureRouteParity.js` drift guards.
+- Added diagnostics actions `invoke_child_studio` and `restore_child_studio`; action count is 10 (including `system_overview`).
+- System architecture modal shows live runtime strip; diagnostics toolbar surfaces card/dock/folder metrics.
 
 ### 2026-07-03 — Base artifact schema + exploration agent selection context (implemented)
 

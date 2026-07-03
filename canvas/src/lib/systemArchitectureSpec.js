@@ -1,7 +1,7 @@
 /** Bump when architecture or shipped load behavior changes. */
 import { getArchitectureGraphManifest } from './architecture/index.js';
 
-export const ARCHITECTURE_SPEC_VERSION = '2026-07-03-base-artifact-schema';
+export const ARCHITECTURE_SPEC_VERSION = '2026-07-03-concentrate-layouts';
 
 export const ARCHITECTURE_LAYERS = [
   {
@@ -21,6 +21,7 @@ export const ARCHITECTURE_LAYERS = [
       'user-note-editing',
       'bookmark-editing',
       'flow-artifacts',
+      'nested-studios',
       'code-preview',
       'diagnostics-canvas',
     ],
@@ -29,15 +30,15 @@ export const ARCHITECTURE_LAYERS = [
     id: 'api',
     label: 'API',
     description:
-      'Express 5 — project documents, spec canvas layout, clusters/primitives, previews, agent chat, explorations, agent templates',
-    featureIds: ['revision-sync', 'previews-api', 'spec-canvas-dual-write', 'flow-artifacts', 'agent-templates'],
+      'Express 5 — project documents, spec canvas layout, clusters/primitives, previews, agent chat, explorations, studios, agent templates',
+    featureIds: ['revision-sync', 'previews-api', 'spec-canvas-dual-write', 'flow-artifacts', 'nested-studios', 'agent-templates'],
   },
   {
     id: 'data',
     label: 'Data',
     description:
       'Postgres — project JSON + spec tables; IndexedDB project cache + previews; localStorage for small prefs only',
-    featureIds: ['revision-sync', 'local-cache', 'previews-api', 'spec-canvas-dual-write', 'artifact-placements-map'],
+    featureIds: ['revision-sync', 'local-cache', 'previews-api', 'spec-canvas-dual-write', 'artifact-placements-map', 'nested-studios'],
   },
   {
     id: 'external',
@@ -187,9 +188,27 @@ export const ARCHITECTURE_FEATURES = [
     id: 'flow-artifacts',
     title: 'Explorations',
     shortDescription:
-      'Revisioned node/edge exploration documents (`flow_document`, `flow_node`, `flow_edge`) separate from canvas layout. Local node types: Artifact, Action, Evaluation (`decision`), External Resource; path groups with run-state tags and hull chrome. REST + per-document SSE; `@xyflow/react` editor; `flow` cards show `FlowPreview` on canvas.',
+      'Revisioned node/edge exploration documents (`flow_document`, `flow_node`, `flow_edge`) separate from canvas layout. Local node types: Artifact, Action, Evaluation (`decision`), External Resource, Child Studio (`child_studio`); studio artifact nodes project child studios via `flowStudioProjection`. Path groups with run-state tags and hull chrome. REST + per-document SSE; `@xyflow/react` editor; `flow` cards show `FlowPreview` on canvas.',
     layerIds: ['client', 'api', 'data'],
     tags: ['flow', 'features'],
+    status: 'current',
+  },
+  {
+    id: 'nested-studios',
+    title: 'Nested studios',
+    shortDescription:
+      'Bounded sub-canvases with playbooks, primary Exploration surfaces, child studio invoke from parent flow selection, dashboard archive/restore, and promotion queue. Server: `studio` tables + `/studios/*`. Client: `studio` cards, `StudioDashboard`, flow node sync on archive/restore.',
+    layerIds: ['client', 'api', 'data'],
+    tags: ['studio', 'features'],
+    status: 'current',
+  },
+  {
+    id: 'sonic-studio',
+    title: 'Sonic studio cards',
+    shortDescription:
+      'Music-oriented studio cards with audition transport and sonic sketch editing (`src/features/sonicStudio/*`). Separate from nested domain/cognitive studios but shares canvas card patterns.',
+    layerIds: ['client', 'api'],
+    tags: ['music', 'features'],
     status: 'current',
   },
   {
@@ -223,7 +242,7 @@ export const ARCHITECTURE_FEATURES = [
     id: 'diagnostics-canvas',
     title: 'Diagnostics canvas (React Flow)',
     shortDescription:
-      'Fullscreen interactive architecture graph at `src/lib/architecture/*` + `src/features/diagnostics/*`. Mirrors nodes, pipes, and seven action simulations for humans and agents. Open from System architecture modal.',
+      'Fullscreen interactive architecture graph at `src/lib/architecture/*` + `src/features/diagnostics/*`. Mirrors nodes, pipes, and action simulations. 3D concentrate mode persists per-action node and wire layouts to `diagnostics_concentrate_layout` (localStorage cache + GET/PUT API). Open from System architecture modal.',
     layerIds: ['client'],
     tags: ['debug', 'architecture'],
     status: 'current',
@@ -323,11 +342,22 @@ export const ARCHITECTURE_ENTITY_STORAGE = [
     client:
       '`src/features/flow/*` editor + preview · optional linked-folder `flows/<id>.json` snapshot',
   },
+  {
+    id: 'studios',
+    label: 'Studios',
+    summary:
+      'Nested bounded exploration workspaces with playbooks, surfaces, child invoke, candidates, and promotions. Child studios archive/restore syncs with parent primary Exploration flow nodes.',
+    server:
+      '`studio` · `studio_surface` · `studio_playbook` · `studio_context_packet` · `studio_step` · `studio_candidate` · `studio_promotion` — `/studios/*`, `/studio-candidates/*`, `/studio-promotions/*`',
+    client:
+      '`studio` cards on project canvas · `StudioDashboard` · `CreateStudioDialog` · child studio nodes on parent `FlowEditor` via `flowStudioProjection`',
+  },
 ];
 
 const CORE_API_ROUTES = [
   'GET /health',
   'GET|PUT /canvas/index',
+  'GET|PUT /canvas/diagnostics/concentrate-layouts/:actionId (per-action 3D concentrate layout)',
   'GET /canvas/projects/:id/meta',
   'GET /canvas/projects/:id/layout (layout-only payload for fast cross-browser convergence)',
   'GET|PUT /canvas/projects/:id (revision, expectedRevision → 409)',
@@ -344,6 +374,20 @@ const CORE_API_ROUTES = [
   'POST /projects/:projectId/flows',
   'GET|PUT|DELETE /flows/:flowId',
   'GET /flows/:flowId/stream (SSE flow_updated)',
+  'GET|POST /studios',
+  'GET|PATCH /studios/:studioId',
+  'GET /studios/:studioId/overview',
+  'POST /studios/:studioId/archive',
+  'POST /studios/:studioId/restore',
+  'POST /studios/:studioId/invoke-child',
+  'POST /studios/:studioId/surfaces',
+  'POST /studios/:studioId/context-packets',
+  'GET|POST /studios/:studioId/candidates',
+  'GET|POST /studios/:studioId/promotions',
+  'POST /studio-promotions/:promotionId/apply',
+  'GET /clusters/:id/primitives, POST /relationships (primitives router)',
+  'GET|POST /agent/types (agent type catalog)',
+  'GET|POST /state-machines (state machine artifacts)',
 ];
 
 const LOAD_ROADMAP = [
@@ -393,7 +437,7 @@ export const IMPLEMENTATION_PRIORITIES = [
 ];
 
 const CONSOLIDATED_SPEC_NOTE =
-  'Consolidated authority: `docs/ARCHITECTURE_MASTER_SPEC.md`. Current decision: `canvas_project_document` is the rendered-canvas authority; `spec_canvas_state` is a secondary projection until explicit cutover. Target: Postgres-authoritative structure, shared resource store on disk, UUID-only identity, and connectors rendered from `note_links`. Shipped: placement SSOT, slim `artifactPlacements`, folder sync identity (`syncStaging`), agent dock sync, `lib/sync/*` project sync modules, layout/meta reads, `spec_*` tables + dual-write.';
+  'Consolidated authority: `docs/ARCHITECTURE_MASTER_SPEC.md` and nested studio design `Specs/canvas_nested_studio_system_spec_v1.md`. Current decision: `canvas_project_document` is the rendered-canvas authority; `spec_canvas_state` is a secondary projection until explicit cutover. Target: Postgres-authoritative structure, shared resource store on disk, UUID-only identity, and connectors rendered from `note_links`. Shipped: placement SSOT, slim `artifactPlacements`, folder sync identity (`syncStaging`), agent dock sync, `lib/sync/*` project sync modules, layout/meta reads, `spec_*` tables + dual-write, nested studios with flow node archive/restore sync.';
 
 export function buildArchitectureMermaid() {
   return `flowchart TB
@@ -504,7 +548,14 @@ export function buildArchitectureMarkdown(runtime) {
     '## Explorations (current)',
     '- **`flow`** cards (UI: **Exploration**) open a revisioned node/edge editor (`src/features/flow/`) backed by `flow_document` tables',
     '- Artifact nodes embed live canvas previews; local nodes are exploration-local only',
+    '- **`child_studio`** local type and studio artifact nodes link parent explorations to nested studios (`flowStudioProjection`)',
     '- Per-document SSE at `GET /flows/:flowId/stream`; saves use `expectedRevision` CAS',
+    '',
+    '## Nested studios (current)',
+    '- **`studio`** cards open `StudioDashboard` with primary Exploration surfaces, child studio list, archive/restore, and promotion queue',
+    '- Child invoke from parent `FlowEditor` selection → `POST /studios/:id/invoke-child` → child card + flow node projection',
+    '- Archive removes child node from parent primary flow server-side; restore re-inserts node and client re-projects if missing',
+    '- Design detail: `Specs/canvas_nested_studio_system_spec_v1.md`',
     '',
     '## Agent providers (current)',
     '- **OpenAI** — stored API credential required (`agentChatProvider` → `openaiChat`)',

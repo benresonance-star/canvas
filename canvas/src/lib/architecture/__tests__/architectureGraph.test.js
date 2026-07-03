@@ -11,6 +11,14 @@ import {
   collectArchitectureCodeRefs,
   ARCHITECTURE_ROUTE_MANIFEST,
 } from '../index.js';
+import {
+  ARCHITECTURE_ENTITY_COVERAGE_CHECKLIST,
+  ARCHITECTURE_FEATURE_FOLDER_INVENTORY,
+  getMissingRouteManifestModules,
+  getUnexpectedRouteManifestModules,
+  SERVER_ROUTE_MODULES,
+} from '../architectureRouteParity.js';
+import { ARCHITECTURE_ENTITY_STORAGE, ARCHITECTURE_FEATURES } from '../../systemArchitectureSpec.js';
 import { REQUIRED_NODE_FIELDS, REQUIRED_PIPE_FIELDS } from '../architectureGraphSchema.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -49,9 +57,10 @@ describe('architectureGraph', () => {
 
   it('manifest reports graph inventory', () => {
     const manifest = getArchitectureGraphManifest();
-    expect(manifest.nodeCount).toBeGreaterThanOrEqual(35);
-    expect(manifest.pipeCount).toBeGreaterThanOrEqual(30);
-    expect(manifest.actionCount).toBe(8);
+    expect(manifest.nodeCount).toBeGreaterThanOrEqual(50);
+    expect(manifest.pipeCount).toBeGreaterThanOrEqual(50);
+    expect(manifest.actionCount).toBe(13);
+    expect(manifest.routeCount).toBe(SERVER_ROUTE_MODULES.length);
   });
 
   it('assigns parallel metadata for multiple pipes between the same nodes', () => {
@@ -95,10 +104,29 @@ describe('architectureCodeRefs', () => {
 });
 
 describe('architectureRoutesParity', () => {
+  it('route manifest covers every server route module', () => {
+    expect(getMissingRouteManifestModules(ARCHITECTURE_ROUTE_MANIFEST)).toEqual([]);
+    expect(getUnexpectedRouteManifestModules(ARCHITECTURE_ROUTE_MANIFEST)).toEqual([]);
+  });
+
   it('route manifest graph nodes exist in architecture graph', () => {
     const nodeIds = new Set(ARCHITECTURE_NODES.map((n) => n.id));
     for (const route of ARCHITECTURE_ROUTE_MANIFEST) {
       expect(nodeIds.has(route.graphNodeId), `missing API node for ${route.id}`).toBe(true);
+    }
+  });
+
+  it('entity storage checklist is covered by ARCHITECTURE_ENTITY_STORAGE', () => {
+    const entityIds = new Set(ARCHITECTURE_ENTITY_STORAGE.map((entry) => entry.id));
+    for (const row of ARCHITECTURE_ENTITY_COVERAGE_CHECKLIST) {
+      expect(entityIds.has(row.entityId), `missing entity storage row for ${row.domain}`).toBe(true);
+    }
+  });
+
+  it('feature folder inventory maps to documented architecture features', () => {
+    const featureIds = new Set(ARCHITECTURE_FEATURES.map((feature) => feature.id));
+    for (const row of ARCHITECTURE_FEATURE_FOLDER_INVENTORY) {
+      expect(featureIds.has(row.featureId), `missing feature ${row.featureId} for folder ${row.folder}`).toBe(true);
     }
   });
 });

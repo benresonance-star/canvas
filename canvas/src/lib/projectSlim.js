@@ -72,6 +72,19 @@ export function stripCardForPersist(card, opts = {}) {
     versions: pinned ? [pinned] : versions.slice(0, 1),
     ...(card.audioSkinColor ? { audioSkinColor: card.audioSkinColor } : {}),
     ...(card.minimalPreview ? { minimalPreview: true } : {}),
+    ...(card.type === 'studio'
+      ? {
+          studioId: card.studioId,
+          studioKind: card.studioKind,
+          studioState: card.studioState,
+          studioSummary: card.studioSummary,
+          parentStudioId: card.parentStudioId,
+          parentStudioTitle: card.parentStudioTitle,
+          studioSurfaces: card.studioSurfaces,
+          studioCounts: card.studioCounts,
+          primaryFlowId: card.primaryFlowId,
+        }
+      : {}),
   };
 }
 

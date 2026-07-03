@@ -2,7 +2,16 @@
 
 Instructions for Cursor Composer and other coding agents working on this app.
 
-**Architecture reference:** [docs/ARCHITECTURE_MASTER_SPEC.md](docs/ARCHITECTURE_MASTER_SPEC.md) (load/commit authority §4, debugging §9).
+**Architecture reference:** [docs/ARCHITECTURE_MASTER_SPEC.md](docs/ARCHITECTURE_MASTER_SPEC.md) (load/commit authority §4, debugging §9). Nested studio design: [`Specs/canvas_nested_studio_system_spec_v1.md`](../Specs/canvas_nested_studio_system_spec_v1.md).
+
+**Architecture maintenance (studios, flow, sync, API routes):** When changing behavior in those areas, update in the same PR:
+
+1. `src/lib/systemArchitectureSpec.js` — features, entity storage, `CORE_API_ROUTES`, bump `ARCHITECTURE_SPEC_VERSION`
+2. `src/lib/architecture/architectureGraphData.js` + `architectureRouteManifest.js` + `architectureActions.js` as needed
+3. `docs/ARCHITECTURE_MASTER_SPEC.md` changelog entry
+4. Run `npm test -- --run src/lib/architecture src/lib/__tests__/systemArchitectureSpec.test.js`
+
+**Diagnostics canvas (2D + 3D):** When changing highlight, focus, ghost, or edge decoration behavior, update `useDiagnosticsGraphProjection` and verify both React Flow and WebGL renderers in the same PR.
 
 **Local dev stack:** [docs/DEV_STACK.md](docs/DEV_STACK.md) — agent prompts **start canvas** / **restart canvas** / **stop canvas**.
 

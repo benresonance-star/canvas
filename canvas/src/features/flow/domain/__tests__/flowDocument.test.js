@@ -331,6 +331,7 @@ describe('flow document isolation', () => {
       action: '#d97706',
       decision: '#059669',
       external_resource: '#dc2626',
+      child_studio: '#7c3aed',
     });
     expect(preview.nodes[0]).toMatchObject({
       title: 'Step one',
@@ -380,6 +381,7 @@ describe('flow document isolation', () => {
         action: '#d97706',
         decision: '#059669',
         external_resource: '#dc2626',
+        child_studio: '#7c3aed',
       },
       nodes: [{
         id: 'n1',

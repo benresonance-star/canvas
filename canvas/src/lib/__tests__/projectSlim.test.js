@@ -18,6 +18,42 @@ describe('slimProjectPayloadForCache', () => {
     expect(slim.minimalPreview).toBe(true);
   });
 
+  it('preserves studio card references on slim cards', () => {
+    const card = {
+      id: 'studio-card-1',
+      key: 'studios__studio-1',
+      prefix: 'studios',
+      name: 'Cell Mitosis Studio',
+      type: 'studio',
+      x: 10,
+      y: 20,
+      pinnedVersion: 1,
+      studioId: 'studio-1',
+      studioKind: 'domain',
+      studioState: 'seeded',
+      studioSummary: 'Study mitosis.',
+      parentStudioId: 'parent-1',
+      parentStudioTitle: 'Cell Studio',
+      studioSurfaces: [{ id: 'surface-1', artifactId: 'flow-1', isPrimary: true }],
+      studioCounts: { runs: 0, promotions: 0 },
+      primaryFlowId: 'flow-1',
+      versions: [{
+        version: 1,
+        studioId: 'studio-1',
+        artifactRef: { id: 'studio-1', type: 'artifact' },
+      }],
+    };
+
+    const slim = stripCardForPersist(card, { slimCard: true });
+
+    expect(slim.studioId).toBe('studio-1');
+    expect(slim.parentStudioId).toBe('parent-1');
+    expect(slim.parentStudioTitle).toBe('Cell Studio');
+    expect(slim.studioSurfaces).toHaveLength(1);
+    expect(slim.primaryFlowId).toBe('flow-1');
+    expect(slim.versions[0].artifactRef.id).toBe('studio-1');
+  });
+
   it('produces smaller serialised payload with v2 placements than duplicated records', () => {
     const cards = Array.from({ length: 20 }, (_, i) => ({
       id: `c${i}`,
