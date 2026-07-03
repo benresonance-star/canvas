@@ -19,7 +19,7 @@ export function versionNeedsHydration(v) {
   }
   const ext = (v.ext || '').toLowerCase();
   const t = fileTypeFromExt(ext);
-  return t === 'image' || t === 'pdf' || t === 'video' || t === 'audio';
+  return t === 'image' || t === 'pdf' || t === 'video' || t === 'audio' || t === '3d-model';
 }
 
 export async function hydrateVersion(v, { force = false, localOnly = false } = {}) {
@@ -41,7 +41,7 @@ export async function hydrateVersion(v, { force = false, localOnly = false } = {
   const type = v.cardType === 'bookmark' ? 'image' : fileTypeFromExt(ext);
   const isImageOrPdf = type === 'image' || type === 'pdf';
 
-  if (isImageOrPdf || type === 'video' || type === 'audio') {
+  if (isImageOrPdf || type === 'video' || type === 'audio' || type === '3d-model') {
     const objectUrl = URL.createObjectURL(blob);
     return {
       ...v,

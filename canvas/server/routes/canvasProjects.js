@@ -150,6 +150,9 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
   app.get('/canvas/projects/:projectId', async (req, res) => {
     try {
       const row = await getCanvasProject(req.params.projectId);
+      if (!row && req.query.optional === '1') {
+        return res.json({ payload: null, updatedAt: null, revision: 0, missing: true });
+      }
       if (!row) return res.status(404).json({ error: 'project not found' });
       res.json({
         payload: row.payload,

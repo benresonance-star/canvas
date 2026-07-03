@@ -72,6 +72,7 @@ export function stripCardForPersist(card, opts = {}) {
     versions: pinned ? [pinned] : versions.slice(0, 1),
     ...(card.audioSkinColor ? { audioSkinColor: card.audioSkinColor } : {}),
     ...(card.minimalPreview ? { minimalPreview: true } : {}),
+    ...(card.threeDViewerState ? { threeDViewerState: card.threeDViewerState } : {}),
     ...(card.type === 'studio'
       ? {
           studioId: card.studioId,

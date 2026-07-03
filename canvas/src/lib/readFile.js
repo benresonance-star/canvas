@@ -1,5 +1,6 @@
 import {
   PREVIEW_MAX_BYTES_IMAGE_PDF,
+  PREVIEW_MAX_BYTES_3D_MODEL,
   STORAGE_LIMIT,
 } from './constants.js';
 import { fileTypeFromExt } from './filename.js';
@@ -31,6 +32,7 @@ export async function readFileEntry(entry, options = {}) {
   const type = fileTypeFromExt(ext);
   const isSmall = file.size <= STORAGE_LIMIT;
   const isImageOrPdf = type === 'image' || type === 'pdf';
+  const isThreeDModel = type === '3d-model';
 
   let content = null;
   let dataUrl = null;
@@ -75,6 +77,16 @@ export async function readFileEntry(entry, options = {}) {
       }
       objectUrl = URL.createObjectURL(blob);
     }
+  } else if (isThreeDModel) {
+    if (file.size <= PREVIEW_MAX_BYTES_3D_MODEL) {
+      const buf = await file.arrayBuffer();
+      const blob = new Blob([buf], { type: file.type || 'model/gltf-binary' });
+      if (cacheKey) {
+        await putPreview(cacheKey, blob);
+        previewCacheKey = cacheKey;
+      }
+      objectUrl = URL.createObjectURL(blob);
+    }
   } else if (isImageOrPdf) {
     if (file.size <= PREVIEW_MAX_BYTES_IMAGE_PDF) {
       const buf = await file.arrayBuffer();
@@ -103,7 +115,8 @@ export async function readFileEntry(entry, options = {}) {
     (content !== null ||
       (Boolean(dataUrl) && !objectUrl) ||
       (type === 'video' && Boolean(dataUrl)) ||
-      (type === 'audio' && Boolean(objectUrl)));
+      (type === 'audio' && Boolean(objectUrl)) ||
+      (type === '3d-model' && Boolean(objectUrl)));
 
   return {
     filename: name,

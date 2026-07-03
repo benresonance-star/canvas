@@ -222,6 +222,20 @@ describe('canvas project routes', () => {
     });
   });
 
+  it('GET /canvas/projects/:id optional returns null payload instead of 404', async () => {
+    repo.getCanvasProject.mockResolvedValue(null);
+
+    const { res, body } = await jsonRequest(server, '/canvas/projects/missing?optional=1');
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({
+      payload: null,
+      updatedAt: null,
+      revision: 0,
+      missing: true,
+    });
+  });
+
   it('GET /canvas/projects/:id/stream subscribes and sends current revision event', async () => {
     repo.getCanvasProjectMeta.mockResolvedValue({
       revision: 5,

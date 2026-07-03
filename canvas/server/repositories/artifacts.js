@@ -24,6 +24,7 @@ export function defaultCapabilitiesForArtifactType(type) {
   if (type === 'live') return ['canRun', 'canVersion', 'canHaveState'];
   if (type === 'image') return ['canReview', 'canTransform', 'canBranch', 'canReference'];
   if (type === 'audio' || type === 'video') return ['canReview', 'canTransform', 'canReference'];
+  if (type === '3d_model') return ['canReview', 'canBranch', 'canReference'];
   if (['user_note', 'user_task', 'agent_chat'].includes(type)) {
     return ['canEdit', 'canReview', 'canReference'];
   }

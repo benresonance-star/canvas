@@ -8,6 +8,7 @@ export function artifactTypeFromCardType(cardType, ext) {
   if (cardType === 'image') return 'image';
   if (cardType === 'video') return 'video';
   if (cardType === 'audio') return 'audio';
+  if (cardType === '3d-model') return '3d_model';
   if (cardType === 'spreadsheet') return 'doc';
   if (cardType === 'pdf') return 'doc';
   if (

@@ -14,6 +14,10 @@ describe('artifactTypeFromCardType', () => {
     expect(artifactTypeFromCardType('video', 'mp4')).toBe('video');
   });
 
+  it('maps 3D model cards to 3d_model artifacts', () => {
+    expect(artifactTypeFromCardType('3d-model', 'glb')).toBe('3d_model');
+  });
+
   it('maps generic file by extension', () => {
     expect(artifactTypeFromCardType('file', 'mp3')).toBe('audio');
     expect(artifactTypeFromCardType('file', 'mp4')).toBe('video');
@@ -34,5 +38,6 @@ describe('artifactTypeFromFile', () => {
     expect(artifactTypeFromFile('source.ts')).toBe('doc');
     expect(artifactTypeFromFile('settings.json')).toBe('doc');
     expect(artifactTypeFromFile('script.py')).toBe('doc');
+    expect(artifactTypeFromFile('chair.glb')).toBe('3d_model');
   });
 });

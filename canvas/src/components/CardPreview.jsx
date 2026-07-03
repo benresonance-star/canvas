@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { Suspense, lazy, useState, useCallback, useEffect } from 'react';
 import { strings } from '../content/strings.js';
 import {
   normalizeCardType,
@@ -26,6 +26,13 @@ import { BeatAgentPreview } from '../features/music/agents/beat/components/BeatA
 import { SonicStudioPreview } from '../features/sonicStudio/components/SonicStudioPreview.jsx';
 import { StudioPreview } from '../features/studio/components/StudioPreview.jsx';
 import { Bot } from 'lucide-react';
+import { ThreeDModelSummary } from '../features/threeDArtifact/components/ThreeDModelSummary.jsx';
+
+const ThreeDInlineViewerLazy = lazy(() =>
+  import('../features/threeDArtifact/components/ThreeDArtifactView.jsx').then((mod) => ({
+    default: mod.ThreeDInlineViewer,
+  })),
+);
 
 export function CardPreview({
   card,
@@ -115,6 +122,7 @@ export function CardPreview({
       && card.type !== 'pdf'
       && card.type !== 'video'
       && card.type !== 'audio'
+      && card.type !== '3d-model'
       && card.type !== 'bookmark'
     ) return;
     onRehydratePreview(card.id, pinned.version);
@@ -408,6 +416,26 @@ export function CardPreview({
         showViewerSelect
         inCard
       />
+    );
+  }
+
+  if (cardType === '3d-model') {
+    if (!isActive || compact) {
+      return <ThreeDModelSummary card={card} version={pinned} compact={compact} />;
+    }
+    return (
+      <div className="h-full w-full min-h-0">
+        <Suspense fallback={<ThreeDModelSummary card={card} version={pinned} compact={compact} />}>
+          <ThreeDInlineViewerLazy
+            card={card}
+            version={pinned}
+            folderHandle={folderHandle}
+            projectId={projectId}
+            layoutKey={`${card.width ?? 0}x${card.height ?? 0}`}
+            onUpdateCard={onUpdateCard}
+          />
+        </Suspense>
+      </div>
     );
   }
 

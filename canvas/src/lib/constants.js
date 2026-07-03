@@ -44,6 +44,7 @@ export const PROJECT_JSON_TRIM_TARGET = 3 * 1024 * 1024;
 export const SLIM_PROJECT_PERSIST_ENABLED = true;
 /** In-session preview max bytes for image/PDF; over STORAGE_LIMIT uses blob URL only until re-sync */
 export const PREVIEW_MAX_BYTES_IMAGE_PDF = 32 * 1024 * 1024;
+export const PREVIEW_MAX_BYTES_3D_MODEL = 100 * 1024 * 1024;
 /** dataUrl strings longer than this are omitted from localStorage (~4MB raw file as base64) */
 export const DATA_URL_PERSIST_MAX_CHARS = 5_500_000;
 /** Very long data: URLs often render as a blank PDF in iframes; use a blob URL for display above this length */
@@ -67,6 +68,7 @@ export const CARD_TYPE_DEFAULT_SIZE = {
   video: { w: 320, h: 200 },
   audio: { w: 320, h: 140 },
   spreadsheet: { w: 320, h: 240 },
+  '3d-model': { w: 340, h: 240 },
   bookmark: { w: 280, h: 200 },
   agent_chat: { w: 360, h: 280 },
   flow: { w: 360, h: 240 },

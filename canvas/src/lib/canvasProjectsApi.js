@@ -125,7 +125,7 @@ export async function fetchCanvasProjectMeta(projectId) {
  * @returns {Promise<{ payload: object, updatedAt: string | null, revision: number } | null>}
  */
 export async function fetchCanvasProjectDocument(projectId) {
-  const res = await fetch(`${API_BASE}/canvas/projects/${encodeURIComponent(projectId)}`, {
+  const res = await fetch(`${API_BASE}/canvas/projects/${encodeURIComponent(projectId)}?optional=1`, {
     headers: { 'Content-Type': 'application/json' },
     signal: AbortSignal.timeout(READ_REQUEST_TIMEOUT_MS),
   });

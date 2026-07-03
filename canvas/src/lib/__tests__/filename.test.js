@@ -79,6 +79,17 @@ describe('fileTypeFromExt audio', () => {
   });
 });
 
+describe('fileTypeFromExt 3D models', () => {
+  it('maps GLB and GLTF files to 3d-model cards', () => {
+    expect(fileTypeFromExt('glb')).toBe('3d-model');
+    expect(fileTypeFromExt('gltf')).toBe('3d-model');
+  });
+
+  it('labels 3D model cards', () => {
+    expect(cardTypeLabel('3d-model')).toBe('3D MODEL');
+  });
+});
+
 describe('fileTypeFromExt code', () => {
   it('maps TypeScript, JavaScript, JSON, and Python extensions to code', () => {
     for (const ext of ['ts', 'tsx', 'js', 'jsx', 'json', 'py']) {

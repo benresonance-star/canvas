@@ -18,6 +18,22 @@ describe('slimProjectPayloadForCache', () => {
     expect(slim.minimalPreview).toBe(true);
   });
 
+  it('preserves threeDViewerState on slim 3D model cards', () => {
+    const viewerState = { showGrid: false, showAxes: false, displayMode: 'material' };
+    const card = {
+      id: 'model1',
+      key: 'models__chair',
+      type: '3d-model',
+      x: 0,
+      y: 0,
+      pinnedVersion: 1,
+      threeDViewerState: viewerState,
+      versions: [{ version: 1, filename: 'chair.glb' }],
+    };
+    const slim = stripCardForPersist(card, { slimCard: true });
+    expect(slim.threeDViewerState).toEqual(viewerState);
+  });
+
   it('preserves studio card references on slim cards', () => {
     const card = {
       id: 'studio-card-1',
@@ -116,6 +132,26 @@ describe('slimProjectPayloadForCache', () => {
     expect(payload.stagedSyncCards[0].versions[0].previewCacheKey).toBe('p:pdf__large:v1');
     expect(payload.artifactPlacements.pdf__large.record).toBeUndefined();
     expect(serialised).not.toContain(largeDataUrl);
+  });
+
+  it('strips 3D object URLs while preserving preview cache keys', () => {
+    const slim = stripCardForPersist({
+      id: 'model-1',
+      key: 'models__chair',
+      type: '3d-model',
+      pinnedVersion: 1,
+      versions: [{
+        version: 1,
+        ext: 'glb',
+        objectUrl: 'blob:model-1',
+        previewCacheKey: 'p:models__chair:v1',
+        inline: true,
+      }],
+    }, { slimCard: true });
+
+    expect(slim.versions[0].objectUrl).toBeUndefined();
+    expect(slim.versions[0].previewCacheKey).toBe('p:models__chair:v1');
+    expect(slim.versions[0].dataUrl).toBeNull();
   });
 
   it('triggers trim when over trim target', () => {

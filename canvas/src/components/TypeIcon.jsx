@@ -1,4 +1,4 @@
-import { Bot, FileText, Image as ImageIcon, FileCode, Film, Music, File, StickyNote, ListTodo, Table, Link2, Workflow, RadioTower, Network } from 'lucide-react';
+import { Bot, Box, FileText, Image as ImageIcon, FileCode, Film, Music, File, StickyNote, ListTodo, Table, Link2, Workflow, RadioTower, Network } from 'lucide-react';
 import { normalizeCardType } from '../lib/filename.js';
 
 export function TypeIcon({ type, className }) {
@@ -19,5 +19,6 @@ export function TypeIcon({ type, className }) {
   if (t === 'video') return <Film {...props} />;
   if (t === 'audio') return <Music {...props} />;
   if (t === 'spreadsheet') return <Table {...props} />;
+  if (t === '3d-model') return <Box {...props} />;
   return <File {...props} />;
 }

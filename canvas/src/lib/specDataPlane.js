@@ -100,6 +100,7 @@ function stagedToPlacedCard(staged, placed) {
     ...(placed.cluster_id ? { clusterId: placed.cluster_id } : {}),
     ...(staged.audioSkinColor ? { audioSkinColor: staged.audioSkinColor } : {}),
     ...(staged.minimalPreview ? { minimalPreview: true } : {}),
+    ...(staged.threeDViewerState ? { threeDViewerState: staged.threeDViewerState } : {}),
   };
 }
 

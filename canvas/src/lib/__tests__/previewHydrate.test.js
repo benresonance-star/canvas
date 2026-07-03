@@ -5,7 +5,7 @@ vi.mock('../previewStore.js', () => ({
 }));
 
 import { getPreview } from '../previewStore.js';
-import { hydrateCardsPreviews, cardsPreviewsChanged } from '../previewHydrate.js';
+import { hydrateCardsPreviews, cardsPreviewsChanged, hydrateVersion } from '../previewHydrate.js';
 
 describe('hydrateCardsPreviews', () => {
   beforeEach(() => {
@@ -14,6 +14,7 @@ describe('hydrateCardsPreviews', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('cardsPreviewsChanged tolerates null versions', () => {
@@ -33,5 +34,22 @@ describe('hydrateCardsPreviews', () => {
     ];
     await hydrateCardsPreviews(cards, { localOnly: true });
     expect(getPreview).toHaveBeenCalledWith('p:c1:v1', { localOnly: true });
+  });
+
+  it('hydrates 3D model versions from preview blobs', async () => {
+    const blob = new Blob(['glb-bytes'], { type: 'model/gltf-binary' });
+    vi.mocked(getPreview).mockResolvedValue(blob);
+    const createObjectURL = vi.fn(() => 'blob:model-1');
+    vi.stubGlobal('URL', { createObjectURL });
+
+    const hydrated = await hydrateVersion({
+      version: 1,
+      ext: 'glb',
+      previewCacheKey: 'p:model:v1',
+    });
+
+    expect(hydrated.objectUrl).toBe('blob:model-1');
+    expect(hydrated.inline).toBe(true);
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
   });
 });

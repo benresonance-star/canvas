@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { Download } from 'lucide-react';
 import { strings } from '../content/strings.js';
 import { normalizeCardType, isCodePreviewType } from '../lib/filename.js';
@@ -15,6 +15,13 @@ import { parseAgentChatTranscript } from '../lib/agentChatArtifact.js';
 import { LiveArtifactView } from '../features/live/components/LiveArtifactView.jsx';
 import { BeatAgentFullscreen } from '../features/music/agents/beat/components/BeatAgentFullscreen.jsx';
 import { SonicStudioEditor } from '../features/sonicStudio/components/SonicStudioEditor.jsx';
+import { ThreeDModelSummary } from '../features/threeDArtifact/components/ThreeDModelSummary.jsx';
+
+const ThreeDFullViewerLazy = lazy(() =>
+  import('../features/threeDArtifact/components/ThreeDArtifactView.jsx').then((mod) => ({
+    default: mod.ThreeDFullViewer,
+  })),
+);
 
 export function ModalContent({
   card,
@@ -97,6 +104,22 @@ export function ModalContent({
         showViewerSelect={false}
         inCard={false}
       />
+    );
+  }
+
+  if (cardType === '3d-model') {
+    return (
+      <div className="h-full w-full min-h-0">
+        <Suspense fallback={<ThreeDModelSummary card={card} version={version} />}>
+          <ThreeDFullViewerLazy
+            card={card}
+            version={version}
+            folderHandle={folderHandle}
+            projectId={projectId ?? card.projectId}
+            onUpdateCard={onUpdateCard}
+          />
+        </Suspense>
+      </div>
     );
   }
 

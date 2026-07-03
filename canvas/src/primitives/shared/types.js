@@ -13,6 +13,7 @@ export const ARTIFACT_TYPES = [
   'image',
   'audio',
   'video',
+  '3d_model',
   'transcript',
   'user_note',
   'user_task',

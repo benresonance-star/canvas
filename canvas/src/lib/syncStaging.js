@@ -664,6 +664,7 @@ export function stagedSyncCardToCanvasCard(staged, worldX, worldY) {
     y: worldY - h / 2,
     ...(staged.audioSkinColor ? { audioSkinColor: staged.audioSkinColor } : {}),
     ...(staged.minimalPreview ? { minimalPreview: true } : {}),
+    ...(staged.threeDViewerState ? { threeDViewerState: staged.threeDViewerState } : {}),
   };
 }
 
@@ -700,6 +701,7 @@ export function canvasCardToStaged(card) {
     pinnedVersion: card.pinnedVersion ?? card.versions?.[0]?.version ?? 1,
     ...(card.audioSkinColor ? { audioSkinColor: card.audioSkinColor } : {}),
     ...(card.minimalPreview ? { minimalPreview: true } : {}),
+    ...(card.threeDViewerState ? { threeDViewerState: card.threeDViewerState } : {}),
   };
 }
 
@@ -743,6 +745,7 @@ export const STAGED_TYPE_GROUP_ORDER = [
   'pdf',
   'video',
   'audio',
+  '3d-model',
   'spreadsheet',
   'bookmark',
   'user_note',

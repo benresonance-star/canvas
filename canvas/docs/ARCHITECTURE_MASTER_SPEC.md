@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.07.03.2
-**Version label:** concentrate-layouts
+**Version:** 2026.07.03.3
+**Version label:** 3d-viewer
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -741,6 +741,27 @@ Shared client modules:
 
 Canvas card toolbar clicks and artifact scroll regions are excluded from card drag via `cardDragIgnoresTarget` (`data-artifact-scroll`, `data-card-artifact-controls`).
 
+### 3D model viewer (shipped)
+
+`.glb` / `.gltf` files ingest as `3d-model` cards (`filename.js` → `fileTypeFromExt`). Design authority: [`Specs/3d_viewer_canvas_artifact_spec.md`](../../Specs/3d_viewer_canvas_artifact_spec.md).
+
+| Module | Role |
+|--------|------|
+| `src/features/threeDArtifact/components/ThreeDArtifactView.jsx` | React Three Fiber viewer — orbit controls, toolbar, fit/reset/save |
+| `src/features/threeDArtifact/utils/cameraFit.js` | Corner-based frustum fit; **Fit** preserves current orbit angle; **Reset** restores default 3/4 view |
+| `src/features/threeDArtifact/utils/viewerState.js` | Defaults + `cameraSaved` flag (Save view vs auto-fit on load) |
+| `src/features/threeDArtifact/hooks/useThreeDModelSource.js` | Loads model bytes from linked folder / artifact ref |
+
+**Surfaces:** lazy-loaded in `CardPreview` (compact) and `ModalContent` (fullscreen). Card resize refits via `layoutKey` + viewport `ResizeObserver` with explicit canvas pixel sizing (avoids buffer/CSS mismatch).
+
+**Persistence:** toolbar display toggles and saved camera write to `card.threeDViewerState` and `version.threeD.viewerState`; slim project payloads preserve `threeDViewerState` (`projectSlim.js`, `syncStaging.js`, `specDataPlane.js`). Changes sync through existing `structuralChange` project document commits — no dedicated 3D API route.
+
+**Camera semantics:**
+
+- **Fit (crosshair):** zoom to model bounds at the current orbit angle (`fitPerspectiveCameraToCurrentView`).
+- **Reset (↺):** default viewer settings + default 3/4 camera framing (`fitPerspectiveCameraToDefaultView`).
+- **Save view:** sets `cameraSaved: true` so reopen restores the saved camera instead of auto-fit.
+
 ### Canvas viewport navigation (shipped)
 
 `Canvas.jsx` owns pan/zoom for the main workspace:
@@ -1232,6 +1253,14 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-07-03 — 3D model viewer artifact + camera fit (implemented)
+
+- Bumped app architecture spec to `2026-07-03-3d-viewer` in `systemArchitectureSpec.js`.
+- Shipped `3d-model` card type (`.glb`/`.gltf` ingest) with lazy `ThreeDArtifactView` in canvas preview and modal fullscreen.
+- Viewer settings and optional saved camera persist on `card.threeDViewerState` + `version.threeD.viewerState` via `structuralChange` sync; slim payloads preserve `threeDViewerState`.
+- Camera fit split: Fit preserves orbit angle and adjusts distance; Reset restores defaults + default 3/4 framing; Save view sets `cameraSaved`.
+- Preview viewport sizing: `ResizeObserver`, explicit canvas buffer dimensions, deduped refit on meaningful resize (≥4px).
 
 ### 2026-07-03 — Diagnostics concentrate layout persistence (implemented)
 

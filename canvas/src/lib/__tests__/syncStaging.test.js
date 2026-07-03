@@ -103,6 +103,21 @@ describe('buildStagedSyncCardFromChange', () => {
     expect(json.type).toBe('code');
     expect(python.type).toBe('code');
   });
+
+  it('stages GLB files as 3D model cards', () => {
+    const staged = buildStagedSyncCardFromChange({
+      key: 'models/chair__concept',
+      group: {
+        parsed: { ext: 'glb', prefix: 'chair', name: 'concept' },
+        versions: [{ version: 1, filename: 'chair__concept-v1.glb' }],
+      },
+    });
+    expect(staged).toMatchObject({
+      key: 'models/chair__concept',
+      type: '3d-model',
+      pinnedVersion: 1,
+    });
+  });
 });
 
 describe('mergeNewlyStaged', () => {

@@ -89,6 +89,7 @@ export function fileTypeFromExt(ext) {
   if (['mp4', 'webm', 'mov'].includes(normalizedExt)) return 'video';
   if (['mp3', 'm4a', 'aac', 'wav', 'ogg', 'flac'].includes(normalizedExt)) return 'audio';
   if (['xlsx', 'xls', 'csv'].includes(normalizedExt)) return 'spreadsheet';
+  if (['glb', 'gltf'].includes(normalizedExt)) return '3d-model';
   return 'file';
 }
 
@@ -354,6 +355,7 @@ export function cardTypeLabel(type) {
   if (t === 'video') return 'VIDEO';
   if (t === 'audio') return 'AUDIO';
   if (t === 'spreadsheet') return 'EXCEL';
+  if (t === '3d-model') return '3D MODEL';
   if (t === 'bookmark') return 'LINK';
   if (t === 'flow') return 'EXPLORATION';
   if (t === 'studio') return 'STUDIO';

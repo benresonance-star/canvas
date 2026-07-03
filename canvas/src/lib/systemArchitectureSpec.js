@@ -1,7 +1,7 @@
 /** Bump when architecture or shipped load behavior changes. */
 import { getArchitectureGraphManifest } from './architecture/index.js';
 
-export const ARCHITECTURE_SPEC_VERSION = '2026-07-03-concentrate-layouts';
+export const ARCHITECTURE_SPEC_VERSION = '2026-07-03-3d-viewer';
 
 export const ARCHITECTURE_LAYERS = [
   {
@@ -23,6 +23,7 @@ export const ARCHITECTURE_LAYERS = [
       'flow-artifacts',
       'nested-studios',
       'code-preview',
+      'three-d-viewer',
       'diagnostics-canvas',
     ],
   },
@@ -236,6 +237,15 @@ export const ARCHITECTURE_FEATURES = [
       '`code` card types render via `CodePreviewFrame` + `highlight.js` (`codeHighlight.js`) in canvas and modal; JS/TS family extensions auto-detected.',
     layerIds: ['client'],
     tags: ['media', 'ux'],
+    status: 'current',
+  },
+  {
+    id: 'three-d-viewer',
+    title: '3D model viewer artifact',
+    shortDescription:
+      '`3d-model` cards (`.glb`/`.gltf`) render via lazy `ThreeDArtifactView` (`src/features/threeDArtifact/*`) in `CardPreview` and `ModalContent`. Viewer toolbar toggles and saved camera persist on `card.threeDViewerState` + `version.threeD.viewerState` through `structuralChange` sync. Fit preserves orbit angle; Reset restores defaults + default 3/4 framing; Save view sets `cameraSaved`. Preview resizes via `ResizeObserver` + explicit canvas buffer sizing.',
+    layerIds: ['client'],
+    tags: ['media', 'ux', '3d'],
     status: 'current',
   },
   {

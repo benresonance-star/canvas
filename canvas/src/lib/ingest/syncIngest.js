@@ -2,6 +2,7 @@ import { artifactTypeFromFile } from './artifactType.js';
 import { normalizeFolderRelativePath, parseFilename, syncKeysMatch } from '../filename.js';
 import { resolveCodeLanguage } from '../codeHighlight.js';
 import { ingestArtifacts, ensureClusterForProject, isApiAvailable } from '../primitivesApi.js';
+import { detectThreeDFormat } from '../../features/threeDArtifact/utils/fileFormat.js';
 
 function artifactFileKey(version) {
   return normalizeFolderRelativePath(version?.relativePath ?? version?.filename);
@@ -16,6 +17,29 @@ function codeMetadata(version) {
     file_kind: 'code',
     ...(ext ? { ext } : {}),
     ...(language ? { language } : {}),
+  };
+}
+
+function threeDMetadata(version) {
+  if (version.cardType !== '3d-model') return {};
+  const format = version.ext ?? detectThreeDFormat(version.filename ?? '');
+  return {
+    canvas_kind: '3d-model',
+    file_kind: '3d-model',
+    threeD: {
+      sourceFile: {
+        filename: version.filename,
+        relativePath: version.relativePath ?? null,
+        format,
+        sizeBytes: version.size ?? 0,
+        uploadedAt: new Date(version.lastModified || Date.now()).toISOString(),
+        contentHash: version.content_hash,
+      },
+      status: format === 'glb' || format === 'gltf' ? 'ready' : 'unsupported',
+      metadata: version.threeD?.metadata ?? {},
+      viewerState: version.threeD?.viewerState ?? null,
+      annotations: version.threeD?.annotations ?? [],
+    },
   };
 }
 
@@ -61,6 +85,7 @@ export async function ingestFoundFiles(projectId, projectName, flatVersions, pre
           : {}),
         ...(v.cardType === 'spreadsheet' ? { file_kind: 'spreadsheet' } : {}),
         ...codeMetadata(v),
+        ...threeDMetadata(v),
         ...(v.cardType === 'user_note' ? { canvas_kind: 'user_note' } : {}),
         ...(v.cardType === 'user_task' ? { canvas_kind: 'user_task' } : {}),
         ...(v.cardType === 'agent_chat'

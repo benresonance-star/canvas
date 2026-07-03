@@ -48,4 +48,15 @@ describe('artifact invariants', () => {
     });
     expect(a.type).toBe('agent_chat');
   });
+
+  it('accepts 3d_model artifact type', () => {
+    const a = createArtifact({
+      id: newUlid(),
+      type: '3d_model',
+      uri: 'folder-relative:p1/models__chair-v1.glb',
+      content_hash: 'deadbeef',
+      retrieved_at: new Date().toISOString(),
+    });
+    expect(a.type).toBe('3d_model');
+  });
 });
