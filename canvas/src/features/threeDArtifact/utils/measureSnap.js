@@ -228,6 +228,7 @@ export function snapToVertex(hit, { maxDistance = 0.1 } = {}) {
   if (!bestPoint) return null;
 
   return {
+    kind: 'vertex',
     position: bestPoint.toArray(),
     meshUuid: mesh.uuid,
   };
@@ -251,6 +252,8 @@ export function snapToEdge(hit, edgePairs, { maxDistance = 0.1 } = {}) {
 
   let bestDistance = maxDistance;
   let bestPoint = null;
+  let bestEdgeStart = null;
+  let bestEdgeEnd = null;
 
   for (const [aIndex, bIndex] of edgePairs) {
     _local.fromBufferAttribute(position, aIndex);
@@ -262,13 +265,18 @@ export function snapToEdge(hit, edgePairs, { maxDistance = 0.1 } = {}) {
     if (distance <= bestDistance) {
       bestDistance = distance;
       bestPoint = _closest.clone();
+      bestEdgeStart = _worldA.clone();
+      bestEdgeEnd = _worldB.clone();
     }
   }
 
-  if (!bestPoint) return null;
+  if (!bestPoint || !bestEdgeStart || !bestEdgeEnd) return null;
 
   return {
+    kind: 'edge',
     position: bestPoint.toArray(),
+    edgeStart: bestEdgeStart.toArray(),
+    edgeEnd: bestEdgeEnd.toArray(),
     meshUuid: mesh.uuid,
   };
 }
@@ -282,9 +290,36 @@ export function snapPickPoint(snapMode, hit, options = {}) {
   if (!hit) return null;
   if (snapMode === 'edge') {
     const edgePairs = buildMeshEdgeCache(hit.object);
-    return snapToEdge(hit, edgePairs, options) ?? snapToVertex(hit, options);
+    return snapToEdge(hit, edgePairs, options);
   }
   return snapToVertex(hit, options) ?? snapToEdge(hit, buildMeshEdgeCache(hit.object), options);
+}
+
+/**
+ * @param {{ position: number[], edgeStart?: number[], edgeEnd?: number[], meshUuid?: string, kind?: string }} edgeSnap
+ */
+export function createEdgeMeasurementRecord(edgeSnap) {
+  if (
+    edgeSnap?.kind !== 'edge'
+    || !Array.isArray(edgeSnap.edgeStart)
+    || !Array.isArray(edgeSnap.edgeEnd)
+  ) {
+    return null;
+  }
+
+  const start = { position: edgeSnap.edgeStart, meshUuid: edgeSnap.meshUuid };
+  const end = { position: edgeSnap.edgeEnd, meshUuid: edgeSnap.meshUuid };
+  const startVec = new THREE.Vector3(...edgeSnap.edgeStart);
+  const endVec = new THREE.Vector3(...edgeSnap.edgeEnd);
+
+  return {
+    id: crypto.randomUUID(),
+    snapMode: 'edge',
+    start,
+    end,
+    distance: startVec.distanceTo(endVec),
+    createdAt: new Date().toISOString(),
+  };
 }
 
 /**

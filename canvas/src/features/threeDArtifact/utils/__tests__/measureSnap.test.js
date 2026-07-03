@@ -5,6 +5,7 @@ import {
   computeMeasurementMarkerRadius,
   computeSnapRadiusWorld,
   convertMeasurementDistance,
+  createEdgeMeasurementRecord,
   createMeasurementRecord,
   formatMeasurementDistance,
   normalizeMeasureUnits,
@@ -44,6 +45,7 @@ describe('measureSnap', () => {
       object: mesh,
     };
     const snapped = snapToVertex(hit, { maxDistance: 0.2 });
+    expect(snapped?.kind).toBe('vertex');
     expect(snapped?.position).toEqual([0, 0, 0]);
   });
 
@@ -55,8 +57,11 @@ describe('measureSnap', () => {
       object: mesh,
     };
     const snapped = snapToEdge(hit, pairs, { maxDistance: 0.2 });
+    expect(snapped?.kind).toBe('edge');
     expect(snapped?.position[0]).toBeCloseTo(1, 5);
     expect(snapped?.position[1]).toBeCloseTo(0, 5);
+    expect(snapped?.edgeStart).toEqual([0, 0, 0]);
+    expect(snapped?.edgeEnd).toEqual([2, 0, 0]);
   });
 
   it('converts between unit systems via meters', () => {
@@ -94,6 +99,20 @@ describe('measureSnap', () => {
     expect(record.distance).toBeCloseTo(5, 5);
     expect(record.snapMode).toBe('vertex');
     expect(record.id).toBeTruthy();
+  });
+
+  it('creates an edge measurement from the full edge segment', () => {
+    const record = createEdgeMeasurementRecord({
+      kind: 'edge',
+      edgeStart: [0, 0, 0],
+      edgeEnd: [2, 0, 0],
+      position: [1, 0, 0],
+      meshUuid: 'mesh-1',
+    });
+    expect(record?.snapMode).toBe('edge');
+    expect(record?.distance).toBeCloseTo(2, 5);
+    expect(record?.start.position).toEqual([0, 0, 0]);
+    expect(record?.end.position).toEqual([2, 0, 0]);
   });
 
   it('normalizes persisted measurement records', () => {

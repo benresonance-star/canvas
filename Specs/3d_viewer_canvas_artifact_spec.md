@@ -684,8 +684,9 @@ Implementation: `environmentConfig.js` + drei `<Environment preset=…>`. Snapsh
 ### Scope
 
 - Available in `ThreeDFullViewer` (modal fullscreen), not inline card preview.
-- Two-click workflow: pick start point, pick end point; **Escape** cancels draft.
-- Snap modes: **vertex** (nearest mesh vertex) or **edge** (nearest triangle edge).
+- **Vertex mode:** two-click workflow — pick start point, pick end point; **Escape** cancels draft.
+- **Edge mode:** single click on an edge measures the **full edge length** (between edge endpoints).
+- Snap modes: **vertex** (nearest mesh vertex) or **edge** (nearest triangle edge segment).
 - OrbitControls: left-click disabled in measure mode; right-drag still rotates; middle-drag zooms.
 
 ### Stored shape
@@ -719,6 +720,7 @@ Supported units: `mm`, `cm`, `m`, `in`, `ft`. Default display unit when metadata
 ### UI
 
 - Measurement markers scale with model bounds (`computeMeasurementMarkerRadius`).
+- **Hover proximity preview (shipped):** cursor snaps to the nearest vertex or edge within screen-space radius. Green highlight (`#34d399`): vertex mode uses a small preview sphere (0.2× measurement marker radius); edge mode highlights the full edge segment plus a preview sphere at the closest point on that edge. Vertex preview appears before the first click and while placing the second point; edge preview appears before the one-click measure. Clears when cursor leaves the model or canvas. Canvas cursor is `crosshair` in measure mode.
 - Floating measurements panel lists saved measurements with delete actions.
 - Unit `<select>` uses theme surface colors (`.three-d-measure-unit-select` in `index.css`).
 
@@ -1185,12 +1187,13 @@ Recommended MVP limits:
 ### Measurement Tests (shipped)
 
 - Vertex snap picks nearest vertex within snap radius.
-- Edge snap picks nearest edge within snap radius.
+- Edge snap picks nearest edge within snap radius; one click measures full edge length (`createEdgeMeasurementRecord`).
 - Distance stored in model world units.
 - Display converts between mm/cm/m/in/ft correctly.
 - Measurements persist on `version.threeD.measurements` through sync round-trip.
 - Adding/removing measurements does not reset camera position.
 - Unit dropdown change converts displayed values, not stored distances.
+- Hover preview highlights vertex or edge segment before each click; clears off-model.
 
 ### Environment / Snapshot Tests (shipped)
 

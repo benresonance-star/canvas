@@ -748,7 +748,7 @@ Canvas card toolbar clicks and artifact scroll regions are excluded from card dr
 | Module | Role |
 |--------|------|
 | `src/features/threeDArtifact/components/ThreeDArtifactView.jsx` | React Three Fiber viewer — orbit controls, toolbar, fit/reset/save, measurements (full viewer) |
-| `src/features/threeDArtifact/components/ThreeDMeasurementLayer.jsx` | Vertex/edge snap picking, preview line, measurement markers |
+| `src/features/threeDArtifact/components/ThreeDMeasurementLayer.jsx` | Vertex two-click / edge one-click picking, hover preview, measurement markers |
 | `src/features/threeDArtifact/utils/measureSnap.js` | Raycast snap, edge cache, unit conversion, distance formatting |
 | `src/features/threeDArtifact/utils/detectModelUnits.js` | Extract `modelUnits` from glTF; resolve display unit defaults |
 | `src/features/threeDArtifact/utils/environmentConfig.js` | HDRI preset mapping (`studio` / `city` / `sunset`) |
@@ -777,7 +777,7 @@ Ingest sets `previewFeasible: false` and `threeDDisplayMode: 'folder_on_demand'`
 
 **Persistence:** toolbar display toggles and saved camera write to `card.threeDViewerState` and `version.threeD.viewerState`; measurements and `metadata.measureUnits` write to `version.threeD` only (do not reset live camera). Slim project payloads preserve `threeDViewerState` (`projectSlim.js`, `syncStaging.js`, `specDataPlane.js`). Changes sync through existing `structuralChange` project document commits — no dedicated 3D API route.
 
-**Measurements (full viewer):** two-click vertex/edge snap; distances stored in model world units; display converts via `measureSnap.convertMeasurementDistance`. Floating overlay panel — does not resize viewport. Camera stays put after measure save (no viewport refit in full viewer; viewer-state resync scoped to card/version identity).
+**Measurements (full viewer):** vertex mode uses two-click point-to-point measure; edge mode uses **one click** to measure full edge length between edge endpoints (`createEdgeMeasurementRecord`). Hover proximity preview (0.2× marker sphere / edge segment highlight). Distances stored in model world units; display converts via `measureSnap.convertMeasurementDistance`. Floating overlay panel — does not resize viewport. Camera stays put after measure save.
 
 **HDRI lighting:** toolbar sun cycles `lightingMode` → drei `<Environment>` preset. Card snapshots use matching HDRI in `captureThreeDSnapshot.js`; cache key includes preset.
 
@@ -1278,6 +1278,12 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-07-03 — 3D measure hover preview and edge one-click (implemented)
+
+- Bumped app architecture spec to `2026-07-03-3d-measure-hover` in `systemArchitectureSpec.js`.
+- Hover proximity preview: green snap highlight follows cursor (small vertex sphere at 0.2× marker size; full edge segment in edge mode).
+- Edge measure mode: single click records full edge length between edge endpoints, not vertex-to-vertex across two picks.
 
 ### 2026-07-03 — 3D measurements, HDRI lighting, camera stability (implemented)
 

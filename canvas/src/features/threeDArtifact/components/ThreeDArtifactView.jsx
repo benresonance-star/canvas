@@ -1055,7 +1055,15 @@ export function ThreeDArtifactViewer({
       {showToolbar && (
         <ThreeDToolbar
           viewerState={viewerState}
-          status={measureModeActive && measureDraftActive ? 'Pick second point (Esc to cancel)' : status}
+          status={
+            measureModeActive && measureSnapMode === 'edge'
+              ? 'Click edge to measure'
+              : measureModeActive && measureDraftActive
+                ? 'Pick second point (Esc to cancel)'
+                : measureModeActive && measureSnapMode === 'vertex'
+                  ? 'Click first point (Esc to cancel)'
+                  : status
+          }
           compact={compact}
           enableMeasurement={enableMeasurement}
           measureModeActive={measureModeActive}

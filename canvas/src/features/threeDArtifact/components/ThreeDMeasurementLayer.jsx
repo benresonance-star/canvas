@@ -4,13 +4,25 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   computeMeasurementMarkerRadius,
+  createEdgeMeasurementRecord,
   createMeasurementRecord,
   formatMeasurementDistance,
   pickSurfaceHit,
   snapPickPoint,
 } from '../utils/measureSnap.js';
 
-function MeasurementMarker({ start, end, label, color = '#fbbf24', markerRadius = 0.008 }) {
+const HOVER_COLOR = '#34d399';
+const DRAFT_COLOR = '#60a5fa';
+const SAVED_COLOR = '#fbbf24';
+
+function MeasurementMarker({
+  start,
+  end,
+  label,
+  color = SAVED_COLOR,
+  markerRadius = 0.008,
+  showEndMarker = true,
+}) {
   const midpoint = useMemo(() => {
     const a = new THREE.Vector3(...start);
     const b = new THREE.Vector3(...end);
@@ -24,16 +36,46 @@ function MeasurementMarker({ start, end, label, color = '#fbbf24', markerRadius 
         <sphereGeometry args={[markerRadius, 10, 10]} />
         <meshBasicMaterial color={color} />
       </mesh>
-      <mesh position={end}>
-        <sphereGeometry args={[markerRadius, 10, 10]} />
-        <meshBasicMaterial color={color} />
-      </mesh>
+      {showEndMarker && (
+        <mesh position={end}>
+          <sphereGeometry args={[markerRadius, 10, 10]} />
+          <meshBasicMaterial color={color} />
+        </mesh>
+      )}
       <Html position={midpoint} center style={{ pointerEvents: 'none' }}>
         <div className="sans px-1.5 py-0.5 rounded bg-surface/90 border border-border text-[10px] text-primary whitespace-nowrap">
           {label}
         </div>
       </Html>
     </>
+  );
+}
+
+function SnapHoverPreview({ hoverSnap, markerRadius }) {
+  const previewRadius = markerRadius * 0.2;
+  if (!hoverSnap) return null;
+
+  if (hoverSnap.kind === 'edge' && hoverSnap.edgeStart && hoverSnap.edgeEnd) {
+    return (
+      <>
+        <Line
+          points={[hoverSnap.edgeStart, hoverSnap.edgeEnd]}
+          color={HOVER_COLOR}
+          lineWidth={2.5}
+        />
+        <mesh position={hoverSnap.position}>
+          <sphereGeometry args={[previewRadius, 10, 10]} />
+          <meshBasicMaterial color={HOVER_COLOR} />
+        </mesh>
+      </>
+    );
+  }
+
+  return (
+    <mesh position={hoverSnap.position}>
+      <sphereGeometry args={[previewRadius, 10, 10]} />
+      <meshBasicMaterial color={HOVER_COLOR} />
+    </mesh>
   );
 }
 
@@ -50,8 +92,11 @@ export function ThreeDMeasurementLayer({
 }) {
   const { camera, raycaster, gl, invalidate } = useThree();
   const pointer = useRef(new THREE.Vector2());
+  const pendingPointerRef = useRef(null);
+  const rafRef = useRef(0);
   const [draftStart, setDraftStart] = useState(null);
   const [previewEnd, setPreviewEnd] = useState(null);
+  const [hoverSnap, setHoverSnap] = useState(null);
   const markerRadius = useMemo(
     () => computeMeasurementMarkerRadius(modelRoot),
     [modelRoot],
@@ -84,9 +129,19 @@ export function ThreeDMeasurementLayer({
     return snapPickPoint(snapMode, hit, { maxDistance: hit.snapRadius });
   }, [camera, gl.domElement, modelRoot, raycaster, snapMode]);
 
+  const applyHoverFromPointer = useCallback((clientX, clientY, hasDraftStart) => {
+    const snapped = resolvePointerSnap(clientX, clientY);
+    setHoverSnap(snapped);
+    if (hasDraftStart) {
+      setPreviewEnd(snapped?.position ?? null);
+    }
+    invalidate();
+  }, [invalidate, resolvePointerSnap]);
+
   useEffect(() => {
     if (!active) {
       clearDraft();
+      setHoverSnap(null);
     }
   }, [active, clearDraft]);
 
@@ -96,14 +151,48 @@ export function ThreeDMeasurementLayer({
   }, [cancelDraftNonce, clearDraft]);
 
   useEffect(() => {
+    clearDraft();
+  }, [clearDraft, snapMode]);
+
+  useEffect(() => {
     if (!active || !modelRoot) return undefined;
 
     const canvas = gl.domElement;
+    canvas.style.cursor = 'crosshair';
+    const isVertexMode = snapMode === 'vertex';
+
+    const flushPendingPointer = () => {
+      rafRef.current = 0;
+      const pending = pendingPointerRef.current;
+      if (!pending) return;
+      applyHoverFromPointer(
+        pending.clientX,
+        pending.clientY,
+        isVertexMode && pending.hasDraftStart,
+      );
+    };
 
     const handlePointerMove = (event) => {
-      if (!draftStart) return;
-      const snapped = resolvePointerSnap(event.clientX, event.clientY);
-      setPreviewEnd(snapped?.position ?? null);
+      pendingPointerRef.current = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        hasDraftStart: isVertexMode && Boolean(draftStart),
+      };
+      if (!rafRef.current) {
+        rafRef.current = requestAnimationFrame(flushPendingPointer);
+      }
+    };
+
+    const handlePointerLeave = () => {
+      pendingPointerRef.current = null;
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
+      }
+      setHoverSnap(null);
+      if (draftStart) {
+        setPreviewEnd(null);
+      }
       invalidate();
     };
 
@@ -115,9 +204,19 @@ export function ThreeDMeasurementLayer({
       const snapped = resolvePointerSnap(event.clientX, event.clientY);
       if (!snapped) return;
 
+      if (snapMode === 'edge') {
+        const record = createEdgeMeasurementRecord(snapped);
+        if (!record) return;
+        onCompleteMeasurement?.(record);
+        setHoverSnap(snapped);
+        invalidate();
+        return;
+      }
+
       if (!draftStart) {
         setDraftStart(snapped);
         setPreviewEnd(snapped.position);
+        setHoverSnap(snapped);
         onDraftChange?.(true);
         invalidate();
         return;
@@ -126,18 +225,28 @@ export function ThreeDMeasurementLayer({
       const record = createMeasurementRecord(draftStart, snapped, snapMode);
       onCompleteMeasurement?.(record);
       clearDraft();
+      setHoverSnap(null);
       invalidate();
     };
 
     canvas.addEventListener('pointermove', handlePointerMove);
+    canvas.addEventListener('pointerleave', handlePointerLeave);
     canvas.addEventListener('pointerdown', handlePointerDown);
 
     return () => {
+      canvas.style.cursor = '';
       canvas.removeEventListener('pointermove', handlePointerMove);
+      canvas.removeEventListener('pointerleave', handlePointerLeave);
       canvas.removeEventListener('pointerdown', handlePointerDown);
+      pendingPointerRef.current = null;
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
+      }
     };
   }, [
     active,
+    applyHoverFromPointer,
     clearDraft,
     draftStart,
     gl.domElement,
@@ -168,14 +277,18 @@ export function ThreeDMeasurementLayer({
           markerRadius={markerRadius}
         />
       ))}
-      {draftStart && previewEnd && (
+      {draftStart && previewEnd && snapMode === 'vertex' && (
         <MeasurementMarker
           start={draftStart.position}
           end={previewEnd}
           label={previewLabel ?? '…'}
-          color="#60a5fa"
+          color={DRAFT_COLOR}
           markerRadius={markerRadius}
+          showEndMarker={!hoverSnap}
         />
+      )}
+      {active && hoverSnap && (
+        <SnapHoverPreview hoverSnap={hoverSnap} markerRadius={markerRadius} />
       )}
     </>
   );
