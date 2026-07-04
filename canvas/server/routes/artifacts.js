@@ -101,7 +101,14 @@ export function registerArtifactRoutes(app) {
       }
       const results = [];
       for (const f of files || []) {
-        const { artifact, created } = await upsertArtifactByHash(clusterId, f);
+        const { artifact, created } = await upsertArtifactByHash(
+          clusterId,
+          {
+            ...f,
+            project_id: f.project_id ?? f.projectId ?? projectId ?? null,
+          },
+          { addToCluster: true },
+        );
         results.push({
           artifactRef: primitiveRef(artifact.id, 'artifact'),
           content_hash: artifact.content_hash,

@@ -1,5 +1,5 @@
 import {
-  renderPercussionEvent,
+  renderSonicVoiceSample,
   renderTemporalChain,
 } from '../../../../packages/sonic-core/src/index.js';
 
@@ -19,26 +19,18 @@ export function renderSonicStudioVoicePreview({
       buffer: [new Float32Array(0), new Float32Array(0)],
     };
   }
-  const durationSeconds = previewDurationForVoice(voice);
-  const rendered = renderPercussionEvent({
-    voice,
-    archetype: voice.archetype,
-    event: {
-      velocity,
-      randomSeed: seed,
-      microVariation: false,
-    },
+  const rendered = renderSonicVoiceSample(voice, {
     sampleRate,
-    durationSeconds,
     seed,
-    microVariation: false,
+    velocity,
   });
+  const buffer = [rendered.left, rendered.right];
   const temporal = engineState.temporal?.enabled
-    ? renderTemporalChain(rendered.buffer, engineState.temporal)
-    : rendered.buffer;
+    ? renderTemporalChain(buffer, engineState.temporal)
+    : buffer;
   return {
     sampleRate,
-    durationSeconds,
+    durationSeconds: rendered.left.length / sampleRate,
     buffer: temporal,
   };
 }
@@ -60,13 +52,4 @@ export function analyzePreviewBuffer(buffer = []) {
     rms: count > 0 ? Math.sqrt(sumSquares / count) : 0,
     nonSilent: peak > 0.0001,
   };
-}
-
-function previewDurationForVoice(voice) {
-  const archetype = voice.archetype;
-  if (archetype === 'kick') return 0.9;
-  if (archetype === 'snare') return 0.8;
-  if (archetype === 'hat') return 0.45;
-  if (archetype === 'cymbal') return 1.6;
-  return 1;
 }

@@ -14,6 +14,11 @@ async function request(path, options = {}) {
   return data;
 }
 
+export async function fetchMusicAgents(projectId) {
+  const data = await request(`/music/projects/${encodeURIComponent(projectId)}/agents`);
+  return data.agents ?? [];
+}
+
 export async function createMusicAgent(projectId, payload) {
   const data = await request(`/music/projects/${encodeURIComponent(projectId)}/agents`, {
     method: 'POST',
@@ -25,6 +30,16 @@ export async function createMusicAgent(projectId, payload) {
 export async function fetchMusicAgent(agentId) {
   const data = await request(`/music/agents/${encodeURIComponent(agentId)}`);
   return data.agent;
+}
+
+export async function fetchBeatSonicLinks(agentId) {
+  const data = await request(`/music/agents/${encodeURIComponent(agentId)}/sonic-links`);
+  return data.links ?? [];
+}
+
+export async function fetchProjectBeatSonicLinks(projectId) {
+  const data = await request(`/music/projects/${encodeURIComponent(projectId)}/sonic-links`);
+  return data.links ?? [];
 }
 
 export async function updateMusicAgent(agentId, patch) {

@@ -36,6 +36,23 @@ describe('hydrateCardsPreviews', () => {
     expect(getPreview).toHaveBeenCalledWith('p:c1:v1', { localOnly: true });
   });
 
+  it('rehydrates when a stale blob URL is still attached', async () => {
+    const blob = new Blob(['ifc-bytes'], { type: 'application/x-step' });
+    vi.mocked(getPreview).mockResolvedValue(blob);
+    const createObjectURL = vi.fn(() => 'blob:ifc-fresh');
+    vi.stubGlobal('URL', { createObjectURL });
+
+    const hydrated = await hydrateVersion({
+      version: 1,
+      ext: 'ifc',
+      previewCacheKey: 'p:ifc:v1',
+      objectUrl: 'blob:http://localhost/dead',
+    });
+
+    expect(getPreview).toHaveBeenCalledWith('p:ifc:v1', { localOnly: false });
+    expect(hydrated.objectUrl).toBe('blob:ifc-fresh');
+  });
+
   it('hydrates 3D model versions from preview blobs', async () => {
     const blob = new Blob(['glb-bytes'], { type: 'model/gltf-binary' });
     vi.mocked(getPreview).mockResolvedValue(blob);

@@ -71,7 +71,12 @@ export function sonicStudioCardFromRecord(record, position = { x: 100, y: 100 })
 }
 
 export function normalizeSonicStudioCardState(card = {}) {
-  return createDefaultSonicStudioState(card.sonicStudioState ?? card.engineState);
+  const raw = card.sonicStudioState ?? card.engineState;
+  const overrides = raw && typeof raw === 'object' ? { ...raw } : {};
+  if (!Array.isArray(overrides.voices) || overrides.voices.length === 0) {
+    delete overrides.voices;
+  }
+  return createDefaultSonicStudioState(overrides);
 }
 
 export function updateSonicVoice(engineState, voiceId, patch = {}) {
@@ -80,6 +85,17 @@ export function updateSonicVoice(engineState, voiceId, patch = {}) {
     ...state,
     voices: state.voices.map((voice) => (
       voice.id === voiceId ? deepMerge(voice, patch) : voice
+    )),
+  };
+}
+
+export function replaceSonicVoiceInState(engineState, voiceId, voice) {
+  const state = createDefaultSonicStudioState(engineState);
+  if (!voiceId || !voice) return state;
+  return {
+    ...state,
+    voices: state.voices.map((entry) => (
+      entry.id === voiceId ? { ...voice, id: voiceId } : entry
     )),
   };
 }

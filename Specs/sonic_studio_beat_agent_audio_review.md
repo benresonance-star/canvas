@@ -397,7 +397,105 @@ Significantly larger than current offline-sample architecture. Deferred unless l
 
 ---
 
-# 10. Recommended next engineering step
+# 11. Phase 3 shipped (2026-07-04)
+
+| Capability | Status |
+|---|---|
+| `renderSonicVoiceSample()` in sonic-core | Shipped |
+| Track `soundSource` / `sonicVoice` / `sonicProvenance` | Shipped |
+| Per-track Sonic assign UI (`BeatTrackSoundControls`) | Shipped |
+| Live sonic temporal FX (`BeatSonicTemporalFxChain`) | Shipped |
+| Delay / shimmer / freeze + bypass toggles | Shipped |
+| Descriptor post-modulation (`deriveSonicTemporalFromDescriptors`) | Shipped |
+| Phase 3E mixing: per-role sends, return EQ, headroom, max wet | Shipped |
+| Dual worklet outputs (dry + send bus) | Shipped |
+
+Signal chain: **dry voices → send bus → sonic temporal FX (return EQ + limiter) → master**, with optional descriptor modulation and independent bypass toggles.
+
+---
+
+# 12. Phase 4 in progress (2026-07-04)
+
+| Capability | Status |
+|---|---|
+| `SonicStudioBridge` API (`createSonicEngine`) | Shipped |
+| Bake `sonicRenderedAssets` on Sonic Studio save | Shipped |
+| Beat resolver prefers baked rendered assets | Shipped |
+| Canvas `input_to` edge sonic_studio → music-agent on assign | Shipped |
+| Stale Sonic link banner + refresh-all in beat fullscreen | Shipped |
+| `music_beat_sonic_link` DB table + API restore on load | Shipped |
+| Load merge fix (`updatedAt` / DB state wins on refresh) | Shipped |
+| FDN reverb / acoustic space on output bus (4C) | Shipped |
+| Live sonic graph routing into worklet (Surface E) | Deferred |
+
+Signal chain (Phase 4C): **dry voices → send bus → sonic temporal FX → FDN acoustic space → master**, with SpacePanel controls, descriptor-derived room params, and `acousticSpaceBypass` toggle.
+
+| Path | Role |
+|---|---|
+| `canvas/public/audio-worklets/fdn-reverb-processor.js` | 8-line FDN reverb worklet (live) |
+| `canvas/src/features/music/agents/beat/domain/BeatAcousticSpaceFxChain.js` | Post-temporal space insert |
+| `canvas/packages/music-core/src/space/acousticSpaceEngine.js` | `mapSpaceStateToFdnParams()` |
+| `canvas/src/features/music/agents/beat/domain/resolveBeatAudioRouting.js` | `resolveBeatSpaceRouting()` |
+
+---
+
+# 13. Phase 5C shipped (2026-07-04)
+
+| Capability | Status |
+|---|---|
+| `deriveBeatPerformanceFromDescriptors()` | Shipped |
+| Complexity → step density / tap chance in worklet | Shipped |
+| Energy / Pressure / Human Feel / Fragility → gain & velocity | Shipped |
+| Descriptor execution respects `descriptorGraphBypass` | Shipped |
+| Compact descriptor dial UI (collapsed maps) | Shipped |
+
+When **Descriptor graph modulation** is enabled, Complexity and related descriptors affect live beat playback (step pass probability, optional tap retriggers, velocity spread, master gain trim) in addition to Reflection clutter analysis.
+
+---
+
+# 14. Phase 5A / 5B shipped (2026-07-04)
+
+| Capability | Status |
+|---|---|
+| Auto-stale sweep when Sonic cards change (`sweepStaleBeatTracksInState`) | Shipped |
+| Beat runtime refreshes stale track provenance on sonic card hash change | Shipped |
+| Project sonic-links API (`GET /music/projects/:projectId/sonic-links`) | Shipped |
+| Canvas edge restore from `music_beat_sonic_link` on graph refresh | Shipped |
+
+**5A:** When a Sonic Studio card saves (or any linked sonic card hash changes), open Beat Agent runtimes detect stale `sonicProvenance.stateHash` values and refresh assigned tracks automatically — no manual “Refresh from Sonic” click required.
+
+**5B:** On cluster graph refresh, missing `input_to` edges between linked Sonic Studio cards and Beat Agent cards are recreated from persisted DB links (idempotent relationship create).
+
+| Path | Role |
+|---|---|
+| `canvas/src/features/music/agents/beat/domain/sweepStaleBeatTracksFromCards.js` | Stale track sweep |
+| `canvas/src/features/music/agents/beat/domain/restoreBeatSonicCanvasEdges.js` | Edge restore from DB links |
+| `canvas/server/repositories/beatSonicLinks.js` | `listBeatSonicLinksForProject()` |
+
+---
+
+# 15. Per-track embedded Sonic editor shipped (2026-07-04)
+
+| Capability | Status |
+|---|---|
+| Compact `SonicVoiceControls` in Beat Agent instrument grid | Shipped |
+| Embedded Sonic source per track (no canvas card required) | Shipped |
+| Inline voice state on `track.sonicVoice` + `sonicProvenance` | Shipped |
+| Optional sync-to-linked-card writes (`sonicProvenance.syncToCard`) | Shipped |
+| Card import still copies voice to track (track-local edits by default) | Shipped |
+
+Each beat track instrument control now offers **Generated**, **Embedded Sonic**, or **From Sonic card**. Embedded voices seed from the default percussion kit by track role. Slider edits update the track immediately for playback (`beatSampleResolver` re-renders when hash changes). When a track was imported from a Sonic Studio card, users can opt in to **Sync to linked Sonic card** so edits also bake and persist back to the canvas card.
+
+| Path | Role |
+|---|---|
+| `canvas/src/features/sonicStudio/components/SonicVoiceControls.jsx` | Compact 6-slider editor + preview |
+| `canvas/src/features/music/agents/beat/domain/beatTrackSoundSource.js` | Embedded assign + inline patch helpers |
+| `canvas/src/features/music/agents/beat/components/BeatTrackSoundControls.jsx` | Source modes + sync toggle |
+| `canvas/src/features/music/agents/beat/components/BeatAgentFullscreen.jsx` | `onUpdateCard` sync path |
+
+---
+
+# 10. Recommended next engineering step (superseded by §11–§12)
 
 Before choosing a linking model, run a **Surface A spike**:
 

@@ -60,11 +60,64 @@ export function beatPatternToPercussionEvents(pattern = {}, transport = {}) {
   return events;
 }
 
+export function previewDurationForVoice(voice) {
+  const archetype = voice?.archetype ?? roleToArchetype(voice?.id);
+  if (archetype === 'kick') return 0.9;
+  if (archetype === 'snare') return 0.8;
+  if (archetype === 'hat') return 0.45;
+  if (archetype === 'cymbal') return 1.6;
+  return 1;
+}
+
+export function renderSonicVoiceSample(voice, {
+  sampleRate = 48000,
+  seed = 1,
+  velocity = 0.86,
+  durationSeconds,
+} = {}) {
+  if (!voice) {
+    return {
+      id: 'empty',
+      role: 'snare',
+      sampleRate,
+      left: new Float32Array(0),
+      right: new Float32Array(0),
+      stats: analyzeAudioBlock([new Float32Array(0)]),
+    };
+  }
+  const archetype = voice.archetype ?? roleToArchetype(voice.id);
+  const resolvedSeed = seed ?? stableSeed(voice.id ?? archetype);
+  const duration = durationSeconds ?? previewDurationForVoice(voice);
+  const render = renderPercussionEvent({
+    voice,
+    archetype,
+    sampleRate,
+    durationSeconds: duration,
+    seed: resolvedSeed,
+    event: { velocity, randomSeed: resolvedSeed, microVariation: false },
+    microVariation: false,
+  });
+  return {
+    id: voice.id ?? archetype,
+    role: archetype,
+    sampleRate,
+    left: render.buffer[0],
+    right: render.buffer[1] ?? render.buffer[0],
+    stats: analyzeAudioBlock(render.buffer),
+  };
+}
+
 export function renderBeatTrackSample(track, {
   sampleRate = 48000,
   durationSeconds,
   seed,
 } = {}) {
+  if (track?.soundSource === 'sonic_voice' && track?.sonicVoice) {
+    return renderSonicVoiceSample(track.sonicVoice, {
+      sampleRate,
+      seed: seed ?? stableSeed(`${track.id}:${track.sonicProvenance?.stateHash ?? 'sonic'}`),
+    });
+  }
   const synth = normalizeSynth(track?.synth);
   const voice = beatTrackToSonicVoice(track, track?.role ?? track?.id);
   const render = renderPercussionEvent({
@@ -89,9 +142,12 @@ export function renderBeatTrackSample(track, {
 export function createBeatSonicSampleMap(pattern = {}, { sampleRate = 48000, seed = 1 } = {}) {
   const samples = {};
   for (const track of pattern.tracks ?? []) {
+    const signature = track?.soundSource === 'sonic_voice' && track?.sonicVoice
+      ? `${track.id}:${track.sonicProvenance?.stateHash ?? track.sonicVoice.id}`
+      : JSON.stringify(track.synth ?? {});
     const rendered = renderBeatTrackSample(track, {
       sampleRate,
-      seed: stableSeed(`${seed}:${track.id}:${JSON.stringify(track.synth ?? {})}`),
+      seed: stableSeed(`${seed}:${track.id}:${signature}`),
     });
     const sample = {
       left: rendered.left,

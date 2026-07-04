@@ -3,6 +3,7 @@ import {
   getCachedFolderHandle,
   setCachedFolderHandle,
   clearCachedFolderHandle,
+  notifyFolderHandleRepaired,
 } from './folderSessionCache.js';
 
 /**
@@ -103,5 +104,76 @@ export async function reconnectFolderForProject(projectId) {
   }
 
   setCachedFolderHandle(projectId, handle);
+  notifyFolderHandleRepaired(projectId, handle);
   return { ok: true, handle };
+}
+
+/**
+ * Verify a directory handle can read the filesystem (without using "." — invalid on Windows).
+ * @param {FileSystemDirectoryHandle} handle
+ */
+export async function probeFolderHandleAlive(handle) {
+  if (!handle || typeof handle.entries !== 'function') return;
+  const iterator = handle.entries();
+  try {
+    await iterator.next();
+  } finally {
+    if (typeof iterator.return === 'function') {
+      await iterator.return();
+    }
+  }
+}
+
+function isStaleFolderHandleProbeError(error) {
+  const message = String(error?.message ?? '');
+  return (
+    /state cached in an interface object/i.test(message)
+    || /state has changed since it was read from the disk/i.test(message)
+  );
+}
+
+/**
+ * Reload a folder handle from IndexedDB after a stale File System Access error.
+ * @param {string} projectId
+ * @returns {Promise<FileSystemDirectoryHandle | null>}
+ */
+export async function reloadFolderHandleForWrite(projectId) {
+  if (!projectId) return null;
+  clearCachedFolderHandle(projectId);
+  const handle = await loadFolderHandle(projectId);
+  if (!handle) return null;
+
+  let perm = await queryFolderPermission(handle);
+  if (perm !== 'granted') {
+    if (perm === 'prompt') {
+      perm = await requestFolderPermission(handle);
+    }
+    if (perm !== 'granted') return null;
+  }
+
+  try {
+    await probeFolderHandleAlive(handle);
+  } catch (error) {
+    if (isStaleFolderHandleProbeError(error)) {
+      const reconnected = await reconnectFolderForProject(projectId);
+      if (reconnected.ok && reconnected.handle) {
+        try {
+          await probeFolderHandleAlive(reconnected.handle);
+          setCachedFolderHandle(projectId, reconnected.handle);
+          notifyFolderHandleRepaired(projectId, reconnected.handle);
+          return reconnected.handle;
+        } catch {
+          clearCachedFolderHandle(projectId);
+          return null;
+        }
+      }
+      clearCachedFolderHandle(projectId);
+      return null;
+    }
+    throw error;
+  }
+
+  setCachedFolderHandle(projectId, handle);
+  notifyFolderHandleRepaired(projectId, handle);
+  return handle;
 }

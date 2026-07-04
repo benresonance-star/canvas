@@ -15,21 +15,17 @@ describe('beatPreviewTransport', () => {
     expect(first).toBeInstanceOf(MusicAudioTransportService);
   });
 
-  it('uses shared transport only when clock sync is enabled', () => {
+  it('always uses the per-agent preview transport for audio routing', () => {
     const audioEngine = { ensureContext: async () => ({ sampleRate: 48000 }) };
     const entry = { previewTransport: null };
     const sharedTransport = { id: 'shared' };
     const preview = ensureBeatPreviewTransport(entry, audioEngine);
 
     expect(resolveBeatAudioTransport(entry, {
-      clockSync: false,
-      sharedTransport,
       audioEngine,
     })).toBe(preview);
     expect(resolveBeatAudioTransport(entry, {
-      clockSync: true,
-      sharedTransport,
       audioEngine,
-    })).toBe(sharedTransport);
+    })).not.toBe(sharedTransport);
   });
 });

@@ -13,8 +13,10 @@ import {
 import {
   evictInactiveProjectCaches,
   evictInactiveProjectIdbCaches,
+  evictPreviewCachesForQuota,
   touchProjectCache,
   isQuotaError,
+  clearAgentChatLocalCaches,
 } from '../storageBudget.js';
 import { normalizeWorkspaceIndex } from '../projectIndexNormalize.js';
 import {
@@ -144,16 +146,32 @@ export async function readLocalProjectSerialised(projectId) {
 export async function writeLocalProjectSerialised(projectId, serialised) {
   touchProjectCache(projectId);
 
+  const removeLegacyLocalStorageCopy = () => {
+    try {
+      localStorage.removeItem(projectStorageKey(projectId));
+    } catch {
+      /* ignore */
+    }
+  };
+
   const tryWrite = async () => {
     if (isProjectDocumentIdbAvailable()) {
-      try {
-        await putProjectDocumentSerialised(projectId, serialised);
-      } catch (e) {
-        console.warn(`IDB project cache write failed for ${projectId}:`, e?.message ?? e);
-      }
+      await putProjectDocumentSerialised(projectId, serialised);
+      removeLegacyLocalStorageCopy();
+      return true;
     }
     await window.storage.set(projectStorageKey(projectId), serialised);
     return true;
+  };
+
+  const tryRecoverFromQuota = async () => {
+    const ctx = getCacheEvictionContext();
+    const activeId = ctx.activeProjectId ?? projectId;
+    evictInactiveProjectCaches(activeId, ctx.indexProjectIds, { maxEvict: 3 });
+    await evictInactiveProjectIdbCaches(activeId, ctx.indexProjectIds, { maxEvict: 3 });
+    await evictPreviewCachesForQuota(activeId, ctx.indexProjectIds);
+    clearAgentChatLocalCaches(null);
+    removeLegacyLocalStorageCopy();
   };
 
   try {
@@ -169,35 +187,18 @@ export async function writeLocalProjectSerialised(projectId, serialised) {
     return false;
   }
 
-  const ctx = getCacheEvictionContext();
-  const evicted = evictInactiveProjectCaches(
-    ctx.activeProjectId ?? projectId,
-    ctx.indexProjectIds,
-    { maxEvict: 3 },
-  );
-  await evictInactiveProjectIdbCaches(
-    ctx.activeProjectId ?? projectId,
-    ctx.indexProjectIds,
-    { maxEvict: 3 },
-  );
-  if (evicted.length === 0) {
-    console.warn(
-      `Cache full for project ${projectId}; using server copy in session only`,
-    );
-    return false;
-  }
+  await tryRecoverFromQuota();
 
   try {
     return await tryWrite();
   } catch (e) {
-    if (isQuotaError(e)) {
-      console.warn(
-        `Cache full for project ${projectId} after eviction; using server copy in session only`,
-      );
-      return false;
-    }
-    throw e;
+    if (!isQuotaError(e)) throw e;
   }
+
+  console.warn(
+    `Cache full for project ${projectId}; using server copy in session only`,
+  );
+  return false;
 }
 
 export async function readLocalProjectDocument(projectId) {

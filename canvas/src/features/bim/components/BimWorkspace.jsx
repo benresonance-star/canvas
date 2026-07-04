@@ -283,6 +283,7 @@ export function BimWorkspace({
           <BimViewport
             preparedModel={prepared}
             selectedElement={selectedElement}
+            selectedProperties={selectedProperties}
             highlightElementIds={queryElementIds}
             displayMode={workspaceState.displayMode}
             focusSelectionToken={selectionFocusToken}

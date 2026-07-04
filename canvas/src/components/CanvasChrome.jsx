@@ -314,6 +314,15 @@ export function CanvasChrome({
       <div className="fixed bottom-6 right-6 flex flex-col items-end gap-2 pointer-events-none">
         {bannerMessage && (
           <div className="sans text-xs bg-surface-muted text-secondary border border-border px-3 py-2 rounded max-w-sm pointer-events-auto leading-snug flex flex-col gap-2">
+            {showClearLocalCache && onClearLocalCache && (
+              <button
+                type="button"
+                onClick={onClearLocalCache}
+                className="sans self-start text-xs bg-accent hover:bg-accent-hover text-on-accent px-3 py-1.5 rounded-full transition font-medium"
+              >
+                {strings.projects.clearLocalCache}
+              </button>
+            )}
             <span>{bannerMessage}</span>
             {showRefresh && (
               <button
@@ -340,15 +349,6 @@ export function CanvasChrome({
                 className="sans self-start text-xs border border-border text-secondary hover:text-primary px-3 py-1.5 rounded-full transition"
               >
                 {strings.projects.keepMyProjectCopy}
-              </button>
-            )}
-            {showClearLocalCache && onClearLocalCache && (
-              <button
-                type="button"
-                onClick={onClearLocalCache}
-                className="sans self-start text-xs border border-border text-secondary hover:text-primary px-3 py-1.5 rounded-full transition"
-              >
-                {strings.projects.clearLocalCache}
               </button>
             )}
           </div>

@@ -7,6 +7,12 @@ import {
   createDefaultSpaceState,
   createDefaultTemporalState,
 } from '../../packages/music-core/src/index.js';
+import {
+  enrichAgentStateWithSonicLinks,
+  listBeatSonicLinks,
+  syncBeatSonicLinksForAgent,
+} from './beatSonicLinks.js';
+import { defaultCapabilitiesForArtifactType } from './artifacts.js';
 
 function artifactHash(id) {
   return crypto.createHash('sha256').update(`canvas-music:${id}`).digest('hex');
@@ -175,14 +181,19 @@ export async function createMusicAgent(projectId, input) {
   try {
     await client.query('BEGIN');
     await client.query(
-      `INSERT INTO artifact
-       (id, type, uri, content_hash, version, source_authority, retrieved_at, payload_text, metadata)
-       VALUES ($1, 'music-agent', $2, $3, '1', 'canvas.music', NOW(), NULL, $4::jsonb)`,
+      `INSERT INTO artifact (
+         id, type, uri, content_hash, version, source_authority, retrieved_at, payload_text,
+         metadata, project_id, title, capabilities, created_at, updated_at
+       )
+       VALUES ($1, 'music-agent', $2, $3, '1', 'canvas.music', NOW(), NULL, $4::jsonb, $5, $6, $7, NOW(), NOW())`,
       [
         artifactId,
         `music-agent:${id}`,
         artifactHash(id),
         JSON.stringify({ title: safeName, project_id: projectId, agent_type: agentType }),
+        projectId,
+        safeName,
+        defaultCapabilitiesForArtifactType('music-agent'),
       ],
     );
     const agent = await client.query(
@@ -275,7 +286,9 @@ export async function listMusicAgents(projectId, { includeDeleted = false } = {}
 
 export async function getMusicAgent(agentId) {
   const res = await query('SELECT * FROM music_agent WHERE id = $1', [agentId]);
-  return mapAgent(res.rows[0]);
+  const agent = mapAgent(res.rows[0]);
+  if (!agent) return null;
+  return enrichAgentStateWithSonicLinks(agent);
 }
 
 export async function updateMusicAgent(agentId, patch) {
@@ -315,7 +328,12 @@ export async function updateMusicAgent(agentId, patch) {
     summary: patch.summary ?? `Updated ${patch.name ?? existing.name}`,
     payload: { status: patch.status ?? existing.status },
   });
-  return mapAgent(updated.rows[0]);
+  const saved = mapAgent(updated.rows[0]);
+  if (saved?.state) {
+    await syncBeatSonicLinksForAgent(saved.projectId, agentId, saved.state);
+    return enrichAgentStateWithSonicLinks(saved);
+  }
+  return saved;
 }
 
 export async function softDeleteMusicAgent(agentId) {

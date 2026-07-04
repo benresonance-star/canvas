@@ -41,13 +41,15 @@ describe('MusicAudioTransportService', () => {
     globalThis.AudioWorkletNode = originalAudioWorkletNode;
   });
 
-  it('initializes one worklet node and sends transport plus registered agents', async () => {
+  it('stores agents lazily and initializes worklet on ensureReady', async () => {
     const context = createFakeContext();
     const service = new MusicAudioTransportService({
-      audioEngine: { ensureContext: vi.fn(async () => context) },
+      audioEngine: createTestAudioEngine(context),
     });
 
     await service.registerBeatAgent({ id: 'beat-1', pattern: { stepCount: 16, tracks: [] } });
+    expect(context.audioWorklet.addModule).not.toHaveBeenCalled();
+
     await service.ensureReady();
 
     expect(context.audioWorklet.addModule).toHaveBeenCalledWith('/audio-worklets/beat-agent-processor.js');
@@ -167,12 +169,11 @@ describe('MusicAudioTransportService', () => {
 
   it('posts transport play after ensuring the universal transport is ready', async () => {
     const context = createFakeContext();
-    const ensureContext = vi.fn(async () => context);
-    const service = new MusicAudioTransportService({ audioEngine: { ensureContext } });
+    const service = new MusicAudioTransportService({ audioEngine: createTestAudioEngine(context) });
 
     await service.play({ startTick: 6 });
 
-    expect(ensureContext).toHaveBeenCalledTimes(1);
+    expect(context.audioWorklet.addModule).toHaveBeenCalled();
     expect(service.node.port.postMessage).toHaveBeenCalledWith({
       type: 'transport.play',
       startTick: 6,
@@ -273,17 +274,46 @@ describe('MusicAudioTransportService', () => {
   });
 });
 
+function createTestAudioEngine(context) {
+  return {
+    context,
+    ensureContext: vi.fn(async () => context),
+    resumeIfNeeded: vi.fn(async () => context),
+    prepareUserGesture: vi.fn(() => context),
+    getContextState: vi.fn(() => context.state),
+  };
+}
+
 function createFakeContext() {
+  const createGain = vi.fn(() => ({
+    gain: { value: 1, cancelScheduledValues: vi.fn(), setTargetAtTime: vi.fn() },
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  }));
+  const createFilter = vi.fn(() => ({
+    type: 'highpass',
+    frequency: { setTargetAtTime: vi.fn(), value: 120 },
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  }));
+  const createCompressor = vi.fn(() => ({
+    threshold: { value: -8 },
+    knee: { value: 6 },
+    ratio: { value: 12 },
+    attack: { value: 0.002 },
+    release: { value: 0.06 },
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  }));
   return {
     state: 'running',
     currentTime: 0,
     audioWorklet: {
       addModule: vi.fn(async () => {}),
     },
-    createGain: vi.fn(() => ({
-      gain: { value: 1 },
-      connect: vi.fn(),
-    })),
+    createGain,
+    createBiquadFilter: createFilter,
+    createDynamicsCompressor: createCompressor,
     destination: {},
   };
 }

@@ -1,12 +1,38 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import {
   bookmarkMarkdownFilenameFromShortcut,
   buildBookmarkMarkdownFile,
   buildBookmarkShortcutFile,
+  FOLDER_HANDLE_STALE_USER_MESSAGE,
   getFileHandleAtPath,
+  isStaleFileSystemHandleError,
+  overwriteTextFileAtPath,
+  runWithStaleFolderHandleRetry,
   writeBinaryFileAtPath,
   writeBookmarkFile,
 } from '../folderWrite.js';
+
+vi.mock('../restoreFolder.js', () => ({
+  reloadFolderHandleForWrite: vi.fn(),
+}));
+
+vi.mock('../folderSessionCache.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    markFolderHandleStale: vi.fn(actual.markFolderHandleStale),
+  };
+});
+
+import { reloadFolderHandleForWrite } from '../restoreFolder.js';
+import { markFolderHandleStale } from '../folderSessionCache.js';
+
+function staleHandleError() {
+  return new DOMException(
+    'An operation that depends on state cached in an interface object was made but the state has changed since it was read from the disk',
+    'NotFoundError',
+  );
+}
 
 describe('bookmark folder writes', () => {
   it('builds an Internet Shortcut file body', () => {
@@ -177,5 +203,68 @@ describe('folder path reads', () => {
       'img__photo-v1.png',
       undefined,
     );
+  });
+});
+
+describe('stale folder handle recovery', () => {
+  beforeEach(() => {
+    vi.mocked(reloadFolderHandleForWrite).mockReset();
+  });
+
+  it('detects stale File System Access errors', () => {
+    expect(isStaleFileSystemHandleError(staleHandleError())).toBe(true);
+    expect(isStaleFileSystemHandleError(new DOMException('Not found', 'NotFoundError'))).toBe(false);
+  });
+
+  it('reloads the folder handle and retries writes after a stale error', async () => {
+    const staleHandle = {
+      getDirectoryHandle: vi.fn(async () => {
+        throw staleHandleError();
+      }),
+    };
+    const writable = {
+      write: vi.fn(),
+      close: vi.fn(),
+    };
+    const fileHandle = {
+      createWritable: vi.fn(async () => writable),
+    };
+    const agentDir = {
+      getFileHandle: vi.fn(async () => fileHandle),
+    };
+    const musicDir = {
+      getDirectoryHandle: vi.fn(async () => agentDir),
+    };
+    const freshHandle = {
+      getDirectoryHandle: vi.fn(async () => musicDir),
+    };
+    vi.mocked(reloadFolderHandleForWrite).mockResolvedValue(freshHandle);
+
+    await overwriteTextFileAtPath(
+      staleHandle,
+      'music/beat-agent-1/beat.agent.json',
+      '{"ok":true}',
+      { projectId: 'p1' },
+    );
+
+    expect(reloadFolderHandleForWrite).toHaveBeenCalledWith('p1');
+    expect(writable.write).toHaveBeenCalledWith('{"ok":true}');
+  });
+
+  it('marks the folder stale when recovery fails', async () => {
+    const staleHandle = {
+      getDirectoryHandle: vi.fn(async () => {
+        throw staleHandleError();
+      }),
+    };
+    vi.mocked(reloadFolderHandleForWrite).mockResolvedValue(null);
+
+    await expect(
+      runWithStaleFolderHandleRetry('p1', staleHandle, async () => {
+        throw staleHandleError();
+      }),
+    ).rejects.toThrow(FOLDER_HANDLE_STALE_USER_MESSAGE);
+
+    expect(markFolderHandleStale).toHaveBeenCalledWith('p1');
   });
 });

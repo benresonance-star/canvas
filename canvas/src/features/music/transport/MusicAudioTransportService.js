@@ -4,6 +4,14 @@ import {
 } from '../../../../packages/music-core/src/index.js';
 import { AudioEngine } from '../kernel/audio/AudioEngine.js';
 import { beatPositionFromStep } from './beatTransportMath.js';
+import { BeatSonicTemporalFxChain } from '../agents/beat/domain/BeatSonicTemporalFxChain.js';
+import { BeatAcousticSpaceFxChain } from '../agents/beat/domain/BeatAcousticSpaceFxChain.js';
+import {
+  beatAudioRoutingSignature,
+  resolveBeatAudioRouting,
+  resolveBeatMixSettings,
+  resolveBeatSpaceRouting,
+} from '../agents/beat/domain/resolveBeatAudioRouting.js';
 
 const WORKLET_URL = '/audio-worklets/beat-agent-processor.js';
 
@@ -27,20 +35,47 @@ export class MusicAudioTransportService {
     this.transportListeners = new Set();
     this.positionListeners = new Set();
     this.agents = new Map();
+    this.fxChain = null;
+    this.spaceChain = null;
+    this.postFxBus = null;
+    this.audioRoutingState = null;
+    this.mixSettings = resolveBeatMixSettings();
   }
 
   async ensureReady() {
-    if (this.readyPromise) return this.readyPromise;
+    if (this.readyPromise) {
+      try {
+        await this.readyPromise;
+        return;
+      } catch {
+        this.readyPromise = null;
+      }
+    }
     this.readyPromise = this.initialize();
     return this.readyPromise;
+  }
+
+  prepareUserGesture() {
+    const context = this.audioEngine.prepareUserGesture?.();
+    if (context) this.context = context;
+    return context;
+  }
+
+  getAudioContextState() {
+    return this.context?.state ?? this.audioEngine.getContextState?.() ?? 'none';
+  }
+
+  async enableAudio() {
+    this.prepareUserGesture();
+    await this.audioEngine.resumeIfNeeded?.();
+    this.context = this.audioEngine.context ?? this.context;
+    await this.ensureReady();
+    return this.getAudioContextState();
   }
 
   async initialize() {
     const context = await this.audioEngine.ensureContext();
     this.context = context;
-    if (context.state === 'suspended') {
-      await context.resume();
-    }
     if (!context.audioWorklet || typeof AudioWorkletNode === 'undefined') {
       throw new Error('AudioWorklet is not available in this browser');
     }
@@ -50,11 +85,19 @@ export class MusicAudioTransportService {
     this.master.connect(context.destination);
     this.node = new AudioWorkletNode(context, 'beat-agent-processor', {
       numberOfInputs: 0,
-      numberOfOutputs: 1,
-      outputChannelCount: [2],
+      numberOfOutputs: 2,
+      outputChannelCount: [2, 2],
     });
     this.node.port.onmessage = (event) => this.handleWorkletMessage(event.data);
-    this.node.connect(this.master);
+    this.postFxBus = context.createGain();
+    this.postFxBus.gain.value = 1;
+    this.fxChain = new BeatSonicTemporalFxChain(context);
+    await this.fxChain.connect(this.node, this.postFxBus);
+    this.spaceChain = new BeatAcousticSpaceFxChain(context);
+    await this.spaceChain.connect(this.postFxBus, this.master);
+    if (this.audioRoutingState) {
+      this.applyBeatAudioRouting(this.audioRoutingState);
+    }
     this.flushPendingMessages();
     this.post({
       type: 'init',
@@ -90,8 +133,13 @@ export class MusicAudioTransportService {
   }
 
   async play({ startTick = 0 } = {}) {
+    this.prepareUserGesture();
+    await this.audioEngine.resumeIfNeeded?.();
+    this.context = this.audioEngine.context ?? this.context;
+    if (this.context?.state !== 'running') {
+      throw new Error('Audio is blocked by the browser. Click Enable audio first.');
+    }
     await this.ensureReady();
-    if (this.context?.state === 'suspended') await this.context.resume();
     const startStep = Number.isFinite(Number(startTick)) ? Number(startTick) : 0;
     await this.flushAgentsToWorklet();
     this.transportState = updateTransportState(this.transportState, {
@@ -119,6 +167,8 @@ export class MusicAudioTransportService {
 
   stop() {
     this.post({ type: 'transport.stop' });
+    this.fxChain?.clearFxBuffer?.();
+    this.spaceChain?.clearFxBuffer?.();
     this.transportState = updateTransportState(this.transportState, {
       isPlaying: false,
       isPaused: false,
@@ -140,6 +190,36 @@ export class MusicAudioTransportService {
 
   panic() {
     this.post({ type: 'panic' });
+    this.fxChain?.clearFxBuffer?.();
+    this.spaceChain?.clearFxBuffer?.();
+  }
+
+  applyBeatAudioRouting({
+    sonicTemporal,
+    spaceState,
+    descriptorGraph,
+    audioRouting,
+    mixSettings,
+  } = {}) {
+    this.audioRoutingState = {
+      sonicTemporal,
+      spaceState,
+      descriptorGraph,
+      audioRouting,
+      mixSettings: resolveBeatMixSettings(mixSettings ?? this.mixSettings),
+    };
+    this.mixSettings = this.audioRoutingState.mixSettings;
+    const resolved = resolveBeatAudioRouting(this.audioRoutingState);
+    const spaceResolved = resolveBeatSpaceRouting(this.audioRoutingState);
+    this.fxChain?.applyRouting({
+      ...resolved,
+      mixSettings: this.mixSettings,
+    });
+    this.spaceChain?.applyRouting(spaceResolved);
+    this.post({
+      type: 'mix.settings',
+      roleSendLevels: this.mixSettings.roleSendLevels,
+    });
   }
 
   setTransportSettings(patch = {}) {
@@ -172,8 +252,9 @@ export class MusicAudioTransportService {
     if (!agent?.id) return;
     const normalized = normalizeAgent(agent);
     this.agents.set(normalized.id, normalized);
-    await this.ensureReady();
-    await this.postAgentUpsert(normalized);
+    if (this.node?.port) {
+      await this.postAgentUpsert(normalized);
+    }
   }
 
   async updateBeatAgent(id, patch = {}) {
@@ -192,10 +273,14 @@ export class MusicAudioTransportService {
       gain: patch.gain ?? current.gain,
       muted: patch.muted ?? current.muted,
       solo: patch.solo ?? current.solo,
+      isolatedTrackId: patch.isolatedTrackId !== undefined
+        ? patch.isolatedTrackId
+        : current.isolatedTrackId ?? null,
     });
     this.agents.set(id, next);
-    await this.ensureReady();
-    await this.postAgentUpsert(next);
+    if (this.node?.port) {
+      await this.postAgentUpsert(next);
+    }
   }
 
   unregisterBeatAgent(id) {
@@ -345,5 +430,6 @@ function normalizeAgent(agent) {
     muted: Boolean(agent.muted),
     solo: Boolean(agent.solo),
     gain: Number.isFinite(Number(agent.gain)) ? Number(agent.gain) : 1,
+    isolatedTrackId: agent.isolatedTrackId ?? null,
   };
 }

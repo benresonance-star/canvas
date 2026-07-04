@@ -1253,6 +1253,28 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 - Workspace state (camera, selection, filters, display mode, panel toggles) persisted in IndexedDB per fingerprint.
 - Graceful degradation: if Fragments conversion fails, evidence table and inspector still work; viewport shows an error banner.
 
+### Folder sync, dock, and artifact ingest (2026-07-04)
+
+**UI:** The bottom **sync holding tray** (`SyncHoldingTray.jsx`) is the **dock** — colored chips for artefacts waiting to be placed. The right sidebar workspace tree is **not** the dock; it lists Postgres cluster primitives.
+
+**Discovery:** Linked-folder scan (`scanFolderFiles`) maps `.ifc` → `bim-model` with no extension blocklist. Nested paths use folder keys (e.g. `IFC/models__clinic-v1.ifc` → key `IFC/models__clinic`). Recommended on-disk naming: `prefix__name-vN.ifc`.
+
+**Dock vs canvas:** Placement is exclusive — an artefact is on the canvas **or** in the dock, not both. New folder files (including IFC) reach the dock only after **Sync → Apply** (or auto-apply on folder connect/reconnect). Agent-chat sidecars auto-stage; BIM models follow the confirm path like other types.
+
+**Ingest fixes (2026-07-04):**
+
+| Issue | Fix |
+|---|---|
+| Folder-synced `bim_model` artefacts missing from workspace tree / project list | `POST /artifacts/ingest` now passes `project_id`, sets `title`, and calls `upsertArtifactByHash(..., { addToCluster: true })` |
+| Re-ingest of existing hash did not backfill `project_id` or cluster membership | `upsertArtifactByHash` updates null `project_id` and joins cluster when `addToCluster: true` |
+| Client ingest payload omitted project scope | `syncIngest.js` sends `project_id` + `title` on each file |
+| IFC preview IndexedDB write failure could block scan registration | `readFile.js` treats BIM preview cache as optional (scan still registers the file) |
+| Dock chip visibility | `stagingColors.js` adds distinct colors for `bim-model` and `3d-model` |
+
+**Related paths:** `folderScan.js`, `readFile.js`, `syncIngest.js`, `syncStaging.js`, `useFolderLinkScan.js`, `server/routes/artifacts.js`, `server/repositories/artifacts.js`.
+
+**Beat Agent create (same release):** `createMusicAgent` artifact insert now sets required `artifact.title` and `project_id` columns (migration `0021_artifact_base_schema.sql` NOT NULL constraint).
+
 ## 29.4 Intentional deviations from this master spec
 
 | Master spec target | Current implementation |

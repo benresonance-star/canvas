@@ -86,6 +86,20 @@ export function stripCardForPersist(card, opts = {}) {
           primaryFlowId: card.primaryFlowId,
         }
       : {}),
+    ...(card.type === 'sonic_studio'
+      ? {
+          sonicStudioId: card.sonicStudioId,
+          sonicStudioState: card.sonicStudioState,
+          sonicRenderedAssets: card.sonicRenderedAssets,
+          sonicSourceStateHash: card.sonicSourceStateHash,
+        }
+      : {}),
+    ...(card.type === 'music-agent'
+      ? {
+          musicAgentId: card.musicAgentId,
+          musicAgentType: card.musicAgentType,
+        }
+      : {}),
   };
 }
 

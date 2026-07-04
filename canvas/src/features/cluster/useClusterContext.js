@@ -7,6 +7,7 @@ import {
   fetchHealth,
   clusterApiStatusFromHealth,
   clusterProjectStreamUrl,
+  isApiAvailable,
 } from '../../lib/primitivesApi.js';
 import {
   resolveWorkspaceClusterId,
@@ -18,6 +19,9 @@ import {
   buildArtifactToCardMap,
   loadCanvasGraph,
 } from '../../lib/graph/clusterGraph.js';
+import { fetchProjectBeatSonicLinks } from '../../features/music/api/musicApi.js';
+import { restoreBeatSonicCanvasEdges } from '../../features/music/agents/beat/domain/restoreBeatSonicCanvasEdges.js';
+import { wireSonicVoiceToBeatAgent } from '../../features/music/agents/beat/domain/wireSonicVoiceToBeatAgent.js';
 
 export function useClusterContext({
   refs: {
@@ -220,8 +224,25 @@ export function useClusterContext({
       };
     }
     try {
-      const [graphResult, hullResult] = await Promise.all([
-        loadCanvasGraph(cid, cards),
+      let graphResult = await loadCanvasGraph(cid, cards);
+      if (projectId && await isApiAvailable()) {
+        try {
+          const links = await fetchProjectBeatSonicLinks(projectId);
+          const { restored } = await restoreBeatSonicCanvasEdges({
+            clusterId: cid,
+            links,
+            cards,
+            canvasEdges: graphResult.canvasEdges,
+            wireFn: wireSonicVoiceToBeatAgent,
+          });
+          if (restored > 0) {
+            graphResult = await loadCanvasGraph(cid, cards);
+          }
+        } catch {
+          /* non-fatal graph restore */
+        }
+      }
+      const [hullResult] = await Promise.all([
         loadClusterHullSource(projectId),
       ]);
       const { canvasEdges: edges, linkCountByCardId: counts } = graphResult;

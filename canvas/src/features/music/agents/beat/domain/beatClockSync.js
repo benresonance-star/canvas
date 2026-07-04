@@ -2,6 +2,7 @@ import {
   beatTrackSampleSignature,
   createBeatSonicSampleMapForPattern,
 } from './beatSampleResolver.js';
+import { resolveBeatDescriptorExecution } from '../../../../../../packages/music-core/src/index.js';
 
 const beatAudioPayloadCache = new Map();
 const DEFAULT_SAMPLE_RATE = 48000;
@@ -16,8 +17,19 @@ export function resolveBeatAudioSampleRate(universalTransport) {
 export function buildBeatAgentAudioPayload(
   id,
   state,
-  { sampleRate = DEFAULT_SAMPLE_RATE, localPreview = false } = {},
+  {
+    sampleRate = DEFAULT_SAMPLE_RATE,
+    localPreview = false,
+    cards = [],
+    descriptorGraph = null,
+    audioRouting = null,
+    isolatedTrackId = null,
+  } = {},
 ) {
+  const performanceExecution = resolveBeatDescriptorExecution({
+    descriptorGraph,
+    audioRouting: audioRouting ?? state?.audioRouting,
+  });
   const signature = JSON.stringify({
     id,
     sampleRate,
@@ -26,23 +38,34 @@ export function buildBeatAgentAudioPayload(
     parameters: state?.parameters,
     muted: state?.muted,
     solo: state?.solo,
+    performanceExecution,
+    cards: cards.map((card) => ({
+      id: card.id,
+      hash: card.sonicSourceStateHash,
+      assets: (card.sonicRenderedAssets ?? []).map((asset) => asset.sourceStateHash),
+    })),
   });
   const cached = beatAudioPayloadCache.get(signature);
-  if (cached) return cached;
-  const payload = {
+  const basePayload = cached ?? {
     id,
     pattern: state?.pattern ?? null,
     parameters: state?.parameters ?? {},
     gain: Number.isFinite(Number(state?.parameters?.gain)) ? Number(state.parameters.gain) : 1,
     muted: state?.muted === true,
     solo: localPreview ? true : state?.solo === true,
-    sonicSamples: createBeatSonicSampleMapForPattern(state?.pattern, { sampleRate, seed: id }),
+    sonicSamples: createBeatSonicSampleMapForPattern(state?.pattern, { sampleRate, seed: id, cards }),
+    performanceExecution,
   };
-  beatAudioPayloadCache.set(signature, payload);
-  if (beatAudioPayloadCache.size > 16) {
-    beatAudioPayloadCache.delete(beatAudioPayloadCache.keys().next().value);
+  if (!cached) {
+    beatAudioPayloadCache.set(signature, basePayload);
+    if (beatAudioPayloadCache.size > 16) {
+      beatAudioPayloadCache.delete(beatAudioPayloadCache.keys().next().value);
+    }
   }
-  return payload;
+  return {
+    ...basePayload,
+    isolatedTrackId: isolatedTrackId ?? null,
+  };
 }
 
 export function stripBeatLiveTransportState(transportState = {}) {
@@ -62,14 +85,24 @@ export function bindBeatRuntimeTransport(entry) {
   entry.activeTransport = null;
 }
 
-export async function startBeatWorkletSession(entry, universalTransport, runtimeKey, state) {
+export async function startBeatWorkletSession(entry, universalTransport, runtimeKey, state, {
+  cards = [],
+  descriptorGraph = null,
+  audioRouting = null,
+  isolatedTrackId = null,
+} = {}) {
   if (!entry || !universalTransport || !runtimeKey) return () => {};
-  await universalTransport.ensureReady?.();
   entry.workletRefs = Math.max(0, entry.workletRefs ?? 0) + 1;
   entry.registeredAudioTransport = universalTransport;
   const sampleRate = resolveBeatAudioSampleRate(universalTransport);
   await universalTransport.registerBeatAgent(
-    buildBeatAgentAudioPayload(runtimeKey, state, { sampleRate }),
+    buildBeatAgentAudioPayload(runtimeKey, state, {
+      sampleRate,
+      cards,
+      descriptorGraph,
+      audioRouting,
+      isolatedTrackId: isolatedTrackId ?? entry.isolatedTrackId ?? null,
+    }),
   );
   return () => releaseBeatWorkletSession(entry, runtimeKey);
 }
@@ -78,13 +111,26 @@ export async function updateBeatWorkletAgent(
   universalTransport,
   runtimeKey,
   state,
-  { localPreview = false } = {},
+  {
+    localPreview = false,
+    cards = [],
+    descriptorGraph = null,
+    audioRouting = null,
+    isolatedTrackId = null,
+  } = {},
 ) {
   if (!universalTransport || !runtimeKey) return;
   const sampleRate = resolveBeatAudioSampleRate(universalTransport);
   await universalTransport.updateBeatAgent(
     runtimeKey,
-    buildBeatAgentAudioPayload(runtimeKey, state, { sampleRate, localPreview }),
+    buildBeatAgentAudioPayload(runtimeKey, state, {
+      sampleRate,
+      localPreview,
+      cards,
+      descriptorGraph,
+      audioRouting,
+      isolatedTrackId,
+    }),
   );
 }
 

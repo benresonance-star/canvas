@@ -1,19 +1,30 @@
 import {
   createDefaultBeatPattern,
   validateBeatPattern,
+  createDefaultBeatAudioRouting,
+  createDefaultBeatMixSettings,
+  createDefaultBeatSonicTemporalState,
 } from '../../../../../../packages/music-core/src/index.js';
 import { normalizeBeatPatternSynth } from './beatTrackSynth.js';
 
 export function createDefaultBeatAgentState(overrides = {}) {
-  const pattern = normalizeBeatPatternSynth(overrides.pattern ?? createDefaultBeatPattern());
+  const {
+    updatedAt,
+    pattern: overridePattern,
+    ...rest
+  } = overrides ?? {};
+  const pattern = normalizeBeatPatternSynth(overridePattern ?? createDefaultBeatPattern());
   return {
     schemaVersion: 1,
     agentType: 'beat',
-    name: overrides.name ?? 'Beat Agent',
-    status: overrides.status ?? 'draft',
-    syncMode: overrides.syncMode ?? 'project',
-    clockSync: overrides.clockSync ?? false,
-    transport: overrides.transport ?? null,
+    name: 'Beat Agent',
+    status: 'draft',
+    syncMode: 'project',
+    clockSync: false,
+    transport: null,
+    sonicTemporal: createDefaultBeatSonicTemporalState(rest.sonicTemporal),
+    audioRouting: createDefaultBeatAudioRouting(rest.audioRouting),
+    mixSettings: createDefaultBeatMixSettings(rest.mixSettings),
     samples: [
       { id: 'kick', name: 'Kick', role: 'kick', filePath: 'generated://kick', gain: 1 },
       { id: 'snare', name: 'Snare', role: 'snare', filePath: 'generated://snare', gain: 0.9 },
@@ -27,9 +38,9 @@ export function createDefaultBeatAgentState(overrides = {}) {
     locks: {},
     effects: [],
     variations: [],
-    updatedAt: new Date().toISOString(),
-    ...overrides,
+    ...rest,
     pattern,
+    updatedAt: updatedAt ?? new Date().toISOString(),
   };
 }
 

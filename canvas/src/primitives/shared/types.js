@@ -14,6 +14,7 @@ export const ARTIFACT_TYPES = [
   'audio',
   'video',
   '3d_model',
+  'bim_model',
   'transcript',
   'user_note',
   'user_task',

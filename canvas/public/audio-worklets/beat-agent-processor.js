@@ -19,6 +19,13 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
     this.voices = [];
     this.seed = 0x1234abcd;
     this.mixEnvelope = 0;
+    this.roleSendLevels = {
+      kick: 0.08,
+      snare: 0.22,
+      clap: 0.26,
+      hat: 0.18,
+      'hat-closed': 0.18,
+    };
     this.port.onmessage = (event) => this.handleMessage(event.data ?? {});
   }
 
@@ -61,6 +68,12 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
       if (message.type === 'panic') {
         this.voices = [];
       }
+      if (message.type === 'mix.settings') {
+        this.roleSendLevels = {
+          ...this.roleSendLevels,
+          ...(message.roleSendLevels ?? {}),
+        };
+      }
     } catch (error) {
       this.port.postMessage({ type: 'error', reason: error?.message ?? 'Beat processor error' });
     }
@@ -80,14 +93,22 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
 
   upsertAgent(agent) {
     if (!agent?.id) return;
+    const previous = this.agents.get(agent.id);
     this.agents.set(agent.id, {
       id: agent.id,
-      pattern: agent.pattern ?? null,
-      parameters: agent.parameters ?? {},
-      sonicSamples: normalizeSonicSamples(agent.sonicSamples),
+      pattern: agent.pattern ?? previous?.pattern ?? null,
+      parameters: agent.parameters ?? previous?.parameters ?? {},
+      sonicSamples: {
+        ...(previous?.sonicSamples ?? {}),
+        ...normalizeSonicSamples(agent.sonicSamples),
+      },
       muted: agent.muted === true,
       solo: agent.solo === true,
-      gain: finite(agent.gain, 1),
+      gain: finite(agent.gain, previous?.gain ?? 1),
+      isolatedTrackId: agent.isolatedTrackId ?? previous?.isolatedTrackId ?? null,
+      performanceExecution: normalizePerformanceExecution(
+        agent.performanceExecution ?? previous?.performanceExecution,
+      ),
     });
   }
 
@@ -110,24 +131,54 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
       const pattern = agent.pattern;
       const stepCount = Math.max(1, Math.floor(Number(pattern?.stepCount) || STEPS_PER_BAR));
       const patternStep = positiveModulo(step, stepCount);
+      const isolatedTrackId = agent.isolatedTrackId ?? null;
       for (const track of pattern?.tracks ?? []) {
         if (track.muted) continue;
+        if (isolatedTrackId && track.id !== isolatedTrackId) continue;
         const stepData = track.steps?.[patternStep];
         if (!stepData?.active) continue;
-        if (this.random() > finite(stepData.probability, 1)) continue;
+        const perf = agent.performanceExecution ?? NEUTRAL_PERFORMANCE;
+        const passProbability = clamp(
+          finite(stepData.probability, 1) + perf.stepProbabilityBias + perf.densityPressure,
+          0.01,
+          1,
+        );
+        if (this.random() > passProbability) continue;
         const synth = track.synth ?? {};
-        const velocity = clamp(finite(stepData.velocity, 0.8), 0, 1);
+        let velocity = clamp(finite(stepData.velocity, 0.8), 0, 1);
+        if (perf.velocitySpread > 0) {
+          velocity = clamp(velocity * (1 + (this.random() - 0.5) * perf.velocitySpread), 0.05, 1);
+        }
         const trackGain = clamp(finite(synth.gain, finite(track.gain, 1)), 0, 1.5);
-        const agentGain = clamp(finite(agent.parameters?.gain, finite(agent.gain, 1)), 0, 1.5);
+        const agentGain = clamp(
+          finite(agent.parameters?.gain, finite(agent.gain, 1)) * (1 + perf.masterGainBias + perf.gainTrim),
+          0,
+          1.5,
+        );
+        const sample = agent.sonicSamples?.[track.id] ?? agent.sonicSamples?.[track.role];
+        const sampleMode = track.soundSource === 'sonic_voice' ? 'sonic' : 'generated';
         this.voices.push(createVoice({
           agentId: agent.id,
           role: track.role ?? track.id,
           velocity,
           gain: velocity * trackGain * agentGain,
           synth,
-          sample: agent.sonicSamples?.[track.id] ?? agent.sonicSamples?.[track.role],
+          sample,
+          sampleMode,
           seed: this.random(),
         }));
+        if (perf.tapChance > 0 && this.random() < perf.tapChance) {
+          this.voices.push(createVoice({
+            agentId: agent.id,
+            role: track.role ?? track.id,
+            velocity: clamp(velocity * 0.72, 0.05, 1),
+            gain: velocity * trackGain * agentGain * 0.65,
+            synth,
+            sample,
+            sampleMode,
+            seed: this.random(),
+          }));
+        }
       }
     }
     this.postPosition(step);
@@ -147,14 +198,19 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
   }
 
   process(_inputs, outputs) {
-    const output = outputs[0] ?? [];
-    const left = output[0];
-    const right = output[1] ?? left;
-    if (!left) return true;
-    left.fill(0);
-    if (right !== left) right.fill(0);
+    const dryOutput = outputs[0] ?? [];
+    const sendOutput = outputs[1] ?? dryOutput;
+    const dryLeft = dryOutput[0];
+    const dryRight = dryOutput[1] ?? dryLeft;
+    const sendLeft = sendOutput[0] ?? dryLeft;
+    const sendRight = sendOutput[1] ?? sendLeft;
+    if (!dryLeft) return true;
+    dryLeft.fill(0);
+    if (dryRight !== dryLeft) dryRight.fill(0);
+    if (sendLeft && sendLeft !== dryLeft) sendLeft.fill(0);
+    if (sendRight && sendRight !== sendLeft && sendRight !== dryRight) sendRight.fill(0);
 
-    for (let index = 0; index < left.length; index += 1) {
+    for (let index = 0; index < dryLeft.length; index += 1) {
       const frame = currentFrame + index;
       while (this.isPlaying && frame >= this.nextStepFrame) {
         this.triggerStep(this.loopedStep());
@@ -162,8 +218,12 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
         this.nextStepFrame += this.stepDurationFrames();
       }
       const sample = this.renderVoices();
-      left[index] = clamp(sample.left, -0.98, 0.98);
-      right[index] = clamp(sample.right, -0.98, 0.98);
+      const sendLevel = clamp(sample.sendLevel ?? 0.18, 0, 1);
+      const dryScale = 1 - sendLevel;
+      dryLeft[index] = clamp(sample.left * dryScale, -0.98, 0.98);
+      dryRight[index] = clamp(sample.right * dryScale, -0.98, 0.98);
+      if (sendLeft) sendLeft[index] = clamp(sample.left * sendLevel, -0.98, 0.98);
+      if (sendRight) sendRight[index] = clamp(sample.right * sendLevel, -0.98, 0.98);
     }
     return true;
   }
@@ -171,16 +231,25 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
   renderVoices() {
     let left = 0;
     let right = 0;
+    let sendLevel = 0;
+    let weight = 0;
     const activeVoices = [];
     for (const voice of this.voices) {
       const sample = voiceSample(voice);
       left += sample.left;
       right += sample.right;
+      const roleSend = roleTemporalSend(voice.role, this.roleSendLevels);
+      sendLevel += roleSend * Math.max(Math.abs(sample.left), Math.abs(sample.right));
+      weight += Math.max(Math.abs(sample.left), Math.abs(sample.right));
       voice.age += 1;
       if (voice.age < voice.durationFrames) activeVoices.push(voice);
     }
     this.voices = activeVoices;
-    return softLimitMix(left, right, this);
+    const limited = softLimitMix(left, right, this);
+    return {
+      ...limited,
+      sendLevel: weight > 0.0001 ? clamp(sendLevel / weight, 0, 1) : 0.18,
+    };
   }
 
   random() {
@@ -189,23 +258,51 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
   }
 }
 
-function createVoice({ agentId, role, velocity, gain, synth, sample, seed }) {
+function createVoice({ agentId, role, velocity, gain, synth, sample, sampleMode = 'generated', seed }) {
   const decayFrames = sampleRate * clamp(finite(synth.decayMs, role === 'kick' ? 220 : 140) / 1000, 0.02, 0.8);
+  const attackFrames = sampleRate * clamp(finite(synth.attackMs, 0) / 1000, 0, 0.08);
+  const pitchRatio = 2 ** (clamp(finite(synth.pitch, 0), -24, 24) / 12);
   const sampleLength = sample?.left?.length ?? 0;
+  let durationFrames = Math.ceil(decayFrames + sampleRate * 0.04);
+  if (sampleLength > 0) {
+    durationFrames = sampleMode === 'sonic'
+      ? Math.min(Math.ceil(sampleLength / Math.max(pitchRatio, 0.25)), Math.ceil(decayFrames))
+      : sampleLength;
+  }
   return {
     agentId,
     role,
     age: 0,
-    durationFrames: sampleLength > 0 ? sampleLength : Math.ceil(decayFrames + sampleRate * 0.04),
+    durationFrames,
     decayFrames,
+    attackFrames,
     gain: clamp(gain, 0, 1.5),
     tone: clamp(finite(synth.tone, 0.5), 0, 1),
-    pitchRatio: 2 ** (clamp(finite(synth.pitch, 0), -24, 24) / 12),
+    pitchRatio,
     distortion: clamp(finite(synth.distortion, 0), 0, 1),
+    sampleMode,
     phase: 0,
     sample,
+    filterState: { left: 0, right: 0 },
+    readPosition: 0,
     noiseState: Math.max(1, Math.floor(seed * 0x7fffffff)),
     velocity,
+  };
+}
+
+function readSampleAt(voice, position) {
+  const length = voice.sample?.left?.length ?? 0;
+  if (length <= 0) return { left: 0, right: 0 };
+  const clamped = clamp(position, 0, Math.max(0, length - 1));
+  const idx = Math.floor(clamped);
+  const frac = clamped - idx;
+  const left0 = voice.sample.left[idx] ?? 0;
+  const left1 = voice.sample.left[idx + 1] ?? left0;
+  const right0 = voice.sample.right?.[idx] ?? left0;
+  const right1 = voice.sample.right?.[idx + 1] ?? right0;
+  return {
+    left: left0 + (left1 - left0) * frac,
+    right: right0 + (right1 - right0) * frac,
   };
 }
 
@@ -214,6 +311,26 @@ function voiceSample(voice) {
     const remaining = voice.durationFrames - voice.age;
     const fadeFrames = Math.min(3, Math.max(0, remaining));
     const fade = fadeFrames > 0 ? fadeFrames / 3 : 1;
+    if (voice.sampleMode === 'sonic') {
+      voice.readPosition += voice.pitchRatio;
+      let { left, right } = readSampleAt(voice, voice.readPosition);
+      const toneCutoff = 0.12 + voice.tone * 0.78;
+      voice.filterState.left += toneCutoff * (left - voice.filterState.left);
+      voice.filterState.right += toneCutoff * (right - voice.filterState.right);
+      left = voice.filterState.left;
+      right = voice.filterState.right;
+      const attackEnv = voice.attackFrames > 0
+        ? clamp(voice.age / voice.attackFrames, 0, 1)
+        : 1;
+      const decayEnv = Math.exp(-voice.age / Math.max(1, voice.decayFrames));
+      const env = attackEnv * decayEnv * fade;
+      left = saturate(left * voice.gain * env, voice.distortion);
+      right = saturate(right * voice.gain * env, voice.distortion);
+      return {
+        left: clamp(left, -0.98, 0.98),
+        right: clamp(right, -0.98, 0.98),
+      };
+    }
     const left = voice.sample.left[voice.age] ?? 0;
     const right = voice.sample.right?.[voice.age] ?? left;
     return {
@@ -285,6 +402,15 @@ function positiveModulo(value, divisor) {
   return ((value % safeDivisor) + safeDivisor) % safeDivisor;
 }
 
+function roleTemporalSend(role, levels = {}) {
+  if (levels[role] != null) return finite(levels[role], 0.18);
+  if (role === 'kick') return finite(levels.kick, 0.08);
+  if (role === 'snare') return finite(levels.snare, 0.22);
+  if (role === 'clap') return finite(levels.clap, 0.26);
+  if (role === 'hat' || role === 'hat-closed') return finite(levels.hat, 0.18);
+  return 0.18;
+}
+
 function finite(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -304,6 +430,26 @@ function normalizeSonicSamples(samples = {}) {
     };
   }
   return normalized;
+}
+
+const NEUTRAL_PERFORMANCE = {
+  stepProbabilityBias: 0,
+  velocitySpread: 0,
+  masterGainBias: 0,
+  densityPressure: 0,
+  tapChance: 0,
+  gainTrim: 0,
+};
+
+function normalizePerformanceExecution(performance = {}) {
+  return {
+    stepProbabilityBias: clamp(performance.stepProbabilityBias ?? 0, -0.35, 0.35),
+    velocitySpread: clamp(performance.velocitySpread ?? 0, 0, 0.45),
+    masterGainBias: clamp(performance.masterGainBias ?? 0, -0.25, 0.25),
+    densityPressure: clamp(performance.densityPressure ?? 0, -0.2, 0.2),
+    tapChance: clamp(performance.tapChance ?? 0, 0, 0.22),
+    gainTrim: clamp(performance.gainTrim ?? 0, -0.18, 0.05),
+  };
 }
 
 registerProcessor('beat-agent-processor', BeatAgentProcessor);

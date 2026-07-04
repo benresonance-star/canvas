@@ -272,6 +272,8 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Viewer ↔ table sync | Yes — bidirectional via `ifcGlobalId` |
 | Workspace state persistence | Yes — IndexedDB per fingerprint (camera, panels, filters, display mode) |
 | Live extraction feed | Yes — progress events during first-open preparation |
+| Folder sync → dock | Yes — `.ifc` scanned as `bim-model`; stages to sync holding tray after Sync → Apply (or auto-apply on folder connect). See master spec §29.3 *Folder sync, dock, and artifact ingest* |
+| Workspace tree visibility | Yes — after 2026-07-04 ingest fix (`project_id` + cluster membership on `/artifacts/ingest`) |
 
 ## 14.2 Not yet shipped (Stage 1 gaps)
 

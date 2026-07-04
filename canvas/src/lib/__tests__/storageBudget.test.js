@@ -40,10 +40,10 @@ describe('storageBudget', () => {
     expect(storage.has('canvas:project:other')).toBe(false);
   });
 
-  it('clearLocalProjectCaches can keep active project', () => {
+  it('clearLocalProjectCaches can keep active project', async () => {
     storage.set('canvas:project:keep', 'x');
     storage.set('canvas:project:drop', 'y');
-    clearLocalProjectCaches({ activeProjectId: 'keep', keepActive: true });
+    await clearLocalProjectCaches({ activeProjectId: 'keep', keepActive: true });
     expect(storage.has('canvas:project:keep')).toBe(true);
     expect(storage.has('canvas:project:drop')).toBe(false);
   });

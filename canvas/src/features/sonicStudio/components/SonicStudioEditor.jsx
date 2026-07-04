@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Blend, BookmarkPlus, Play, RotateCcw, Save, Square } from 'lucide-react';
+import { VintageSlider } from '../../../components/VintageSlider.jsx';
+import { PitchSliderControl } from '../../../components/PitchSliderControl.jsx';
 import {
   addSonicSavePoint,
   buildSonicStudioCardPatch,
@@ -10,16 +12,15 @@ import {
   updateSonicVoiceFromSpace,
   updateSonicVoice,
 } from '../domain/sonicStudioCard.js';
+import { bakeSonicRenderedAssets } from '../domain/sonicRenderedAssets.js';
 import { renderSonicStudioVoicePreview } from '../domain/sonicStudioAudition.js';
+import {
+  patchVoiceFromPath,
+  PITCH_CONTROL_KEY,
+  SONIC_VOICE_PARAM_CONTROLS,
+} from '../domain/sonicVoiceParams.js';
 
-const PARAM_CONTROLS = [
-  { key: 'material.brightness', label: 'Brightness', min: 0, max: 1, step: 0.01 },
-  { key: 'material.hardness', label: 'Hardness', min: 0, max: 1, step: 0.01 },
-  { key: 'body.resonance', label: 'Resonance', min: 0, max: 1, step: 0.01 },
-  { key: 'body.damping', label: 'Damping', min: 0, max: 1, step: 0.01 },
-  { key: 'contact.friction', label: 'Friction', min: 0, max: 1, step: 0.01 },
-  { key: 'output.gain', label: 'Gain', min: 0, max: 1.5, step: 0.01 },
-];
+const PARAM_CONTROLS = SONIC_VOICE_PARAM_CONTROLS;
 
 export function SonicStudioEditor({ card, onUpdateCard }) {
   const cardState = useMemo(() => normalizeSonicStudioCardState(card), [card]);
@@ -32,6 +33,7 @@ export function SonicStudioEditor({ card, onUpdateCard }) {
   const [previewStatus, setPreviewStatus] = useState('idle');
   const [previewError, setPreviewError] = useState('');
   const [saveStatus, setSaveStatus] = useState('');
+  const [pitchSemitoneMode, setPitchSemitoneMode] = useState(false);
   const audioContextRef = useRef(null);
   const activeSourceRef = useRef(null);
   const persistTimerRef = useRef(null);
@@ -61,7 +63,10 @@ export function SonicStudioEditor({ card, onUpdateCard }) {
       persistTimerRef.current = null;
     }
     latestDraftRef.current = nextState;
-    onUpdateCard?.(buildSonicStudioCardPatch(nextState, card.sonicRenderedAssets ?? []));
+    const renderedAssets = bakeSonicRenderedAssets(nextState, {
+      previousAssets: card.sonicRenderedAssets ?? [],
+    });
+    onUpdateCard?.(buildSonicStudioCardPatch(nextState, renderedAssets));
     setSaveStatus('Saved');
   };
 
@@ -268,6 +273,19 @@ export function SonicStudioEditor({ card, onUpdateCard }) {
               </div>
               <div className="space-y-4">
                 {PARAM_CONTROLS.map((control) => {
+                  if (control.key === PITCH_CONTROL_KEY) {
+                    return (
+                      <PitchSliderControl
+                        key={control.key}
+                        variant="editor"
+                        label={control.label}
+                        value={getPath(selectedVoice, control.key) ?? 0}
+                        semitoneMode={pitchSemitoneMode}
+                        onSemitoneModeChange={setPitchSemitoneMode}
+                        onChange={(nextValue) => updateSelectedVoice(control.key, nextValue)}
+                      />
+                    );
+                  }
                   const value = getPath(selectedVoice, control.key) ?? 0;
                   return (
                     <label key={control.key} className="block">
@@ -275,14 +293,12 @@ export function SonicStudioEditor({ card, onUpdateCard }) {
                         <span className="sans text-xs text-secondary">{control.label}</span>
                         <span className="sans text-[10px] text-muted tabular-nums">{Number(value).toFixed(2)}</span>
                       </div>
-                      <input
-                        type="range"
+                      <VintageSlider
                         min={control.min}
                         max={control.max}
                         step={control.step}
                         value={value}
                         onChange={(event) => updateSelectedVoice(control.key, event.target.value)}
-                        className="w-full accent-[var(--color-accent)]"
                       />
                     </label>
                   );
@@ -419,14 +435,12 @@ export function SonicStudioEditor({ card, onUpdateCard }) {
               <span className="sans text-xs text-secondary">Amount</span>
               <span className="sans text-[10px] text-muted tabular-nums">{morphAmount.toFixed(2)}</span>
             </div>
-            <input
-              type="range"
+            <VintageSlider
               min="0"
               max="1"
               step="0.01"
               value={morphAmount}
               onChange={(event) => setMorphAmount(Number(event.target.value))}
-              className="w-full accent-[var(--color-accent)]"
             />
           </label>
           <button

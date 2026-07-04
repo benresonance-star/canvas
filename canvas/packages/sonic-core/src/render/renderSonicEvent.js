@@ -24,6 +24,14 @@ export function deriveVoiceRootHz(voice) {
   return clamp(archetypeBase * sizeScale * tensionScale * stiffnessScale * materialScale, 20, 12000);
 }
 
+export function resolveVoiceRootHz(voice, event = {}) {
+  const state = createSonicVoiceState(voice);
+  const pitchSemitones = Number(state.output?.pitchSemitones ?? 0);
+  const baseRootHz = event.pitchHz ?? deriveVoiceRootHz(state);
+  const ratio = Number.isFinite(pitchSemitones) ? 2 ** (pitchSemitones / 12) : 1;
+  return clamp(baseRootHz * ratio, 20, 12000);
+}
+
 export function renderSonicEvent({
   voice,
   event = {},
@@ -43,7 +51,7 @@ export function renderSonicEvent({
     material: state.material,
     gesture: { ...state.gesture, ...(event.gestureOverride ?? {}) },
   });
-  const rootHz = event.pitchHz ?? deriveVoiceRootHz(state);
+  const rootHz = resolveVoiceRootHz(state, event);
   const resonatorType = state.resonator?.type ?? 'modal';
   let rendered;
   if (resonatorType === 'comb') {

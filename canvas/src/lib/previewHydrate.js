@@ -1,5 +1,6 @@
 import { fileTypeFromExt } from './filename.js';
 import { getPreview } from './previewStore.js';
+import { isBlobUrl, stripEphemeralPreviewUrls } from './previewUrl.js';
 
 function blobToDataUrl(blob) {
   return new Promise((resolve) => {
@@ -10,9 +11,11 @@ function blobToDataUrl(blob) {
 }
 
 export function versionNeedsHydration(v) {
-  if (!v.previewCacheKey) return false;
-  if (v.dataUrl || v.objectUrl) {
-    return Boolean(v.previewStripped);
+  const version = stripEphemeralPreviewUrls(v);
+  if (!version.previewCacheKey) return false;
+  if (isBlobUrl(version.objectUrl)) return true;
+  if (version.dataUrl || version.objectUrl) {
+    return Boolean(version.previewStripped);
   }
   if (v.cardType === 'bookmark' || v.externalUrl) {
     return Boolean(v.previewCacheKey);
@@ -23,36 +26,37 @@ export function versionNeedsHydration(v) {
 }
 
 export async function hydrateVersion(v, { force = false, localOnly = false } = {}) {
-  if (!v.previewCacheKey) {
-    if (v.previewStripped && (v.dataUrl || v.objectUrl)) {
-      return { ...v, previewStripped: false };
+  const version = stripEphemeralPreviewUrls(v);
+  if (!version.previewCacheKey) {
+    if (version.previewStripped && (version.dataUrl || version.objectUrl)) {
+      return { ...version, previewStripped: false };
     }
-    return v;
+    return version;
   }
 
-  if (!force && !versionNeedsHydration(v)) {
-    return v;
+  if (!force && !versionNeedsHydration(version)) {
+    return version;
   }
 
-  const blob = await getPreview(v.previewCacheKey, { localOnly });
-  if (!blob) return v;
+  const blob = await getPreview(version.previewCacheKey, { localOnly });
+  if (!blob) return version;
 
-  const ext = (v.ext || '').toLowerCase();
-  const type = v.cardType === 'bookmark' ? 'image' : fileTypeFromExt(ext);
+  const ext = (version.ext || '').toLowerCase();
+  const type = version.cardType === 'bookmark' ? 'image' : fileTypeFromExt(ext);
   const isImageOrPdf = type === 'image' || type === 'pdf';
 
   if (isImageOrPdf || type === 'video' || type === 'audio' || type === '3d-model' || type === 'bim-model') {
     const objectUrl = URL.createObjectURL(blob);
     return {
-      ...v,
+      ...version,
       objectUrl,
-      dataUrl: force ? null : (v.dataUrl ?? null),
+      dataUrl: force ? null : (version.dataUrl ?? null),
       previewStripped: false,
       inline: true,
     };
   }
 
-  return v;
+  return version;
 }
 
 async function hydrateCard(c, { localOnly = false }) {

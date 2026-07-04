@@ -5,7 +5,7 @@ import {
   linkFolderForProject,
   reconnectFolderForProject,
 } from '../../lib/restoreFolder.js';
-import { setCachedFolderHandle } from '../../lib/folderSessionCache.js';
+import { setCachedFolderHandle, onFolderHandleRepaired, onFolderHandleStale } from '../../lib/folderSessionCache.js';
 import { deriveFolderLinkState, resolveFolderSyncAction } from '../../lib/folderLinkState.js';
 import {
   MANUAL_SYNC_TIMEOUT_MS,
@@ -1102,6 +1102,34 @@ export function useFolderLinkScan({
   useEffect(() => {
     if (!folderHandle) setFolderPresentKeys(null);
   }, [folderHandle]);
+
+  useEffect(() => {
+    return onFolderHandleRepaired((projectId, handle) => {
+      if (projectId !== activeProjectIdRef.current) return;
+      setFolderHandle(handle);
+      folderHandleProjectIdRef.current = projectId;
+    });
+  }, [activeProjectIdRef, setFolderHandle]);
+
+  useEffect(() => {
+    return onFolderHandleStale((projectId) => {
+      if (projectId !== activeProjectIdRef.current) return;
+      setFolderHandle(null);
+      folderHandleProjectIdRef.current = null;
+      setSyncStatus({
+        error: strings.sync.folderStaleOnDisk,
+        toast: strings.sync.reconnectFolderAction,
+      });
+      setTimeout(() => {
+        setSyncStatus((prev) => {
+          if (prev?.error !== strings.sync.folderStaleOnDisk) return prev ?? null;
+          const next = { ...(prev ?? {}) };
+          delete next.error;
+          return Object.keys(next).length > 0 ? next : null;
+        });
+      }, 8000);
+    });
+  }, [activeProjectIdRef, setFolderHandle, setSyncStatus]);
 
   useEffect(() => {
     folderPresentKeysRef.current = folderPresentKeys;

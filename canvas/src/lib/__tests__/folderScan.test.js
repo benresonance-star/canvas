@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('../previewStore.js', () => ({
+  previewCacheKey: (projectId, cardKey, version) => `${projectId}:${cardKey}:v${version}`,
+  putPreview: vi.fn(async () => {}),
+}));
+
 import { scanFolderFiles } from '../folderScan.js';
 
 function fileHandle(name, body = 'hello') {
@@ -154,5 +160,32 @@ describe('scanFolderFiles', () => {
     const { found } = await scanFolderFiles(root, { projectId: 'p1' });
 
     expect(found.map((entry) => entry.relativePath)).toEqual(['notes__real-v1.md']);
+  });
+
+  it('scans IFC files in nested folders as bim-model artifacts', async () => {
+    const ifcBody = new Uint8Array([0x49, 0x53, 0x4f]); // "ISO" header bytes
+    const root = directoryHandle('project', [
+      directoryHandle('IFC', [
+        {
+          kind: 'file',
+          name: 'Resort Villa.ifc',
+          async getFile() {
+            return new File([ifcBody], 'Resort Villa.ifc', {
+              type: 'application/x-step',
+              lastModified: 1,
+            });
+          },
+        },
+      ]),
+    ]);
+
+    const { found } = await scanFolderFiles(root, { projectId: 'p1' });
+
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      filename: 'Resort Villa.ifc',
+      relativePath: 'IFC/Resort Villa.ifc',
+      cardKey: 'IFC/Resort Villa',
+    });
   });
 });

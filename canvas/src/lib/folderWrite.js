@@ -1,5 +1,60 @@
 import { buildFilename } from './filename.js';
 import { readFileEntry } from './readFile.js';
+import { reloadFolderHandleForWrite } from './restoreFolder.js';
+import { markFolderHandleStale } from './folderSessionCache.js';
+
+export const FOLDER_HANDLE_STALE_USER_MESSAGE =
+  'Folder changed on disk — click Restore folder link in the sync bar, then retry.';
+
+export function isFolderHandleStaleUserError(error) {
+  return String(error?.message ?? '') === FOLDER_HANDLE_STALE_USER_MESSAGE;
+}
+
+function failStaleFolderWrite(projectId) {
+  if (projectId) markFolderHandleStale(projectId);
+  throw new Error(FOLDER_HANDLE_STALE_USER_MESSAGE);
+}
+
+export function isStaleFileSystemHandleError(error) {
+  const message = String(error?.message ?? '');
+  return (
+    /state cached in an interface object/i.test(message)
+    || /state has changed since it was read from the disk/i.test(message)
+  );
+}
+
+/**
+ * @template T
+ * @param {string | null | undefined} projectId
+ * @param {FileSystemDirectoryHandle | null | undefined} handle
+ * @param {(handle: FileSystemDirectoryHandle) => Promise<T>} operation
+ * @returns {Promise<T>}
+ */
+export async function runWithStaleFolderHandleRetry(projectId, handle, operation) {
+  if (!handle) {
+    throw new DOMException('File path unavailable', 'NotFoundError');
+  }
+  try {
+    return await operation(handle);
+  } catch (error) {
+    if (!isStaleFileSystemHandleError(error)) throw error;
+    if (!projectId) {
+      failStaleFolderWrite(projectId);
+    }
+    const reloaded = await reloadFolderHandleForWrite(projectId);
+    if (!reloaded) {
+      failStaleFolderWrite(projectId);
+    }
+    try {
+      return await operation(reloaded);
+    } catch (retryError) {
+      if (isStaleFileSystemHandleError(retryError)) {
+        failStaleFolderWrite(projectId);
+      }
+      throw retryError;
+    }
+  }
+}
 
 function splitRelativePath(path) {
   return String(path ?? '')
@@ -32,20 +87,22 @@ export async function getFileHandleAtPath(handle, relativePath, options) {
   return dir.getFileHandle(parts[parts.length - 1], options);
 }
 
-export async function writeBinaryFileAtPath(handle, relativePath, bytes) {
-  const parts = splitRelativePath(relativePath);
-  if (!handle || parts.length === 0) {
-    throw new DOMException('File path unavailable', 'NotFoundError');
-  }
-  let dir = handle;
-  for (const segment of parts.slice(0, -1)) {
-    dir = await dir.getDirectoryHandle(segment, { create: true });
-  }
-  const fileHandle = await dir.getFileHandle(parts[parts.length - 1], { create: true });
-  const writable = await fileHandle.createWritable();
-  await writable.write(bytes);
-  await writable.close();
-  return relativePath;
+export async function writeBinaryFileAtPath(handle, relativePath, bytes, { projectId } = {}) {
+  return runWithStaleFolderHandleRetry(projectId, handle, async (folderHandle) => {
+    const parts = splitRelativePath(relativePath);
+    if (parts.length === 0) {
+      throw new DOMException('File path unavailable', 'NotFoundError');
+    }
+    let dir = folderHandle;
+    for (const segment of parts.slice(0, -1)) {
+      dir = await dir.getDirectoryHandle(segment, { create: true });
+    }
+    const fileHandle = await dir.getFileHandle(parts[parts.length - 1], { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(bytes);
+    await writable.close();
+    return relativePath;
+  });
 }
 
 export async function ensureWritePermission(handle) {
@@ -62,12 +119,14 @@ export async function ensureWritePermission(handle) {
   }
 }
 
-export async function writeTextFileToFolder(handle, filename, text) {
-  const fileHandle = await handle.getFileHandle(filename, { create: true });
-  const writable = await fileHandle.createWritable();
-  await writable.write(text);
-  await writable.close();
-  return fileHandle;
+export async function writeTextFileToFolder(handle, filename, text, { projectId } = {}) {
+  return runWithStaleFolderHandleRetry(projectId, handle, async (folderHandle) => {
+    const fileHandle = await folderHandle.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(text);
+    await writable.close();
+    return fileHandle;
+  });
 }
 
 export async function writeUserNoteFile(handle, { prefix, name, body, version = 1 }) {
@@ -140,12 +199,14 @@ export async function writeBookmarkFile(handle, { filename, url, title }) {
   return markdownFilename;
 }
 
-export async function overwriteTextFileAtPath(handle, relativePath, body) {
-  const entry = await getFileHandleAtPath(handle, relativePath, { create: true });
-  const writable = await entry.createWritable();
-  await writable.write(body);
-  await writable.close();
-  return relativePath;
+export async function overwriteTextFileAtPath(handle, relativePath, body, { projectId } = {}) {
+  return runWithStaleFolderHandleRetry(projectId, handle, async (folderHandle) => {
+    const entry = await getFileHandleAtPath(folderHandle, relativePath, { create: true });
+    const writable = await entry.createWritable();
+    await writable.write(body);
+    await writable.close();
+    return relativePath;
+  });
 }
 
 export async function overwriteUserNoteFile(handle, filename, body) {

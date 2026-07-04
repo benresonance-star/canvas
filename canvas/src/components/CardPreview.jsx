@@ -20,6 +20,7 @@ import { BookmarkPreview } from './BookmarkPreview.jsx';
 import { BookmarkInlineEditor } from './BookmarkInlineEditor.jsx';
 import { audioSkinUsesDarkText, resolveAudioSkinColor } from '../lib/audioSkin.js';
 import { buildHtmlPreviewSrcDoc } from '../lib/htmlPreviewDocument.js';
+import { isBlobUrl } from '../lib/previewUrl.js';
 import { FlowPreview } from '../features/flow/components/FlowPreview.jsx';
 import { LiveArtifactView } from '../features/live/components/LiveArtifactView.jsx';
 import { BeatAgentPreview } from '../features/music/agents/beat/components/BeatAgentPreview.jsx';
@@ -122,17 +123,38 @@ export function CardPreview({
   }, [isActive]);
 
   useEffect(() => {
-    if (mediaSrc || !pinned?.previewCacheKey || !onRehydratePreview) return;
+    if (!pinned?.previewCacheKey || !onRehydratePreview) return;
     if (
       card.type !== 'image'
       && card.type !== 'pdf'
       && card.type !== 'video'
       && card.type !== 'audio'
       && card.type !== '3d-model'
+      && card.type !== 'bim-model'
       && card.type !== 'bookmark'
     ) return;
-    onRehydratePreview(card.id, pinned.version);
-  }, [card.id, card.type, pinned?.version, pinned?.previewCacheKey, mediaSrc, onRehydratePreview]);
+
+    if (!mediaSrc) {
+      onRehydratePreview(card.id, pinned.version);
+      return undefined;
+    }
+
+    if (!isBlobUrl(pinned?.objectUrl)) return undefined;
+
+    let cancelled = false;
+    fetch(pinned.objectUrl)
+      .then((response) => {
+        if (!response.ok && !cancelled) {
+          onRehydratePreview(card.id, pinned.version, { force: true });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) onRehydratePreview(card.id, pinned.version, { force: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [card.id, card.type, pinned?.version, pinned?.previewCacheKey, pinned?.objectUrl, mediaSrc, onRehydratePreview]);
 
   if (!pinned) return <div className="serif italic text-muted text-sm">{strings.preview.noData}</div>;
 
@@ -148,9 +170,11 @@ export function CardPreview({
     );
   }
   if (cardType === 'music-agent') {
+    const cards = cardsById ? [...cardsById.values()] : [];
     return (
       <BeatAgentPreview
         card={card}
+        cards={cards}
         projectId={projectId || card.projectId}
         folderHandle={folderHandle}
         onUpdateCard={onUpdateCard}
@@ -563,6 +587,9 @@ export function CardPreview({
           iframeKey={`${card.id}-v${pinned.version}-pdf`}
           title={card.name}
           pointerEventsNone={!isActive}
+          onPreviewError={() => {
+            void onRehydratePreview?.(card.id, pinned.version, { force: true });
+          }}
         />
       </div>
     );

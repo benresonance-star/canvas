@@ -106,7 +106,21 @@ export function createSonicVoiceState(overrides = {}) {
     richness: overrides.richness ?? { saturation: 0.08, noise: 0.08, drift: 0.02 },
     temporal: overrides.temporal ?? { enabled: false },
     environment: overrides.environment ?? { roomSize: 0.2, stereoWidth: 0.3, airAbsorption: 0.35 },
-    output: overrides.output ?? { gain: 0.9, pan: 0 },
+    output: normalizeSonicVoiceOutput(overrides.output ?? { gain: 0.9, pan: 0 }),
+  };
+}
+
+function clampPitchSemitones(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(-24, Math.min(24, number));
+}
+
+export function normalizeSonicVoiceOutput(output = {}) {
+  return {
+    gain: clamp(output.gain ?? 0.9),
+    pan: clamp(output.pan ?? 0, -1, 1),
+    pitchSemitones: clampPitchSemitones(output.pitchSemitones ?? 0),
   };
 }
 

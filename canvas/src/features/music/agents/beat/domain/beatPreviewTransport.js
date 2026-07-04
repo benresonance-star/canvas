@@ -7,8 +7,7 @@ export function ensureBeatPreviewTransport(entry, audioEngine) {
   return entry.previewTransport;
 }
 
-export function resolveBeatAudioTransport(entry, { clockSync, sharedTransport, audioEngine }) {
-  if (clockSync) return sharedTransport;
+export function resolveBeatAudioTransport(entry, { audioEngine }) {
   return ensureBeatPreviewTransport(entry, audioEngine);
 }
 

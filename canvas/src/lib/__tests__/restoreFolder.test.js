@@ -10,6 +10,7 @@ import {
   linkFolderForProject,
   restoreFolderForProject,
   reconnectFolderForProject,
+  reloadFolderHandleForWrite,
 } from '../restoreFolder.js';
 import {
   getCachedFolderHandle,
@@ -20,11 +21,16 @@ import {
 function mockHandle(permSequence) {
   let i = 0;
   const next = () => permSequence[i++] ?? 'denied';
-  return {
+  const handle = {
     name: 'MyProject',
     queryPermission: vi.fn(async () => next()),
     requestPermission: vi.fn(async () => next()),
+    entries: vi.fn(() => ({
+      next: vi.fn(async () => ({ done: true, value: undefined })),
+      return: vi.fn(async () => ({})),
+    })),
   };
+  return handle;
 }
 
 describe('restoreFolder', () => {
@@ -129,5 +135,63 @@ describe('restoreFolder', () => {
     const result = await reconnectFolderForProject('p1');
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('denied');
+  });
+
+  it('reloadFolderHandleForWrite clears cache and reloads from IndexedDB', async () => {
+    const handle = mockHandle(['granted']);
+    vi.mocked(loadFolderHandle).mockResolvedValue(handle);
+    setCachedFolderHandle('p1', { name: 'stale' });
+
+    const result = await reloadFolderHandleForWrite('p1');
+
+    expect(result).toBe(handle);
+    expect(getCachedFolderHandle('p1')).toBe(handle);
+    expect(loadFolderHandle).toHaveBeenCalledWith('p1');
+  });
+
+  it('reloadFolderHandleForWrite returns null when permission is denied', async () => {
+    const handle = mockHandle(['denied']);
+    vi.mocked(loadFolderHandle).mockResolvedValue(handle);
+
+    const result = await reloadFolderHandleForWrite('p1');
+
+    expect(result).toBeNull();
+    expect(getCachedFolderHandle('p1')).toBeNull();
+  });
+
+  it('reloadFolderHandleForWrite returns null when stored handle probe is stale', async () => {
+    const staleHandle = {
+      name: 'MyProject',
+      queryPermission: vi.fn(async () => 'granted'),
+      requestPermission: vi.fn(async () => 'denied'),
+      entries: vi.fn(() => ({
+        next: vi.fn(async () => {
+          throw new DOMException(
+            'An operation that depends on state cached in an interface object was made but the state has changed since it was read from the disk',
+            'NotFoundError',
+          );
+        }),
+        return: vi.fn(async () => ({})),
+      })),
+    };
+    vi.mocked(loadFolderHandle).mockResolvedValue(staleHandle);
+
+    const result = await reloadFolderHandleForWrite('p1');
+
+    expect(result).toBeNull();
+    expect(getCachedFolderHandle('p1')).toBeNull();
+  });
+
+  it('probeFolderHandleAlive reads via entries without using "."', async () => {
+    const { probeFolderHandleAlive } = await import('../restoreFolder.js');
+    const next = vi.fn(async () => ({ done: true, value: undefined }));
+    const handle = {
+      entries: vi.fn(() => ({ next, return: vi.fn(async () => ({})) })),
+    };
+
+    await probeFolderHandleAlive(handle);
+
+    expect(handle.entries).toHaveBeenCalled();
+    expect(next).toHaveBeenCalled();
   });
 });

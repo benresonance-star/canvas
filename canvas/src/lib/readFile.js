@@ -106,8 +106,12 @@ export async function readFileEntry(entry, options = {}) {
       const buf = await file.arrayBuffer();
       const blob = new Blob([buf], { type: file.type || 'application/x-step' });
       if (cacheKey) {
-        await putPreview(cacheKey, blob);
-        previewCacheKey = cacheKey;
+        try {
+          await putPreview(cacheKey, blob);
+          previewCacheKey = cacheKey;
+        } catch {
+          /* Preview cache is optional; folder scan should still register the IFC file. */
+        }
       }
       objectUrl = URL.createObjectURL(blob);
     } else {

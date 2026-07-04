@@ -24,7 +24,7 @@ export function defaultCapabilitiesForArtifactType(type) {
   if (type === 'live') return ['canRun', 'canVersion', 'canHaveState'];
   if (type === 'image') return ['canReview', 'canTransform', 'canBranch', 'canReference'];
   if (type === 'audio' || type === 'video') return ['canReview', 'canTransform', 'canReference'];
-  if (type === '3d_model') return ['canReview', 'canBranch', 'canReference'];
+  if (type === '3d_model' || type === 'bim_model') return ['canReview', 'canBranch', 'canReference'];
   if (['user_note', 'user_task', 'agent_chat'].includes(type)) {
     return ['canEdit', 'canReview', 'canReference'];
   }
@@ -70,6 +70,8 @@ export async function upsertArtifactByHash(clusterId, fields, { addToCluster = f
   );
   if (existing.rows[0]) {
     const row = existing.rows[0];
+    const nextProjectId =
+      fields.project_id ?? fields.projectId ?? fields.metadata?.project_id ?? fields.metadata?.projectId ?? null;
     if (
       fields.type &&
       fields.type !== 'other' &&
@@ -77,6 +79,12 @@ export async function upsertArtifactByHash(clusterId, fields, { addToCluster = f
       fields.type !== row.type
     ) {
       await query('UPDATE artifact SET type = $2 WHERE id = $1', [row.id, fields.type]);
+    }
+    if (nextProjectId && !row.project_id) {
+      await query('UPDATE artifact SET project_id = $2, updated_at = NOW() WHERE id = $1', [
+        row.id,
+        nextProjectId,
+      ]);
     }
     if (addToCluster && clusterId) {
       await addClusterMember(clusterId, { id: row.id, type: 'artifact' });

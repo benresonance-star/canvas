@@ -8,6 +8,8 @@ import {
   deriveSpaceFromDescriptors,
   deriveTemporalFromDescriptors,
   driveDescriptorMappings,
+  deriveBeatPerformanceFromDescriptors,
+  resolveBeatDescriptorExecution,
   analyzeMusicClutter,
   createDefaultTransportState,
   ticksToBarBeatTick,
@@ -204,5 +206,33 @@ describe('music core MVP', () => {
     });
     expect(analysis.risk).toBe('high');
     expect(analysis.suggestions.length).toBeGreaterThan(0);
+  });
+
+  it('derives beat performance execution from descriptors', () => {
+    let graph = createDefaultDescriptorGraph();
+    graph = updateDescriptorValue(graph, 'Complexity', 0.92).graph;
+    graph = updateDescriptorValue(graph, 'Energy', 0.88).graph;
+    const active = deriveBeatPerformanceFromDescriptors(graph, { macroDepth: 1 });
+    const bypassed = deriveBeatPerformanceFromDescriptors(graph, { bypass: true });
+    expect(active.stepProbabilityBias).toBeGreaterThan(0.05);
+    expect(active.masterGainBias).toBeGreaterThan(0);
+    expect(bypassed.stepProbabilityBias).toBe(0);
+    expect(bypassed.masterGainBias).toBe(0);
+  });
+
+  it('resolves neutral execution when descriptor graph bypass is enabled', () => {
+    const graph = updateDescriptorValue(createDefaultDescriptorGraph(), 'Complexity', 0.95).graph;
+    const execution = resolveBeatDescriptorExecution({
+      descriptorGraph: graph,
+      audioRouting: { descriptorGraphBypass: true },
+    });
+    expect(execution).toEqual({
+      stepProbabilityBias: 0,
+      velocitySpread: 0,
+      masterGainBias: 0,
+      densityPressure: 0,
+      tapChance: 0,
+      gainTrim: 0,
+    });
   });
 });

@@ -111,6 +111,12 @@ function idbListKeys(storeName) {
  * @param {string} projectId
  * @param {string} serialised
  */
+function isQuotaError(e) {
+  const name = e?.name ?? '';
+  const msg = String(e?.message ?? e);
+  return name === 'QuotaExceededError' || /quota/i.test(msg);
+}
+
 export async function putProjectDocumentSerialised(projectId, serialised) {
   if (!isProjectDocumentIdbAvailable()) {
     memoryDocuments.set(projectId, serialised);
@@ -119,7 +125,8 @@ export async function putProjectDocumentSerialised(projectId, serialised) {
   }
   try {
     await idbPut(STORE_DOCUMENTS, projectId, serialised);
-  } catch {
+  } catch (e) {
+    if (isQuotaError(e)) throw e;
     memoryDocuments.set(projectId, serialised);
   }
   notifyProjectCacheChanged(projectId);

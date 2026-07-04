@@ -72,6 +72,39 @@ describe('upsertArtifactByHash', () => {
     expect(addClusterMember).not.toHaveBeenCalled();
   });
 
+  it('backfills project_id and joins cluster for existing artifacts when requested', async () => {
+    query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'artifact-existing',
+          type: 'bim_model',
+          content_hash: baseFields.content_hash,
+          project_id: null,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'artifact-existing',
+          ...baseFields,
+          type: 'bim_model',
+          project_id: 'project-1',
+        }],
+      });
+
+    const result = await upsertArtifactByHash(
+      'cluster-1',
+      { ...baseFields, type: 'bim_model', project_id: 'project-1' },
+      { addToCluster: true },
+    );
+
+    expect(result.created).toBe(false);
+    expect(addClusterMember).toHaveBeenCalledWith('cluster-1', {
+      id: 'artifact-existing',
+      type: 'artifact',
+    });
+  });
+
   it('joins the cluster when addToCluster is true', async () => {
     newUlid.mockReturnValue('01KVFSHETF31J7PZ0AFPGTY179');
     query

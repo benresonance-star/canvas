@@ -298,11 +298,11 @@ export async function loadThreadTranscript({
 
   if (artifactRef?.id) {
     try {
-      const { artifact } = await getArtifact(artifactRef.id);
+      const { artifact } = await getArtifact(artifactRef.id, { optional: true });
       const text = artifact?.payload_text;
       if (typeof text === 'string' && text.length > 0) return text;
     } catch {
-      /* ignore */
+      /* ignore network errors */
     }
   }
 

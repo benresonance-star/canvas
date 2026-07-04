@@ -48,7 +48,11 @@ import {
   recordGoodLocalCardCount,
   getLastGoodLocalCardCount,
   clearLastGoodLocalCardCount,
+  recordGoodEphemeralCardCount,
+  getLastGoodEphemeralCardCount,
+  clearLastGoodEphemeralCardCount,
   preserveCanvasCardsInMergedPayload,
+  preserveEphemeralAgentCardsInMergedPayload,
   isAuthoritativeRepairDocument,
 } from '../projectDocumentMerge.js';
 
@@ -56,7 +60,11 @@ export {
   recordGoodLocalCardCount,
   getLastGoodLocalCardCount,
   clearLastGoodLocalCardCount,
+  recordGoodEphemeralCardCount,
+  getLastGoodEphemeralCardCount,
+  clearLastGoodEphemeralCardCount,
   preserveCanvasCardsInMergedPayload,
+  preserveEphemeralAgentCardsInMergedPayload,
 };
 
 import {

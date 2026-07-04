@@ -15,6 +15,50 @@ import { payloadsEquivalent, projectCardCount } from './sync/projectSyncMerge.js
 
 /** Best-known non-zero artifact count per project (guards against stale empty server). */
 const lastGoodArtifactCountByProjectId = new Map();
+/** Best-known non-zero ephemeral agent card count per project. */
+const lastGoodEphemeralCardCountByProjectId = new Map();
+
+const EPHEMERAL_AGENT_CARD_TYPES = new Set(['music-agent', 'agent']);
+
+export function countEphemeralAgentCards(doc) {
+  return (doc?.cards ?? []).filter((card) => EPHEMERAL_AGENT_CARD_TYPES.has(card?.type)).length;
+}
+
+export function extractEphemeralAgentCards(doc) {
+  return (doc?.cards ?? []).filter((card) => EPHEMERAL_AGENT_CARD_TYPES.has(card?.type));
+}
+
+function ephemeralCardIdentity(card) {
+  if (card?.type === 'music-agent') {
+    return card.musicAgentId || card.id || null;
+  }
+  if (card?.type === 'agent') {
+    return card.agentArtifactId || card.id || null;
+  }
+  return card?.id ?? null;
+}
+
+function hasMatchingEphemeralCard(cards, card) {
+  const identity = ephemeralCardIdentity(card);
+  if (!identity) return false;
+  return (cards ?? []).some((entry) => (
+    entry?.type === card?.type && ephemeralCardIdentity(entry) === identity
+  ));
+}
+
+export function recordGoodEphemeralCardCount(projectId, count) {
+  if (projectId && count > 0) {
+    lastGoodEphemeralCardCountByProjectId.set(projectId, count);
+  }
+}
+
+export function getLastGoodEphemeralCardCount(projectId) {
+  return lastGoodEphemeralCardCountByProjectId.get(projectId) ?? 0;
+}
+
+export function clearLastGoodEphemeralCardCount(projectId) {
+  lastGoodEphemeralCardCountByProjectId.delete(projectId);
+}
 
 export function isAuthoritativeEmptyRepairDocument(doc) {
   return Boolean(
@@ -46,6 +90,45 @@ export function getLastGoodLocalCardCount(projectId) {
 
 export function clearLastGoodLocalCardCount(projectId) {
   lastGoodArtifactCountByProjectId.delete(projectId);
+  clearLastGoodEphemeralCardCount(projectId);
+}
+
+/**
+ * Keep local music-agent and image-generator cards when inbound sync drops them.
+ * @param {object} mergedPayload
+ * @param {{ localDoc?: object | null, projectId?: string }} ctx
+ */
+export function preserveEphemeralAgentCardsInMergedPayload(mergedPayload, ctx = {}) {
+  if (!mergedPayload) return mergedPayload;
+  const { localDoc, projectId } = ctx;
+  const localEphemeral = extractEphemeralAgentCards(localDoc);
+  if (localEphemeral.length === 0) return mergedPayload;
+
+  const mergedCount = countEphemeralAgentCards(mergedPayload);
+  const lastGood = projectId ? getLastGoodEphemeralCardCount(projectId) : 0;
+  const threshold = Math.max(localEphemeral.length, lastGood);
+  if (mergedCount >= threshold) return mergedPayload;
+
+  const mergedCards = [...(mergedPayload.cards ?? [])];
+  let changed = false;
+  for (const card of localEphemeral) {
+    if (!hasMatchingEphemeralCard(mergedCards, card)) {
+      mergedCards.push(card);
+      changed = true;
+    }
+  }
+  if (!changed) return mergedPayload;
+
+  const staged = mergedPayload.stagedSyncCards ?? [];
+  return {
+    ...mergedPayload,
+    cards: mergedCards,
+    artifactPlacements: patchPlacementsMapFromArrays(
+      mergedPayload.artifactPlacements ?? {},
+      mergedCards,
+      staged,
+    ),
+  };
 }
 
 /**
@@ -165,6 +248,7 @@ export function mergeProjectDocuments(localDoc, remoteDoc, options = {}) {
     && !payloadsEquivalent(localPatched, remotePatched);
   if (isAuthoritativeRepairDocument(remotePatched)) {
     clearLastGoodLocalCardCount(projectId);
+    clearLastGoodEphemeralCardCount(projectId);
     return {
       merged: remotePatched,
       decision: 'adoptedRemote',
@@ -172,8 +256,18 @@ export function mergeProjectDocuments(localDoc, remoteDoc, options = {}) {
     };
   }
   if (preferRemote && remoteArtifactCount > 0 && !localChangedAfterKnownServer) {
+    let merged = remotePatched;
+    merged = preserveCanvasCardsInMergedPayload(merged, {
+      localDoc: localPatched,
+      placementSource: placementRef,
+      projectId,
+    });
+    merged = preserveEphemeralAgentCardsInMergedPayload(merged, {
+      localDoc: localPatched,
+      projectId,
+    });
     return {
-      merged: remotePatched,
+      merged,
       decision: 'adoptedRemote',
       skipWrite: false,
     };
@@ -219,8 +313,22 @@ export function mergeProjectDocuments(localDoc, remoteDoc, options = {}) {
     placementSource: placementRef,
     projectId,
   });
+  merged = preserveEphemeralAgentCardsInMergedPayload(merged, {
+    localDoc: localPatched,
+    projectId,
+  });
 
   const mergedArtifactCount = projectArtifactCount(merged);
+  const localEphemeralCount = countEphemeralAgentCards(localPatched);
+  const mergedEphemeralCount = countEphemeralAgentCards(merged);
+  if (localEphemeralCount > 0 && mergedEphemeralCount < localEphemeralCount) {
+    return {
+      merged: localPatched,
+      decision: 'keptLocal',
+      skipWrite: true,
+      reason: `${reason}:ephemeral-regression`,
+    };
+  }
   if (localArtifactCount > 0 && mergedArtifactCount < localArtifactCount) {
     return {
       merged: localPatched,

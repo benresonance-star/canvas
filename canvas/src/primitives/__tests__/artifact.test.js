@@ -59,4 +59,15 @@ describe('artifact invariants', () => {
     });
     expect(a.type).toBe('3d_model');
   });
+
+  it('accepts bim_model artifact type', () => {
+    const a = createArtifact({
+      id: newUlid(),
+      type: 'bim_model',
+      uri: 'folder-relative:p1/models__clinic-v1.ifc',
+      content_hash: 'deadbeef',
+      retrieved_at: new Date().toISOString(),
+    });
+    expect(a.type).toBe('bim_model');
+  });
 });

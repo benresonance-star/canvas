@@ -90,6 +90,8 @@ export async function ingestFoundFiles(projectId, projectName, flatVersions, pre
       uri: v.cardType === 'bookmark' && v.externalUrl
         ? v.externalUrl
         : `folder-relative:${projectId}/${artifactFileKey(v)}`,
+      project_id: projectId,
+      title: v.name ?? v.filename ?? null,
       content_hash: v.content_hash,
       version: String(v.version ?? 1),
       retrieved_at: new Date(v.lastModified || Date.now()).toISOString(),
@@ -100,6 +102,7 @@ export async function ingestFoundFiles(projectId, projectName, flatVersions, pre
         cardKey: v.cardKey ?? null,
         prefix: v.prefix,
         name: v.name,
+        project_id: projectId,
         ...(v.cardType === 'bookmark'
           ? {
               canvas_kind: 'bookmark',

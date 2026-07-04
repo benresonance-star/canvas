@@ -2,9 +2,13 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   mergeProjectDocuments,
   preserveCanvasCardsInMergedPayload,
+  preserveEphemeralAgentCardsInMergedPayload,
   shouldSkipInboundReconcileAfterLocalCommit,
   clearLastGoodLocalCardCount,
+  clearLastGoodEphemeralCardCount,
   recordGoodLocalCardCount,
+  recordGoodEphemeralCardCount,
+  countEphemeralAgentCards,
 } from '../projectDocumentMerge.js';
 
 describe('mergeProjectDocuments', () => {
@@ -189,6 +193,53 @@ describe('shouldSkipInboundReconcileAfterLocalCommit', () => {
     const local = { cards: [], stagedSyncCards: [{ key: 'notes__dock' }] };
     const server = { cards: [], stagedSyncCards: [] };
     expect(shouldSkipInboundReconcileAfterLocalCommit(local, server)).toBe(true);
+  });
+});
+
+describe('preserveEphemeralAgentCardsInMergedPayload', () => {
+  beforeEach(() => {
+    clearLastGoodEphemeralCardCount('p-ephemeral');
+  });
+
+  it('preserves local music-agent cards when merge drops them', () => {
+    const merged = {
+      cards: [{ id: 'note-1', type: 'user_note' }],
+      stagedSyncCards: [],
+    };
+    const localDoc = {
+      cards: [
+        { id: 'note-1', type: 'user_note' },
+        { id: 'beat-1', type: 'music-agent', musicAgentId: 'agent-1' },
+      ],
+      stagedSyncCards: [],
+    };
+    const out = preserveEphemeralAgentCardsInMergedPayload(merged, {
+      localDoc,
+      projectId: 'p-ephemeral',
+    });
+    expect(out.cards.filter((card) => card.type === 'music-agent')).toHaveLength(1);
+  });
+
+  it('preserves local ephemeral cards during inbound merge', () => {
+    const localDoc = {
+      cards: [
+        { id: 'beat-1', type: 'music-agent', musicAgentId: 'agent-1' },
+        { id: 'agent-1', type: 'agent', agentArtifactId: 'img-1' },
+      ],
+      stagedSyncCards: [],
+    };
+    const remoteDoc = {
+      cards: [{ id: 'note-1', type: 'user_note' }],
+      stagedSyncCards: [],
+    };
+    const { merged, skipWrite } = mergeProjectDocuments(localDoc, remoteDoc, {
+      localEditAt: 100,
+      serverAt: 200,
+      projectId: 'p-ephemeral',
+    });
+    expect(skipWrite).toBe(false);
+    expect(countEphemeralAgentCards(merged)).toBe(2);
+    expect(merged.cards).toHaveLength(3);
   });
 });
 

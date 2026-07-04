@@ -35,6 +35,14 @@ class TemporalDelayProcessor extends AudioWorkletProcessor {
       this.topology = data.topology || 'digital';
       this.freeze = data.freeze === true;
       this.reverse = data.reverse === true;
+      if (data.clear === true) {
+        this.left.fill(0);
+        this.right.fill(0);
+        this.writeIndex = 0;
+        this.lowpassLeft = 0;
+        this.lowpassRight = 0;
+        this.freeze = false;
+      }
       this.crossFeedback = clamp(data.crossFeedback ?? 0, 0, 0.55);
       this.pitchRatio = clamp(data.pitchRatio ?? 1, 0.25, 4);
       this.grainSamples = clamp(data.grainSamples ?? sampleRate * 0.08, sampleRate * 0.012, sampleRate * 0.24);
@@ -170,6 +178,14 @@ function readTopologyTaps({
     return mixTaps(left, right, position, [
       [pitchSweep, 0.7],
       [pitchSweep + baseDelaySamples * 0.5 / pitchRatio, 0.3],
+    ], maxDelaySamples);
+  }
+  if (topology === 'shimmer') {
+    const shimmerOffset = baseDelaySamples * 0.5 * pitchRatio;
+    return mixTaps(left, right, position, [
+      [0, 0.55],
+      [shimmerOffset, 0.3],
+      [-shimmerOffset * 0.5, 0.15],
     ], maxDelaySamples);
   }
   if (topology === 'granular') {

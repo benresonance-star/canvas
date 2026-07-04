@@ -1717,9 +1717,13 @@ export function CanvasWorkspaceView({
           customContent={
             <BeatAgentFullscreen
               card={openCard}
+              cards={state.cards}
+              clusterId={clusterId}
+              canvasEdges={canvasEdges}
               projectId={effectiveProjectId}
               folderHandle={folderHandle}
               onUpdateCard={(updates) => updateCard(openCard.id, updates)}
+              onGraphRefresh={refreshGraph}
             />
           }
         />

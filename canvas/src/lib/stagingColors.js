@@ -15,6 +15,8 @@ const STAGING_COLOR_BY_TYPE = {
   user_task: '#ea580c',
   bookmark: '#f472b6',
   agent_chat: '#a78bfa',
+  '3d-model': '#f59e0b',
+  'bim-model': '#84cc16',
   live: '#0ea5e9',
   agent: '#7c3aed',
   'music-agent': '#db2777',

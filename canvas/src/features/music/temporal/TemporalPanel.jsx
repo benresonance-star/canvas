@@ -1,5 +1,6 @@
 import React from 'react';
 import { TimerReset } from 'lucide-react';
+import { VintageSlider } from '../../../components/VintageSlider.jsx';
 import {
   TEMPORAL_TOPOLOGIES,
   createDefaultTemporalState,
@@ -42,8 +43,7 @@ export function TemporalPanel({ temporalState, descriptorGraph, onChange }) {
         ].map(([key, min, max, step]) => (
           <label key={key} className="sans text-[10px] text-muted grid grid-cols-[5rem_1fr] gap-2 items-center">
             {key}
-            <input
-              type="range"
+            <VintageSlider
               min={min}
               max={max}
               step={step}
@@ -55,8 +55,7 @@ export function TemporalPanel({ temporalState, descriptorGraph, onChange }) {
         <div className="grid gap-2 border-t border-border pt-2">
           <label className="sans text-[10px] text-muted grid grid-cols-[5rem_1fr] gap-2 items-center">
             drive
-            <input
-              type="range"
+            <VintageSlider
               min="0"
               max="1"
               step="0.01"
@@ -66,8 +65,7 @@ export function TemporalPanel({ temporalState, descriptorGraph, onChange }) {
           </label>
           <label className="sans text-[10px] text-muted grid grid-cols-[5rem_1fr] gap-2 items-center">
             age
-            <input
-              type="range"
+            <VintageSlider
               min="0"
               max="1"
               step="0.01"
@@ -77,8 +75,7 @@ export function TemporalPanel({ temporalState, descriptorGraph, onChange }) {
           </label>
           <label className="sans text-[10px] text-muted grid grid-cols-[5rem_1fr] gap-2 items-center">
             mod
-            <input
-              type="range"
+            <VintageSlider
               min="0"
               max="1"
               step="0.01"
@@ -88,8 +85,7 @@ export function TemporalPanel({ temporalState, descriptorGraph, onChange }) {
           </label>
           <label className="sans text-[10px] text-muted grid grid-cols-[5rem_1fr] gap-2 items-center">
             width
-            <input
-              type="range"
+            <VintageSlider
               min="0"
               max="1"
               step="0.01"
@@ -111,8 +107,7 @@ export function TemporalPanel({ temporalState, descriptorGraph, onChange }) {
         {state.topology === 'pitch-delay' && (
           <label className="sans text-[10px] text-muted grid grid-cols-[5rem_1fr] gap-2 items-center">
             pitch
-            <input
-              type="range"
+            <VintageSlider
               min="-24"
               max="24"
               step="1"
@@ -124,8 +119,7 @@ export function TemporalPanel({ temporalState, descriptorGraph, onChange }) {
         {state.topology === 'granular' && (
           <label className="sans text-[10px] text-muted grid grid-cols-[5rem_1fr] gap-2 items-center">
             grain
-            <input
-              type="range"
+            <VintageSlider
               min="12"
               max="240"
               step="1"
@@ -137,8 +131,7 @@ export function TemporalPanel({ temporalState, descriptorGraph, onChange }) {
         {state.topology === 'swarm' && (
           <label className="sans text-[10px] text-muted grid grid-cols-[5rem_1fr] gap-2 items-center">
             voices
-            <input
-              type="range"
+            <VintageSlider
               min="1"
               max="12"
               step="1"

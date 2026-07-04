@@ -13,6 +13,7 @@ import {
   resolveFragmentsGlobalIdByLocalId,
   resolveFragmentsLocalIdByGlobalId,
 } from '../bim-core/fragmentsSelection.js';
+import { BimSelectedElementHud } from './BimSelectedElementHud.jsx';
 
 const SELECTED_MATERIAL = {
   color: new THREE.Color('#f59e0b'),
@@ -76,6 +77,7 @@ function fitPerspectiveCameraToBox(camera, controls, box, renderer) {
 export function BimViewport({
   preparedModel,
   selectedElement,
+  selectedProperties = [],
   highlightElementIds = [],
   displayMode,
   focusSelectionToken = 0,
@@ -430,9 +432,11 @@ export function BimViewport({
           </div>
         )}
         {loadState === 'ready' && selectedElement && (
-          <div className="absolute left-3 bottom-3 max-w-lg rounded border border-accent bg-surface/95 px-3 py-2 text-xs text-secondary">
-            Selected: {selectedElement.name || selectedElement.ifcClass} - {selectedElement.ifcGlobalId}
-          </div>
+          <BimSelectedElementHud
+            element={selectedElement}
+            properties={selectedProperties}
+            inspectorOpen={rightPanelOpen}
+          />
         )}
       </div>
     </div>

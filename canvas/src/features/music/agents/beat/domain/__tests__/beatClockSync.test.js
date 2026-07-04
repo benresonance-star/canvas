@@ -8,6 +8,7 @@ import {
   stripBeatLiveTransportState,
   updateBeatWorkletAgent,
 } from '../beatClockSync.js';
+import { createDefaultDescriptorGraph, updateDescriptorValue } from '../../../../../../../packages/music-core/src/index.js';
 import { createDefaultBeatAgentState } from '../beatAgentState.js';
 
 describe('beat worklet playback helpers', () => {
@@ -27,8 +28,23 @@ describe('beat worklet playback helpers', () => {
       muted: true,
       solo: false,
       sonicSamples: expect.any(Object),
+      performanceExecution: expect.objectContaining({
+        stepProbabilityBias: expect.any(Number),
+      }),
     }));
     expect(payload.sonicSamples.kick.left.length).toBeGreaterThan(0);
+  });
+
+  it('includes active performance execution when descriptor bypass is off', () => {
+    const graph = updateDescriptorValue(createDefaultDescriptorGraph(), 'Complexity', 0.92).graph;
+    const state = createDefaultBeatAgentState({
+      audioRouting: { descriptorGraphBypass: false, descriptorMacroDepth: 1 },
+    });
+    const payload = buildBeatAgentAudioPayload('beat-1', state, {
+      descriptorGraph: graph,
+      audioRouting: state.audioRouting,
+    });
+    expect(payload.performanceExecution.stepProbabilityBias).toBeGreaterThan(0);
   });
 
   it('forces solo for local preview when requested', () => {
@@ -62,6 +78,37 @@ describe('beat worklet playback helpers', () => {
     expect(entry.workletRefs).toBe(0);
     expect(transport.unregisterBeatAgent).toHaveBeenCalledTimes(1);
     expect(transport.unregisterBeatAgent).toHaveBeenCalledWith('beat-1');
+  });
+
+  it('rebuilds sonic samples when track synth changes', () => {
+    const state = createDefaultBeatAgentState();
+    const first = buildBeatAgentAudioPayload('beat-1', state);
+    const kickTrack = state.pattern.tracks.find((track) => track.role === 'kick');
+    const nextState = {
+      ...state,
+      pattern: {
+        ...state.pattern,
+        updatedAt: new Date().toISOString(),
+        tracks: state.pattern.tracks.map((track) => (
+          track.id === kickTrack.id
+            ? { ...track, synth: { ...track.synth, tone: 0.95, distortion: 0.8 } }
+            : track
+        )),
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    const second = buildBeatAgentAudioPayload('beat-1', nextState);
+    expect(second.sonicSamples.kick.left).not.toBe(first.sonicSamples.kick.left);
+    expect(Array.from(second.sonicSamples.kick.left)).not.toEqual(Array.from(first.sonicSamples.kick.left));
+  });
+
+  it('includes isolated track id without affecting sample cache', () => {
+    const state = createDefaultBeatAgentState();
+    const first = buildBeatAgentAudioPayload('beat-1', state, { isolatedTrackId: 'kick' });
+    const second = buildBeatAgentAudioPayload('beat-1', state, { isolatedTrackId: null });
+    expect(first.isolatedTrackId).toBe('kick');
+    expect(second.isolatedTrackId).toBeNull();
+    expect(first.sonicSamples.kick.left).toBe(second.sonicSamples.kick.left);
   });
 
   it('updates a registered worklet agent through the universal transport', async () => {

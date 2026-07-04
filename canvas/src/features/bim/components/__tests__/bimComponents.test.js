@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { BimSelectedElementHud } from '../BimSelectedElementHud.jsx';
 import { BimElementTable } from '../BimElementTable.jsx';
 import { BimInspector } from '../BimInspector.jsx';
 import { BimQueryPanel } from '../BimQueryPanel.jsx';
@@ -63,6 +64,32 @@ describe('BIM UI components', () => {
     expect(html).toContain('North Wall');
     expect(html).toContain('IFC Attributes');
     expect(html).toContain('web-ifc-line');
+  });
+
+  it('shows expanded selected HUD when inspector is collapsed', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimSelectedElementHud, {
+        element,
+        properties: [
+          {
+            id: 'p-layer',
+            elementId: element.id,
+            psetName: 'Archicad Properties',
+            propertyName: 'Layer',
+            value: 'Structure',
+          },
+        ],
+        inspectorOpen: false,
+      }),
+    );
+    expect(html).toContain('Type');
+    expect(html).toContain('Basic Wall');
+    expect(html).toContain('Layer');
+    expect(html).toContain('Structure');
+    expect(html).toContain('Element ID');
+    expect(html).toContain('ifc:wall-1');
+    expect(html).toContain('Global ID');
+    expect(html).toContain('wall-1');
   });
 
   it('shows viewport loading state before fragments load', () => {

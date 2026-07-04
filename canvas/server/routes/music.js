@@ -33,6 +33,7 @@ import {
   upsertTemporalSketch,
   upsertMusicBlackboard,
 } from '../repositories/music.js';
+import { listBeatSonicLinks, listBeatSonicLinksForProject } from '../repositories/beatSonicLinks.js';
 import { createDefaultTransportState } from '../../packages/music-core/src/index.js';
 import { createMusicArtifactManifest } from '../../packages/music-core/src/index.js';
 
@@ -97,6 +98,26 @@ export function registerMusicRoutes(app, { requireDb, sendClusterError }) {
       const agent = await updateMusicAgent(req.params.agentId, req.body ?? {});
       if (!agent) return res.status(404).json({ error: 'music agent not found' });
       res.json({ agent });
+    } catch (error) {
+      sendClusterError(res, error);
+    }
+  });
+
+  app.get('/music/agents/:agentId/sonic-links', async (req, res) => {
+    if (!requireDb(res)) return;
+    try {
+      const links = await listBeatSonicLinks(req.params.agentId);
+      res.json({ links });
+    } catch (error) {
+      sendClusterError(res, error);
+    }
+  });
+
+  app.get('/music/projects/:projectId/sonic-links', async (req, res) => {
+    if (!requireDb(res)) return;
+    try {
+      const links = await listBeatSonicLinksForProject(req.params.projectId);
+      res.json({ links });
     } catch (error) {
       sendClusterError(res, error);
     }

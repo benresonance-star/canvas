@@ -134,10 +134,43 @@ export async function evictInactiveProjectIdbCaches(
 }
 
 /**
- * Clear local project caches; keeps index row metadata in memory for caller to re-save.
+ * Drop preview blobs to recover browser quota (inactive projects first, then active).
+ * @param {string} activeProjectId
+ * @param {string[]} indexProjectIds
+ * @returns {Promise<number>} projects whose previews were cleared
+ */
+export async function evictPreviewCachesForQuota(
+  activeProjectId,
+  indexProjectIds = [],
+) {
+  const keep = new Set([activeProjectId, ...indexProjectIds].filter(Boolean));
+  let cleared = 0;
+  try {
+    const cached = await listCachedProjectIds();
+    for (const id of cached) {
+      if (keep.has(id)) continue;
+      try {
+        await deletePreviewsForProject(id);
+        cleared += 1;
+      } catch {
+        /* ignore */
+      }
+    }
+    if (activeProjectId) {
+      await deletePreviewsForProject(activeProjectId);
+      cleared += 1;
+    }
+  } catch {
+    /* ignore */
+  }
+  return cleared;
+}
+
+/**
+ * Clear cached project keys from localStorage only.
  * @param {{ activeProjectId?: string | null, keepActive?: boolean }} [opts]
  */
-export function clearLocalProjectCaches(opts = {}) {
+export function clearLocalStorageProjectCaches(opts = {}) {
   const { activeProjectId = null, keepActive = true } = opts;
   if (typeof localStorage === 'undefined') return { cleared: 0 };
 
@@ -163,6 +196,56 @@ export function clearLocalProjectCaches(opts = {}) {
     }
   }
   return { cleared };
+}
+
+/**
+ * Clear local project caches (localStorage, IndexedDB bodies, preview blobs).
+ * Keeps workspace index metadata; caller reloads active project from server.
+ * @param {{ activeProjectId?: string | null, keepActive?: boolean, clearAgentChat?: boolean }} [opts]
+ * @returns {Promise<{ cleared: number, clearedProjects: number, clearedAgentChat: number }>}
+ */
+export async function clearLocalProjectCaches(opts = {}) {
+  const {
+    activeProjectId = null,
+    keepActive = true,
+    clearAgentChat = !keepActive,
+  } = opts;
+  const { cleared } = clearLocalStorageProjectCaches(opts);
+
+  let clearedProjects = 0;
+  try {
+    const cached = await listCachedProjectIds();
+    for (const id of cached) {
+      if (keepActive && id === activeProjectId) continue;
+      try {
+        await deleteProjectDocumentSerialised(id);
+        await deletePreviewsForProject(id);
+        projectTouchAt.delete(id);
+        clearedProjects += 1;
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!keepActive && activeProjectId && !cached.includes(activeProjectId)) {
+      try {
+        await deleteProjectDocumentSerialised(activeProjectId);
+        await deletePreviewsForProject(activeProjectId);
+        projectTouchAt.delete(activeProjectId);
+        clearedProjects += 1;
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  let clearedAgentChat = 0;
+  if (clearAgentChat) {
+    clearedAgentChat = clearAgentChatLocalCaches(null);
+  }
+
+  return { cleared, clearedProjects, clearedAgentChat };
 }
 
 export function clearAgentChatLocalCaches(projectId = null) {

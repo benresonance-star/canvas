@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createDefaultBeatAgentState } from '../domain/beatAgentState.js';
 import { buildDeterministicBeatMutation } from '../domain/beatAi.js';
 import { BeatTransportStrip } from '../../../transport/BeatTransportStrip.jsx';
@@ -6,6 +6,7 @@ import {
   fetchChronicleEvents,
   fetchMusicPresets,
   fetchMusicVersions,
+  fetchProjectDescriptorGraph,
   fetchProjectSpaceState,
   fetchSketchClusters,
   fetchSketchForAgent,
@@ -21,23 +22,26 @@ import {
   saveProjectSpaceState,
   saveSketchDescriptorGraph,
   saveSonicSketch,
-  saveTemporalSketch,
 } from '../../../api/musicApi.js';
 import {
   createDefaultDescriptorGraph,
   createDefaultSpaceState,
-  createDefaultTemporalState,
+  createDefaultBeatAudioRouting,
   analyzeMusicClutter,
   deriveSpaceFromDescriptors,
-  deriveTemporalFromDescriptors,
+  normalizeSonicTemporal,
 } from '../../../../../../packages/music-core/src/index.js';
 import { downloadMusicArtifactPackage } from '../../../serialization/musicArtifactPackage.js';
 import { useBeatAgentRuntime } from '../hooks/useBeatAgentRuntime.js';
-import { BeatTrackSynthControls } from './BeatTrackSynthControls.jsx';
+import { BeatTrackSoundControls } from './BeatTrackSoundControls.jsx';
+import { BeatSonicTemporalPanel } from './BeatSonicTemporalPanel.jsx';
+import { summarizeBeatSonicLinks } from '../domain/beatSonicCanvasLinks.js';
+import { refreshTrackFromSonicCard, buildLinkedSonicCardSyncPatch } from '../domain/beatTrackSoundSource.js';
+import { wireSonicVoiceToBeatAgent } from '../domain/wireSonicVoiceToBeatAgent.js';
 import { DescriptorGraphPanel } from '../../../descriptors/DescriptorGraphPanel.jsx';
+import { pickNewestDescriptorGraph, pickNewestSpaceState } from '../../../descriptors/descriptorGraphPersistence.js';
 import { ChronicleTimeline } from '../../../chronicle/ChronicleTimeline.jsx';
 import { SpacePanel } from '../../../space/SpacePanel.jsx';
-import { TemporalPanel } from '../../../temporal/TemporalPanel.jsx';
 import { ReflectionPanel } from '../../../reflection/ReflectionPanel.jsx';
 import { ExplorationWorkspace } from '../../../workspace/ExplorationWorkspace.jsx';
 
@@ -65,21 +69,29 @@ function updateCardFromFullscreen(onUpdateCard, cardId, updates) {
   }
 }
 
-export function BeatAgentFullscreen({ card, projectId, folderHandle = null, onUpdateCard }) {
+export function BeatAgentFullscreen({
+  card,
+  cards = [],
+  clusterId = null,
+  canvasEdges = [],
+  projectId,
+  folderHandle = null,
+  onUpdateCard,
+  onGraphRefresh = null,
+}) {
+  const [copyTemporalOnAssign, setCopyTemporalOnAssign] = useState(false);
   const [presets, setPresets] = useState([]);
   const [versions, setVersions] = useState([]);
   const [sketch, setSketch] = useState(null);
   const [sketches, setSketches] = useState([]);
   const [clusters, setClusters] = useState([]);
   const [chronicleEvents, setChronicleEvents] = useState([]);
-  const [descriptorGraph, setDescriptorGraph] = useState(() => createDefaultDescriptorGraph(
-    card.musicState?.descriptorGraph ?? card.descriptorGraph,
+  const [descriptorGraph, setDescriptorGraph] = useState(() => pickNewestDescriptorGraph(
+    card.musicState?.descriptorGraph,
+    card.descriptorGraph,
   ));
   const [spaceState, setSpaceState] = useState(() => createDefaultSpaceState(
     card.musicState?.spaceState ?? card.spaceState,
-  ));
-  const [temporalState, setTemporalState] = useState(() => createDefaultTemporalState(
-    card.musicState?.temporalState ?? card.temporalState,
   ));
   const [temporalSketches, setTemporalSketches] = useState([]);
   const pendingDescriptorPersistRef = useRef(null);
@@ -93,30 +105,95 @@ export function BeatAgentFullscreen({ card, projectId, folderHandle = null, onUp
     setState,
     status,
     setStatus,
+    error,
     transport,
     playhead,
+    prepareBeatAudio,
+    enableBeatAudio,
+    audioContextState,
     toggleStep,
     updateTrackSynth,
+    updateTrackSound,
+    updateAgentAudio,
+    setTemporalActive,
     updateTransportSettings,
     clockSync,
     toggleClockSync,
     persist,
+    isolatedTrackId,
+    toggleTrackIsolate,
   } = useBeatAgentRuntime({
     card,
+    cards,
     projectId,
     folderHandle,
     onUpdateCard,
-    temporalState,
+    descriptorGraph,
+    spaceState,
   });
+
+  const sonicLinkSummary = useMemo(() => summarizeBeatSonicLinks({
+    beatCardId: card?.id,
+    pattern: state.pattern,
+    canvasEdges,
+    cards,
+  }), [card?.id, state.pattern, canvasEdges, cards]);
+
+  const wireSonicLink = useCallback(({ sonicCard, track, voiceId }) => {
+    if (!clusterId) return;
+    void wireSonicVoiceToBeatAgent({
+      clusterId,
+      sonicCard,
+      beatCard: card,
+      trackId: track?.id,
+      voiceId,
+    }).then(() => onGraphRefresh?.()).catch(() => {});
+  }, [card, clusterId, onGraphRefresh]);
+
+  const syncTrackVoiceToSonicCard = useCallback((nextTrack) => {
+    const cardId = nextTrack?.sonicProvenance?.cardId;
+    if (!cardId || !nextTrack?.sonicProvenance?.syncToCard) return;
+    const sonicCard = cards.find((candidate) => candidate.id === cardId);
+    const sync = buildLinkedSonicCardSyncPatch(nextTrack, sonicCard);
+    if (!sync) return;
+    updateCardFromFullscreen(onUpdateCard, sync.cardId, sync.patch);
+  }, [cards, onUpdateCard]);
+
+  const refreshStaleSonicTracks = useCallback(() => {
+    for (const track of sonicLinkSummary.staleTracks) {
+      const sonicCard = cards.find((candidate) => candidate.id === track.sonicProvenance?.cardId);
+      if (!sonicCard) continue;
+      updateTrackSound(track.id, refreshTrackFromSonicCard(track, sonicCard), { debounce: false });
+    }
+  }, [cards, sonicLinkSummary.staleTracks, updateTrackSound]);
 
   useEffect(() => {
     if (!projectId) return;
     fetchMusicPresets(projectId).then(setPresets).catch(() => {});
     fetchSketchClusters(projectId).then(setClusters).catch(() => {});
     fetchSonicSketches(projectId).then(setSketches).catch(() => {});
-    fetchProjectSpaceState(projectId).then(setSpaceState).catch(() => {});
+    fetchProjectSpaceState(projectId)
+      .then((loadedSpace) => {
+        if (!loadedSpace) return;
+        setSpaceState((current) => pickNewestSpaceState(current, loadedSpace));
+      })
+      .catch(() => {});
+    fetchProjectDescriptorGraph(projectId)
+      .then((loadedGraph) => {
+        if (!loadedGraph || descriptorDirtyRef.current) return;
+        setDescriptorGraph((current) => pickNewestDescriptorGraph(current, loadedGraph));
+      })
+      .catch(() => {});
     fetchChronicleEvents(projectId).then(setChronicleEvents).catch(() => {});
   }, [projectId]);
+
+  useEffect(() => {
+    if (!state.descriptorGraph || descriptorDirtyRef.current) return;
+    setDescriptorGraph((current) => pickNewestDescriptorGraph(
+      current,
+      state.descriptorGraph,
+    ));
+  }, [state.descriptorGraph]);
 
   useEffect(() => {
     const agentId = agent?.id || card.musicAgentId || card.versions?.[0]?.musicAgentId;
@@ -130,9 +207,20 @@ export function BeatAgentFullscreen({ card, projectId, folderHandle = null, onUp
         }
         setSketch(loadedSketch);
         if (!descriptorDirtyRef.current) {
-          setDescriptorGraph(createDefaultDescriptorGraph(loadedSketch.descriptorGraph));
-          setSpaceState(createDefaultSpaceState(loadedSketch.spaceState));
-          setTemporalState(createDefaultTemporalState(loadedSketch.temporalState));
+          setDescriptorGraph((current) => pickNewestDescriptorGraph(
+            current,
+            card.musicState?.descriptorGraph,
+            card.descriptorGraph,
+            loadedSketch.descriptorGraph,
+          ));
+          if (loadedSketch.spaceState) {
+            setSpaceState((current) => pickNewestSpaceState(
+              current,
+              card.musicState?.spaceState,
+              card.spaceState,
+              loadedSketch.spaceState,
+            ));
+          }
         }
         if (projectId) {
           fetchChronicleEvents(projectId, { sketchId: loadedSketch.id }).then(setChronicleEvents).catch(() => {});
@@ -258,20 +346,16 @@ export function BeatAgentFullscreen({ card, projectId, folderHandle = null, onUp
     descriptorDirtyRef.current = true;
     setDescriptorGraph(nextGraph);
     const nextSpace = deriveSpaceFromDescriptors(spaceState, nextGraph);
-    const nextTemporal = deriveTemporalFromDescriptors(temporalState, nextGraph);
     setSpaceState(nextSpace);
-    setTemporalState(nextTemporal);
     const nextAgentState = createDefaultBeatAgentState({
       ...state,
       descriptorGraph: nextGraph,
       spaceState: nextSpace,
-      temporalState: nextTemporal,
       updatedAt: new Date().toISOString(),
     });
     updateCardFromFullscreen(onUpdateCard, card.id, {
       descriptorGraph: nextGraph,
       spaceState: nextSpace,
-      temporalState: nextTemporal,
       musicState: nextAgentState,
     });
     void persist(nextAgentState, 'Descriptors saved');
@@ -281,7 +365,6 @@ export function BeatAgentFullscreen({ card, projectId, folderHandle = null, onUp
       sequence,
       nextGraph,
       nextSpace,
-      nextTemporal,
     };
     pendingDescriptorPersistRef.current = payload;
     void persistDescriptorGraphDrivenStateRef.current?.(payload);
@@ -291,7 +374,6 @@ export function BeatAgentFullscreen({ card, projectId, folderHandle = null, onUp
     sequence,
     nextGraph,
     nextSpace,
-    nextTemporal,
   }) {
     if (sequence !== descriptorPersistSeqRef.current) return;
     pendingDescriptorPersistRef.current = null;
@@ -302,23 +384,15 @@ export function BeatAgentFullscreen({ card, projectId, folderHandle = null, onUp
     }
     if (!sketch?.id) return;
     await saveSketchDescriptorGraph(sketch.id, nextGraph);
-    const savedTemporal = projectId
-      ? await saveTemporalSketch(projectId, {
-        id: temporalSketches[0]?.id,
-        sketchId: sketch.id,
-        name: `${nextTemporal.topology} Temporal Sketch`,
-        topology: nextTemporal.topology,
-        state: nextTemporal,
-        descriptorMappings: nextGraph,
-      })
-      : null;
-    if (savedTemporal) {
-      setTemporalSketches((current) => [savedTemporal, ...current.filter((item) => item.id !== savedTemporal.id)]);
-    }
+    const sonicTemporal = normalizeSonicTemporal(state.sonicTemporal);
     const reflection = analyzeMusicClutter({
       descriptorGraph: nextGraph,
       spaceState: nextSpace,
-      temporalState: nextTemporal,
+      temporalState: {
+        wet: sonicTemporal.delay.wet,
+        feedback: sonicTemporal.delay.feedback,
+        topology: sonicTemporal.shimmer.enabled ? 'shimmer' : 'digital',
+      },
       performerStates: [currentBeatPerformerSummary(state)],
     });
     if (projectId && reflection.risk === 'high') {
@@ -335,7 +409,7 @@ export function BeatAgentFullscreen({ card, projectId, folderHandle = null, onUp
       ...sketch,
       descriptorGraph: nextGraph,
       spaceState: nextSpace,
-      temporalState: nextTemporal,
+      sonicTemporal,
     });
     if (sequence !== descriptorPersistSeqRef.current) return;
     setSketch(updatedSketch);
@@ -345,38 +419,31 @@ export function BeatAgentFullscreen({ card, projectId, folderHandle = null, onUp
   persistDescriptorGraphDrivenStateRef.current = persistDescriptorGraphDrivenState;
 
   async function saveSpace(nextSpace) {
-    setSpaceState(nextSpace);
-    if (projectId) await saveProjectSpaceState(projectId, nextSpace);
+    const normalizedSpace = createDefaultSpaceState(nextSpace);
+    setSpaceState(normalizedSpace);
+    const nextAgentState = createDefaultBeatAgentState({
+      ...state,
+      spaceState: normalizedSpace,
+      updatedAt: new Date().toISOString(),
+    });
+    updateCardFromFullscreen(onUpdateCard, card.id, {
+      spaceState: normalizedSpace,
+      musicState: nextAgentState,
+    });
+    void persist(nextAgentState, 'Space saved', { debounce: true });
+    if (projectId) await saveProjectSpaceState(projectId, normalizedSpace);
     if (sketch?.id) {
       const updatedSketch = await saveSonicSketch(projectId, {
         ...sketch,
-        spaceState: nextSpace,
+        spaceState: normalizedSpace,
       });
       setSketch(updatedSketch);
       await refreshChronicle(updatedSketch.id);
     }
   }
 
-  async function saveTemporal(nextTemporal) {
-    setTemporalState(nextTemporal);
-    if (!projectId) return;
-    const savedTemporal = await saveTemporalSketch(projectId, {
-      id: temporalSketches[0]?.id,
-      sketchId: sketch?.id,
-      name: `${nextTemporal.topology} Temporal Sketch`,
-      topology: nextTemporal.topology,
-      state: nextTemporal,
-      descriptorMappings: descriptorGraph,
-    });
-    setTemporalSketches((current) => [savedTemporal, ...current.filter((item) => item.id !== savedTemporal.id)]);
-    if (sketch?.id) {
-      const updatedSketch = await saveSonicSketch(projectId, {
-        ...sketch,
-        temporalState: nextTemporal,
-      });
-      setSketch(updatedSketch);
-      await refreshChronicle(updatedSketch.id);
-    }
+  async function saveSonicTemporalSettings(nextSonicTemporal) {
+    updateAgentAudio({ sonicTemporal: normalizeSonicTemporal(nextSonicTemporal) }, { debounce: true });
   }
 
   return (
@@ -391,36 +458,29 @@ export function BeatAgentFullscreen({ card, projectId, folderHandle = null, onUp
           />
           <div className="sans text-[10px] uppercase tracking-wider text-muted">music-agent / beat</div>
         </div>
-        <BeatTransportStrip
-          state={transport.state}
-          onPlay={transport.play}
-          onStop={transport.stop}
-          onBpmChange={(bpm) => updateTransportSettings({ bpm })}
-          clockSync={clockSync}
-          onClockSyncToggle={() => toggleClockSync()}
-        />
+        <div className="flex flex-col items-end gap-1 min-w-0">
+          {error && (
+            <div className="sans text-xs text-danger max-w-md text-right truncate" title={error}>
+              {error}
+            </div>
+          )}
+          <BeatTransportStrip
+            state={transport.state}
+            onPlay={transport.play}
+            onPreparePlay={prepareBeatAudio}
+            onEnableAudio={enableBeatAudio}
+            audioNeedsUnlock={audioContextState !== 'running'}
+            onStop={transport.stop}
+            onBpmChange={(bpm) => updateTransportSettings({ bpm })}
+            clockSync={clockSync}
+            onClockSyncToggle={() => toggleClockSync()}
+          />
+        </div>
       </div>
       <div className="flex-1 min-h-0 overflow-auto p-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_21rem]">
-        <section className="min-w-0">
-          <div className="mb-4 grid gap-4 2xl:grid-cols-[minmax(0,1fr)_20rem]">
-            <DescriptorGraphPanel
-              descriptorGraph={descriptorGraph}
-              onChange={(nextGraph) => { void saveDescriptorGraph(nextGraph); }}
-            />
-            <ExplorationWorkspace
-              sketches={sketches}
-              clusters={clusters}
-              activeSketchId={sketch?.id}
-              onSelectSketch={(nextSketch) => {
-                setSketch(nextSketch);
-                setDescriptorGraph(createDefaultDescriptorGraph(nextSketch.descriptorGraph));
-                setSpaceState(createDefaultSpaceState(nextSketch.spaceState));
-                setTemporalState(createDefaultTemporalState(nextSketch.temporalState));
-                void refreshChronicle(nextSketch.id);
-              }}
-            />
-          </div>
+        <section className="min-w-0 flex flex-col gap-4">
           <div className="border border-border rounded-lg bg-surface p-3">
+            <div className="sans text-[10px] uppercase tracking-wider text-muted mb-3">Sequencer</div>
             <div className="grid gap-2">
               {state.pattern.tracks.map((track) => (
                 <div key={track.id} className="grid grid-cols-[5rem_1fr] gap-2 items-center">
@@ -443,38 +503,123 @@ export function BeatAgentFullscreen({ card, projectId, folderHandle = null, onUp
               ))}
             </div>
           </div>
-          <div className="mt-4 border border-border rounded-lg bg-surface p-3">
+          <div className="border border-border rounded-lg bg-surface p-3">
             <div className="sans text-[10px] uppercase tracking-wider text-muted mb-3">
               Instrument Controls
             </div>
-            <div className="grid gap-3 xl:grid-cols-2">
-              {state.pattern.tracks.map((track) => (
-                <div key={`${track.id}-synth`} className="min-w-0 border border-border bg-surface-muted rounded p-3">
-                  <div className="sans text-xs text-primary mb-2 truncate">{track.name}</div>
-                  <BeatTrackSynthControls
-                    track={track}
-                    onChange={(trackId, patch) => updateTrackSynth(trackId, patch, { debounce: true })}
-                  />
+            {sonicLinkSummary.hasStale && (
+              <div className="mb-3 rounded border border-warning/40 bg-warning/10 px-3 py-2 flex items-center justify-between gap-2">
+                <div className="sans text-xs text-warning">
+                  {sonicLinkSummary.staleTracks.length} Sonic voice
+                  {sonicLinkSummary.staleTracks.length === 1 ? '' : 's'} changed since assign
                 </div>
+                <button
+                  type="button"
+                  className="sans text-xs border border-border rounded px-2 py-1"
+                  onClick={refreshStaleSonicTracks}
+                >
+                  Refresh all
+                </button>
+              </div>
+            )}
+            {sonicLinkSummary.linkedCards.length > 0 && (
+              <div className="sans text-[10px] text-muted mb-3">
+                Canvas links: {sonicLinkSummary.linkedCards.map((linked) => linked.name ?? linked.id).join(', ')}
+              </div>
+            )}
+            <div className="grid gap-3 xl:grid-cols-2">
+              <label className="sans text-xs text-secondary flex items-center gap-2 xl:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={copyTemporalOnAssign}
+                  onChange={(event) => setCopyTemporalOnAssign(event.target.checked)}
+                />
+                Copy temporal settings when assigning Sonic voice
+              </label>
+              {state.pattern.tracks.map((track) => (
+                <BeatTrackSoundControls
+                  key={`${track.id}-sound`}
+                  track={track}
+                  cards={cards}
+                  isolatedTrackId={isolatedTrackId}
+                  onToggleIsolate={toggleTrackIsolate}
+                  copyTemporalOnAssign={copyTemporalOnAssign}
+                  onCopyTemporal={(temporal) => {
+                    const normalized = normalizeSonicTemporal(temporal);
+                    updateAgentAudio({
+                      sonicTemporal: normalized,
+                      audioRouting: createDefaultBeatAudioRouting({
+                        ...state.audioRouting,
+                        sonicTemporalBypass: normalized.enabled === false,
+                      }),
+                    }, { debounce: true });
+                  }}
+                  onWireSonicLink={wireSonicLink}
+                  onSyncToCard={syncTrackVoiceToSonicCard}
+                  onChange={(nextTrack) => updateTrackSound(track.id, nextTrack, { debounce: true })}
+                />
               ))}
             </div>
           </div>
+          <DescriptorGraphPanel
+            descriptorGraph={descriptorGraph}
+            audioRouting={state.audioRouting}
+            onChange={(nextGraph) => { void saveDescriptorGraph(nextGraph); }}
+            onChangeAudioRouting={(nextRouting) => updateAgentAudio(
+              { audioRouting: nextRouting },
+              { debounce: true },
+            )}
+          />
+          <ExplorationWorkspace
+            sketches={sketches}
+            clusters={clusters}
+            activeSketchId={sketch?.id}
+            onSelectSketch={(nextSketch) => {
+              setSketch(nextSketch);
+              setDescriptorGraph(createDefaultDescriptorGraph(nextSketch.descriptorGraph));
+              setSpaceState(createDefaultSpaceState(nextSketch.spaceState));
+              void refreshChronicle(nextSketch.id);
+            }}
+          />
         </section>
         <aside className="flex flex-col gap-3 min-w-0">
+          <BeatSonicTemporalPanel
+            sonicTemporal={state.sonicTemporal}
+            audioRouting={state.audioRouting}
+            mixSettings={state.mixSettings}
+            cards={cards}
+            onChangeTemporalActive={(active) => setTemporalActive(active, { debounce: true })}
+            onChangeSonicTemporal={saveSonicTemporalSettings}
+            onChangeAudioRouting={(nextRouting) => updateAgentAudio({ audioRouting: nextRouting }, { debounce: true })}
+            onChangeMixSettings={(nextMix) => updateAgentAudio({ mixSettings: nextMix }, { debounce: true })}
+            onImportFromCard={(sonicCard) => {
+              const imported = sonicCard?.sonicStudioState?.temporal;
+              if (!imported) return;
+              const normalized = normalizeSonicTemporal(imported);
+              updateAgentAudio({
+                sonicTemporal: normalized,
+                audioRouting: createDefaultBeatAudioRouting({
+                  ...state.audioRouting,
+                  sonicTemporalBypass: normalized.enabled === false,
+                }),
+              }, { debounce: true });
+            }}
+          />
           <SpacePanel
             spaceState={spaceState}
             descriptorGraph={descriptorGraph}
+            audioRouting={state.audioRouting}
             onChange={(nextSpace) => { void saveSpace(nextSpace); }}
-          />
-          <TemporalPanel
-            temporalState={temporalState}
-            descriptorGraph={descriptorGraph}
-            onChange={(nextTemporal) => { void saveTemporal(nextTemporal); }}
+            onChangeAudioRouting={(nextRouting) => updateAgentAudio({ audioRouting: nextRouting }, { debounce: true })}
           />
           <ReflectionPanel
             descriptorGraph={descriptorGraph}
             spaceState={spaceState}
-            temporalState={temporalState}
+            temporalState={{
+              wet: state.sonicTemporal?.delay?.wet ?? 0.18,
+              feedback: state.sonicTemporal?.delay?.feedback ?? 0.28,
+              topology: state.sonicTemporal?.shimmer?.enabled ? 'shimmer' : 'digital',
+            }}
             performerStates={[currentBeatPerformerSummary(state)]}
           />
           <ChronicleTimeline events={chronicleEvents} />
@@ -540,8 +685,21 @@ export function BeatAgentFullscreen({ card, projectId, folderHandle = null, onUp
           <div className="border-t border-border pt-3">
             <div className="sans text-[10px] uppercase tracking-wider text-muted mb-2">Effects</div>
             <div className="sans text-xs text-muted">
-              Shared {temporalState.topology} delay bus active: {Math.round(temporalState.wet * 100)}% wet,
-              {Math.round(temporalState.feedback * 100)}% feedback.
+              Sonic temporal FX {
+                state.audioRouting?.sonicTemporalBypass || state.sonicTemporal?.enabled === false
+                  ? 'bypassed'
+                  : 'active'
+              }
+              {' · '}
+              Acoustic space {
+                spaceState?.roomIdentity === 'void'
+                  ? 'void (dry)'
+                  : state.audioRouting?.acousticSpaceBypass
+                    ? 'bypassed'
+                    : 'active'
+              }
+              {' · '}
+              Descriptor graph {state.audioRouting?.descriptorGraphBypass === false ? 'modulating' : 'bypassed'}
             </div>
           </div>
           {status && <div className="sans text-xs text-warning">{status}</div>}

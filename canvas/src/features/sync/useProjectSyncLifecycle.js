@@ -74,7 +74,13 @@ import {
   shouldOfferDockRestore,
   countRestorableDockCards,
 } from '../../lib/projectDocumentShape.js';
-import { isAuthoritativeRepairDocument } from '../../lib/projectDocumentMerge.js';
+import {
+  isAuthoritativeRepairDocument,
+  countEphemeralAgentCards,
+  recordGoodEphemeralCardCount,
+} from '../../lib/projectDocumentMerge.js';
+import { ensureEphemeralAgentCards } from '../../lib/ensureEphemeralAgentCards.js';
+import { isApiAvailable } from '../../lib/canvasProjectsApi.js';
 import {
   shouldApplyProjectLoad,
   buildSwitchPlaceholderState,
@@ -153,6 +159,7 @@ export function useProjectSyncLifecycle({
   const loadProjectIntoStateRef = useRef(null);
   const applyServerPullResultRef = useRef(null);
   const backgroundSyncStartedRef = useRef(false);
+  const ephemeralRestoreAttemptedRef = useRef(new Set());
 
   const loadProjectIntoState = useCallback(async (
     projectId,
@@ -254,6 +261,7 @@ export function useProjectSyncLifecycle({
     lastLoadedCardsRef.current = cards;
     projectHydratedRef.current.add(projectId);
     recordGoodLocalCardCount(projectId, cards.length + stagedHydrated.length);
+    recordGoodEphemeralCardCount(projectId, countEphemeralAgentCards({ cards }));
     const { stagedSyncCards: _staged, ...stateWithoutStaged } = normalized;
     const indexForName = await loadProjectIndex();
     const displayName = resolveProjectDisplayName(
@@ -296,6 +304,67 @@ export function useProjectSyncLifecycle({
         return Object.keys(rest).length > 0 ? rest : null;
       });
     }
+
+    let patchedPlacementsAfterRestore = patchedPlacements;
+    if (
+      projectId === activeProjectIdRef.current
+      && !switchingProjectRef.current
+      && !localOnly
+      && !ephemeralRestoreAttemptedRef.current.has(projectId)
+    ) {
+      ephemeralRestoreAttemptedRef.current.add(projectId);
+      try {
+        const apiOk = await isApiAvailable();
+        if (apiOk) {
+          const restoreResult = await ensureEphemeralAgentCards({ projectId, cards });
+          if (restoreResult.changed) {
+            cards = restoreResult.cards;
+            patchedPlacementsAfterRestore = patchPlacementsMapFromArrays(
+              patchedPlacementsAfterRestore,
+              cards,
+              stagedHydrated,
+            );
+            lastLoadedCardsRef.current = cards;
+            recordGoodEphemeralCardCount(projectId, countEphemeralAgentCards({ cards }));
+            stateRef.current = {
+              ...stateRef.current,
+              cards,
+              artifactPlacements: patchedPlacementsAfterRestore,
+            };
+            setState((prev) => ({
+              ...prev,
+              cards,
+              artifactPlacements: patchedPlacementsAfterRestore,
+            }));
+            await commitProjectDocument(projectId, {
+              state: {
+                ...stateRef.current,
+                cards,
+                artifactPlacements: patchedPlacementsAfterRestore,
+              },
+              stagedSyncCards: stagedHydrated,
+              reason: 'ephemeral-agent:restore',
+              pushRemote: true,
+            });
+            const { beat, agent } = restoreResult.restored;
+            setSyncStatus((prev) => ({
+              ...(prev ?? {}),
+              toast: strings.sync.ephemeralAgentsRestoredToast(beat, agent),
+            }));
+            setTimeout(() => setSyncStatus(null), 5000);
+            flowTrace('project:ephemeral-agent-restore', {
+              projectId,
+              beat,
+              agent,
+              cardCount: cards.length,
+            });
+          }
+        }
+      } catch (error) {
+        console.warn('Ephemeral agent card restore failed:', error?.message ?? error);
+      }
+    }
+
     if (
       (
         cleanedPersist
@@ -312,7 +381,7 @@ export function useProjectSyncLifecycle({
     ) {
       void saveProjectById(
         projectId,
-        { ...stateWithoutStaged, artifactPlacements: patchedPlacements, cards },
+        { ...stateWithoutStaged, artifactPlacements: patchedPlacementsAfterRestore, cards },
         stagedHydrated,
         { pushRemote: true },
       );
@@ -327,19 +396,19 @@ export function useProjectSyncLifecycle({
           ...stateWithoutStaged,
           projectName: mergedProjectName,
           cards,
-          artifactPlacements: patchedPlacements,
+          artifactPlacements: patchedPlacementsAfterRestore,
           canvasView:
             stateWithoutStaged.canvasView ?? { x: 0, y: 0, zoom: 1 },
         },
         stagedHydrated,
         suppressedKeys,
-        { authoritativePlacements: patchedPlacements },
+        { authoritativePlacements: patchedPlacementsAfterRestore },
       ),
     );
     auditPlacementStep('load:projectIntoState', {
       cards,
       stagedSyncCards: stagedHydrated,
-      artifactPlacements: patchedPlacements,
+      artifactPlacements: patchedPlacementsAfterRestore,
     }, { projectId });
     flowTrace('project:load-done', {
       projectId,
@@ -549,7 +618,7 @@ export function useProjectSyncLifecycle({
       return;
     }
     const projectId = activeProjectIdRef.current;
-    clearLocalProjectCaches({ activeProjectId: projectId, keepActive: false });
+    await clearLocalProjectCaches({ activeProjectId: projectId, keepActive: false });
     setSyncStatus({ toast: strings.projects.clearLocalCacheDone });
     if (projectId) {
       const pullResult = await pullProjectDocumentIfServerNewer(projectId, {

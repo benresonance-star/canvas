@@ -52,6 +52,8 @@ export const strings = {
     importedFilesFolderName: 'Imported files',
     importFiles: 'Import files',
     folderPermissionDenied: 'Could not access the folder. Try Reconnect or pick the folder again.',
+    folderStaleOnDisk:
+      'The project folder changed on disk. Click Restore folder link below, then retry your save.',
     folderSaveFailed:
       'Folder connected for this session, but this browser could not save the folder link. Reconnect before refreshing the page.',
     primitivesNotUpdated: 'Saved to folder; primitives not updated (start API with npm run server).',
@@ -282,6 +284,17 @@ export const strings = {
     dockRestoreAction: 'Restore to canvas',
     dockRestoredToast: (n) =>
       `Restored ${n} item${n === 1 ? '' : 's'} from the sync dock to the canvas.`,
+    ephemeralAgentsRestoredToast: (beatCount, agentCount) => {
+      const parts = [];
+      if (beatCount > 0) {
+        parts.push(`${beatCount} beat agent${beatCount === 1 ? '' : 's'}`);
+      }
+      if (agentCount > 0) {
+        parts.push(`${agentCount} image generator${agentCount === 1 ? '' : 's'}`);
+      }
+      if (parts.length === 0) return 'Restored agent cards to the canvas.';
+      return `Restored ${parts.join(' and ')} to the canvas.`;
+    },
     agentChatPlacementPruned:
       'Chat transcript removed from layout (file still on disk). Open the chat thread or click Sync to restore.',
     syncMissingBody: 'Canvas data missing on server — open in the browser that has this project to upload.',

@@ -1,14 +1,28 @@
 import React, { useMemo, useState } from 'react';
-import { Clock, Play, Square } from 'lucide-react';
+import { Clock, Focus, Play, Square } from 'lucide-react';
+import { SonicVoiceControls } from '../../../../sonicStudio/components/SonicVoiceControls.jsx';
+import { summarizeSonicVoice } from '../../../../sonicStudio/domain/sonicStudioCard.js';
 import { useBeatAgentRuntime } from '../hooks/useBeatAgentRuntime.js';
+import { updateTrackSonicVoice } from '../domain/beatTrackSoundSource.js';
 import { BeatTrackSynthControls } from './BeatTrackSynthControls.jsx';
 
 function stopCardInteraction(event) {
   event.stopPropagation();
 }
 
+const cardPointerGuard = {
+  onPointerDown: stopCardInteraction,
+  onMouseDown: stopCardInteraction,
+  onDoubleClick: stopCardInteraction,
+};
+
+function isSonicTrack(track) {
+  return track?.soundSource === 'sonic_voice' && Boolean(track?.sonicVoice);
+}
+
 export function BeatAgentPreview({
   card,
+  cards = [],
   projectId = null,
   folderHandle = null,
   onUpdateCard = null,
@@ -18,30 +32,43 @@ export function BeatAgentPreview({
     state,
     transportState,
     play,
+    prepareBeatAudio,
+    enableBeatAudio,
+    audioContextState,
     stop,
     playhead,
     toggleStep,
     updateTrackSynth,
+    updateTrackSound,
     clockSync,
     toggleClockSync,
+    isolatedTrackId,
+    toggleTrackIsolate,
     saving,
     error,
     status,
   } = useBeatAgentRuntime({
     card,
+    cards,
     projectId,
     folderHandle,
     onUpdateCard,
     debounceMs: 550,
   });
 
-  const pattern = state?.pattern ?? card?.musicState?.pattern;
+  const pattern = state?.pattern;
   const tracks = pattern?.tracks ?? [];
   const visibleTracks = tracks.slice(0, compact ? 3 : 4);
   const [selectedTrackId, setSelectedTrackId] = useState(null);
   const selectedTrack = useMemo(() => (
     visibleTracks.find((track) => track.id === selectedTrackId) ?? visibleTracks[0] ?? null
   ), [selectedTrackId, visibleTracks]);
+  const selectedTrackIsSonic = isSonicTrack(selectedTrack);
+  const linkedSonicCard = useMemo(() => {
+    const cardId = selectedTrack?.sonicProvenance?.cardId;
+    if (!cardId) return null;
+    return cards.find((item) => item.id === cardId) ?? null;
+  }, [cards, selectedTrack?.sonicProvenance?.cardId]);
   const label = error || (saving ? 'Saving...' : status || state?.status || 'draft');
 
   return (
@@ -52,6 +79,21 @@ export function BeatAgentPreview({
           <div className="sans text-xs text-primary truncate">{pattern?.name ?? card.name}</div>
         </div>
         <div className="shrink-0 flex items-center gap-1">
+          {audioContextState !== 'running' && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 h-8 px-2 rounded border border-warning/50 bg-warning/10 text-warning sans text-[10px] pointer-events-auto"
+              title="Browser blocked audio — click to enable"
+              onPointerDown={stopCardInteraction}
+              onMouseDown={stopCardInteraction}
+              onClick={(event) => {
+                event.stopPropagation();
+                void enableBeatAudio();
+              }}
+            >
+              Enable audio
+            </button>
+          )}
           <button
             type="button"
             className={`inline-flex h-8 w-8 items-center justify-center rounded border transition pointer-events-auto ${
@@ -81,7 +123,10 @@ export function BeatAgentPreview({
             }`}
             title={transportState.isPlaying ? 'Stop preview' : 'Play preview'}
             aria-label={transportState.isPlaying ? 'Stop preview' : 'Play preview'}
-            onPointerDown={stopCardInteraction}
+            onPointerDown={(event) => {
+              stopCardInteraction(event);
+              if (!transportState.isPlaying) prepareBeatAudio();
+            }}
             onMouseDown={stopCardInteraction}
             onDoubleClick={stopCardInteraction}
             onClick={(event) => {
@@ -152,20 +197,82 @@ export function BeatAgentPreview({
 
       {selectedTrack && !compact && (
         <div
-          className="border-t border-border-subtle pt-2"
+          className="border-t border-border-subtle pt-1.5 min-h-0 overflow-y-auto"
           onPointerDown={stopCardInteraction}
           onMouseDown={stopCardInteraction}
           onDoubleClick={stopCardInteraction}
         >
-          <div className="sans text-[10px] text-muted truncate mb-1">
-            {selectedTrack.name} sound
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <div className="sans text-[10px] text-muted truncate min-w-0">
+              <span>{selectedTrack.name} sound</span>
+              {selectedTrackIsSonic && (
+                <span className="text-secondary">
+                  {' · '}
+                  {summarizeSonicVoice(selectedTrack.sonicVoice)?.archetype ?? selectedTrack.sonicVoice.archetype}
+                  {linkedSonicCard
+                    ? ` · ${linkedSonicCard.name ?? 'Sonic Studio'}`
+                    : ' · embedded'}
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              aria-pressed={isolatedTrackId === selectedTrack.id}
+              title={isolatedTrackId === selectedTrack.id ? 'Exit isolate' : 'Isolate this instrument'}
+              className={`inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 sans text-[9px] pointer-events-auto transition ${
+                isolatedTrackId === selectedTrack.id
+                  ? 'border-accent text-accent bg-accent/15'
+                  : 'border-border text-muted hover:border-accent/60 hover:text-secondary'
+              }`}
+              onPointerDown={stopCardInteraction}
+              onMouseDown={stopCardInteraction}
+              onDoubleClick={stopCardInteraction}
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleTrackIsolate(selectedTrack.id);
+              }}
+            >
+              <Focus size={10} aria-hidden="true" />
+              Isolate
+            </button>
           </div>
-          <BeatTrackSynthControls
-            track={selectedTrack}
-            controls={['gain', 'decayMs', 'tone', 'distortion']}
-            compact
-            onChange={(trackId, patch) => updateTrackSynth(trackId, patch, { debounce: true })}
-          />
+          {selectedTrackIsSonic ? (
+            <div className="grid gap-1.5">
+              <SonicVoiceControls
+                voice={selectedTrack.sonicVoice}
+                compact
+                showPreview={false}
+                onPointerGuard={cardPointerGuard}
+                onChange={(patch) => {
+                  updateTrackSound(
+                    selectedTrack.id,
+                    updateTrackSonicVoice(selectedTrack, patch),
+                    { debounce: true },
+                  );
+                }}
+              />
+              <div className="border-t border-border-subtle pt-1.5">
+                <div className="sans text-[9px] uppercase tracking-wider text-muted mb-1.5">Synth</div>
+                <BeatTrackSynthControls
+                  track={selectedTrack}
+                  variant="dials"
+                  controls={['gain', 'attackMs', 'decayMs', 'tone', 'distortion', 'pitch']}
+                  compact
+                  pointerGuard={cardPointerGuard}
+                  onChange={(trackId, patch) => updateTrackSynth(trackId, patch, { debounce: true })}
+                />
+              </div>
+            </div>
+          ) : (
+            <BeatTrackSynthControls
+              track={selectedTrack}
+              variant="dials"
+              controls={['gain', 'attackMs', 'decayMs', 'tone', 'distortion', 'pitch']}
+              compact
+              pointerGuard={cardPointerGuard}
+              onChange={(trackId, patch) => updateTrackSynth(trackId, patch, { debounce: true })}
+            />
+          )}
         </div>
       )}
 

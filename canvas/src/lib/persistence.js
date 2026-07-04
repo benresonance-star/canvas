@@ -3,6 +3,7 @@
  * for all UI/feature loads. `loadProjectById` is a deprecated alias.
  */
 import { resolveLoadedCardType } from './filename.js';
+import { isBlobUrl } from './previewUrl.js';
 import {
   stripVersionForPersist,
   slimProjectPayloadForCache,
@@ -41,6 +42,10 @@ export { stripVersionForPersist } from './projectSlim.js';
 function normalizeLoadedVersions(versions) {
   return (versions ?? []).map((v) => {
     let row = v;
+    if (isBlobUrl(row.objectUrl)) {
+      const { objectUrl, ...rest } = row;
+      row = { ...rest, inline: false };
+    }
     if (row.previewStripped && (row.dataUrl || row.previewCacheKey)) {
       row = { ...row, previewStripped: false };
     }

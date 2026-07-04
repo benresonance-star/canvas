@@ -25,6 +25,9 @@ export function createBeatTrack(track, stepCount = 16) {
     solo: false,
     gain: 1,
     sampleId: track.sampleId ?? track.id,
+    soundSource: track.soundSource === 'sonic_voice' ? 'sonic_voice' : 'generated',
+    sonicVoice: track.sonicVoice ?? null,
+    sonicProvenance: track.sonicProvenance ?? null,
     steps: Array.from({ length: stepCount }, () => createBeatStep()),
   };
 }

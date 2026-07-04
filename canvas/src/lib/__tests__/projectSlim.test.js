@@ -34,6 +34,67 @@ describe('slimProjectPayloadForCache', () => {
     expect(slim.threeDViewerState).toEqual(viewerState);
   });
 
+  it('preserves sonic studio card state on slim cards', () => {
+    const card = {
+      id: 'sonic-card-1',
+      key: 'music__sonic-1',
+      prefix: 'music',
+      name: 'Sonic Studio 1',
+      type: 'sonic_studio',
+      x: 10,
+      y: 20,
+      pinnedVersion: 1,
+      sonicStudioId: 'sonic-1',
+      sonicStudioState: {
+        voices: [{ id: 'kick-voice', archetype: 'kick', name: 'Kick' }],
+      },
+      sonicSourceStateHash: 'sonic-abc',
+      versions: [{
+        version: 1,
+        filename: 'Sonic Studio 1.sonicstudio',
+        ext: 'sonicstudio',
+        inline: true,
+        artifactRef: { id: 'sonic-1', type: 'artifact' },
+      }],
+    };
+
+    const slim = stripCardForPersist(card, { slimCard: true });
+
+    expect(slim.sonicStudioId).toBe('sonic-1');
+    expect(slim.sonicStudioState.voices).toHaveLength(1);
+    expect(slim.sonicSourceStateHash).toBe('sonic-abc');
+  });
+
+  it('preserves music-agent card references on slim cards', () => {
+    const card = {
+      id: 'beat-card-1',
+      key: 'music__beat-1',
+      prefix: 'music',
+      name: 'Beat Agent 1',
+      type: 'music-agent',
+      x: 10,
+      y: 20,
+      pinnedVersion: 1,
+      musicAgentId: 'agent-1',
+      musicAgentType: 'beat',
+      versions: [{
+        version: 1,
+        filename: 'Beat Agent 1.musicartifact',
+        ext: 'musicartifact',
+        inline: true,
+        artifactRef: { id: 'agent-1', type: 'artifact' },
+        musicAgentId: 'agent-1',
+        musicAgentType: 'beat',
+      }],
+    };
+
+    const slim = stripCardForPersist(card, { slimCard: true });
+
+    expect(slim.musicAgentId).toBe('agent-1');
+    expect(slim.musicAgentType).toBe('beat');
+    expect(slim.versions[0].artifactRef.id).toBe('agent-1');
+  });
+
   it('preserves studio card references on slim cards', () => {
     const card = {
       id: 'studio-card-1',
