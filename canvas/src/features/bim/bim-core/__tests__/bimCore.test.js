@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { computeBimModelFingerprint } from '../fingerprint.js';
 import { createMemoryBimRepository } from '../bimRepository.js';
 import { prepareBimModel } from '../prepareBimModel.js';
-import { validateBqlQuery } from '../bql.js';
+import { executeBqlQuery, validateBqlQuery } from '../bql.js';
 import { normalizeBimWorkspaceState } from '../types.js';
 import {
   resolveFragmentsGlobalIdByLocalId,
@@ -82,6 +82,11 @@ describe('BIM core fingerprinting and cache', () => {
     });
 
     expect(state.camera).toBeNull();
+  });
+
+  it('normalizes persisted side panel state', () => {
+    expect(normalizeBimWorkspaceState({}).panels).toEqual({ left: true, right: true });
+    expect(normalizeBimWorkspaceState({ panels: { left: false } }).panels).toEqual({ left: false, right: true });
   });
 });
 
@@ -215,5 +220,117 @@ describe('BQL validation', () => {
     expect(result.ok).toBe(false);
     expect(result.errors.map((error) => error.path)).toContain('deleteFiles');
     expect(result.errors.map((error) => error.path)).toContain('where.properties[0].op');
+  });
+});
+
+describe('BQL execution', () => {
+  const preparedModel = {
+    elements: [
+      {
+        id: 'ifc:beam-1',
+        ifcClass: 'IfcBeam',
+        ifcGlobalId: 'beam-guid',
+        fragmentsObjectId: 'beam-guid',
+        name: 'Beam-001',
+        typeName: 'Timber Beam',
+        storeyId: 'GROUND FLOOR',
+      },
+      {
+        id: 'ifc:door-1',
+        ifcClass: 'IfcDoor',
+        ifcGlobalId: 'door-guid',
+        fragmentsObjectId: 'door-guid',
+        name: 'Door-001',
+        typeName: 'Fire Door',
+        storeyId: 'LEVEL 01',
+      },
+    ],
+    properties: [
+      {
+        id: 'p1',
+        elementId: 'ifc:door-1',
+        psetName: 'Pset_DoorCommon',
+        propertyName: 'FireRating',
+        value: '60',
+        source: 'ifc-property',
+      },
+      {
+        id: 'q1',
+        elementId: 'ifc:beam-1',
+        psetName: 'BaseQuantities',
+        propertyName: 'Length',
+        value: 1200,
+        source: 'ifc-quantity',
+      },
+    ],
+    provenance: [
+      {
+        id: 'prov1',
+        recordId: 'ifc:beam-1',
+        extractionRule: 'web-ifc-line',
+        ifcGlobalId: 'beam-guid',
+      },
+    ],
+    semanticAssemblies: [
+      {
+        id: 'WIN-001',
+        modelId: 'model-1',
+        kind: 'WindowAssembly',
+        label: 'Kitchen Window',
+      },
+    ],
+  };
+
+  it('returns deterministic element result rows and viewer instructions', () => {
+    const result = executeBqlQuery(preparedModel, {
+      version: '0.1',
+      select: 'elements',
+      from: 'physicalElements',
+      where: { ifcClass: 'IfcBeam', storey: 'GROUND FLOOR' },
+      view: { mode: 'ghostOthers', focus: true },
+    });
+
+    expect(result.status).toBe('success');
+    expect(result.objectRefs).toEqual([
+      expect.objectContaining({ id: 'ifc:beam-1', fragmentsObjectId: 'beam-guid' }),
+    ]);
+    expect(result.tableRows[0]).toMatchObject({ name: 'Beam-001', storeyId: 'GROUND FLOOR' });
+    expect(result.viewerState).toMatchObject({ mode: 'ghostOthers', focus: true });
+    expect(result.evidence[0]).toMatchObject({ objectId: 'ifc:beam-1', evidenceType: 'ifcClass' });
+  });
+
+  it('filters by property and quantity predicates', () => {
+    const fireDoors = executeBqlQuery(preparedModel, {
+      version: '0.1',
+      select: 'elements',
+      from: 'physicalElements',
+      where: { properties: [{ path: 'Pset_DoorCommon.FireRating', op: 'exists' }] },
+    });
+    const longBeams = executeBqlQuery(preparedModel, {
+      version: '0.1',
+      select: 'elements',
+      from: 'physicalElements',
+      where: { quantities: [{ name: 'Length', op: '>=', value: 1000 }] },
+    });
+
+    expect(fireDoors.objectRefs.map((ref) => ref.id)).toEqual(['ifc:door-1']);
+    expect(longBeams.objectRefs.map((ref) => ref.id)).toEqual(['ifc:beam-1']);
+  });
+
+  it('counts physical and semantic objects from allBimObjects', () => {
+    const result = executeBqlQuery(preparedModel, {
+      version: '0.1',
+      select: 'count',
+      from: 'allBimObjects',
+      where: {
+        or: [
+          { ifcClass: 'IfcDoor' },
+          { semanticType: 'WindowAssembly' },
+        ],
+      },
+    });
+
+    expect(result.summary).toBe('2 matching BIM objects');
+    expect(result.tableRows).toEqual([]);
   });
 });

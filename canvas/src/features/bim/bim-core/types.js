@@ -50,12 +50,17 @@ export function emptyPreparedBimModel(metadata = {}) {
 }
 
 export function normalizeBimWorkspaceState(state = {}) {
+  const panels = state?.panels && typeof state.panels === 'object' ? state.panels : {};
   return {
     selectedObjectId: state?.selectedObjectId ?? null,
     selectedObjectKind: state?.selectedObjectKind ?? 'physicalElement',
     displayMode: BIM_DISPLAY_MODES.includes(state?.displayMode) ? state.displayMode : 'highlight',
     tableSearch: String(state?.tableSearch ?? ''),
     ifcClassFilter: String(state?.ifcClassFilter ?? ''),
+    panels: {
+      left: panels.left !== false,
+      right: panels.right !== false,
+    },
     camera: normalizeBimCameraState(state?.camera),
     lastOpenedAt: state?.lastOpenedAt ?? null,
     updatedAt: state?.updatedAt ?? null,

@@ -5,6 +5,7 @@ export function BimElementTable({
   selectedElementId,
   search,
   ifcClassFilter,
+  title = 'Elements',
   onSearchChange,
   onIfcClassFilterChange,
   onSelectElement,
@@ -34,6 +35,9 @@ export function BimElementTable({
 
   return (
     <div className="h-full min-h-0 flex flex-col border-r border-border bg-surface">
+      <div className="shrink-0 border-b border-border px-2 py-1 text-[10px] uppercase tracking-wider text-muted">
+        {title} · {filtered.length}
+      </div>
       <div className="shrink-0 p-2 border-b border-border flex gap-2">
         <input
           value={search}
@@ -53,10 +57,11 @@ export function BimElementTable({
           ))}
         </select>
       </div>
-      <div className="shrink-0 grid grid-cols-[1.4fr_1fr_1.3fr_.9fr] gap-2 border-b border-border px-2 py-1 text-[10px] uppercase tracking-wider text-muted">
+      <div className="shrink-0 grid grid-cols-[1.1fr_.75fr_1.1fr_.8fr_.9fr] gap-2 border-b border-border px-2 py-1 text-[10px] uppercase tracking-wider text-muted">
         <span>Name</span>
         <span>Class</span>
         <span>GlobalId</span>
+        <span>Storey</span>
         <span>Type</span>
       </div>
       <div className="flex-1 min-h-0 overflow-auto">
@@ -70,7 +75,7 @@ export function BimElementTable({
             type="button"
             aria-current={selectedElementId === element.id ? 'true' : undefined}
             onClick={() => onSelectElement(element.id)}
-            className={`w-full grid grid-cols-[1.4fr_1fr_1.3fr_.9fr] gap-2 px-2 py-1.5 text-left text-xs border-b border-border/70 ${
+            className={`w-full grid grid-cols-[1.1fr_.75fr_1.1fr_.8fr_.9fr] gap-2 px-2 py-1.5 text-left text-xs border-b border-border/70 ${
               selectedElementId === element.id
                 ? 'bg-accent text-on-accent'
                 : 'text-secondary hover:bg-surface-muted'
@@ -79,6 +84,7 @@ export function BimElementTable({
             <span className="truncate">{element.name || 'Unnamed'}</span>
             <span className="truncate">{element.ifcClass}</span>
             <span className="truncate font-mono text-[10px]">{element.ifcGlobalId}</span>
+            <span className="truncate">{element.storeyId || '-'}</span>
             <span className="truncate">{element.typeName || '-'}</span>
           </button>
         ))}

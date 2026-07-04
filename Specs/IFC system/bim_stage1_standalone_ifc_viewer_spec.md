@@ -248,7 +248,7 @@ Persist locally:
 
 ---
 
-# 14. Implementation status (2026-07-04)
+# 14. Implementation status (2026-07-04, updated)
 
 Stage 1 capabilities are **shipped inside Canvas** as the first host, before the standalone `desktop-bim-app` shell exists.
 
@@ -259,17 +259,19 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Open IFC | Yes — `.ifc` → `bim-model` artifact via drag/drop, folder sync, or reload |
 | Automatic first-open preparation | Yes — `prepareBimModel()` in modal open |
 | Fingerprinting and cache reuse | Yes — `computeBimModelFingerprint()` + IndexedDB store |
+| Cache rebuild | Yes — `deletePreparedModel()` via `BimQueryPanel` rebuild control |
 | That Open / Fragments conversion | Yes — `convertIfcToFragmentsBlob()` |
 | Local BIM index | Yes — elements, properties, relationships, provenance in IndexedDB (not SQL) |
 | Raw element extraction | Yes — 18 common IFC classes via web-ifc |
 | Property/quantity extraction | Yes — `rel-defines-by-properties` + quantity sets |
-| Storey extraction | Partial — `storeyId` on element records; not shown in table column |
+| Storey extraction | Yes — `storeyId` on element records and shown in table column |
 | Viewer rendering | Yes — `BimViewport.jsx` (Fragments + Three.js) |
 | Picking/selection | Yes — raycast + GlobalId mapping |
-| Element table | Yes — name, class, GlobalId, type; search + class filter |
+| Element table | Yes — name, class, GlobalId, type, storey; search + class filter |
 | Properties inspector | Yes — grouped Psets, provenance, assembly membership |
 | Viewer ↔ table sync | Yes — bidirectional via `ifcGlobalId` |
-| Workspace state persistence | Yes — IndexedDB per fingerprint |
+| Workspace state persistence | Yes — IndexedDB per fingerprint (camera, panels, filters, display mode) |
+| Live extraction feed | Yes — progress events during first-open preparation |
 
 ## 14.2 Not yet shipped (Stage 1 gaps)
 
@@ -278,8 +280,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Standalone desktop shell | Not built |
 | Filesystem cache layout (`model-cache/<fingerprint>/`) | Not built — IndexedDB instead |
 | Embedded SQL database | Not built |
-| Storey column in table | Not shown |
-| `colorBy` display mode | Not built |
+| `colorBy` display mode | Validated in BQL but not applied in viewport |
 | Package split (`bim-core`, `bim-viewer-ui`) | Deferred — monolithic `features/bim/` |
 
 ## 14.3 Key paths
@@ -291,6 +292,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Fragments conversion | `canvas/src/features/bim/bim-core/fragmentsConversion.js` |
 | Repository | `canvas/src/features/bim/bim-core/bimRepository.js` |
 | Workspace UI | `canvas/src/features/bim/components/BimWorkspace.jsx` |
+| Query panel | `canvas/src/features/bim/components/BimQueryPanel.jsx` |
 | Canvas routing | `canvas/src/components/ModalContent.jsx`, `CardPreview.jsx` |
 | Tests | `canvas/src/features/bim/bim-core/__tests__/`, `canvas/src/components/__tests__/BimArtifactRoutes.test.js` |
 

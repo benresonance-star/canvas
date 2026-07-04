@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createIndexedDbBimRepository } from '../bim-core/bimRepository.js';
+import { executeBqlQuery } from '../bim-core/bql.js';
 import { prepareBimModel } from '../bim-core/prepareBimModel.js';
 import { normalizeBimWorkspaceState } from '../bim-core/types.js';
 import { useBimModelSource } from '../hooks/useBimModelSource.js';
 import { BimElementTable } from './BimElementTable.jsx';
 import { BimInspector } from './BimInspector.jsx';
+import { BimQueryPanel } from './BimQueryPanel.jsx';
 import { BimViewport } from './BimViewport.jsx';
 
 const PHASE_LABELS = {
@@ -54,6 +56,8 @@ export function BimWorkspace({
   const [workspaceState, setWorkspaceState] = useState(() => normalizeBimWorkspaceState(version?.bim?.workspaceState));
   const [selectionFocusToken, setSelectionFocusToken] = useState(0);
   const [extractionFeed, setExtractionFeed] = useState([]);
+  const [queryResult, setQueryResult] = useState(null);
+  const [prepRunId, setPrepRunId] = useState(0);
 
   const appendExtractionEvent = (event) => {
     setExtractionFeed((feed) => [
@@ -105,7 +109,7 @@ export function BimWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [source.arrayBuffer, version]);
+  }, [prepRunId, source.arrayBuffer, version]);
 
   useEffect(() => {
     if (!fingerprint) return;
@@ -124,6 +128,18 @@ export function BimWorkspace({
     () => prepared?.provenance?.filter((record) => record.recordId === selectedElement?.id) ?? [],
     [prepared?.provenance, selectedElement?.id],
   );
+  const queryElementIds = useMemo(
+    () => queryResult?.objectRefs
+      ?.filter((ref) => ref.kind === 'physicalElement')
+      .map((ref) => ref.id) ?? [],
+    [queryResult],
+  );
+  const tableElements = useMemo(() => {
+    if (!prepared) return [];
+    if (!queryResult || queryResult.select === 'count') return prepared.elements;
+    const ids = new Set(queryElementIds);
+    return prepared.elements.filter((element) => ids.has(element.id));
+  }, [prepared, queryElementIds, queryResult]);
 
   const patchWorkspaceState = (patch) => {
     setWorkspaceState((state) => normalizeBimWorkspaceState({ ...state, ...patch }));
@@ -132,9 +148,56 @@ export function BimWorkspace({
   const selectElementByGlobalId = (ifcGlobalId) => {
     const element = prepared?.elements?.find((candidate) => candidate.ifcGlobalId === ifcGlobalId);
     if (!element) return;
+    setQueryResult(null);
     patchWorkspaceState({
       selectedObjectId: element.id,
       selectedObjectKind: 'physicalElement',
+      tableSearch: '',
+      ifcClassFilter: '',
+    });
+  };
+
+  const runBqlQuery = (query) => {
+    if (!prepared) return;
+    const result = executeBqlQuery(prepared, query);
+    result.select = query.select;
+    setQueryResult(result);
+    if (result.viewerState?.mode && result.viewerState.mode !== 'colorBy') {
+      patchWorkspaceState({ displayMode: result.viewerState.mode });
+    }
+    const firstPhysicalRef = result.objectRefs.find((ref) => ref.kind === 'physicalElement');
+    if (firstPhysicalRef) {
+      patchWorkspaceState({
+        selectedObjectId: firstPhysicalRef.id,
+        selectedObjectKind: 'physicalElement',
+      });
+      if (result.viewerState?.focus) setSelectionFocusToken((token) => token + 1);
+    }
+  };
+
+  const clearBqlQuery = () => {
+    setQueryResult(null);
+  };
+
+  const rebuildBimCache = async () => {
+    if (!fingerprint) return;
+    await repositoryRef.current.deletePreparedModel?.(fingerprint);
+    setPrepared(null);
+    setFingerprint(null);
+    setQueryResult(null);
+    setCacheStatus('preparing');
+    setPhase('preparing');
+    setPrepRunId((runId) => runId + 1);
+  };
+
+  const leftPanelOpen = workspaceState.panels?.left !== false;
+  const rightPanelOpen = workspaceState.panels?.right !== false;
+  const togglePanel = (panel) => {
+    patchWorkspaceState({
+      panels: {
+        ...(workspaceState.panels ?? { left: true, right: true }),
+        [panel]: !workspaceState.panels?.[panel],
+      },
     });
   };
 
@@ -181,41 +244,68 @@ export function BimWorkspace({
           {extractionFeed.at(-1)?.message}
         </div>
       )}
+      <BimQueryPanel
+        queryResult={queryResult}
+        onRunQuery={runBqlQuery}
+        onClearQuery={clearBqlQuery}
+        onRebuildCache={rebuildBimCache}
+        rebuildDisabled={!fingerprint}
+      />
       {prepared.warnings?.length > 0 && (
         <div className="shrink-0 border-b border-border bg-warning/10 px-3 py-1 text-[10px] text-warning">
           {prepared.warnings.join(' ')}
         </div>
       )}
-      <div className="flex-1 min-h-0 grid grid-cols-[minmax(18rem,25%)_1fr_minmax(18rem,25%)]">
-        <BimElementTable
-          elements={prepared.elements}
-          selectedElementId={workspaceState.selectedObjectId}
-          search={workspaceState.tableSearch}
-          ifcClassFilter={workspaceState.ifcClassFilter}
-          onSearchChange={(tableSearch) => patchWorkspaceState({ tableSearch })}
-          onIfcClassFilterChange={(ifcClassFilter) => patchWorkspaceState({ ifcClassFilter })}
-          onSelectElement={(selectedObjectId) => {
-            setSelectionFocusToken((token) => token + 1);
-            patchWorkspaceState({ selectedObjectId, selectedObjectKind: 'physicalElement' });
-          }}
-        />
-        <BimViewport
-          preparedModel={prepared}
-          selectedElement={selectedElement}
-          displayMode={workspaceState.displayMode}
-          initialCamera={workspaceState.camera}
-          focusSelectionToken={selectionFocusToken}
-          onDisplayModeChange={(displayMode) => patchWorkspaceState({ displayMode })}
-          onSelectElementByGlobalId={selectElementByGlobalId}
-          onCameraChange={(camera) => patchWorkspaceState({ camera })}
-        />
-        <BimInspector
-          element={selectedElement}
-          properties={selectedProperties}
-          provenance={selectedProvenance}
-          assemblies={prepared.semanticAssemblies ?? []}
-          assemblyMembers={prepared.assemblyMembers ?? []}
-        />
+      <div
+        className="flex-1 min-h-0 grid"
+        style={{
+          gridTemplateColumns: `${leftPanelOpen ? 'minmax(18rem,25%)' : '0'} minmax(0,1fr) ${rightPanelOpen ? 'minmax(18rem,25%)' : '0'}`,
+        }}
+      >
+        <div className="h-full min-h-0 overflow-hidden" style={{ gridColumn: 1 }}>
+          {leftPanelOpen ? (
+            <BimElementTable
+              elements={tableElements}
+              selectedElementId={workspaceState.selectedObjectId}
+              search={workspaceState.tableSearch}
+              ifcClassFilter={workspaceState.ifcClassFilter}
+              title={queryResult ? 'BQL result' : 'Elements'}
+              onSearchChange={(tableSearch) => patchWorkspaceState({ tableSearch })}
+              onIfcClassFilterChange={(ifcClassFilter) => patchWorkspaceState({ ifcClassFilter })}
+              onSelectElement={(selectedObjectId) => {
+                setSelectionFocusToken((token) => token + 1);
+                patchWorkspaceState({ selectedObjectId, selectedObjectKind: 'physicalElement' });
+              }}
+            />
+          ) : null}
+        </div>
+        <div className="h-full min-h-0" style={{ gridColumn: 2 }}>
+          <BimViewport
+            preparedModel={prepared}
+            selectedElement={selectedElement}
+            highlightElementIds={queryElementIds}
+            displayMode={workspaceState.displayMode}
+            focusSelectionToken={selectionFocusToken}
+            leftPanelOpen={leftPanelOpen}
+            rightPanelOpen={rightPanelOpen}
+            onToggleLeftPanel={() => togglePanel('left')}
+            onToggleRightPanel={() => togglePanel('right')}
+            onDisplayModeChange={(displayMode) => patchWorkspaceState({ displayMode })}
+            onSelectElementByGlobalId={selectElementByGlobalId}
+            onCameraChange={(camera) => patchWorkspaceState({ camera })}
+          />
+        </div>
+        <div className="h-full min-h-0 overflow-hidden" style={{ gridColumn: 3 }}>
+          {rightPanelOpen ? (
+            <BimInspector
+              element={selectedElement}
+              properties={selectedProperties}
+              provenance={selectedProvenance}
+              assemblies={prepared.semanticAssemblies ?? []}
+              assemblyMembers={prepared.assemblyMembers ?? []}
+            />
+          ) : null}
+        </div>
       </div>
     </div>
   );

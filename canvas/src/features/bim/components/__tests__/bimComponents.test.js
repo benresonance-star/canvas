@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { BimElementTable } from '../BimElementTable.jsx';
 import { BimInspector } from '../BimInspector.jsx';
+import { BimQueryPanel } from '../BimQueryPanel.jsx';
 import { BimViewport } from '../BimViewport.jsx';
 
 describe('BIM UI components', () => {
@@ -31,6 +32,7 @@ describe('BIM UI components', () => {
     expect(html).toContain('North Wall');
     expect(html).toContain('IfcWall');
     expect(html).toContain('wall-1');
+    expect(html).toContain('Level 01');
   });
 
   it('renders inspector identity and grouped properties', () => {
@@ -101,5 +103,19 @@ describe('BIM UI components', () => {
     );
     expect(html).toContain('Fragments viewport unavailable');
     expect(html).toContain('bad fragment payload');
+  });
+
+  it('renders the BQL query controls and result summary', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimQueryPanel, {
+        queryResult: { status: 'success', summary: '3 matching BIM objects', warnings: [] },
+        onRunQuery: () => {},
+        onClearQuery: () => {},
+        onRebuildCache: () => {},
+      }),
+    );
+
+    expect(html).toContain('3 matching BIM objects');
+    expect(html).toContain('BQL query JSON');
   });
 });

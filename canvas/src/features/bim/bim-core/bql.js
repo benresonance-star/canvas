@@ -67,3 +67,181 @@ export function validateBqlQuery(query) {
   }
   return { ok: errors.length === 0, errors };
 }
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [value];
+}
+
+function textIncludes(value, needle) {
+  return String(value ?? '').toLowerCase().includes(String(needle ?? '').toLowerCase());
+}
+
+function compareValues(actual, op, expected) {
+  if (op === 'exists') return actual !== undefined && actual !== null && actual !== '';
+  if (op === 'contains') return textIncludes(actual, expected);
+  const actualNumber = Number(actual);
+  const expectedNumber = Number(expected);
+  const useNumber = Number.isFinite(actualNumber) && Number.isFinite(expectedNumber);
+  const left = useNumber ? actualNumber : String(actual ?? '');
+  const right = useNumber ? expectedNumber : String(expected ?? '');
+  if (op === '=') return left === right;
+  if (op === '!=') return left !== right;
+  if (op === '>') return left > right;
+  if (op === '>=') return left >= right;
+  if (op === '<') return left < right;
+  if (op === '<=') return left <= right;
+  return false;
+}
+
+function objectProperties(preparedModel, objectRef) {
+  if (objectRef.kind !== 'physicalElement') return [];
+  return preparedModel.properties?.filter((property) => property.elementId === objectRef.id) ?? [];
+}
+
+function propertyPathMatches(property, path) {
+  const fullPath = `${property.psetName}.${property.propertyName}`;
+  return fullPath === path || property.propertyName === path;
+}
+
+function objectMatchesWhere(preparedModel, objectRef, where = {}) {
+  if (!where || Object.keys(where).length === 0) return true;
+  if (where.and?.some((entry) => !objectMatchesWhere(preparedModel, objectRef, entry))) return false;
+  if (where.or && !where.or.some((entry) => objectMatchesWhere(preparedModel, objectRef, entry))) return false;
+  if (where.not && objectMatchesWhere(preparedModel, objectRef, where.not)) return false;
+
+  if (where.ifcClass !== undefined) {
+    if (objectRef.kind !== 'physicalElement') return false;
+    if (!asArray(where.ifcClass).includes(objectRef.ifcClass)) return false;
+  }
+  if (where.semanticType !== undefined) {
+    if (objectRef.kind !== 'semanticAssembly') return false;
+    if (!asArray(where.semanticType).includes(objectRef.kindName)) return false;
+  }
+  if (where.storey !== undefined) {
+    if (objectRef.kind !== 'physicalElement') return false;
+    if (!asArray(where.storey).some((storey) => textIncludes(objectRef.storeyId, storey))) return false;
+  }
+  if (where.nameContains !== undefined) {
+    if (!textIncludes(objectRef.name, where.nameContains) && !textIncludes(objectRef.typeName, where.nameContains)) return false;
+  }
+
+  const properties = objectProperties(preparedModel, objectRef);
+  if (where.properties?.some((predicate) => {
+    const matches = properties.filter((property) => propertyPathMatches(property, predicate.path));
+    if (predicate.op === 'exists') return matches.length === 0;
+    return !matches.some((property) => compareValues(property.value, predicate.op, predicate.value));
+  })) return false;
+
+  if (where.quantities?.some((predicate) => {
+    const matches = properties.filter((property) => property.source === 'ifc-quantity' && property.propertyName === predicate.name);
+    if (predicate.op === 'exists') return matches.length === 0;
+    return !matches.some((property) => compareValues(property.value, predicate.op, predicate.value));
+  })) return false;
+
+  return true;
+}
+
+function physicalRefs(preparedModel) {
+  return (preparedModel.elements ?? []).map((element) => ({
+    ...element,
+    kind: 'physicalElement',
+    kindName: element.ifcClass,
+  }));
+}
+
+function assemblyRefs(preparedModel) {
+  return (preparedModel.semanticAssemblies ?? []).map((assembly) => ({
+    id: assembly.id,
+    modelId: assembly.modelId,
+    kind: 'semanticAssembly',
+    kindName: assembly.kind,
+    name: assembly.label ?? assembly.id,
+    typeName: assembly.kind,
+    storeyId: null,
+    assembly,
+  }));
+}
+
+function rowsForRefs(refs) {
+  return refs.map((ref) => ({
+    id: ref.id,
+    kind: ref.kind,
+    name: ref.name ?? ref.id,
+    ifcClass: ref.ifcClass ?? ref.kindName,
+    ifcGlobalId: ref.ifcGlobalId ?? null,
+    storeyId: ref.storeyId ?? null,
+    typeName: ref.typeName ?? ref.kindName ?? null,
+  }));
+}
+
+function evidenceForRefs(preparedModel, refs) {
+  const provenance = preparedModel.provenance ?? [];
+  return refs.flatMap((ref) => {
+    const base = [{
+      objectId: ref.id,
+      evidenceType: ref.kind === 'semanticAssembly' ? 'semanticAssembly' : 'ifcClass',
+      value: ref.kindName,
+      ifcGlobalId: ref.ifcGlobalId,
+    }];
+    const records = provenance
+      .filter((record) => record.recordId === ref.id)
+      .map((record) => ({
+        objectId: ref.id,
+        evidenceType: 'relationship',
+        value: record.extractionRule,
+        ifcGlobalId: record.ifcGlobalId,
+      }));
+    return [...base, ...records];
+  });
+}
+
+export function executeBqlQuery(preparedModel, query) {
+  const validation = validateBqlQuery(query);
+  if (!validation.ok) {
+    return {
+      queryId: `bql:${Date.now()}`,
+      status: 'error',
+      objectRefs: [],
+      tableRows: [],
+      viewerState: { mode: query?.view?.mode ?? 'highlight', focus: false },
+      evidence: [],
+      summary: 'Invalid BQL query',
+      warnings: validation.errors.map((error) => `${error.path}: ${error.message}`),
+    };
+  }
+
+  const from = query.from ?? (query.select === 'assemblies' ? 'semanticAssemblies' : 'physicalElements');
+  const candidates = [
+    ...(from === 'semanticAssemblies' ? [] : physicalRefs(preparedModel)),
+    ...(from === 'physicalElements' ? [] : assemblyRefs(preparedModel)),
+  ];
+  const matched = candidates
+    .filter((ref) => objectMatchesWhere(preparedModel, ref, query.where))
+    .slice(0, query.limit ?? candidates.length);
+
+  const objectRefs = matched.map((ref) => ({
+    id: ref.id,
+    kind: ref.kind,
+    ifcGlobalId: ref.ifcGlobalId,
+    fragmentsObjectId: ref.fragmentsObjectId ?? ref.ifcGlobalId,
+  }));
+  const status = matched.length > 0 ? 'success' : 'empty';
+  const countOnly = query.select === 'count';
+
+  return {
+    queryId: `bql:${Date.now()}`,
+    status,
+    objectRefs,
+    tableRows: countOnly ? [] : rowsForRefs(matched),
+    viewerState: {
+      mode: query.view?.mode ?? 'highlight',
+      focus: Boolean(query.view?.focus),
+      objectIds: objectRefs.map((ref) => ref.id),
+    },
+    evidence: evidenceForRefs(preparedModel, matched),
+    summary: countOnly
+      ? `${matched.length} matching BIM objects`
+      : `${matched.length} matching BIM ${matched.length === 1 ? 'object' : 'objects'}`,
+    warnings: [],
+  };
+}

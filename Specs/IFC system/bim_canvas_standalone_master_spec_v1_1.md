@@ -1191,7 +1191,7 @@ xeokit / XKT remains a deferred benchmark fallback only. It shall not be introdu
 
 ---
 
-# 29. Implementation status (2026-07-04)
+# 29. Implementation status (2026-07-04, updated)
 
 The first vertical slice ships **inside Canvas** as `canvas/src/features/bim/`, ahead of the standalone desktop shell. Delivery order is intentionally **Canvas-first** (Stage 4 capabilities) while reusing the shared-core module layout described in §23.
 
@@ -1200,9 +1200,9 @@ The first vertical slice ships **inside Canvas** as `canvas/src/features/bim/`, 
 | Stage | Status | Notes |
 |---|---|---|
 | Stage 0 — foundations | **Done** | Stack locked: web-ifc + That Open Fragments + Three.js; pipeline version constants in `versions.js` |
-| Stage 1 — IFC evidence viewer MVP | **Partial (Canvas host)** | Prep pipeline, cache, viewer, table, inspector, selection sync shipped; standalone shell and filesystem cache layout deferred |
-| Stage 2 — BQL + agent | **Partial** | BQL validator only; no executor, agent panel, or query-driven UI |
-| Stage 3 — semantic assemblies | **Partial** | Archicad `Canvas.*` projection + member inspector; no assembly table, assembly selection, or BQL-backed queries |
+| Stage 1 — IFC evidence viewer MVP | **Mostly done (Canvas host)** | Prep pipeline, cache, viewer, table (incl. storey column), inspector, selection sync, cache rebuild shipped; standalone shell and filesystem cache layout deferred |
+| Stage 2 — BQL + agent | **Partial** | BQL validator + executor + manual query panel + query-driven viewer/table shipped; NL agent side panel, saved queries, and `colorBy` application deferred |
+| Stage 3 — semantic assemblies | **Partial** | Archicad `Canvas.*` projection, member inspector, and BQL window query (`IfcWindow` + `WindowAssembly`) shipped; assembly table, assembly selection, and assembly inspector deferred |
 | Stage 4 — Canvas integration | **Done (MVP)** | `bim-model` artifact type, card preview, modal workspace, ingest/sync hooks |
 | Stage 5+ | **Not started** | Revit connector, inference, multi-model, exports |
 
@@ -1214,19 +1214,20 @@ Monolithic feature module (package split deferred):
 canvas/src/features/bim/
   bim-core/
     prepareBimModel.js       # first-open orchestration + cache gate
-    ifcProjection.js       # web-ifc evidence extraction
-    fragmentsConversion.js # IFC → Fragments blob
+    ifcProjection.js         # web-ifc evidence extraction
+    fragmentsConversion.js   # IFC → Fragments blob
     fragmentsSelection.js    # GlobalId ↔ Fragments localId mapping
-    bimRepository.js         # IndexedDB prepared-model + workspace store
+    bimRepository.js         # IndexedDB prepared-model + workspace store (+ deletePreparedModel)
     fingerprint.js
     versions.js              # bim-projection-v0.3, bim-connectors-v0.1, thatopen-fragments-v0.2
     types.js
-    bql.js                   # validator only
+    bql.js                   # validateBqlQuery + executeBqlQuery
   components/
     BimWorkspace.jsx
     BimViewport.jsx
     BimElementTable.jsx
     BimInspector.jsx
+    BimQueryPanel.jsx        # manual JSON BQL editor + presets
     BimModelSummary.jsx
   hooks/
     useBimModelSource.js
@@ -1240,11 +1241,16 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 
 - `.ifc` files ingest as `bim-model` cards with static card preview (`BimModelSummary`).
 - First modal open runs `prepareBimModel()`: fingerprint check → Fragments conversion → web-ifc projection → IndexedDB cache.
-- Reopen of unchanged model reuses cached prepared artifacts when fingerprint matches.
+- Reopen of unchanged model reuses cached prepared artifacts when fingerprint matches; user can force rebuild via `BimQueryPanel`.
+- Live extraction feed during first-open preparation.
 - 3D viewport: orbit/pan/zoom, fit, raycast pick, highlight / isolate / ghost others.
 - Bidirectional selection sync between table, viewport, and inspector via `ifcGlobalId`.
+- Element table includes storey column; search and IFC class filter.
 - Inspector shows grouped Psets/quantities, provenance, and semantic assembly membership for member elements.
-- Workspace state (camera, selection, filters, display mode) persisted in IndexedDB per fingerprint.
+- **BQL executor** (`executeBqlQuery`) runs against prepared model index with `physicalElements`, `semanticAssemblies`, and `allBimObjects` scopes.
+- **BimQueryPanel** provides JSON BQL editor with presets (all beams, ground floor, windows incl. `WindowAssembly`).
+- Query results drive viewer display mode and filter the element table; evidence bundle returned per result.
+- Workspace state (camera, selection, filters, display mode, panel toggles) persisted in IndexedDB per fingerprint.
 - Graceful degradation: if Fragments conversion fails, evidence table and inspector still work; viewport shows an error banner.
 
 ## 29.4 Intentional deviations from this master spec
@@ -1255,17 +1261,18 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 | `/packages/bim-core` + `/packages/bim-viewer-ui` split | Monolithic `features/bim/` module |
 | Filesystem cache (`model-cache/<fingerprint>/`) | IndexedDB via `createIndexedDbBimRepository()` |
 | Embedded SQL (`bim-index.db`) | In-memory JS objects stored in IndexedDB |
-| BQL executor + agent side panel | Validator only (`validateBqlQuery`) |
-| Storey column in element table | `storeyId` extracted but not shown as table column |
-| `colorBy` display mode | Not implemented |
+| NL BIM agent side panel | Not built; manual JSON `BimQueryPanel` instead |
+| `colorBy` display mode | Validated in BQL but not applied in viewport |
 | Workspace state on card `version.bim` | Read on init; persist to IndexedDB only (no write-back to card metadata) |
 | IFC schema in fingerprint | Hardcoded `'unknown'` until schema detection lands |
 | Element coverage | 18 common IFC classes, not full schema scan |
+| Assembly-level viewer selection | BQL can match assemblies; viewport highlights physical members only |
 
 ## 29.5 Next engineering moves
 
-1. BQL executor + result/evidence payload (`executeBql`) against prepared model index.
-2. BIM agent side panel wired to validator → executor → viewer/table apply loop.
+1. NL BIM agent side panel wired to validator → executor → viewer/table apply loop.
+2. `colorBy` view instruction application in viewport.
 3. Assembly-aware table mode and assembly-level selection/inspector.
-4. Extract `bim-core` / `bim-viewer-ui` packages when Canvas + standalone both need the code.
-5. Standalone `desktop-bim-app` shell reusing the same core.
+4. Saved queries and query history.
+5. Extract `bim-core` / `bim-viewer-ui` packages when Canvas + standalone both need the code.
+6. Standalone `desktop-bim-app` shell reusing the same core.

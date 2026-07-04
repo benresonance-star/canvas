@@ -223,9 +223,9 @@ Create small IFC fixtures for:
 
 ---
 
-# 13. Implementation status (2026-07-04)
+# 13. Implementation status (2026-07-04, updated)
 
-Semantic assembly **projection** and **member-level inspector** behaviour are shipped. Assembly-aware querying, assembly selection, and assembly inspector views are not.
+Semantic assembly **projection**, **member-level inspector**, and **BQL-backed window query** are shipped. Assembly-level selection and assembly inspector views remain deferred.
 
 ## 13.1 Shipped
 
@@ -237,15 +237,16 @@ Semantic assembly **projection** and **member-level inspector** behaviour are sh
 | Member inspector shows assembly + role | Yes | `BimInspector.jsx` |
 | Confidence = explicit for connector metadata | Yes | assembly records |
 | Warnings for incomplete metadata | Partial | pipeline warnings array |
+| Query “show all windows” (`IfcWindow` + `WindowAssembly`) | Yes | `BimQueryPanel.jsx` windows preset → `executeBqlQuery` |
 
 ## 13.2 Not yet shipped
 
 | Requirement | Status |
 |---|---|
-| Query “show all windows” (IfcWindow + WindowAssembly) | Blocked on BQL executor |
 | Assembly-level selection in viewer | Not built |
 | Assembly inspector view (select assembly, show all members) | Not built |
 | Assembly table mode | Not built |
+| Assembly-only viewport highlight (all members from one assembly ref) | Not built |
 | Test IFC fixtures (§11) | Not committed |
 | Inference / heuristic assembly creation | Not built (deferred by design) |
 

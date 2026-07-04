@@ -234,9 +234,9 @@ The executor, not the agent, decides final query result membership.
 
 ---
 
-# 14. Implementation status (2026-07-04)
+# 14. Implementation status (2026-07-04, updated)
 
-Only the **validator** portion of this spec is implemented. Execution, result payloads, agent contract, and query-driven UI remain spec-only.
+BQL **validator**, **executor**, and **manual query UI** are shipped. NL agent translation, saved queries, and `colorBy` viewport application remain deferred.
 
 ## 14.1 Shipped
 
@@ -248,18 +248,26 @@ Only the **validator** portion of this spec is implemented. Execution, result pa
 | Reject unsupported operators | Yes | same |
 | Reject write/network actions | Yes | same |
 | `view.mode` validation | Yes | same |
+| Deterministic BIM executor (`executeBqlQuery`) | Yes | same |
+| Result payload (`objectRefs`, `tableRows`, `viewerState`, `evidence`, `summary`) | Yes | same |
+| `from` scopes: `physicalElements`, `semanticAssemblies`, `allBimObjects` | Yes | same |
+| Where filters: class, semantic type, storey, name, properties, quantities, and/or/not | Yes | same |
+| Query-driven viewer apply (highlight / isolate / ghostOthers) | Yes | `BimWorkspace.jsx` → `BimViewport.jsx` |
+| Query-driven table filter | Yes | `BimWorkspace.jsx` → `BimElementTable.jsx` |
+| Manual query panel with presets | Yes | `BimQueryPanel.jsx` |
+| Windows preset (`IfcWindow` + `WindowAssembly`) | Yes | `BimQueryPanel.jsx` |
+| Invalid BQL rejected before execution | Yes | `executeBqlQuery` returns `status: 'error'` |
 
 ## 14.2 Not yet shipped
 
 | Requirement | Status |
 |---|---|
-| Deterministic BIM executor (`executeBql`) | Not built |
-| Result payload (`BqlResult`, `BimObjectRef`, `EvidenceBundle`) | Not built |
-| Query-driven viewer/table apply loop | Not built |
 | Agent → BQL translation layer | Not built |
+| NL BIM agent side panel | Not built |
 | Saved queries / reruns | Not built |
-| `colorBy` view instruction application | Not built |
+| `colorBy` view instruction application | Validated but not applied in viewport |
+| Assembly-only viewport highlight (multi-member) | Partial — physical member ids only |
 
 ## 14.3 Next move
 
-Implement `executeBql(query, preparedModel)` returning the §8 result contract, then wire a BIM agent side panel to: interpret → validate → execute → apply viewer/table state.
+Wire a NL BIM agent side panel to: interpret user intent → produce BQL → validate → execute → apply viewer/table state. Add `colorBy` rendering and saved query persistence.

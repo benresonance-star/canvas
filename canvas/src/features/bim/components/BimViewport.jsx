@@ -1,11 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Box, Eye, EyeOff, LocateFixed, RotateCcw } from 'lucide-react';
+import { Box, Eye, EyeOff, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw } from 'lucide-react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { FragmentsModels, RenderedFaces } from '@thatopen/fragments';
 import fragmentsWorkerUrl from '@thatopen/fragments/dist/Worker/worker.mjs?url';
 import {
-  applySavedCameraState,
   fitPerspectiveCameraToDefaultView,
   syncOrbitControlsAfterCameraFit,
 } from '../../threeDArtifact/utils/cameraFit.js';
@@ -77,9 +76,13 @@ function fitPerspectiveCameraToBox(camera, controls, box, renderer) {
 export function BimViewport({
   preparedModel,
   selectedElement,
+  highlightElementIds = [],
   displayMode,
-  initialCamera = null,
   focusSelectionToken = 0,
+  leftPanelOpen = true,
+  rightPanelOpen = true,
+  onToggleLeftPanel = () => {},
+  onToggleRightPanel = () => {},
   onDisplayModeChange,
   onSelectElementByGlobalId = () => {},
   onCameraChange = () => {},
@@ -95,9 +98,9 @@ export function BimViewport({
   const modelRef = useRef(null);
   const animationRef = useRef(null);
   const localIdsRef = useRef([]);
-  const initialCameraRef = useRef(initialCamera);
   const lastFocusTokenRef = useRef(focusSelectionToken);
   const onCameraChangeRef = useRef(onCameraChange);
+  const pointerDownRef = useRef(null);
   const [loadState, setLoadState] = useState(() => (getViewportError(preparedModel) ? 'error' : 'loading'));
   const [renderError, setRenderError] = useState(() => getViewportError(preparedModel));
 
@@ -182,8 +185,13 @@ export function BimViewport({
       camera.updateProjectionMatrix();
       syncOrbitControlsAfterCameraFit(controls);
     };
+    const resizeAndRefresh = () => {
+      resize();
+      void fragmentsRef.current?.update?.(true);
+    };
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(container);
+    window.addEventListener('resize', resizeAndRefresh);
     resize();
 
     const fragments = new FragmentsModels(fragmentsWorkerUrl);
@@ -207,10 +215,24 @@ export function BimViewport({
         scene.add(model.object);
         localIdsRef.current = await model.getLocalIds();
         if (!disposed) {
-          if (initialCameraRef.current) applySavedCameraState(camera, controls, initialCameraRef.current);
-          else fitModel();
+          resize();
+          await fragments.update(true);
+          fitModel();
+          renderer.render(scene, camera);
           emitCameraChange();
           setLoadState('ready');
+          window.requestAnimationFrame(() => {
+            if (disposed) return;
+            resize();
+            fitModel();
+            void fragments.update(true);
+          });
+          window.setTimeout(() => {
+            if (disposed) return;
+            resize();
+            fitModel();
+            void fragments.update(true);
+          }, 80);
         }
       } catch (error) {
         if (!disposed) {
@@ -240,6 +262,7 @@ export function BimViewport({
       disposed = true;
       if (animationRef.current) window.cancelAnimationFrame(animationRef.current);
       resizeObserver.disconnect();
+      window.removeEventListener('resize', resizeAndRefresh);
       controls.removeEventListener('end', emitCameraChange);
       controls.dispose();
       void fragments.dispose();
@@ -263,24 +286,33 @@ export function BimViewport({
     async function applySelection() {
       await model.resetHighlight();
       await model.resetVisible();
-      if (!selectedElement?.ifcGlobalId || cancelled) return;
+      const resultElements = (preparedModel?.elements ?? []).filter((element) => highlightElementIds.includes(element.id));
+      const selectedOnly = selectedElement ? [selectedElement] : [];
+      const targetElements = resultElements.length > 0 ? resultElements : selectedOnly;
+      if (targetElements.length === 0 || cancelled) return;
 
-      const localId = await resolveFragmentsLocalIdByGlobalId(model, selectedElement.ifcGlobalId);
-      if (!isValidFragmentsLocalId(localId) || cancelled) return;
+      const localIds = (await Promise.all(
+        targetElements.map((element) => resolveFragmentsLocalIdByGlobalId(model, element.ifcGlobalId)),
+      )).filter(isValidFragmentsLocalId);
+      if (localIds.length === 0 || cancelled) return;
+      const primaryLocalId = selectedElement
+        ? await resolveFragmentsLocalIdByGlobalId(model, selectedElement.ifcGlobalId)
+        : localIds[0];
 
       if (displayMode === 'isolate') {
         await model.setVisible(undefined, false);
-        await model.setVisible([localId], true);
+        await model.setVisible(localIds, true);
       } else if (displayMode === 'ghostOthers') {
         const allLocalIds = localIdsRef.current.length > 0 ? localIdsRef.current : await model.getLocalIds();
-        const otherLocalIds = allLocalIds.filter((candidate) => candidate !== localId);
+        const selectedSet = new Set(localIds);
+        const otherLocalIds = allLocalIds.filter((candidate) => !selectedSet.has(candidate));
         if (otherLocalIds.length > 0) await model.highlight(otherLocalIds, GHOST_MATERIAL);
       }
-      await model.highlight([localId], SELECTED_MATERIAL);
+      await model.highlight(localIds, SELECTED_MATERIAL);
 
-      if (focusSelectionToken !== lastFocusTokenRef.current) {
+      if (focusSelectionToken !== lastFocusTokenRef.current && isValidFragmentsLocalId(primaryLocalId)) {
         lastFocusTokenRef.current = focusSelectionToken;
-        const box = typeof model.getMergedBox === 'function' ? await model.getMergedBox([localId]) : null;
+        const box = typeof model.getMergedBox === 'function' ? await model.getMergedBox([primaryLocalId]) : null;
         fitPerspectiveCameraToBox(cameraRef.current, controlsRef.current, box, rendererRef.current);
         const state = serializeCameraState(cameraRef.current, controlsRef.current);
         if (state) onCameraChangeRef.current(state);
@@ -293,19 +325,27 @@ export function BimViewport({
     return () => {
       cancelled = true;
     };
-  }, [displayMode, focusSelectionToken, loadState, selectedElement]);
+  }, [displayMode, focusSelectionToken, highlightElementIds, loadState, preparedModel?.elements, selectedElement]);
 
-  const handleCanvasClick = useCallback((event) => {
+  const handleCanvasPointerDown = useCallback((event) => {
+    pointerDownRef.current = { x: event.clientX, y: event.clientY };
+  }, []);
+
+  const pickFromPointerEvent = useCallback((event) => {
+    const pointerDown = pointerDownRef.current;
+    pointerDownRef.current = null;
+    if (
+      pointerDown
+      && Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 5
+    ) {
+      return;
+    }
     const model = modelRef.current;
     const camera = cameraRef.current;
     const renderer = rendererRef.current;
     if (!model || !camera || !renderer) return;
-    const rect = renderer.domElement.getBoundingClientRect();
-    const mouse = new THREE.Vector2(
-      ((event.clientX - rect.left) / Math.max(rect.width, 1)) * 2 - 1,
-      -(((event.clientY - rect.top) / Math.max(rect.height, 1)) * 2 - 1),
-    );
-    void model.raycast({ camera, mouse, dom: renderer.domElement }).then(async (hit) => {
+    const mouse = new THREE.Vector2(event.clientX, event.clientY);
+    void Promise.resolve(fragmentsRef.current?.update?.(true)).then(() => model.raycast({ camera, mouse, dom: renderer.domElement })).then(async (hit) => {
       if (!hit || !isValidFragmentsLocalId(hit.localId)) return;
       const guid = await resolveFragmentsGlobalIdByLocalId(model, hit.localId);
       if (guid) onSelectElementByGlobalId(guid);
@@ -321,6 +361,22 @@ export function BimViewport({
           IFC Fragments View - {total} elements
         </div>
         <div className="flex items-center gap-1">
+          <button
+            type="button"
+            title={leftPanelOpen ? 'Collapse element list' : 'Expand element list'}
+            onClick={onToggleLeftPanel}
+            className="rounded border border-border p-1 text-secondary hover:bg-surface-muted"
+          >
+            {leftPanelOpen ? <PanelLeftClose size={14} strokeWidth={1.7} /> : <PanelLeft size={14} strokeWidth={1.7} />}
+          </button>
+          <button
+            type="button"
+            title={rightPanelOpen ? 'Collapse inspector' : 'Expand inspector'}
+            onClick={onToggleRightPanel}
+            className="rounded border border-border p-1 text-secondary hover:bg-surface-muted"
+          >
+            {rightPanelOpen ? <PanelRightClose size={14} strokeWidth={1.7} /> : <PanelRight size={14} strokeWidth={1.7} />}
+          </button>
           <button type="button" title="Reset visibility" onClick={resetVisibility} className="rounded border border-border p-1 text-secondary hover:bg-surface-muted">
             <RotateCcw size={14} strokeWidth={1.7} />
           </button>
@@ -357,7 +413,8 @@ export function BimViewport({
         <canvas
           ref={canvasRef}
           className="absolute inset-0 h-full w-full"
-          onClick={handleCanvasClick}
+          onPointerDown={handleCanvasPointerDown}
+          onPointerUp={pickFromPointerEvent}
         />
         {loadState === 'loading' && (
           <div className="absolute inset-0 flex items-center justify-center bg-preview-bg/80 text-xs text-muted">

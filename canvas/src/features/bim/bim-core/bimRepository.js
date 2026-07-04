@@ -73,6 +73,15 @@ export function createIndexedDbBimRepository() {
         },
       });
     },
+    async deletePreparedModel(fingerprint) {
+      const db = await getDb();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(PREPARED_STORE, 'readwrite');
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.objectStore(PREPARED_STORE).delete(fingerprint);
+      });
+    },
     async getWorkspaceState(fingerprint) {
       const state = await txGet(WORKSPACE_STORE, fingerprint);
       return state ? normalizeBimWorkspaceState(state) : null;
@@ -95,6 +104,9 @@ export function createMemoryBimRepository(seed = {}) {
     },
     async putPreparedModel(fingerprint, preparedModel) {
       prepared.set(fingerprint, preparedModel);
+    },
+    async deletePreparedModel(fingerprint) {
+      prepared.delete(fingerprint);
     },
     async getWorkspaceState(fingerprint) {
       const state = workspace.get(fingerprint);
