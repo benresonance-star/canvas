@@ -175,6 +175,7 @@ describe('agent routes', () => {
       body: JSON.stringify({
         provider: 'ollama',
         connectorId: 'ollama-gemma-26b',
+        responseFormat: 'json',
         systemContext: 'Base',
         messages: [{ role: 'user', content: 'Hi bigger local model' }],
       }),
@@ -187,6 +188,7 @@ describe('agent routes', () => {
       provider: 'ollama',
       connectorId: 'ollama-gemma-26b',
       model: null,
+      responseFormat: 'json',
     }));
   });
 

@@ -123,7 +123,7 @@ export function buildOllamaMessages({ systemContext, messages }) {
 }
 
 /**
- * @param {{ provider: string, connectorId?: string | null, messages: object[], systemContext?: string, model?: string | null }} params
+ * @param {{ provider: string, connectorId?: string | null, messages: object[], systemContext?: string, model?: string | null, responseFormat?: string | null }} params
  */
 export async function completeOllamaChat({
   provider,
@@ -131,6 +131,7 @@ export async function completeOllamaChat({
   messages,
   systemContext,
   model = null,
+  responseFormat = null,
 }) {
   const connector = resolveConnector({ provider, connectorId });
   if (!connector) {
@@ -148,6 +149,7 @@ export async function completeOllamaChat({
         model: resolvedModel,
         messages: buildOllamaMessages({ systemContext, messages }),
         stream: false,
+        ...(responseFormat === 'json' ? { format: 'json' } : {}),
       }),
       signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
     });

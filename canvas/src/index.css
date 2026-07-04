@@ -458,6 +458,22 @@ html[data-theme='blue'] {
   animation-direction: reverse;
 }
 
+@keyframes bim-agent-running-throb {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.72;
+    transform: scale(1.04);
+  }
+}
+
+.bim-agent-running-badge {
+  animation: bim-agent-running-throb 1.8s ease-in-out infinite;
+  transform-origin: center;
+}
+
 .react-flow__edge.flow-edge-reverse.animated path:not(.react-flow__edge-interaction) {
   animation-direction: reverse;
 }

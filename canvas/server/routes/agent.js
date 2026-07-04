@@ -201,7 +201,7 @@ export function registerAgentRoutes(app) {
 
   app.post('/agent/chat', async (req, res) => {
     try {
-      const { provider, connectorId, messages, systemContext, templateId } = req.body;
+      const { provider, connectorId, messages, systemContext, templateId, responseFormat } = req.body;
       if (!provider || !isAllowedProvider(provider)) {
         return res.status(400).json({ error: 'Unknown or missing provider' });
       }
@@ -229,6 +229,7 @@ export function registerAgentRoutes(app) {
         messages: messages || [],
         systemContext: resolved.systemContext,
         model: resolved.model,
+        responseFormat,
       });
       res.json({ ...result, templateId: resolved.template?.id ?? null });
     } catch (e) {

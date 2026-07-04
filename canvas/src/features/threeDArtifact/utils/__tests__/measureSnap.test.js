@@ -7,7 +7,14 @@ import {
   convertMeasurementDistance,
   createEdgeMeasurementRecord,
   createMeasurementRecord,
+  createPolylineMeasurementRecord,
+  computePolylineDistance,
+  computePolygonArea3D,
+  computePolylineArea,
+  convertMeasurementArea,
   formatMeasurementDistance,
+  formatMeasurementArea,
+  formatMeasurementLabel,
   normalizeMeasureUnits,
   normalizeMeasurements,
   snapToEdge,
@@ -97,8 +104,53 @@ describe('measureSnap', () => {
       'vertex',
     );
     expect(record.distance).toBeCloseTo(5, 5);
+    expect(record.kind).toBe('segment');
     expect(record.snapMode).toBe('vertex');
     expect(record.id).toBeTruthy();
+  });
+
+  it('creates a polyline measurement with optional closing segment', () => {
+    const points = [
+      { position: [0, 0, 0] },
+      { position: [3, 0, 0] },
+      { position: [3, 4, 0] },
+    ];
+    const open = createPolylineMeasurementRecord(points, { closed: false });
+    expect(open?.kind).toBe('polyline');
+    expect(open?.distance).toBeCloseTo(7, 5);
+    expect(open?.area).toBeNull();
+
+    const closed = createPolylineMeasurementRecord(points, { closed: true });
+    expect(closed?.distance).toBeCloseTo(12, 5);
+    expect(closed?.area).toBeCloseTo(6, 5);
+    expect(computePolylineDistance(points, true)).toBeCloseTo(12, 5);
+  });
+
+  it('computes planar polygon area in 3D', () => {
+    const rectangle = [
+      { position: [0, 0, 0] },
+      { position: [3, 0, 0] },
+      { position: [3, 4, 0] },
+      { position: [0, 4, 0] },
+    ];
+    expect(computePolygonArea3D(rectangle)).toBeCloseTo(12, 5);
+    expect(computePolylineArea(rectangle, true)).toBeCloseTo(12, 5);
+    expect(convertMeasurementArea(12, 'm', 'm')).toBeCloseTo(12, 5);
+    expect(formatMeasurementArea(12, 'm', 'm')).toBe('12.00 m²');
+  });
+
+  it('formats polyline labels with point count and area', () => {
+    const label = formatMeasurementLabel({
+      kind: 'polyline',
+      distance: 12,
+      area: 8.5,
+      closed: true,
+      points: [{ position: [0, 0, 0] }, { position: [1, 0, 0] }, { position: [1, 1, 0] }],
+      snapMode: 'vertex',
+    }, 'm', 'm');
+    expect(label).toContain('perimeter');
+    expect(label).toContain('m²');
+    expect(label).toContain('3 pts');
   });
 
   it('creates an edge measurement from the full edge segment', () => {
@@ -118,13 +170,23 @@ describe('measureSnap', () => {
   it('normalizes persisted measurement records', () => {
     const valid = [{
       id: 'm1',
+      kind: 'segment',
       snapMode: 'edge',
       start: { position: [0, 0, 0] },
       end: { position: [1, 0, 0] },
       distance: 1,
       createdAt: '2026-01-01T00:00:00.000Z',
     }];
+    const polyline = [{
+      id: 'm2',
+      kind: 'polyline',
+      snapMode: 'vertex',
+      points: [{ position: [0, 0, 0] }, { position: [2, 0, 0] }],
+      closed: false,
+      distance: 2,
+    }];
     expect(normalizeMeasurements(valid)).toHaveLength(1);
+    expect(normalizeMeasurements(polyline)).toHaveLength(1);
     expect(normalizeMeasurements([{ id: 'bad' }])).toHaveLength(0);
   });
 

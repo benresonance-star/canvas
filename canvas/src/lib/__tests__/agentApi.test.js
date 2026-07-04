@@ -48,6 +48,45 @@ describe('agentApi', () => {
     });
   });
 
+  it('supports longer chat timeouts for local model calls', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ reply: 'ok', model: 'gemma4:26b' }),
+    });
+
+    const result = await sendAgentChat({
+      provider: 'ollama',
+      connectorId: 'ollama-gemma-26b',
+      messages: [{ role: 'user', content: 'hi' }],
+      timeoutMs: 120_000,
+    });
+
+    expect(result.reply).toBe('ok');
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/agent/chat'),
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it('maps request aborts to timeout errors', async () => {
+    const error = new DOMException('signal timed out', 'TimeoutError');
+    vi.mocked(fetch).mockRejectedValue(error);
+
+    await expect(
+      sendAgentChat({
+        provider: 'ollama',
+        messages: [{ role: 'user', content: 'hi' }],
+        timeoutMs: 120_000,
+      }),
+    ).rejects.toMatchObject({
+      kind: 'timeout',
+      message: expect.stringContaining('120 seconds'),
+    });
+  });
+
   it('retries a create conflict as an update with the server revision', async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce({

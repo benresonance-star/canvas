@@ -183,6 +183,27 @@ describe('ollamaChat', () => {
     expect(body.model).toBe('gemma4:26b');
   });
 
+  it('requests native Ollama JSON format when responseFormat is json', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        model: 'gemma4:26b',
+        message: { content: '{"query":{"version":"0.1"}}' },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await completeOllamaChat({
+      provider: 'ollama',
+      connectorId: 'ollama-gemma-26b',
+      responseFormat: 'json',
+      messages: [{ role: 'user', content: 'Return JSON' }],
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.format).toBe('json');
+  });
+
   it('checks model availability for the selected connector', async () => {
     const health = await checkOllamaReachable({
       provider: 'ollama',

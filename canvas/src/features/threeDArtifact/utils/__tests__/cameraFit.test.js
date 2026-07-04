@@ -4,6 +4,7 @@ import {
   allBoxCornersInsideCameraView,
   applySavedCameraState,
   computeFitDistanceForBox,
+  fitOrthographicCameraToDefaultView,
   fitPerspectiveCameraToCurrentView,
   fitPerspectiveCameraToDefaultView,
 } from '../cameraFit.js';
@@ -90,6 +91,22 @@ describe('fitPerspectiveCameraToCurrentView', () => {
   });
 });
 
+describe('fitOrthographicCameraToDefaultView', () => {
+  it('frames a mesh within the orthographic frustum', () => {
+    const geometry = new THREE.BoxGeometry(2, 4, 6);
+    const material = new THREE.MeshBasicMaterial();
+    const mesh = new THREE.Mesh(geometry, material);
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+    const controls = { target: new THREE.Vector3(), update: () => {} };
+
+    const fitted = fitOrthographicCameraToDefaultView(camera, controls, mesh, { viewportAspect: 1 });
+
+    expect(fitted).toBe(true);
+    expect(camera.top - camera.bottom).toBeGreaterThan(4);
+    expect(controls.target.length()).toBe(0);
+  });
+});
+
 describe('applySavedCameraState', () => {
   it('restores camera position and orbit target', () => {
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
@@ -107,5 +124,24 @@ describe('applySavedCameraState', () => {
     expect(camera.position.toArray()).toEqual([8, 6, 10]);
     expect(controls.target.toArray()).toEqual([1, 2, 3]);
     expect(camera.fov).toBe(50);
+  });
+
+  it('restores orthographic zoom and view height', () => {
+    const camera = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    const controls = { target: new THREE.Vector3(), update: () => {} };
+
+    applySavedCameraState(camera, controls, {
+      position: [0, 0, 10],
+      target: [0, 0, 0],
+      up: [0, 1, 0],
+      zoom: 2,
+      viewHeight: 12,
+      near: 0.2,
+      far: 500,
+    }, { viewportWidth: 800, viewportHeight: 600 });
+
+    expect(camera.zoom).toBe(2);
+    expect(camera.userData.viewHeight).toBe(12);
+    expect(camera.top - camera.bottom).toBeCloseTo(6, 5);
   });
 });

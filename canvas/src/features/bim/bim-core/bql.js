@@ -1,9 +1,12 @@
-const TOP_LEVEL_FIELDS = new Set(['version', 'select', 'from', 'where', 'include', 'view', 'limit']);
-const SELECT_VALUES = new Set(['elements', 'assemblies', 'count', 'properties']);
+const TOP_LEVEL_FIELDS = new Set(['version', 'select', 'from', 'where', 'include', 'view', 'limit', 'aggregate', 'groupBy']);
+const SELECT_VALUES = new Set(['elements', 'assemblies', 'count', 'properties', 'aggregate', 'groupedCount']);
 const FROM_VALUES = new Set(['physicalElements', 'semanticAssemblies', 'allBimObjects']);
-const WHERE_FIELDS = new Set(['ifcClass', 'semanticType', 'storey', 'nameContains', 'properties', 'quantities', 'and', 'or', 'not']);
+const WHERE_FIELDS = new Set(['ifcClass', 'semanticType', 'storey', 'nameContains', 'semanticAliases', 'properties', 'quantities', 'and', 'or', 'not']);
 const PROPERTY_OPS = new Set(['=', '!=', '>', '>=', '<', '<=', 'contains', 'exists']);
 const VIEW_MODES = new Set(['highlight', 'isolate', 'ghostOthers', 'colorBy']);
+const AGGREGATE_OPS = new Set(['sum']);
+const AGGREGATE_FIELDS = new Set(['quantity', 'property']);
+const GROUP_BY_FIELDS = new Set(['ifcClass', 'storey', 'typeName', 'type', 'name']);
 
 function addError(errors, path, message) {
   errors.push({ path, message });
@@ -43,6 +46,18 @@ function validateWhere(where, errors, path = 'where') {
       }
     });
   }
+  if (where.semanticAliases !== undefined) {
+    const entries = Array.isArray(where.semanticAliases) ? where.semanticAliases : [where.semanticAliases];
+    entries.forEach((entry, index) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        addError(errors, `${path}.semanticAliases[${index}]`, 'semanticAliases entry must be an object');
+        return;
+      }
+      if (!Array.isArray(entry.aliases) || entry.aliases.length === 0) {
+        addError(errors, `${path}.semanticAliases[${index}].aliases`, 'semanticAliases aliases must be a non-empty array');
+      }
+    });
+  }
 }
 
 export function validateBqlQuery(query) {
@@ -65,6 +80,20 @@ export function validateBqlQuery(query) {
   if (query.limit !== undefined && (!Number.isInteger(query.limit) || query.limit < 1)) {
     addError(errors, 'limit', 'limit must be a positive integer');
   }
+  if (query.select === 'aggregate') {
+    if (!query.aggregate || typeof query.aggregate !== 'object' || Array.isArray(query.aggregate)) {
+      addError(errors, 'aggregate', 'aggregate must be an object');
+    } else {
+      if (!AGGREGATE_OPS.has(query.aggregate.op)) addError(errors, 'aggregate.op', 'Unsupported aggregate operator');
+      if (!AGGREGATE_FIELDS.has(query.aggregate.field)) addError(errors, 'aggregate.field', 'Unsupported aggregate field');
+      if (typeof query.aggregate.name !== 'string' || query.aggregate.name.trim() === '') {
+        addError(errors, 'aggregate.name', 'aggregate name is required');
+      }
+    }
+  }
+  if (query.select === 'groupedCount') {
+    if (!GROUP_BY_FIELDS.has(query.groupBy)) addError(errors, 'groupBy', 'Unsupported groupBy field');
+  }
   return { ok: errors.length === 0, errors };
 }
 
@@ -73,7 +102,17 @@ function asArray(value) {
 }
 
 function textIncludes(value, needle) {
-  return String(value ?? '').toLowerCase().includes(String(needle ?? '').toLowerCase());
+  const haystack = String(value ?? '').toLowerCase();
+  const target = String(needle ?? '').toLowerCase();
+  if (haystack.includes(target)) return true;
+  const compactHaystack = haystack.replace(/[^a-z0-9]/g, '');
+  const compactTarget = target.replace(/[^a-z0-9]/g, '');
+  if (!compactTarget) return false;
+  if (compactHaystack.includes(compactTarget)) return true;
+  const singularCompactTarget = compactTarget.endsWith('s')
+    ? compactTarget.slice(0, -1)
+    : compactTarget;
+  return singularCompactTarget.length > 2 && compactHaystack.includes(singularCompactTarget);
 }
 
 function compareValues(actual, op, expected) {
@@ -122,10 +161,33 @@ function objectMatchesWhere(preparedModel, objectRef, where = {}) {
     if (!asArray(where.storey).some((storey) => textIncludes(objectRef.storeyId, storey))) return false;
   }
   if (where.nameContains !== undefined) {
-    if (!textIncludes(objectRef.name, where.nameContains) && !textIncludes(objectRef.typeName, where.nameContains)) return false;
+    const searchableValues = [
+      objectRef.name,
+      objectRef.typeName,
+      objectRef.id,
+      objectRef.ifcGlobalId,
+      objectRef.fragmentsObjectId,
+      objectRef.kindName,
+    ];
+    if (!searchableValues.some((value) => textIncludes(value, where.nameContains))) return false;
   }
 
   const properties = objectProperties(preparedModel, objectRef);
+  if (where.semanticAliases !== undefined) {
+    const entries = Array.isArray(where.semanticAliases) ? where.semanticAliases : [where.semanticAliases];
+    const semanticValues = [
+      objectRef.name,
+      objectRef.typeName,
+      objectRef.id,
+      objectRef.ifcGlobalId,
+      objectRef.fragmentsObjectId,
+      objectRef.kindName,
+      ...properties.map((property) => property.value),
+    ];
+    if (!entries.every((entry) => (
+      (entry.aliases ?? []).some((alias) => semanticValues.some((value) => textIncludes(value, alias)))
+    ))) return false;
+  }
   if (where.properties?.some((predicate) => {
     const matches = properties.filter((property) => propertyPathMatches(property, predicate.path));
     if (predicate.op === 'exists') return matches.length === 0;
@@ -174,6 +236,28 @@ function rowsForRefs(refs) {
   }));
 }
 
+function groupValueForRef(ref, groupBy) {
+  if (groupBy === 'ifcClass') return ref.ifcClass ?? ref.kindName ?? 'Unknown';
+  if (groupBy === 'storey') return ref.storeyId ?? 'Unknown';
+  if (groupBy === 'type' || groupBy === 'typeName') return ref.typeName ?? 'Unknown';
+  if (groupBy === 'name') return ref.name ?? 'Unknown';
+  return 'Unknown';
+}
+
+function groupedCountsForRefs(refs, groupBy) {
+  const groups = new Map();
+  refs.forEach((ref) => {
+    const value = groupValueForRef(ref, groupBy) || 'Unknown';
+    const group = groups.get(value) ?? { value, count: 0, objectIds: [] };
+    group.count += 1;
+    group.objectIds.push(ref.id);
+    groups.set(value, group);
+  });
+  return [...groups.values()].sort((left, right) => (
+    right.count - left.count || String(left.value).localeCompare(String(right.value))
+  ));
+}
+
 function evidenceForRefs(preparedModel, refs) {
   const provenance = preparedModel.provenance ?? [];
   return refs.flatMap((ref) => {
@@ -193,6 +277,41 @@ function evidenceForRefs(preparedModel, refs) {
       }));
     return [...base, ...records];
   });
+}
+
+function propertyMatchesAggregate(property, aggregate) {
+  const name = String(aggregate?.name ?? '').toLowerCase();
+  if (!name) return false;
+  if (aggregate.field === 'quantity' && property.source !== 'ifc-quantity') return false;
+  const propertyName = String(property.propertyName ?? '').toLowerCase();
+  const fullPath = `${property.psetName}.${property.propertyName}`.toLowerCase();
+  if (aggregate.field === 'property') return fullPath === name || propertyName === name;
+  if (propertyName === name) return true;
+  if (name === 'area') return propertyName.includes('area');
+  if (name === 'volume') return propertyName.includes('volume');
+  if (name === 'length') return propertyName.includes('length');
+  return false;
+}
+
+function aggregateForRefs(preparedModel, refs, aggregate) {
+  if (!aggregate) return null;
+  const refIds = new Set(refs.map((ref) => ref.id));
+  const matches = (preparedModel.properties ?? [])
+    .filter((property) => refIds.has(property.elementId) && propertyMatchesAggregate(property, aggregate))
+    .map((property) => ({ property, value: Number(property.value) }))
+    .filter((entry) => Number.isFinite(entry.value));
+  const value = aggregate.op === 'sum'
+    ? matches.reduce((sum, entry) => sum + entry.value, 0)
+    : null;
+  return {
+    op: aggregate.op,
+    field: aggregate.field,
+    name: aggregate.name,
+    value,
+    matchedValueCount: matches.length,
+    objectCount: refs.length,
+    unit: matches.find((entry) => entry.property.unit)?.property.unit ?? null,
+  };
 }
 
 export function executeBqlQuery(preparedModel, query) {
@@ -227,21 +346,33 @@ export function executeBqlQuery(preparedModel, query) {
   }));
   const status = matched.length > 0 ? 'success' : 'empty';
   const countOnly = query.select === 'count';
+  const aggregate = query.select === 'aggregate' ? aggregateForRefs(preparedModel, matched, query.aggregate) : null;
+  const groups = query.select === 'groupedCount' ? groupedCountsForRefs(matched, query.groupBy) : null;
+  const aggregateSummary = aggregate
+    ? `${aggregate.value ?? 0} total ${aggregate.name}${aggregate.unit ? ` ${aggregate.unit}` : ''} across ${aggregate.objectCount} matching BIM ${aggregate.objectCount === 1 ? 'object' : 'objects'}`
+    : null;
+  const groupedSummary = groups
+    ? `${matched.length} matching BIM ${matched.length === 1 ? 'object' : 'objects'} grouped by ${query.groupBy}`
+    : null;
 
   return {
     queryId: `bql:${Date.now()}`,
     status,
+    select: query.select,
     objectRefs,
     tableRows: countOnly ? [] : rowsForRefs(matched),
     viewerState: {
       mode: query.view?.mode ?? 'highlight',
       focus: Boolean(query.view?.focus),
+      colorByProperty: query.view?.colorByProperty ?? null,
       objectIds: objectRefs.map((ref) => ref.id),
     },
     evidence: evidenceForRefs(preparedModel, matched),
-    summary: countOnly
+    aggregate,
+    groups: groups ?? undefined,
+    summary: aggregateSummary ?? groupedSummary ?? (countOnly
       ? `${matched.length} matching BIM objects`
-      : `${matched.length} matching BIM ${matched.length === 1 ? 'object' : 'objects'}`,
+      : `${matched.length} matching BIM ${matched.length === 1 ? 'object' : 'objects'}`),
     warnings: [],
   };
 }

@@ -6,7 +6,7 @@ const REQUEST_TIMEOUT_MS = 15_000;
 export class AgentApiError extends Error {
   /**
    * @param {string} message
-   * @param {{ status?: number, kind?: 'network' | 'backend' | 'api', details?: object }} [options]
+   * @param {{ status?: number, kind?: 'network' | 'timeout' | 'backend' | 'api', details?: object }} [options]
    */
   constructor(message, options = {}) {
     super(message);
@@ -26,7 +26,13 @@ async function request(path, options = {}) {
       signal: fetchOptions.signal ?? AbortSignal.timeout(timeoutMs),
       ...fetchOptions,
     });
-  } catch {
+  } catch (err) {
+    if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
+      throw new AgentApiError(
+        `Canvas API request timed out after ${Math.round(timeoutMs / 1000)} seconds.`,
+        { kind: 'timeout' },
+      );
+    }
     throw new AgentApiError(
       'Cannot reach the Canvas API. Is npm run server running?',
       { kind: 'network' },
@@ -154,10 +160,13 @@ export async function sendAgentChat({
   messages,
   systemContext,
   templateId,
+  timeoutMs,
+  responseFormat,
 }) {
   return request('/agent/chat', {
     method: 'POST',
-    body: JSON.stringify({ provider, connectorId, messages, systemContext, templateId }),
+    timeoutMs,
+    body: JSON.stringify({ provider, connectorId, messages, systemContext, templateId, responseFormat }),
   });
 }
 

@@ -1,7 +1,25 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { getAgentHealth, listAgentConnectors, sendAgentChat } from '../../../lib/agentApi.js';
+import { DEFAULT_SINGLE_CONNECTOR_ID, getConnectorById } from '../../../lib/agentConnectors.js';
 import { createIndexedDbBimRepository } from '../bim-core/bimRepository.js';
+import { draftBqlFromNaturalLanguage } from '../bim-core/bimAgent.js';
+import {
+  BIM_LLM_AGENT_SYSTEM_CONTEXT,
+  buildBimLlmAgentRepairPrompt,
+  buildBimLlmAgentUserPrompt,
+  compactBimModelSummaryForAgent,
+  parseBimLlmAgentReply,
+  summarizeBimModelForAgent,
+} from '../bim-core/bimLlmAgent.js';
 import { executeBqlQuery } from '../bim-core/bql.js';
+import {
+  applySemanticResolutionToBql,
+  buildSemanticModelVocabulary,
+  resolveBimQuestionSemantics,
+} from '../bim-core/bimSemanticResolver.js';
 import { prepareBimModel } from '../bim-core/prepareBimModel.js';
+import { logBimPickWarning } from '../bim-core/bimPickDebug.js';
+import { findPreparedElementByGlobalId } from '../bim-core/fragmentsSelection.js';
 import { normalizeBimWorkspaceState } from '../bim-core/types.js';
 import { useBimModelSource } from '../hooks/useBimModelSource.js';
 import { BimElementTable } from './BimElementTable.jsx';
@@ -16,6 +34,58 @@ const PHASE_LABELS = {
   building_index: 'Building BIM index',
   ready: 'Ready',
 };
+
+const API_OFFLINE_PROVIDER_MESSAGE =
+  'Canvas API offline. Start with npm run dev:stack or npm run server.';
+const BIM_AGENT_CHAT_TIMEOUT_MS = 120_000;
+
+function validationWarningsForResult(result) {
+  return result?.warnings ?? [];
+}
+
+function classifyAgentProviderError(error) {
+  const message = error?.message || 'Provider unavailable.';
+  if (/cannot reach the canvas api/i.test(message)) {
+    return {
+      status: 'apiOffline',
+      message: API_OFFLINE_PROVIDER_MESSAGE,
+      didProviderRun: false,
+    };
+  }
+  if (/timed out/i.test(message) || error?.kind === 'timeout') {
+    return {
+      status: 'timeout',
+      message: `Provider timed out. Gemma 26B can take longer than ${Math.round(BIM_AGENT_CHAT_TIMEOUT_MS / 1000)} seconds for BIM questions.`,
+      didProviderRun: true,
+    };
+  }
+  if (/cannot reach ollama/i.test(message)) {
+    return {
+      status: 'ollamaOffline',
+      message: 'Ollama offline. Start Ollama on localhost:11434.',
+      didProviderRun: false,
+    };
+  }
+  if (/not pulled/i.test(message)) {
+    return {
+      status: 'modelMissing',
+      message,
+      didProviderRun: false,
+    };
+  }
+  if (/no reply from ollama/i.test(message)) {
+    return {
+      status: 'providerNoReply',
+      message: 'Ollama returned no reply; local rules answered where possible.',
+      didProviderRun: true,
+    };
+  }
+  return {
+    status: 'providerFailed',
+    message,
+    didProviderRun: true,
+  };
+}
 
 function BimExtractionFeed({ events }) {
   const visibleEvents = events.slice(-8);
@@ -54,10 +124,23 @@ export function BimWorkspace({
   const [prepared, setPrepared] = useState(null);
   const [fingerprint, setFingerprint] = useState(null);
   const [workspaceState, setWorkspaceState] = useState(() => normalizeBimWorkspaceState(version?.bim?.workspaceState));
-  const [selectionFocusToken, setSelectionFocusToken] = useState(0);
   const [extractionFeed, setExtractionFeed] = useState([]);
   const [queryResult, setQueryResult] = useState(null);
+  const [semanticAliasMemory, setSemanticAliasMemory] = useState({});
   const [prepRunId, setPrepRunId] = useState(0);
+  const [agentRunState, setAgentRunState] = useState({
+    status: 'idle',
+    message: null,
+    model: null,
+    responderLabel: null,
+  });
+  const [agentProviderState, setAgentProviderState] = useState({
+    status: 'checking',
+    message: 'Checking Canvas API.',
+    health: null,
+    connectors: [],
+    secretsConfigured: false,
+  });
 
   const appendExtractionEvent = (event) => {
     setExtractionFeed((feed) => [
@@ -94,6 +177,7 @@ export function BimWorkspace({
         const savedState = await repositoryRef.current.getWorkspaceState(result.fingerprint);
         if (cancelled) return;
         setPrepared(result.preparedModel);
+        setSemanticAliasMemory({});
         setCacheStatus(result.reused ? 'loaded_cache' : 'prepared');
         setWorkspaceState((current) => normalizeBimWorkspaceState({
           ...current,
@@ -116,6 +200,40 @@ export function BimWorkspace({
     void repositoryRef.current.putWorkspaceState(fingerprint, workspaceState);
   }, [fingerprint, workspaceState]);
 
+  const refreshAgentProviderState = useCallback(async () => {
+    setAgentProviderState((state) => ({
+      ...state,
+      status: 'checking',
+      message: 'Checking Canvas API.',
+    }));
+    try {
+      const [health, connectorData] = await Promise.all([
+        getAgentHealth(),
+        listAgentConnectors(),
+      ]);
+      setAgentProviderState({
+        status: 'ready',
+        message: 'Canvas API ready.',
+        health,
+        connectors: connectorData.connectors ?? [],
+        secretsConfigured: Boolean(connectorData.secretsConfigured),
+      });
+    } catch (err) {
+      setAgentProviderState({
+        status: 'offline',
+        message: API_OFFLINE_PROVIDER_MESSAGE,
+        health: null,
+        connectors: [],
+        secretsConfigured: false,
+        error: err?.message ?? API_OFFLINE_PROVIDER_MESSAGE,
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshAgentProviderState();
+  }, [refreshAgentProviderState]);
+
   const selectedElement = useMemo(
     () => prepared?.elements?.find((element) => element.id === workspaceState.selectedObjectId) ?? null,
     [prepared?.elements, workspaceState.selectedObjectId],
@@ -128,6 +246,10 @@ export function BimWorkspace({
     () => prepared?.provenance?.filter((record) => record.recordId === selectedElement?.id) ?? [],
     [prepared?.provenance, selectedElement?.id],
   );
+  const semanticVocabulary = useMemo(
+    () => buildSemanticModelVocabulary(prepared),
+    [prepared],
+  );
   const queryElementIds = useMemo(
     () => queryResult?.objectRefs
       ?.filter((ref) => ref.kind === 'physicalElement')
@@ -136,7 +258,7 @@ export function BimWorkspace({
   );
   const tableElements = useMemo(() => {
     if (!prepared) return [];
-    if (!queryResult || queryResult.select === 'count') return prepared.elements;
+    if (!queryResult) return prepared.elements;
     const ids = new Set(queryElementIds);
     return prepared.elements.filter((element) => ids.has(element.id));
   }, [prepared, queryElementIds, queryResult]);
@@ -146,8 +268,11 @@ export function BimWorkspace({
   };
 
   const selectElementByGlobalId = (ifcGlobalId) => {
-    const element = prepared?.elements?.find((candidate) => candidate.ifcGlobalId === ifcGlobalId);
-    if (!element) return;
+    const element = findPreparedElementByGlobalId(prepared?.elements ?? [], ifcGlobalId);
+    if (!element) {
+      logBimPickWarning('GUID not in prepared element index', { ifcGlobalId });
+      return false;
+    }
     setQueryResult(null);
     patchWorkspaceState({
       selectedObjectId: element.id,
@@ -155,28 +280,348 @@ export function BimWorkspace({
       tableSearch: '',
       ifcClassFilter: '',
     });
+    return true;
   };
 
-  const runBqlQuery = (query) => {
-    if (!prepared) return;
-    const result = executeBqlQuery(prepared, query);
+  const deselectElement = () => {
+    patchWorkspaceState({
+      selectedObjectId: null,
+      selectedObjectKind: 'physicalElement',
+    });
+  };
+
+  const applyBqlQueryResult = (query, result, options = {}) => {
     result.select = query.select;
     setQueryResult(result);
-    if (result.viewerState?.mode && result.viewerState.mode !== 'colorBy') {
-      patchWorkspaceState({ displayMode: result.viewerState.mode });
+    const statePatch = {
+      tableSearch: '',
+      ifcClassFilter: '',
+    };
+    if (result.viewerState?.mode) {
+      statePatch.displayMode = result.viewerState.mode;
+    }
+    if (options.savedQueryId) {
+      statePatch.savedQueries = (workspaceState.savedQueries ?? []).map((entry) => (
+        entry.id === options.savedQueryId ? { ...entry, lastRunAt: new Date().toISOString() } : entry
+      ));
     }
     const firstPhysicalRef = result.objectRefs.find((ref) => ref.kind === 'physicalElement');
     if (firstPhysicalRef) {
-      patchWorkspaceState({
-        selectedObjectId: firstPhysicalRef.id,
-        selectedObjectKind: 'physicalElement',
+      statePatch.selectedObjectId = firstPhysicalRef.id;
+      statePatch.selectedObjectKind = 'physicalElement';
+    } else if (result.status === 'empty') {
+      statePatch.selectedObjectId = null;
+      statePatch.selectedObjectKind = 'physicalElement';
+    }
+    patchWorkspaceState(statePatch);
+  };
+
+  const runBqlQuery = (query, options = {}) => {
+    if (!prepared) return null;
+    const result = executeBqlQuery(prepared, query);
+    applyBqlQueryResult(query, result, options);
+    return result;
+  };
+
+  const resolveDraftSemantics = (utterance, draft, source = 'local') => {
+    const resolution = resolveBimQuestionSemantics({
+      utterance,
+      draft,
+      vocabulary: semanticVocabulary,
+      aliasMemory: semanticAliasMemory,
+    });
+    const resolvedDraft = applySemanticResolutionToBql(draft, resolution);
+    return {
+      ...resolvedDraft,
+      semanticResolution: resolution,
+      workSummarySuffix: resolution.terms.length > 0
+        ? `${source === 'provider' ? 'AI' : 'Local rules'} resolved aliases`
+        : null,
+    };
+  };
+
+  const rememberSemanticResolution = (resolution, result) => {
+    if (!resolution?.memoryUpdates || result?.status !== 'success') return;
+    setSemanticAliasMemory((memory) => ({
+      ...memory,
+      ...resolution.memoryUpdates,
+    }));
+  };
+
+  const executeResolvedDraft = (utterance, draft, source = 'local') => {
+    const resolvedDraft = resolveDraftSemantics(utterance, draft, source);
+    const result = executeBqlQuery(prepared, resolvedDraft.query);
+    rememberSemanticResolution(resolvedDraft.semanticResolution, result);
+    applyBqlQueryResult(resolvedDraft.query, result);
+    return { draft: resolvedDraft, result };
+  };
+
+  const runLocalBimAgent = (utterance) => {
+    if (!prepared) throw new Error('BIM model is not ready yet.');
+    const draft = draftBqlFromNaturalLanguage(utterance);
+    if (!draft.ok) return draft;
+    const executed = executeResolvedDraft(utterance, draft, 'local');
+    return {
+      ...executed.draft,
+      result: executed.result,
+      connectorLabel: 'Local BIM rules',
+      model: 'local/bim-bql-rules-v0.1',
+      providerStatus: 'ready',
+      providerStatusMessage: 'Local BIM Rules ready.',
+      workSummary: executed.draft.workSummarySuffix
+        ? `Local rules drafted BQL; ${executed.draft.workSummarySuffix}`
+        : 'Local rules drafted BQL',
+      didProviderRun: false,
+    };
+  };
+
+  const runLlmBimAgent = async (utterance, connectorId) => {
+    if (!prepared) throw new Error('BIM model is not ready yet.');
+    const connector = getConnectorById(connectorId) ?? getConnectorById(DEFAULT_SINGLE_CONNECTOR_ID);
+    if (!connector) throw new Error('No BIM agent connector is available.');
+    setAgentRunState({
+      status: 'running',
+      message: `Asking ${connector.label}`,
+      model: connector.model,
+      responderLabel: connector.label,
+    });
+    const modelSummary = {
+      ...summarizeBimModelForAgent(prepared, selectedElement),
+      nameTypeVocabulary: semanticVocabulary.nameTypeVocabulary,
+    };
+    try {
+      const { reply, model } = await sendAgentChat({
+        provider: connector.provider,
+        connectorId: connector.id,
+        systemContext: BIM_LLM_AGENT_SYSTEM_CONTEXT,
+        messages: [{
+          role: 'user',
+          content: buildBimLlmAgentUserPrompt({ utterance, modelSummary }),
+        }],
+        timeoutMs: BIM_AGENT_CHAT_TIMEOUT_MS,
+        responseFormat: 'json',
       });
-      if (result.viewerState?.focus) setSelectionFocusToken((token) => token + 1);
+      let draft = resolveDraftSemantics(utterance, parseBimLlmAgentReply(reply), 'provider');
+      let result = executeBqlQuery(prepared, draft.query);
+      let repaired = false;
+      let initialInvalidWarnings = [];
+      if (result.status === 'error') {
+        initialInvalidWarnings = validationWarningsForResult(result);
+        const repair = await sendAgentChat({
+          provider: connector.provider,
+          connectorId: connector.id,
+          systemContext: BIM_LLM_AGENT_SYSTEM_CONTEXT,
+          messages: [{
+            role: 'user',
+            content: buildBimLlmAgentRepairPrompt({
+              utterance,
+              modelSummary,
+              invalidQuery: draft.query,
+              validationErrors: initialInvalidWarnings,
+            }),
+          }],
+          timeoutMs: BIM_AGENT_CHAT_TIMEOUT_MS,
+          responseFormat: 'json',
+        });
+        const repairedDraft = resolveDraftSemantics(utterance, parseBimLlmAgentReply(repair.reply), 'provider');
+        const repairedResult = executeBqlQuery(prepared, repairedDraft.query);
+        if (repairedResult.status !== 'error') {
+          draft = {
+            ...repairedDraft,
+            warnings: [
+              ...(draft.warnings ?? []),
+              ...(repairedDraft.warnings ?? []),
+              `Provider repaired invalid BQL: ${initialInvalidWarnings.join('; ')}`,
+            ],
+          };
+          result = repairedResult;
+          repaired = true;
+        }
+      }
+      if (result.status === 'error') {
+        const fallback = resolveDraftSemantics(utterance, draftBqlFromNaturalLanguage(utterance), 'local');
+        if (fallback.ok) {
+          const fallbackResult = executeBqlQuery(prepared, fallback.query);
+          rememberSemanticResolution(fallback.semanticResolution, fallbackResult);
+          applyBqlQueryResult(fallback.query, fallbackResult);
+          const message = 'Provider drafted invalid BQL; answered with local BIM rules.';
+          setAgentRunState({
+            status: 'ready',
+            message,
+            model: 'local/bim-bql-rules-v0.1',
+            responderLabel: 'Local BIM rules',
+          });
+          return {
+            ...fallback,
+            result: fallbackResult,
+            connectorLabel: 'Local BIM rules',
+            model: 'local/bim-bql-rules-v0.1',
+            didProviderRun: true,
+            providerStatus: 'invalidBql',
+            providerStatusMessage: `${connector.label} drafted invalid BQL; local rules answered.`,
+            workSummary: 'Provider drafted invalid BQL; local rules answered',
+            warnings: [
+              `${connector.label} drafted invalid BQL.`,
+              ...initialInvalidWarnings,
+              ...(result.warnings ?? []),
+              ...(fallback.warnings ?? []),
+            ],
+          };
+        }
+        applyBqlQueryResult(draft.query, result);
+        const resolvedModel = model ?? connector.model;
+        setAgentRunState({
+          status: 'error',
+          message: result.warnings.join(' '),
+          model: resolvedModel,
+          responderLabel: connector.label,
+        });
+        return {
+          ...draft,
+          result,
+          connectorLabel: connector.label,
+          model: resolvedModel,
+          didProviderRun: true,
+          providerStatus: 'invalidBql',
+          providerStatusMessage: `${connector.label} drafted invalid BQL.`,
+          workSummary: 'Provider drafted invalid BQL',
+          warnings: [...(draft.warnings ?? []), ...(result.warnings ?? [])],
+        };
+      }
+      rememberSemanticResolution(draft.semanticResolution, result);
+      applyBqlQueryResult(draft.query, result);
+      const resolvedModel = model ?? connector.model;
+      setAgentRunState({
+        status: result.status === 'error' ? 'error' : 'ready',
+        message: result.status === 'error' ? result.warnings.join(' ') : draft.intentSummary,
+        model: resolvedModel,
+        responderLabel: connector.label,
+      });
+      return {
+        ...draft,
+        result,
+        connectorLabel: connector.label,
+        model: resolvedModel,
+        providerStatus: repaired ? 'repairedBql' : 'ready',
+        providerStatusMessage: repaired
+          ? `${connector.label} repaired invalid BQL before execution.`
+          : `${connector.label} drafted valid BQL.`,
+        workSummary: [
+          repaired ? 'Provider repaired BQL and executed evidence query' : 'Provider drafted BQL',
+          draft.workSummarySuffix,
+        ].filter(Boolean).join('; '),
+        didProviderRun: true,
+      };
+    } catch (err) {
+      const providerFailure = classifyAgentProviderError(err);
+      if (providerFailure.status === 'providerNoReply') {
+        try {
+          const compactSummary = compactBimModelSummaryForAgent(modelSummary);
+          const retry = await sendAgentChat({
+            provider: connector.provider,
+            connectorId: connector.id,
+            systemContext: BIM_LLM_AGENT_SYSTEM_CONTEXT,
+            messages: [{
+              role: 'user',
+              content: buildBimLlmAgentUserPrompt({ utterance, modelSummary: compactSummary }),
+            }],
+            timeoutMs: BIM_AGENT_CHAT_TIMEOUT_MS,
+            responseFormat: 'json',
+          });
+          const retryDraft = resolveDraftSemantics(utterance, parseBimLlmAgentReply(retry.reply), 'provider');
+          const retryResult = executeBqlQuery(prepared, retryDraft.query);
+          if (retryResult.status !== 'error') {
+            rememberSemanticResolution(retryDraft.semanticResolution, retryResult);
+            applyBqlQueryResult(retryDraft.query, retryResult);
+            const resolvedModel = retry.model ?? connector.model;
+            setAgentRunState({
+              status: 'ready',
+              message: 'Provider answered after compact retry.',
+              model: resolvedModel,
+              responderLabel: connector.label,
+            });
+            return {
+              ...retryDraft,
+              result: retryResult,
+              connectorLabel: connector.label,
+              model: resolvedModel,
+              providerStatus: 'compactRetry',
+              providerStatusMessage: `${connector.label} returned no reply first, then answered with compact context.`,
+              workSummary: ['Provider answered with compact retry', retryDraft.workSummarySuffix].filter(Boolean).join('; '),
+              didProviderRun: true,
+              warnings: [
+                'Ollama returned no reply on the first attempt; compact retry answered.',
+                ...(retryDraft.warnings ?? []),
+              ],
+            };
+          }
+        } catch {
+          // Fall through to deterministic local fallback below.
+        }
+      }
+      if (providerFailure.status === 'apiOffline') {
+        setAgentProviderState({
+          status: 'offline',
+          message: API_OFFLINE_PROVIDER_MESSAGE,
+          health: null,
+          connectors: [],
+          secretsConfigured: false,
+          error: err?.message ?? API_OFFLINE_PROVIDER_MESSAGE,
+        });
+      }
+      const fallback = resolveDraftSemantics(utterance, draftBqlFromNaturalLanguage(utterance), 'local');
+      if (fallback.ok) {
+        const result = executeBqlQuery(prepared, fallback.query);
+        rememberSemanticResolution(fallback.semanticResolution, result);
+        applyBqlQueryResult(fallback.query, result);
+        const message = providerFailure.didProviderRun
+          ? 'Provider failed; answered with local BIM rules.'
+          : 'Provider did not run; answered with local BIM rules.';
+        setAgentRunState({
+          status: 'ready',
+          message,
+          model: 'local/bim-bql-rules-v0.1',
+          responderLabel: 'Local BIM rules',
+        });
+        return {
+          ...fallback,
+          result,
+          connectorLabel: 'Local BIM rules',
+          model: 'local/bim-bql-rules-v0.1',
+          didProviderRun: providerFailure.didProviderRun,
+          providerStatus: providerFailure.status,
+          providerStatusMessage: providerFailure.message,
+          warnings: [...(fallback.warnings ?? []), err?.message || 'Provider unavailable.'],
+        };
+      }
+      const message = err?.message || 'BIM agent request failed.';
+      setAgentRunState({ status: 'error', message, model: connector.model, responderLabel: connector.label });
+      throw err;
     }
   };
 
   const clearBqlQuery = () => {
     setQueryResult(null);
+  };
+
+  const saveBqlQuery = (label, query) => {
+    const createdAt = new Date().toISOString();
+    const savedQuery = {
+      id: `bql-saved:${createdAt}:${Math.random().toString(36).slice(2, 8)}`,
+      label: String(label || 'Saved BIM query').slice(0, 64),
+      query,
+      createdAt,
+      lastRunAt: null,
+    };
+    patchWorkspaceState({
+      savedQueries: [savedQuery, ...(workspaceState.savedQueries ?? [])].slice(0, 20),
+    });
+  };
+
+  const deleteSavedBqlQuery = (id) => {
+    patchWorkspaceState({
+      savedQueries: (workspaceState.savedQueries ?? []).filter((entry) => entry.id !== id),
+    });
   };
 
   const rebuildBimCache = async () => {
@@ -247,8 +692,16 @@ export function BimWorkspace({
       <BimQueryPanel
         queryResult={queryResult}
         onRunQuery={runBqlQuery}
+        onRunLocalAgent={runLocalBimAgent}
+        onRunLlmAgent={runLlmBimAgent}
+        agentRunState={agentRunState}
+        agentProviderState={agentProviderState}
+        onRefreshAgentProviderState={refreshAgentProviderState}
         onClearQuery={clearBqlQuery}
         onRebuildCache={rebuildBimCache}
+        savedQueries={workspaceState.savedQueries}
+        onSaveQuery={saveBqlQuery}
+        onDeleteSavedQuery={deleteSavedBqlQuery}
         rebuildDisabled={!fingerprint}
       />
       {prepared.warnings?.length > 0 && (
@@ -273,7 +726,6 @@ export function BimWorkspace({
               onSearchChange={(tableSearch) => patchWorkspaceState({ tableSearch })}
               onIfcClassFilterChange={(ifcClassFilter) => patchWorkspaceState({ ifcClassFilter })}
               onSelectElement={(selectedObjectId) => {
-                setSelectionFocusToken((token) => token + 1);
                 patchWorkspaceState({ selectedObjectId, selectedObjectKind: 'physicalElement' });
               }}
             />
@@ -286,14 +738,38 @@ export function BimWorkspace({
             selectedProperties={selectedProperties}
             highlightElementIds={queryElementIds}
             displayMode={workspaceState.displayMode}
-            focusSelectionToken={selectionFocusToken}
+            colorByProperty={queryResult?.viewerState?.colorByProperty}
             leftPanelOpen={leftPanelOpen}
             rightPanelOpen={rightPanelOpen}
+            initialCamera={workspaceState.camera}
+            projectionMode={workspaceState.projectionMode}
             onToggleLeftPanel={() => togglePanel('left')}
             onToggleRightPanel={() => togglePanel('right')}
             onDisplayModeChange={(displayMode) => patchWorkspaceState({ displayMode })}
             onSelectElementByGlobalId={selectElementByGlobalId}
+            onDeselectElement={deselectElement}
             onCameraChange={(camera) => patchWorkspaceState({ camera })}
+            onProjectionModeChange={(projectionMode) => patchWorkspaceState({ projectionMode })}
+            measurements={workspaceState.measurements}
+            measureUnits={workspaceState.measureUnits}
+            measureSnapMode={workspaceState.measureSnapMode}
+            measureKind={workspaceState.measureKind}
+            measurementsVisible={workspaceState.measurementsVisible}
+            wireframeMode={workspaceState.wireframeMode}
+            wireframeLineWeight={workspaceState.wireframeLineWeight}
+            wireframeOpacity={workspaceState.wireframeOpacity}
+            wireframeColor={workspaceState.wireframeColor}
+            showEnvironment={workspaceState.showEnvironment}
+            lightingMode={workspaceState.lightingMode}
+            environmentPreset={workspaceState.environmentPreset}
+            onMeasurementsChange={(measurements) => patchWorkspaceState({ measurements })}
+            onMeasureUnitsChange={(measureUnits) => patchWorkspaceState({ measureUnits })}
+            onMeasureSnapModeChange={(measureSnapMode) => patchWorkspaceState({ measureSnapMode })}
+            onMeasureKindChange={(measureKind) => patchWorkspaceState({ measureKind })}
+            onMeasurementsVisibleChange={(measurementsVisible) => patchWorkspaceState({ measurementsVisible })}
+            onWireframeModeChange={(wireframeMode) => patchWorkspaceState({ wireframeMode })}
+            onWireframeStyleChange={(wireframeStylePatch) => patchWorkspaceState(wireframeStylePatch)}
+            onLightingChange={(lightingPatch) => patchWorkspaceState(lightingPatch)}
           />
         </div>
         <div className="h-full min-h-0 overflow-hidden" style={{ gridColumn: 3 }}>

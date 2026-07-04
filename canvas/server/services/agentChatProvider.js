@@ -3,7 +3,7 @@ import { completeChat } from './openaiChat.js';
 import { completeOllamaChat } from './ollamaChat.js';
 
 /**
- * @param {{ apiKey?: string | null, provider: string, messages: object[], systemContext?: string, model?: string | null }} params
+ * @param {{ apiKey?: string | null, provider: string, messages: object[], systemContext?: string, model?: string | null, responseFormat?: string | null }} params
  */
 export async function completeAgentChat(params) {
   if (params.provider === 'openai') {

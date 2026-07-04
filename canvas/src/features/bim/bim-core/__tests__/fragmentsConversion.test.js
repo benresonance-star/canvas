@@ -13,18 +13,22 @@ describe('Fragments conversion', () => {
   });
 
   it('returns a fragments source marker on successful conversion', async () => {
+    let processInput = null;
     const { convertIfcToFragmentsBlob } = await loadConverterWithMock({
       IfcImporter: class {
-        async process() {
+        async process(input) {
+          processInput = input;
           return new Uint8Array([1, 2, 3]);
         }
       },
     });
 
-    const result = await convertIfcToFragmentsBlob(new Uint8Array([9, 9, 9]).buffer);
+    const result = await convertIfcToFragmentsBlob(new Uint8Array([9, 9, 9]).buffer, { modelId: 'model-1' });
 
     expect(result.status).toBe('success');
     expect(result.sourceKind).toBe('fragments');
+    expect(result.modelId).toBe('model-1');
+    expect(processInput.id).toBe('model-1');
     expect(result.blob).toBeInstanceOf(Blob);
     expect(await result.blob.arrayBuffer()).toHaveProperty('byteLength', 3);
   });

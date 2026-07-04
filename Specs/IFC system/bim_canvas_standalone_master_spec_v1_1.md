@@ -1201,7 +1201,7 @@ The first vertical slice ships **inside Canvas** as `canvas/src/features/bim/`, 
 |---|---|---|
 | Stage 0 — foundations | **Done** | Stack locked: web-ifc + That Open Fragments + Three.js; pipeline version constants in `versions.js` |
 | Stage 1 — IFC evidence viewer MVP | **Mostly done (Canvas host)** | Prep pipeline, cache, viewer, table (incl. storey column), inspector, selection sync, cache rebuild shipped; standalone shell and filesystem cache layout deferred |
-| Stage 2 — BQL + agent | **Partial** | BQL validator + executor + manual query panel + query-driven viewer/table shipped; NL agent side panel, saved queries, and `colorBy` application deferred |
+| Stage 2 — BQL + agent | **Partial** | BQL validator + executor + manual query panel + query-driven viewer/table + agent chat in query panel shipped; saved queries and `colorBy` application deferred |
 | Stage 3 — semantic assemblies | **Partial** | Archicad `Canvas.*` projection, member inspector, and BQL window query (`IfcWindow` + `WindowAssembly`) shipped; assembly table, assembly selection, and assembly inspector deferred |
 | Stage 4 — Canvas integration | **Done (MVP)** | `bim-model` artifact type, card preview, modal workspace, ingest/sync hooks |
 | Stage 5+ | **Not started** | Revit connector, inference, multi-model, exports |
@@ -1222,6 +1222,13 @@ canvas/src/features/bim/
     versions.js              # bim-projection-v0.3, bim-connectors-v0.1, thatopen-fragments-v0.2
     types.js
     bql.js                   # validateBqlQuery + executeBqlQuery
+    bimWireframeOverlay.js   # feature-edge overlay (LineSegments2 + two-pass render)
+    bimCamera.js             # perspective / orthographic camera helpers
+    bimLighting.js           # HDRI environment + legacy/direct lights
+    bimMeasurementController.js
+    bimMeasurementOverlay.js
+    bimMeasurementPick.js
+    bimAgent.js / bimLlmAgent.js / bimAgentResponse.js / bimSemanticResolver.js
   components/
     BimWorkspace.jsx
     BimViewport.jsx
@@ -1244,13 +1251,15 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 - Reopen of unchanged model reuses cached prepared artifacts when fingerprint matches; user can force rebuild via `BimQueryPanel`.
 - Live extraction feed during first-open preparation.
 - 3D viewport: orbit/pan/zoom, fit, raycast pick, highlight / isolate / ghost others.
+- Viewport toolbar: perspective ↔ orthographic toggle, FOV input, HDRI lighting cycle, measurement tools (vertex/edge snap, segment/polyline), wireframe overlay toggle.
+- **Wireframe overlay** (2026-07-04): optional camera-visible feature edges composited over lit/ghost/highlight views — independent of display mode. Built from Fragments `getItemsGeometry()` into `LineSegments2` + `LineMaterial` (screen-space px width). Two-pass render: main scene first, then overlay scene with `autoClear: false`. When wireframe is on, toolbar exposes **line weight** (0.5–6 px), **transparency** (5–100%), and **colour** controls; values persist in workspace state (`wireframeMode`, `wireframeLineWeight`, `wireframeOpacity`, `wireframeColor`). Live style updates apply without edge rebuild.
 - Bidirectional selection sync between table, viewport, and inspector via `ifcGlobalId`.
 - Element table includes storey column; search and IFC class filter.
 - Inspector shows grouped Psets/quantities, provenance, and semantic assembly membership for member elements.
 - **BQL executor** (`executeBqlQuery`) runs against prepared model index with `physicalElements`, `semanticAssemblies`, and `allBimObjects` scopes.
 - **BimQueryPanel** provides JSON BQL editor with presets (all beams, ground floor, windows incl. `WindowAssembly`).
 - Query results drive viewer display mode and filter the element table; evidence bundle returned per result.
-- Workspace state (camera, selection, filters, display mode, panel toggles) persisted in IndexedDB per fingerprint.
+- Workspace state (camera, selection, filters, display mode, projection mode, measurements, wireframe mode + style, lighting, panel toggles) persisted in IndexedDB per fingerprint.
 - Graceful degradation: if Fragments conversion fails, evidence table and inspector still work; viewport shows an error banner.
 
 ### Folder sync, dock, and artifact ingest (2026-07-04)
@@ -1283,7 +1292,8 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 | `/packages/bim-core` + `/packages/bim-viewer-ui` split | Monolithic `features/bim/` module |
 | Filesystem cache (`model-cache/<fingerprint>/`) | IndexedDB via `createIndexedDbBimRepository()` |
 | Embedded SQL (`bim-index.db`) | In-memory JS objects stored in IndexedDB |
-| NL BIM agent side panel | Not built; manual JSON `BimQueryPanel` instead |
+| NL BIM agent side panel | Partial — `BimQueryPanel` agent chat + local rule fallback shipped; full side-panel UX deferred |
+| Wireframe overlay | Shipped — toggle + style controls; selected-element edge highlight deferred |
 | `colorBy` display mode | Validated in BQL but not applied in viewport |
 | Workspace state on card `version.bim` | Read on init; persist to IndexedDB only (no write-back to card metadata) |
 | IFC schema in fingerprint | Hardcoded `'unknown'` until schema detection lands |

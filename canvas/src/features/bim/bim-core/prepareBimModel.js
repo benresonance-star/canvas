@@ -1,6 +1,6 @@
 import { computeBimModelFingerprint } from './fingerprint.js';
 import { projectIfcEvidence } from './ifcProjection.js';
-import { convertIfcToFragmentsBlob } from './fragmentsConversion.js';
+import { convertIfcToFragmentsBlob, fragmentsRuntimeModelId } from './fragmentsConversion.js';
 
 export async function prepareBimModel({
   arrayBuffer,
@@ -30,10 +30,11 @@ export async function prepareBimModel({
     ifcSchema: 'unknown',
     createdAt,
   };
+  const fragmentsModelId = fragmentsRuntimeModelId(fingerprint);
 
   onPhase('converting_ifc');
   onProgress({ kind: 'phase', message: 'Converting IFC geometry to Fragments' });
-  const fragments = await convertIfcToFragmentsBlob(arrayBuffer);
+  const fragments = await convertIfcToFragmentsBlob(arrayBuffer, { modelId: fragmentsModelId });
   onPhase('extracting_properties');
   onProgress({ kind: 'phase', message: 'Opening IFC evidence model with web-ifc' });
   const projected = await projectIfcEvidence({ arrayBuffer, metadata, onProgress });
@@ -50,6 +51,7 @@ export async function prepareBimModel({
       status: 'ready',
       fragmentsStatus: fragments.status,
       fragmentsSourceKind: fragments.sourceKind,
+      fragmentsModelId,
       fragmentsError: fragments.error ?? null,
       cachedAt: createdAt,
     },

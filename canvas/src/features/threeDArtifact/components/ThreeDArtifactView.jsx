@@ -1,7 +1,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Environment, Grid, OrbitControls } from '@react-three/drei';
-import { Box, Grid2X2, LocateFixed, Move3D, RotateCcw, Ruler, Save, SunMedium, Trash2 } from 'lucide-react';
+import { Box, Grid2X2, LocateFixed, Move3D, RotateCcw, Save, SunMedium } from 'lucide-react';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MOUSE } from 'three';
 import { computeModelStats } from '../loaders/computeModelStats.js';
@@ -31,9 +31,10 @@ import { requestActionSync } from '../../../lib/actionSync.js';
 import { strings } from '../../../content/strings.js';
 import { canRequestFolderLoad } from '../utils/previewFeasibility.js';
 import { formatThreeDSize } from '../utils/fileFormat.js';
-import { formatMeasurementDistance, MEASUREMENT_UNIT_OPTIONS, normalizeMeasurements, normalizeMeasureUnits } from '../utils/measureSnap.js';
+import { normalizeMeasurements, normalizeMeasureUnits } from '../utils/measureSnap.js';
 import { extractModelWorldUnits, resolveDisplayMeasureUnits, resolveModelMeasureUnits } from '../utils/detectModelUnits.js';
 import { ThreeDMeasurementLayer } from './ThreeDMeasurementLayer.jsx';
+import { MeasurementToolbarControls, MeasurementsListPanel } from './MeasurementUi.jsx';
 
 const VIEWER_STATE_SYNC_DEBOUNCE_MS = 400;
 
@@ -521,12 +522,6 @@ function ThreeDToolbar({
         ? 'border-accent bg-accent text-on-accent'
         : 'border-border bg-surface text-secondary hover:text-primary hover:bg-surface-muted'
     }`;
-  const snapButtonClass = (active = false) =>
-    `px-2 py-1 rounded text-[10px] uppercase tracking-wide transition ${
-      active
-        ? 'bg-accent text-on-accent'
-        : 'text-muted hover:text-primary hover:bg-surface-muted'
-    }`;
 
   return (
     <div className={`sans shrink-0 flex items-center justify-between gap-2 border-b border-border bg-surface ${compact ? 'px-2 py-1' : 'px-3 py-2'}`}>
@@ -551,83 +546,21 @@ function ThreeDToolbar({
           <Box size={compact ? 12 : 14} strokeWidth={1.7} />
         </button>
         {enableMeasurement && (
-          <>
-            <button type="button" title="Measure" className={buttonClass(measureModeActive)} onClick={onToggleMeasureMode}>
-              <Ruler size={compact ? 12 : 14} strokeWidth={1.7} />
-            </button>
-            <label className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-secondary">
-              <span className="uppercase tracking-wide text-muted">Unit</span>
-              <select
-                value={measureUnits}
-                onChange={(event) => onMeasureUnitsChange?.(event.target.value)}
-                className="three-d-measure-unit-select outline-none cursor-pointer"
-                aria-label="Measurement unit"
-              >
-                {MEASUREMENT_UNIT_OPTIONS.map((unit) => (
-                  <option key={unit} value={unit}>{unit}</option>
-                ))}
-              </select>
-            </label>
-            {measureModeActive && (
-              <div className="inline-flex items-center rounded border border-border overflow-hidden">
-                <button
-                  type="button"
-                  title="Snap to vertices"
-                  className={snapButtonClass(measureSnapMode === 'vertex')}
-                  onClick={() => onMeasureSnapModeChange?.('vertex')}
-                >
-                  Vertex
-                </button>
-                <button
-                  type="button"
-                  title="Snap to edges"
-                  className={snapButtonClass(measureSnapMode === 'edge')}
-                  onClick={() => onMeasureSnapModeChange?.('edge')}
-                >
-                  Edge
-                </button>
-              </div>
-            )}
-          </>
+          <MeasurementToolbarControls
+            measureModeActive={measureModeActive}
+            measureSnapMode={measureSnapMode}
+            measureUnits={measureUnits}
+            onToggleMeasureMode={onToggleMeasureMode}
+            onMeasureSnapModeChange={onMeasureSnapModeChange}
+            onMeasureUnitsChange={onMeasureUnitsChange}
+            compact={compact}
+          />
         )}
         {!compact && (
           <button type="button" title="Save view" className={buttonClass()} onClick={onSave}>
             <Save size={14} strokeWidth={1.7} />
           </button>
         )}
-      </div>
-    </div>
-  );
-}
-
-function ThreeDMeasurementsPanel({
-  measurements,
-  units = 'cm',
-  modelUnits = 'cm',
-  onRemoveMeasurement,
-}) {
-  if (!measurements.length) return null;
-
-  return (
-    <div className="sans absolute bottom-3 left-3 z-20 max-w-sm rounded border border-border bg-surface/95 px-3 py-2 shadow-lg backdrop-blur-sm">
-      <div className="text-[10px] uppercase tracking-wider text-muted mb-2">Measurements</div>
-      <div className="flex flex-col gap-1 max-h-28 overflow-y-auto">
-        {measurements.map((measurement, index) => (
-          <div key={measurement.id} className="flex items-center justify-between gap-2 text-xs text-secondary">
-            <span>
-              {index + 1}. {formatMeasurementDistance(measurement.distance, units, modelUnits)}
-              <span className="text-muted"> · {measurement.snapMode}</span>
-            </span>
-            <button
-              type="button"
-              title="Delete measurement"
-              className="inline-flex items-center justify-center rounded border border-border px-1.5 py-0.5 text-muted hover:text-warning hover:border-warning transition"
-              onClick={() => onRemoveMeasurement?.(measurement.id)}
-            >
-              <Trash2 size={12} strokeWidth={1.7} />
-            </button>
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -1080,7 +1013,7 @@ export function ThreeDArtifactViewer({
       )}
       <div ref={viewportRef} className="flex-1 min-h-0 relative">
         {enableMeasurement && measurements.length > 0 && (
-          <ThreeDMeasurementsPanel
+          <MeasurementsListPanel
             measurements={measurements}
             units={measureUnits}
             modelUnits={modelMeasureUnits}

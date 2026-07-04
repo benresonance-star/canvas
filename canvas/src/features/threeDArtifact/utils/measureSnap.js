@@ -11,6 +11,15 @@ const UNIT_LABELS = {
   unknown: 'units',
 };
 
+const AREA_UNIT_LABELS = {
+  mm: 'mm²',
+  cm: 'cm²',
+  m: 'm²',
+  in: 'in²',
+  ft: 'ft²',
+  unknown: 'units²',
+};
+
 export const MEASUREMENT_UNIT_OPTIONS = ['mm', 'cm', 'm', 'in', 'ft'];
 
 const VALID_UNITS = new Set(MEASUREMENT_UNIT_OPTIONS);
@@ -58,6 +67,26 @@ export function formatMeasurementDistance(distance, displayUnits = 'cm', modelUn
   const model = normalizeMeasureUnits(modelUnits ?? displayUnits);
   const label = UNIT_LABELS[display] ?? UNIT_LABELS.cm;
   const converted = convertMeasurementDistance(distance, model, display);
+  return `${converted.toFixed(2)} ${label}`;
+}
+
+/**
+ * Convert an area from model world units squared to a display unit squared.
+ */
+export function convertMeasurementArea(area, fromUnits, toUnits) {
+  const linearFactor = convertMeasurementDistance(1, fromUnits, toUnits);
+  const value = Number.isFinite(area) ? area : 0;
+  return value * linearFactor * linearFactor;
+}
+
+/**
+ * @param {number} area Stored area in model world units squared.
+ */
+export function formatMeasurementArea(area, displayUnits = 'cm', modelUnits = null) {
+  const display = normalizeMeasureUnits(displayUnits);
+  const model = normalizeMeasureUnits(modelUnits ?? displayUnits);
+  const label = AREA_UNIT_LABELS[display] ?? AREA_UNIT_LABELS.cm;
+  const converted = convertMeasurementArea(area, model, display);
   return `${converted.toFixed(2)} ${label}`;
 }
 
@@ -314,6 +343,7 @@ export function createEdgeMeasurementRecord(edgeSnap) {
 
   return {
     id: crypto.randomUUID(),
+    kind: 'segment',
     snapMode: 'edge',
     start,
     end,
@@ -332,6 +362,7 @@ export function createMeasurementRecord(start, end, snapMode) {
   const endVec = new THREE.Vector3(...end.position);
   return {
     id: crypto.randomUUID(),
+    kind: 'segment',
     snapMode,
     start,
     end,
@@ -341,17 +372,181 @@ export function createMeasurementRecord(start, end, snapMode) {
 }
 
 /**
+ * @param {Array<{ position: number[] }>} points
+ * @param {boolean} [closed=false]
+ */
+export function computePolylineDistance(points, closed = false) {
+  if (!Array.isArray(points) || points.length < 2) return 0;
+  let total = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const start = new THREE.Vector3(...points[index - 1].position);
+    const end = new THREE.Vector3(...points[index].position);
+    total += start.distanceTo(end);
+  }
+  if (closed && points.length >= 3) {
+    const start = new THREE.Vector3(...points[points.length - 1].position);
+    const end = new THREE.Vector3(...points[0].position);
+    total += start.distanceTo(end);
+  }
+  return total;
+}
+
+/**
+ * Planar polygon area in 3D using Newell's method.
+ * @param {Array<{ position: number[] } | number[]>} points
+ */
+export function computePolygonArea3D(points) {
+  if (!Array.isArray(points) || points.length < 3) return 0;
+
+  let sumX = 0;
+  let sumY = 0;
+  let sumZ = 0;
+
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index]?.position ?? points[index];
+    const next = points[(index + 1) % points.length]?.position ?? points[(index + 1) % points.length];
+    if (!Array.isArray(current) || !Array.isArray(next)) continue;
+    sumX += (current[1] - next[1]) * (current[2] + next[2]);
+    sumY += (current[2] - next[2]) * (current[0] + next[0]);
+    sumZ += (current[0] - next[0]) * (current[1] + next[1]);
+  }
+
+  return Math.sqrt((sumX * sumX) + (sumY * sumY) + (sumZ * sumZ)) / 2;
+}
+
+/**
+ * @param {Array<{ position: number[] }>} points
+ * @param {boolean} [closed=false]
+ */
+export function computePolylineArea(points, closed = false) {
+  if (!closed || !Array.isArray(points) || points.length < 3) return null;
+  const area = computePolygonArea3D(points);
+  return Number.isFinite(area) && area > 0 ? area : null;
+}
+
+/**
+ * @param {{ distance: number, area?: number | null, closed?: boolean, pointCount?: number }} values
+ */
+export function formatPolylineMeasurementLabel(
+  values,
+  displayUnits = 'cm',
+  modelUnits = null,
+) {
+  const distanceLabel = formatMeasurementDistance(values.distance, displayUnits, modelUnits);
+  const parts = [distanceLabel];
+  if (values.closed && Number.isFinite(values.area) && values.area > 0) {
+    parts.push(formatMeasurementArea(values.area, displayUnits, modelUnits));
+  }
+  parts.push(values.closed ? 'perimeter' : 'polyline');
+  if (values.pointCount) {
+    parts.push(`${values.pointCount} pts`);
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * @param {Array<{ position: number[], meshUuid?: string }>} points
+ * @param {{ closed?: boolean, snapMode?: 'vertex' | 'edge' }} [options]
+ */
+export function createPolylineMeasurementRecord(points, { closed = false, snapMode = 'vertex' } = {}) {
+  if (!Array.isArray(points) || points.length < 2) return null;
+  const normalizedPoints = points.map((point) => ({
+    position: point.position,
+    meshUuid: point.meshUuid,
+  }));
+  const closedLoop = Boolean(closed);
+  const distance = computePolylineDistance(normalizedPoints, closedLoop);
+  const area = computePolylineArea(normalizedPoints, closedLoop);
+  return {
+    id: crypto.randomUUID(),
+    kind: 'polyline',
+    snapMode,
+    points: normalizedPoints,
+    closed: closedLoop,
+    distance,
+    area,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function isValidMeasurementPoint(point) {
+  return Array.isArray(point?.position) && point.position.length === 3;
+}
+
+function normalizeSegmentMeasurement(entry) {
+  if (
+    !entry
+    || !isValidMeasurementPoint(entry.start)
+    || !isValidMeasurementPoint(entry.end)
+    || !Number.isFinite(entry.distance)
+  ) {
+    return null;
+  }
+  return {
+    ...entry,
+    kind: 'segment',
+    start: entry.start,
+    end: entry.end,
+    distance: entry.distance,
+  };
+}
+
+function normalizePolylineMeasurement(entry) {
+  if (
+    !entry
+    || entry.kind !== 'polyline'
+    || !Array.isArray(entry.points)
+    || entry.points.length < 2
+    || !entry.points.every(isValidMeasurementPoint)
+  ) {
+    return null;
+  }
+  const closed = Boolean(entry.closed);
+  const distance = Number.isFinite(entry.distance)
+    ? entry.distance
+    : computePolylineDistance(entry.points, closed);
+  if (!Number.isFinite(distance)) return null;
+  const area = closed
+    ? (Number.isFinite(entry.area) ? entry.area : computePolylineArea(entry.points, true))
+    : null;
+  return {
+    ...entry,
+    kind: 'polyline',
+    points: entry.points,
+    closed,
+    distance,
+    area,
+  };
+}
+
+/**
  * @param {unknown} measurements
  * @returns {Array<object>}
  */
 export function normalizeMeasurements(measurements) {
   if (!Array.isArray(measurements)) return [];
-  return measurements.filter((entry) =>
-    entry
-    && Array.isArray(entry.start?.position)
-    && entry.start.position.length === 3
-    && Array.isArray(entry.end?.position)
-    && entry.end.position.length === 3
-    && Number.isFinite(entry.distance),
-  );
+  return measurements.flatMap((entry) => {
+    if (entry?.kind === 'polyline') {
+      const normalized = normalizePolylineMeasurement(entry);
+      return normalized ? [normalized] : [];
+    }
+    const normalized = normalizeSegmentMeasurement(entry);
+    return normalized ? [normalized] : [];
+  });
+}
+
+/**
+ * @param {ReturnType<typeof normalizeMeasurements>[number]} measurement
+ */
+export function formatMeasurementLabel(measurement, displayUnits = 'cm', modelUnits = null) {
+  if (measurement.kind === 'polyline') {
+    return formatPolylineMeasurementLabel({
+      distance: measurement.distance,
+      area: measurement.area,
+      closed: measurement.closed,
+      pointCount: measurement.points?.length ?? 0,
+    }, displayUnits, modelUnits);
+  }
+  const distanceLabel = formatMeasurementDistance(measurement.distance, displayUnits, modelUnits);
+  return `${distanceLabel} · ${measurement.snapMode ?? 'vertex'}`;
 }
