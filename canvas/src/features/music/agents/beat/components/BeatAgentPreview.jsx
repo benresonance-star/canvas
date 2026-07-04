@@ -56,7 +56,7 @@ export function BeatAgentPreview({
             type="button"
             className={`inline-flex h-8 w-8 items-center justify-center rounded border transition pointer-events-auto ${
               clockSync
-                ? 'border-accent text-accent bg-accent/10'
+                ? 'border-accent text-accent bg-accent/20 ring-2 ring-accent/40 shadow-[0_0_10px_rgba(var(--accent-rgb,255,140,0),0.25)]'
                 : 'border-border text-secondary bg-surface-muted hover:border-accent hover:text-accent'
             }`}
             title={clockSync ? 'Clock sync on' : 'Clock sync off'}
@@ -67,7 +67,7 @@ export function BeatAgentPreview({
             onDoubleClick={stopCardInteraction}
             onClick={(event) => {
               event.stopPropagation();
-              toggleClockSync({ debounce: true });
+              void toggleClockSync();
             }}
           >
             <Clock size={14} />

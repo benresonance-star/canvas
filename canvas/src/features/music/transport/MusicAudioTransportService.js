@@ -14,6 +14,7 @@ export class MusicAudioTransportService {
     this.master = null;
     this.node = null;
     this.readyPromise = null;
+    this.pendingMessages = [];
     this.transportState = createDefaultTransportState();
     this.position = {
       isPlaying: false,
@@ -37,6 +38,9 @@ export class MusicAudioTransportService {
   async initialize() {
     const context = await this.audioEngine.ensureContext();
     this.context = context;
+    if (context.state === 'suspended') {
+      await context.resume();
+    }
     if (!context.audioWorklet || typeof AudioWorkletNode === 'undefined') {
       throw new Error('AudioWorklet is not available in this browser');
     }
@@ -51,6 +55,7 @@ export class MusicAudioTransportService {
     });
     this.node.port.onmessage = (event) => this.handleWorkletMessage(event.data);
     this.node.connect(this.master);
+    this.flushPendingMessages();
     this.post({
       type: 'init',
       transport: this.serializedTransportSettings(),
@@ -88,7 +93,7 @@ export class MusicAudioTransportService {
     await this.ensureReady();
     if (this.context?.state === 'suspended') await this.context.resume();
     const startStep = Number.isFinite(Number(startTick)) ? Number(startTick) : 0;
-    this.flushAgentsToWorklet();
+    await this.flushAgentsToWorklet();
     this.transportState = updateTransportState(this.transportState, {
       isPlaying: true,
       isPaused: false,
@@ -106,9 +111,9 @@ export class MusicAudioTransportService {
     this.emitPosition();
   }
 
-  flushAgentsToWorklet() {
+  async flushAgentsToWorklet() {
     for (const agent of this.agents.values()) {
-      this.post({ type: 'agent.upsert', agent });
+      await this.postAgentUpsert(agent);
     }
   }
 
@@ -163,14 +168,15 @@ export class MusicAudioTransportService {
     return () => this.positionListeners.delete(listener);
   }
 
-  registerBeatAgent(agent) {
+  async registerBeatAgent(agent) {
     if (!agent?.id) return;
     const normalized = normalizeAgent(agent);
     this.agents.set(normalized.id, normalized);
-    this.post({ type: 'agent.upsert', agent: normalized });
+    await this.ensureReady();
+    await this.postAgentUpsert(normalized);
   }
 
-  updateBeatAgent(id, patch = {}) {
+  async updateBeatAgent(id, patch = {}) {
     if (!id) return;
     const current = this.agents.get(id) ?? { id };
     const next = normalizeAgent({
@@ -188,7 +194,8 @@ export class MusicAudioTransportService {
       solo: patch.solo ?? current.solo,
     });
     this.agents.set(id, next);
-    this.post({ type: 'agent.upsert', agent: next });
+    await this.ensureReady();
+    await this.postAgentUpsert(next);
   }
 
   unregisterBeatAgent(id) {
@@ -208,33 +215,105 @@ export class MusicAudioTransportService {
     };
   }
 
+  flushPendingMessages() {
+    if (!this.node?.port || this.pendingMessages.length === 0) return;
+    const queued = [...this.pendingMessages];
+    this.pendingMessages = [];
+    for (const message of queued) {
+      this.deliverMessage(message);
+    }
+  }
+
   post(message) {
-    if (!this.node?.port) return;
+    if (!this.node?.port) {
+      this.pendingMessages.push(message);
+      return;
+    }
+    this.deliverMessage(message);
+  }
+
+  deliverMessage(message) {
+    if (!this.node?.port) {
+      this.pendingMessages.push(message);
+      return;
+    }
     try {
       this.node.port.postMessage(message);
     } catch (error) {
-      if (message?.agent?.sonicSamples) {
-        const fallback = {
-          ...message,
-          agent: {
-            ...message.agent,
-            sonicSamples: {},
-          },
-        };
-        this.node.port.postMessage(fallback);
-        console.warn('Beat transport dropped Sonic samples for AudioWorklet compatibility.', error);
-        return;
-      }
-      if (message?.type === 'init' && Array.isArray(message.agents)) {
-        this.node.port.postMessage({
-          ...message,
-          agents: message.agents.map((agent) => ({ ...agent, sonicSamples: {} })),
-        });
-        console.warn('Beat transport initialized without Sonic samples for AudioWorklet compatibility.', error);
-        return;
-      }
-      throw error;
+      this.handlePostFailure(message, error);
     }
+  }
+
+  async postAgentUpsert(agent) {
+    const message = { type: 'agent.upsert', agent };
+    if (!this.node?.port) {
+      this.pendingMessages.push(message);
+      return;
+    }
+    try {
+      this.node.port.postMessage(message);
+    } catch (error) {
+      await this.retryAgentUpsertPerTrack(agent, error);
+    }
+  }
+
+  async retryAgentUpsertPerTrack(agent, originalError) {
+    const samples = agent?.sonicSamples ?? {};
+    const trackIds = Object.keys(samples);
+    if (trackIds.length === 0) {
+      this.deliverMessage({
+        type: 'agent.upsert',
+        agent: { ...agent, sonicSamples: {} },
+      });
+      console.warn(
+        'Beat transport dropped Sonic samples for AudioWorklet compatibility.',
+        originalError?.message ?? originalError,
+      );
+      return;
+    }
+
+    const baseAgent = { ...agent, sonicSamples: {} };
+    this.deliverMessage({ type: 'agent.upsert', agent: baseAgent });
+
+    for (const trackId of trackIds) {
+      const sample = samples[trackId];
+      if (!sample?.left?.length) continue;
+      const patchAgent = {
+        ...baseAgent,
+        sonicSamples: { [trackId]: sample },
+      };
+      try {
+        this.node.port.postMessage({ type: 'agent.upsert', agent: patchAgent });
+        baseAgent.sonicSamples = {
+          ...baseAgent.sonicSamples,
+          [trackId]: sample,
+        };
+      } catch (trackError) {
+        console.warn(
+          `Beat transport skipped Sonic sample "${trackId}" for agent ${agent.id}.`,
+          trackError?.message ?? trackError,
+        );
+      }
+    }
+  }
+
+  handlePostFailure(message, error) {
+    if (message?.agent?.sonicSamples) {
+      void this.retryAgentUpsertPerTrack(message.agent, error);
+      return;
+    }
+    if (message?.type === 'init' && Array.isArray(message.agents)) {
+      this.node.port.postMessage({
+        ...message,
+        agents: message.agents.map((agent) => ({ ...agent, sonicSamples: {} })),
+      });
+      console.warn(
+        'Beat transport initialized without Sonic samples for AudioWorklet compatibility.',
+        error?.message ?? error,
+      );
+      return;
+    }
+    throw error;
   }
 
   emitTransport() {

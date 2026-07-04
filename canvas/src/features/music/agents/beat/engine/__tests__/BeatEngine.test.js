@@ -76,7 +76,7 @@ describe('BeatEngine scheduling', () => {
     expect(wetGain.setTargetAtTime).toHaveBeenCalledWith(0, 4.2, 0.01);
   });
 
-  it('uses Sonic Core rendered samples for local unsynced playback', async () => {
+  it('reuses cached AudioBuffer for repeated track triggers', async () => {
     const context = createFakeAudioContext();
     const engine = new BeatEngine({
       getState: () => ({ parameters: { gain: 0.8 } }),
@@ -87,16 +87,18 @@ describe('BeatEngine scheduling', () => {
     engine.ensureContext = vi.fn(async () => context);
     engine.applyTemporalState = vi.fn();
 
-    await engine.triggerTrack({
+    const track = {
       id: 'kick',
       role: 'kick',
       gain: 1,
       synth: { gain: 1, attackMs: 1, decayMs: 120, pitch: 0, tone: 0.5, distortion: 0 },
-    }, { velocity: 0.75, scheduledAudioTime: 2 });
+    };
 
-    expect(context.createBufferSource).toHaveBeenCalledTimes(1);
-    expect(context.createdSource.start).toHaveBeenCalledWith(2);
-    expect(context.createdSource.connect).toHaveBeenCalled();
+    await engine.triggerTrack(track, { velocity: 0.75, scheduledAudioTime: 2 });
+    await engine.triggerTrack(track, { velocity: 0.75, scheduledAudioTime: 2.5 });
+
+    expect(context.createBuffer).toHaveBeenCalledTimes(1);
+    expect(context.createBufferSource).toHaveBeenCalledTimes(2);
   });
 });
 

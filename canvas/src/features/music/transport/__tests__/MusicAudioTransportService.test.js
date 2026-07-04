@@ -47,7 +47,7 @@ describe('MusicAudioTransportService', () => {
       audioEngine: { ensureContext: vi.fn(async () => context) },
     });
 
-    service.registerBeatAgent({ id: 'beat-1', pattern: { stepCount: 16, tracks: [] } });
+    await service.registerBeatAgent({ id: 'beat-1', pattern: { stepCount: 16, tracks: [] } });
     await service.ensureReady();
 
     expect(context.audioWorklet.addModule).toHaveBeenCalledWith('/audio-worklets/beat-agent-processor.js');
@@ -64,7 +64,7 @@ describe('MusicAudioTransportService', () => {
     await service.ensureReady();
     service.node.port.postMessage.mockClear();
 
-    service.registerBeatAgent({
+    await service.registerBeatAgent({
       id: 'beat-1',
       pattern: { stepCount: 16, tracks: [] },
       parameters: { gain: 0.7 },
@@ -91,7 +91,7 @@ describe('MusicAudioTransportService', () => {
       audioEngine: { ensureContext: vi.fn(async () => createFakeContext()) },
     });
     await service.ensureReady();
-    service.registerBeatAgent({
+    await service.registerBeatAgent({
       id: 'beat-1',
       pattern: { stepCount: 16, tracks: [{ id: 'kick' }] },
       parameters: { gain: 0.7, swing: 0.1 },
@@ -99,7 +99,7 @@ describe('MusicAudioTransportService', () => {
     });
     service.node.port.postMessage.mockClear();
 
-    service.updateBeatAgent('beat-1', {
+    await service.updateBeatAgent('beat-1', {
       parameters: { gain: 0.55 },
       muted: true,
     });
@@ -134,7 +134,7 @@ describe('MusicAudioTransportService', () => {
       },
     };
 
-    service.registerBeatAgent({
+    await service.registerBeatAgent({
       id: 'beat-1',
       pattern: { stepCount: 16, tracks: [] },
       sonicSamples,
@@ -153,7 +153,7 @@ describe('MusicAudioTransportService', () => {
       audioEngine: { ensureContext: vi.fn(async () => createFakeContext()) },
     });
     await service.ensureReady();
-    service.registerBeatAgent({ id: 'beat-1', pattern: { stepCount: 16, tracks: [] } });
+    await service.registerBeatAgent({ id: 'beat-1', pattern: { stepCount: 16, tracks: [] } });
     service.node.port.postMessage.mockClear();
 
     service.unregisterBeatAgent('beat-1');
@@ -186,7 +186,7 @@ describe('MusicAudioTransportService', () => {
       audioEngine: { ensureContext: vi.fn(async () => createFakeContext()) },
     });
     await service.ensureReady();
-    service.registerBeatAgent({
+    await service.registerBeatAgent({
       id: 'beat-1',
       pattern: { stepCount: 16, tracks: [{ id: 'kick' }] },
       sonicSamples: {

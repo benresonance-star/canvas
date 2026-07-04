@@ -13,13 +13,16 @@ import {
 import {
   applyBeatClockTransportSettings,
   bindBeatRuntimeTransport,
-  startBeatClockSync,
-  stopLocalTransportForClockSync,
+  startBeatWorkletSession,
   stripBeatLiveTransportState,
-  updateBeatClockSync,
+  updateBeatWorkletAgent,
 } from '../domain/beatClockSync.js';
+import {
+  ensureBeatPreviewTransport,
+  resolveBeatAudioTransport,
+} from '../domain/beatPreviewTransport.js';
 import { BeatEngine } from '../engine/BeatEngine.js';
-import { MusicTransport } from '../../../transport/MusicTransport.js';
+import { useMusicKernel } from '../../../kernel/MusicKernelProvider.jsx';
 import { useUniversalMusicTransport } from '../../../transport/useUniversalMusicTransport.js';
 import {
   fetchMusicAgent,
@@ -34,18 +37,16 @@ import {
 
 const beatRuntimeEntries = new Map();
 
-function createRuntimeEntry(key, initialTransport = {}) {
+function createRuntimeEntry(key) {
   const entry = {
     key,
     refs: 0,
-    syncedRefs: 0,
+    workletRefs: 0,
     registeredAudioTransport: null,
     latestState: null,
     latestTemporalState: null,
     cleanupTimer: null,
-    localTransport: new MusicTransport(initialTransport),
-    activeTransport: null,
-    unsubscribeSteps: null,
+    previewTransport: null,
     engine: null,
   };
   entry.engine = new BeatEngine({
@@ -55,11 +56,11 @@ function createRuntimeEntry(key, initialTransport = {}) {
   return entry;
 }
 
-function getRuntimeEntry(key, initialTransport = {}) {
+function getRuntimeEntry(key) {
   const runtimeKey = key || 'beat-runtime-anonymous';
   let entry = beatRuntimeEntries.get(runtimeKey);
   if (!entry) {
-    entry = createRuntimeEntry(runtimeKey, initialTransport);
+    entry = createRuntimeEntry(runtimeKey);
     beatRuntimeEntries.set(runtimeKey, entry);
   }
   if (entry.cleanupTimer) {
@@ -78,7 +79,8 @@ function releaseRuntimeEntry(entry) {
     entry.unsubscribeSteps?.();
     entry.unsubscribeSteps = null;
     entry.activeTransport = null;
-    entry.localTransport.stop();
+    entry.previewTransport?.stop();
+    entry.previewTransport = null;
     entry.engine.stop();
     beatRuntimeEntries.delete(entry.key);
   }, 1000);
@@ -119,13 +121,15 @@ export function useBeatAgentRuntime({
   temporalState = null,
 } = {}) {
   const runtimeKey = resolveBeatAgentId(card) || card?.id || card?.key;
+  const cardId = card?.id;
+  const agentId = resolveBeatAgentId(card);
   const initialCardState = useMemo(
     () => defaultBeatStateFromCard(card),
     [card?.id, card?.musicState, card?.name],
   );
   const runtimeEntryRef = useRef(null);
   if (!runtimeEntryRef.current || runtimeEntryRef.current.key !== (runtimeKey || 'beat-runtime-anonymous')) {
-    runtimeEntryRef.current = getRuntimeEntry(runtimeKey, initialCardState.transport ?? {});
+    runtimeEntryRef.current = getRuntimeEntry(runtimeKey);
     runtimeEntryRef.current.latestState = newestBeatState(
       runtimeEntryRef.current.latestState,
       initialCardState,
@@ -151,19 +155,28 @@ export function useBeatAgentRuntime({
 
   runtimeEntry.latestState = newestBeatState(runtimeEntry.latestState, state);
   runtimeEntry.latestTemporalState = temporalState;
-  const [localTransportState, setLocalTransportState] = useState(runtimeEntry.localTransport.state);
+  const kernel = useMusicKernel();
   const universalTransport = useUniversalMusicTransport();
-  const engine = runtimeEntry.engine;
+  const previewTransport = ensureBeatPreviewTransport(runtimeEntry, kernel.audioEngine);
   const clockSync = Boolean(state.clockSync);
-  const localMusicTransport = runtimeEntry.localTransport;
-  const localTransport = useMemo(() => ({
-    transport: localMusicTransport,
-    state: localTransportState,
-    play: () => localMusicTransport.play(),
-    stop: () => localMusicTransport.stop(),
-    setTransportState: (patch) => localMusicTransport.setState(patch),
-  }), [localMusicTransport, localTransportState]);
-  const transport = clockSync ? universalTransport : localTransport;
+  const activeAudioTransport = resolveBeatAudioTransport(runtimeEntry, {
+    clockSync,
+    sharedTransport: universalTransport.transport,
+    audioEngine: kernel.audioEngine,
+  });
+  const [previewTransportState, setPreviewTransportState] = useState(
+    () => previewTransport.transportState,
+  );
+
+  useEffect(
+    () => previewTransport.subscribeTransportState(setPreviewTransportState),
+    [previewTransport],
+  );
+
+  const transportState = clockSync ? universalTransport.state : previewTransportState;
+  const setActiveTransportState = useCallback((patch) => {
+    activeAudioTransport.setTransportSettings(patch);
+  }, [activeAudioTransport]);
 
   useEffect(() => {
     const canonicalState = newestBeatState(runtimeEntry.latestState, state);
@@ -173,47 +186,57 @@ export function useBeatAgentRuntime({
   }, [runtimeEntry, state]);
 
   useEffect(() => {
-    const audioClock = {
-      ensureReady: () => engine.ensureContext(),
-      getCurrentTime: () => engine.currentTime(),
-    };
-    localMusicTransport.setAudioClock(audioClock);
-  }, [engine, localMusicTransport]);
-
-  useEffect(() => {
     runtimeEntry.refs += 1;
     return () => releaseRuntimeEntry(runtimeEntry);
   }, [runtimeEntry]);
 
-  useEffect(() => localMusicTransport.subscribe(setLocalTransportState), [localMusicTransport]);
+  useEffect(() => {
+    void runtimeEntry.engine.ensureContext().then(() => {
+      runtimeEntry.engine.applyTemporalState();
+    });
+  }, [runtimeEntry, temporalState]);
 
   useEffect(() => {
-    bindBeatRuntimeTransport(runtimeEntry, transport.transport, { clockSync });
-  }, [clockSync, runtimeEntry, transport.transport]);
+    bindBeatRuntimeTransport(runtimeEntry);
+  }, [runtimeEntry]);
 
   useEffect(() => {
-    if (!clockSync || !runtimeKey) return undefined;
-    return startBeatClockSync(
+    if (!runtimeKey) return undefined;
+    let cancelled = false;
+    let release = () => {};
+    void startBeatWorkletSession(
       runtimeEntry,
-      universalTransport.transport,
+      activeAudioTransport,
       runtimeKey,
       stateRef.current,
-    );
+    )
+      .then((cleanup) => {
+        if (cancelled) {
+          cleanup();
+          return;
+        }
+        release = cleanup;
+      })
+      .catch((syncError) => {
+        const reason = syncError?.message ?? 'Could not initialize beat audio';
+        setError(reason);
+        setStatus(reason);
+      });
+    return () => {
+      cancelled = true;
+      release();
+    };
   }, [
+    activeAudioTransport,
     clockSync,
     runtimeEntry,
     runtimeKey,
-    universalTransport.registerBeatAgent,
-    universalTransport.transport,
   ]);
 
   useEffect(() => {
-    if (!clockSync || !runtimeKey) return;
-    updateBeatClockSync(universalTransport.transport, runtimeKey, state);
-  }, [clockSync, runtimeKey, state, universalTransport.transport]);
-
-  const cardId = card?.id;
-  const agentId = resolveBeatAgentId(card);
+    if (!runtimeKey) return;
+    void updateBeatWorkletAgent(activeAudioTransport, runtimeKey, state);
+  }, [activeAudioTransport, clockSync, runtimeKey, state]);
 
   const clearStatusSoon = useCallback(() => {
     window.setTimeout(() => setStatus(''), 2500);
@@ -327,19 +350,39 @@ export function useBeatAgentRuntime({
     void persist(result.state, 'Pattern saved', options);
   }, [persist]);
 
-  const toggleClockSync = useCallback((options = {}) => {
+  const toggleClockSync = useCallback(async () => {
     const enabled = !stateRef.current.clockSync;
     const nextState = {
       ...stateRef.current,
       clockSync: enabled,
       updatedAt: new Date().toISOString(),
     };
-    void persist(
-      nextState,
+    applyState(nextState);
+    if (enabled) {
+      try {
+        await universalTransport.transport.ensureReady();
+        applyBeatClockTransportSettings(
+          universalTransport.transport,
+          stripBeatLiveTransportState(nextState.transport ?? {}),
+        );
+      } catch (syncError) {
+        const reason = syncError?.message ?? 'Could not initialize clock sync audio';
+        const reverted = {
+          ...stateRef.current,
+          clockSync: false,
+          updatedAt: new Date().toISOString(),
+        };
+        applyState(reverted);
+        setError(reason);
+        setStatus(reason);
+        return;
+      }
+    }
+    await persistNow(
+      runtimeEntry.latestState,
       enabled ? 'Clock sync enabled' : 'Clock sync disabled',
-      options,
     );
-  }, [persist]);
+  }, [applyState, persistNow, runtimeEntry, universalTransport.transport]);
 
   const updateTrackSynth = useCallback((trackId, patch, options = {}) => {
     const result = updateBeatTrackSynthState(stateRef.current, trackId, patch);
@@ -359,20 +402,16 @@ export function useBeatAgentRuntime({
       return;
     }
     const nextTransport = result.state.transport ?? {};
-    localMusicTransport.setState(nextTransport);
-    if (clockSync) {
-      applyBeatClockTransportSettings(universalTransport.transport, nextTransport);
-    }
-    if (projectId) {
+    applyBeatClockTransportSettings(activeAudioTransport, nextTransport);
+    if (clockSync && projectId) {
       void saveProjectMusicTransport(projectId, nextTransport).catch(() => {});
     }
     void persist(result.state, 'Transport saved', options);
   }, [
+    activeAudioTransport,
     clockSync,
-    localMusicTransport,
     persist,
     projectId,
-    universalTransport.transport,
   ]);
 
   useEffect(() => {
@@ -384,13 +423,16 @@ export function useBeatAgentRuntime({
         setAgent(loaded);
         if (loaded?.state) {
           const loadedState = createDefaultBeatAgentState(loaded.state);
-          applyState(loadedState);
-          if (loadedState.transport) {
-            localMusicTransport.setState(stripBeatLiveTransportState(loadedState.transport));
-            if (loadedState.clockSync) {
-              applyBeatClockTransportSettings(universalTransport.transport, loadedState.transport);
-            }
-            appliedTransportRevisionRef.current = loadedState.transport.updatedAt ?? JSON.stringify(loadedState.transport);
+          const mergedState = newestBeatState(stateRef.current, loadedState);
+          applyState(mergedState);
+          if (mergedState.transport) {
+            const loadTransport = resolveBeatAudioTransport(runtimeEntry, {
+              clockSync: mergedState.clockSync,
+              sharedTransport: universalTransport.transport,
+              audioEngine: kernel.audioEngine,
+            });
+            applyBeatClockTransportSettings(loadTransport, mergedState.transport);
+            appliedTransportRevisionRef.current = mergedState.transport.updatedAt ?? JSON.stringify(mergedState.transport);
           }
         }
       })
@@ -404,24 +446,19 @@ export function useBeatAgentRuntime({
     return () => {
       cancelled = true;
     };
-  }, [agentId, applyState, localMusicTransport, universalTransport.transport]);
+  }, [agentId, applyState, kernel.audioEngine, runtimeEntry, universalTransport.transport]);
 
   useEffect(() => {
-    const transportState = state.transport;
-    if (!transportState) return;
-    const revision = transportState.updatedAt ?? JSON.stringify(transportState);
+    const agentTransport = state.transport;
+    if (!agentTransport) return;
+    const revision = agentTransport.updatedAt ?? JSON.stringify(agentTransport);
     if (appliedTransportRevisionRef.current === revision) return;
     appliedTransportRevisionRef.current = revision;
-    const transportSettings = stripBeatLiveTransportState(transportState);
-    localMusicTransport.setState(transportSettings);
-    if (clockSync) {
-      applyBeatClockTransportSettings(universalTransport.transport, transportSettings);
-    }
-  }, [clockSync, localMusicTransport, state.transport, universalTransport.transport]);
-
-  useEffect(() => {
-    if (clockSync) stopLocalTransportForClockSync(localMusicTransport);
-  }, [clockSync, localMusicTransport]);
+    applyBeatClockTransportSettings(
+      activeAudioTransport,
+      stripBeatLiveTransportState(agentTransport),
+    );
+  }, [activeAudioTransport, state.transport]);
 
   useEffect(() => () => {
     if (saveTimerRef.current) {
@@ -431,25 +468,38 @@ export function useBeatAgentRuntime({
     }
   }, []);
 
-  const playhead = transport.state.currentTick % (state.pattern?.stepCount ?? 16);
+  const playhead = transportState.currentTick % (state.pattern?.stepCount ?? 16);
   const playPlayback = useCallback(async (options) => {
     try {
       setError('');
-      if (clockSync && runtimeKey) {
-        updateBeatClockSync(universalTransport.transport, runtimeKey, stateRef.current);
+      const audioTransport = resolveBeatAudioTransport(runtimeEntry, {
+        clockSync: stateRef.current.clockSync,
+        sharedTransport: universalTransport.transport,
+        audioEngine: kernel.audioEngine,
+      });
+      await audioTransport.ensureReady();
+      applyBeatClockTransportSettings(
+        audioTransport,
+        stripBeatLiveTransportState(stateRef.current.transport ?? {}),
+      );
+      if (runtimeKey) {
+        await updateBeatWorkletAgent(audioTransport, runtimeKey, stateRef.current);
       }
-      await transport.play(options);
+      await audioTransport.play(options);
     } catch (playError) {
       const reason = playError?.message ?? 'Could not start Beat Agent playback';
       setError(reason);
       setStatus(reason);
     }
-  }, [clockSync, runtimeKey, transport, universalTransport.transport]);
+  }, [kernel.audioEngine, runtimeEntry, runtimeKey, universalTransport.transport]);
 
   const stopPlayback = useCallback(() => {
-    transport.stop();
-    engine.stop();
-  }, [engine, transport]);
+    if (clockSync) {
+      universalTransport.transport.stop();
+      return;
+    }
+    previewTransport.stop();
+  }, [clockSync, previewTransport, universalTransport.transport]);
 
   return {
     agent,
@@ -462,14 +512,15 @@ export function useBeatAgentRuntime({
     error,
     setError,
     transport: {
-      ...transport,
+      state: transportState,
       play: playPlayback,
       stop: stopPlayback,
+      setTransportState: setActiveTransportState,
     },
-    transportState: transport.state,
+    transportState,
     play: playPlayback,
     stop: stopPlayback,
-    setTransportState: transport.setTransportState,
+    setTransportState: setActiveTransportState,
     clockSync,
     toggleClockSync,
     playhead,

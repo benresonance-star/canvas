@@ -1,4 +1,4 @@
-import { renderBeatTrackSample } from '../../../../../../packages/sonic-core/src/index.js';
+import { resolveBeatTrackSample } from '../domain/beatSampleResolver.js';
 
 const ROLE_TEMPORAL_SEND = {
   kick: 0.08,
@@ -28,6 +28,8 @@ export class BeatEngine {
     this.temporalWorkletLoading = null;
     this.lastTemporalSignature = '';
     this.sonicSampleCache = new Map();
+    this.masterGainTarget = null;
+    this.voiceBus = null;
   }
 
   async ensureContext() {
@@ -37,18 +39,32 @@ export class BeatEngine {
     this.context = new AudioContextCtor();
     this.master = this.context.createGain();
     this.master.gain.value = 0.8;
+    this.voiceBus = this.context.createGain();
+    this.voiceBus.gain.value = 0.72;
     this.limiter = this.context.createDynamicsCompressor();
-    this.limiter.threshold.value = -6;
-    this.limiter.knee.value = 6;
-    this.limiter.ratio.value = 12;
-    this.limiter.attack.value = 0.003;
-    this.limiter.release.value = 0.16;
-    this.master.connect(this.limiter);
-    this.limiter.connect(this.context.destination);
+    this.limiter.threshold.value = -10;
+    this.limiter.knee.value = 8;
+    this.limiter.ratio.value = 16;
+    this.limiter.attack.value = 0.001;
+    this.limiter.release.value = 0.08;
+    this.voiceBus.connect(this.limiter);
+    this.limiter.connect(this.master);
+    this.master.connect(this.context.destination);
     this.ensureTemporalBus();
     void this.ensureTemporalWorklet();
     if (this.context.state === 'suspended') await this.context.resume();
+    this.applyMasterGain(this.context);
     return this.context;
+  }
+
+  applyMasterGain(context = this.context) {
+    if (!this.master || !context) return;
+    const target = clampNumber(this.getState()?.parameters?.gain ?? 0.8, 0, 1.5);
+    if (this.masterGainTarget === target) return;
+    this.masterGainTarget = target;
+    const now = context.currentTime;
+    this.master.gain.cancelScheduledValues(now);
+    this.master.gain.setTargetAtTime(target, now, 0.02);
   }
 
   currentTime() {
@@ -75,7 +91,7 @@ export class BeatEngine {
     this.temporalHighCut.connect(this.temporalFeedback);
     this.temporalFeedback.connect(this.temporalDelay);
     this.temporalHighCut.connect(this.temporalWet);
-    this.temporalWet.connect(this.master);
+    this.temporalWet.connect(this.voiceBus ?? this.master);
     this.temporalModOsc.connect(this.temporalModGain);
     this.temporalModGain.connect(this.temporalDelay.delayTime);
     this.temporalModOsc.start();
@@ -105,7 +121,7 @@ export class BeatEngine {
             /* fallback graph may not be connected yet */
           }
           this.temporalInput.connect(node);
-          node.connect(this.master);
+          node.connect(this.voiceBus ?? this.master);
         }
         this.temporalWorkletReady = true;
         this.lastTemporalSignature = '';
@@ -144,7 +160,11 @@ export class BeatEngine {
 
   applyTemporalState() {
     if (!this.context || (!this.temporalDelay && !this.temporalWorklet)) return;
-    const state = this.getTemporalState?.() ?? {};
+    const state = this.getTemporalState?.() ?? null;
+    if (!state) {
+      this.silenceTemporalBus();
+      return;
+    }
     const signature = this.temporalSignature(state);
     if (signature === this.lastTemporalSignature) return;
     this.lastTemporalSignature = signature;
@@ -153,7 +173,7 @@ export class BeatEngine {
     const topologyGain = topology === 'freeze' ? 0.42 : topology === 'swarm' ? 0.36 : 1;
     const delaySeconds = clampNumber((state.delayMs ?? 250) / 1000, 0.02, 4);
     const feedback = clampNumber(state.feedback ?? 0.28, 0, topology === 'freeze' ? 0.9 : 0.78);
-    const wet = clampNumber((state.wet ?? 0.18) * topologyGain, 0, 0.72);
+    const wet = clampNumber((state.wet ?? 0) * topologyGain, 0, 0.72);
     const drive = clampNumber(state.character?.drive ?? 0, 0, 1);
     const age = clampNumber(state.character?.age ?? 0, 0, 1);
     const diffusion = clampNumber(state.diffusion ?? 0, 0, 1);
@@ -205,6 +225,24 @@ export class BeatEngine {
     this.temporalModGain.gain.setTargetAtTime(delaySeconds * modDepth * 0.08, now, 0.05);
   }
 
+  silenceTemporalBus() {
+    if (!this.context) return;
+    const now = this.context.currentTime;
+    if (this.temporalWet) {
+      this.temporalWet.gain.cancelScheduledValues(now);
+      this.temporalWet.gain.setTargetAtTime(0, now, 0.01);
+    }
+    if (this.temporalFeedback) {
+      this.temporalFeedback.gain.cancelScheduledValues(now);
+      this.temporalFeedback.gain.setTargetAtTime(0, now, 0.01);
+    }
+    if (this.temporalWorklet) {
+      setAudioParam(this.temporalWorklet.parameters.get('wet'), 0, now);
+      setAudioParam(this.temporalWorklet.parameters.get('feedback'), 0, now);
+    }
+    this.lastTemporalSignature = 'off';
+  }
+
   createDistortionCurve(amount = 0) {
     const samples = 256;
     const curve = new Float32Array(samples);
@@ -227,12 +265,7 @@ export class BeatEngine {
 
   async triggerTrack(track, step) {
     const context = await this.ensureContext();
-    if (this.master) {
-      const now = context.currentTime;
-      this.master.gain.cancelScheduledValues(now);
-      this.master.gain.setTargetAtTime(this.getState()?.parameters?.gain ?? 0.8, now, 0.012);
-    }
-    this.applyTemporalState();
+    this.applyMasterGain(context);
     const scheduledTime = step.scheduledAudioTime != null
       && Number.isFinite(Number(step.scheduledAudioTime))
       ? Number(step.scheduledAudioTime)
@@ -247,29 +280,37 @@ export class BeatEngine {
     const pitchRatio = 2 ** (Math.max(-24, Math.min(24, synth.pitch ?? 0)) / 12);
     const tone = Math.max(0, Math.min(1, synth.tone ?? 0.5));
     const distortion = Math.max(0, Math.min(1, synth.distortion ?? 0));
+    const voiceOutput = this.voiceBus ?? this.master;
     const gain = context.createGain();
     const temporalSend = context.createGain();
     temporalSend.gain.value = temporalSendLevel(track, this.getTemporalState?.());
-    gain.gain.setValueAtTime(0.001, now);
-    gain.gain.linearRampToValueAtTime(Math.max(0.001, velocity * synthGain), now + attack);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + attack + decay);
-    gain.connect(this.connectVoiceOutput(context, this.master, distortion));
+    const peakGain = Math.max(0.001, velocity * synthGain * roleVoiceHeadroom(track.role));
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(peakGain, now + Math.max(attack, 0.003));
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + attack + decay);
+    gain.connect(this.connectVoiceOutput(context, voiceOutput, distortion));
     if (this.temporalInput && temporalSend.gain.value > 0.001) {
       gain.connect(temporalSend);
       temporalSend.connect(this.temporalInput);
     }
 
     const sonicSample = this.getSonicSample(track);
-    if (sonicSample?.left?.length) {
+    if (sonicSample?.audioBuffer) {
       const source = context.createBufferSource();
-      const channelCount = sonicSample.right?.length ? 2 : 1;
-      const buffer = context.createBuffer(channelCount, sonicSample.left.length, context.sampleRate);
-      buffer.getChannelData(0).set(sonicSample.left);
-      if (channelCount > 1) buffer.getChannelData(1).set(sonicSample.right);
-      source.buffer = buffer;
+      source.buffer = sonicSample.audioBuffer;
       source.connect(gain);
+      const stopAt = now + Math.min(
+        sonicSample.audioBuffer.duration,
+        attack + decay + 0.015,
+      );
+      const fadeStart = Math.max(now + 0.003, stopAt - 0.008);
+      gain.gain.cancelScheduledValues(now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(peakGain, now + 0.003);
+      gain.gain.setValueAtTime(peakGain, fadeStart);
+      gain.gain.linearRampToValueAtTime(0.0001, stopAt);
       source.start(now);
-      source.stop(now + buffer.duration + 0.02);
+      source.stop(stopAt + 0.016);
       return;
     }
 
@@ -308,21 +349,35 @@ export class BeatEngine {
 
   getSonicSample(track) {
     if (!this.context || !track) return null;
+    const sampleRate = this.context.sampleRate;
     const signature = JSON.stringify({
       id: track.id,
       role: track.role,
       gain: track.gain,
       synth: track.synth,
-      sampleRate: this.context.sampleRate,
+      sampleRate,
     });
     const cached = this.sonicSampleCache.get(signature);
     if (cached) return cached;
-    const rendered = renderBeatTrackSample(track, {
-      sampleRate: this.context.sampleRate,
+    const rendered = resolveBeatTrackSample(track, {
+      sampleRate,
       seed: hashString(signature),
     });
-    this.sonicSampleCache.set(signature, rendered);
-    return rendered;
+    const channelCount = rendered.right?.length ? 2 : 1;
+    const audioBuffer = this.context.createBuffer(
+      channelCount,
+      rendered.left.length,
+      sampleRate,
+    );
+    audioBuffer.getChannelData(0).set(rendered.left);
+    if (channelCount > 1) audioBuffer.getChannelData(1).set(rendered.right);
+    softenSampleEdges(audioBuffer, sampleRate);
+    const entry = {
+      ...rendered,
+      audioBuffer,
+    };
+    this.sonicSampleCache.set(signature, entry);
+    return entry;
   }
 
   async scheduledAudioTimeFromClock(scheduledTime, clockSource = 'audio') {
@@ -347,12 +402,13 @@ export class BeatEngine {
       const step = track.steps[stepIndex % pattern.stepCount];
       if (!step?.active) continue;
       if (Math.random() > (step.probability ?? 1)) continue;
-      await this.triggerTrack(track, { ...step, scheduledAudioTime: resolvedScheduledAudioTime });
+      void this.triggerTrack(track, { ...step, scheduledAudioTime: resolvedScheduledAudioTime });
     }
   }
 
   stop() {
     const now = this.context?.currentTime ?? 0;
+    this.masterGainTarget = null;
     if (this.master) {
       this.master.gain.cancelScheduledValues(now);
       this.master.gain.setTargetAtTime(0, now, 0.01);
@@ -368,8 +424,37 @@ export class BeatEngine {
   }
 }
 
-function temporalSendLevel(track, temporalState = {}) {
-  const wet = clampNumber(temporalState?.wet ?? 0, 0, 1);
+function roleVoiceHeadroom(role) {
+  if (role === 'hat') return 0.62;
+  if (role === 'clap') return 0.78;
+  if (role === 'snare') return 0.82;
+  return 0.9;
+}
+
+function softenSampleEdges(audioBuffer, sampleRate) {
+  const fadeInFrames = Math.min(
+    audioBuffer.length,
+    Math.max(1, Math.ceil(sampleRate * 0.004)),
+  );
+  const fadeOutFrames = Math.min(
+    audioBuffer.length,
+    Math.max(1, Math.ceil(sampleRate * 0.01)),
+  );
+  for (let channel = 0; channel < audioBuffer.numberOfChannels; channel += 1) {
+    const data = audioBuffer.getChannelData(channel);
+    for (let index = 0; index < fadeInFrames; index += 1) {
+      data[index] *= index / fadeInFrames;
+    }
+    for (let index = 0; index < fadeOutFrames; index += 1) {
+      const sampleIndex = data.length - fadeOutFrames + index;
+      data[sampleIndex] *= (fadeOutFrames - index) / fadeOutFrames;
+    }
+  }
+}
+
+function temporalSendLevel(track, temporalState = null) {
+  if (!temporalState) return 0;
+  const wet = clampNumber(temporalState.wet ?? 0, 0, 1);
   if (wet <= 0.001) return 0;
   const base = ROLE_TEMPORAL_SEND[track.role] ?? 0.16;
   const topologyBoost = temporalState.topology === 'ping-pong' || temporalState.topology === 'diffused-delay'
@@ -377,7 +462,7 @@ function temporalSendLevel(track, temporalState = {}) {
     : temporalState.topology === 'freeze'
       ? 0.75
       : 1;
-  return clampNumber(base * wet * topologyBoost, 0, 0.42);
+  return clampNumber(base * wet * topologyBoost, 0, 0.32);
 }
 
 function clampNumber(value, min, max) {

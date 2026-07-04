@@ -18,6 +18,7 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
     this.agents = new Map();
     this.voices = [];
     this.seed = 0x1234abcd;
+    this.mixEnvelope = 0;
     this.port.onmessage = (event) => this.handleMessage(event.data ?? {});
   }
 
@@ -179,7 +180,7 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
       if (voice.age < voice.durationFrames) activeVoices.push(voice);
     }
     this.voices = activeVoices;
-    return { left, right };
+    return softLimitMix(left, right, this);
   }
 
   random() {
@@ -210,11 +211,14 @@ function createVoice({ agentId, role, velocity, gain, synth, sample, seed }) {
 
 function voiceSample(voice) {
   if (voice.sample?.left?.length) {
+    const remaining = voice.durationFrames - voice.age;
+    const fadeFrames = Math.min(3, Math.max(0, remaining));
+    const fade = fadeFrames > 0 ? fadeFrames / 3 : 1;
     const left = voice.sample.left[voice.age] ?? 0;
     const right = voice.sample.right?.[voice.age] ?? left;
     return {
-      left: clamp(left * voice.gain, -0.98, 0.98),
-      right: clamp(right * voice.gain, -0.98, 0.98),
+      left: clamp(left * voice.gain * fade, -0.98, 0.98),
+      right: clamp(right * voice.gain * fade, -0.98, 0.98),
     };
   }
   const t = voice.age / sampleRate;
@@ -258,6 +262,22 @@ function saturate(value, amount) {
   if (amount <= 0.001) return value;
   const drive = 1 + amount * 12;
   return Math.tanh(value * drive) / Math.tanh(drive);
+}
+
+function softLimitMix(left, right, processor) {
+  const peak = Math.max(Math.abs(left), Math.abs(right));
+  const attack = 0.35;
+  const release = 0.92;
+  const ceiling = 0.85;
+  const coefficient = peak > processor.mixEnvelope ? attack : release;
+  processor.mixEnvelope = peak + (processor.mixEnvelope - peak) * coefficient;
+  const gain = processor.mixEnvelope > ceiling
+    ? ceiling / Math.max(processor.mixEnvelope, 1e-6)
+    : 1;
+  return {
+    left: Math.tanh(left * gain),
+    right: Math.tanh(right * gain),
+  };
 }
 
 function positiveModulo(value, divisor) {
