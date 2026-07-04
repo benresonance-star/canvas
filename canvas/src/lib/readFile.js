@@ -34,6 +34,7 @@ export async function readFileEntry(entry, options = {}) {
   const isSmall = file.size <= STORAGE_LIMIT;
   const isImageOrPdf = type === 'image' || type === 'pdf';
   const isThreeDModel = type === '3d-model';
+  const isBimModel = type === 'bim-model';
 
   let content = null;
   let dataUrl = null;
@@ -100,6 +101,18 @@ export async function readFileEntry(entry, options = {}) {
       previewFeasible = false;
       threeDDisplayMode = 'folder_on_demand';
     }
+  } else if (isBimModel) {
+    if (file.size <= PREVIEW_MAX_BYTES_3D_MODEL) {
+      const buf = await file.arrayBuffer();
+      const blob = new Blob([buf], { type: file.type || 'application/x-step' });
+      if (cacheKey) {
+        await putPreview(cacheKey, blob);
+        previewCacheKey = cacheKey;
+      }
+      objectUrl = URL.createObjectURL(blob);
+    } else {
+      previewFeasible = false;
+    }
   } else if (isImageOrPdf) {
     if (file.size <= PREVIEW_MAX_BYTES_IMAGE_PDF) {
       const buf = await file.arrayBuffer();
@@ -129,7 +142,8 @@ export async function readFileEntry(entry, options = {}) {
       (Boolean(dataUrl) && !objectUrl) ||
       (type === 'video' && Boolean(dataUrl)) ||
       (type === 'audio' && Boolean(objectUrl)) ||
-      (type === '3d-model' && Boolean(objectUrl)));
+      (type === '3d-model' && Boolean(objectUrl)) ||
+      (type === 'bim-model' && Boolean(objectUrl)));
 
   return {
     filename: name,

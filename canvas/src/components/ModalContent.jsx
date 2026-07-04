@@ -16,10 +16,17 @@ import { LiveArtifactView } from '../features/live/components/LiveArtifactView.j
 import { BeatAgentFullscreen } from '../features/music/agents/beat/components/BeatAgentFullscreen.jsx';
 import { SonicStudioEditor } from '../features/sonicStudio/components/SonicStudioEditor.jsx';
 import { ThreeDModelSummary } from '../features/threeDArtifact/components/ThreeDModelSummary.jsx';
+import { BimModelSummary } from '../features/bim/components/BimModelSummary.jsx';
 
 const ThreeDFullViewerLazy = lazy(() =>
   import('../features/threeDArtifact/components/ThreeDArtifactView.jsx').then((mod) => ({
     default: mod.ThreeDFullViewer,
+  })),
+);
+
+const BimWorkspaceLazy = lazy(() =>
+  import('../features/bim/components/BimWorkspace.jsx').then((mod) => ({
+    default: mod.BimWorkspace,
   })),
 );
 
@@ -116,6 +123,22 @@ export function ModalContent({
             version={version}
             folderHandle={folderHandle}
             folderLinked={Boolean(folderHandle)}
+            projectId={projectId ?? card.projectId}
+            onUpdateCard={onUpdateCard}
+          />
+        </Suspense>
+      </div>
+    );
+  }
+
+  if (cardType === 'bim-model') {
+    return (
+      <div className="h-full w-full min-h-0">
+        <Suspense fallback={<BimModelSummary card={card} version={version} />}>
+          <BimWorkspaceLazy
+            card={card}
+            version={version}
+            folderHandle={folderHandle}
             projectId={projectId ?? card.projectId}
             onUpdateCard={onUpdateCard}
           />

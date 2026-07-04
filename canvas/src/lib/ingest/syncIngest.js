@@ -51,6 +51,27 @@ function threeDMetadata(version) {
   };
 }
 
+function bimMetadata(version) {
+  if (version.cardType !== 'bim-model') return {};
+  return {
+    canvas_kind: 'bim-model',
+    file_kind: 'bim-model',
+    bim: {
+      sourceFile: {
+        filename: version.filename,
+        relativePath: version.relativePath ?? null,
+        format: 'ifc',
+        sizeBytes: version.size ?? 0,
+        uploadedAt: new Date(version.lastModified || Date.now()).toISOString(),
+        contentHash: version.content_hash,
+      },
+      status: 'unprepared',
+      previewFeasible: version.previewFeasible !== false,
+      workspaceState: version.bim?.workspaceState ?? null,
+    },
+  };
+}
+
 /**
  * Ingest synced files as artifacts; return map filename -> { artifactRef, content_hash }
  */
@@ -94,6 +115,7 @@ export async function ingestFoundFiles(projectId, projectName, flatVersions, pre
         ...(v.cardType === 'spreadsheet' ? { file_kind: 'spreadsheet' } : {}),
         ...codeMetadata(v),
         ...threeDMetadata(v),
+        ...bimMetadata(v),
         ...(v.cardType === 'user_note' ? { canvas_kind: 'user_note' } : {}),
         ...(v.cardType === 'user_task' ? { canvas_kind: 'user_task' } : {}),
         ...(v.cardType === 'agent_chat'

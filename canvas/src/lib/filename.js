@@ -90,6 +90,7 @@ export function fileTypeFromExt(ext) {
   if (['mp3', 'm4a', 'aac', 'wav', 'ogg', 'flac'].includes(normalizedExt)) return 'audio';
   if (['xlsx', 'xls', 'csv'].includes(normalizedExt)) return 'spreadsheet';
   if (['glb', 'gltf'].includes(normalizedExt)) return '3d-model';
+  if (normalizedExt === 'ifc') return 'bim-model';
   return 'file';
 }
 
@@ -401,6 +402,7 @@ export function cardTypeLabel(type) {
   if (t === 'audio') return 'AUDIO';
   if (t === 'spreadsheet') return 'EXCEL';
   if (t === '3d-model') return '3D MODEL';
+  if (t === 'bim-model') return 'BIM MODEL';
   if (t === 'bookmark') return 'LINK';
   if (t === 'flow') return 'EXPLORATION';
   if (t === 'studio') return 'STUDIO';

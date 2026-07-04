@@ -92,6 +92,18 @@ describe('fileTypeFromExt 3D models', () => {
   });
 });
 
+describe('fileTypeFromExt BIM models', () => {
+  it('maps IFC files to bim-model cards without changing GLB/GLTF', () => {
+    expect(fileTypeFromExt('ifc')).toBe('bim-model');
+    expect(fileTypeFromExt('glb')).toBe('3d-model');
+    expect(fileTypeFromExt('gltf')).toBe('3d-model');
+  });
+
+  it('labels BIM model cards', () => {
+    expect(cardTypeLabel('bim-model')).toBe('BIM MODEL');
+  });
+});
+
 describe('fileTypeFromExt code', () => {
   it('maps TypeScript, JavaScript, JSON, and Python extensions to code', () => {
     for (const ext of ['ts', 'tsx', 'js', 'jsx', 'json', 'py']) {

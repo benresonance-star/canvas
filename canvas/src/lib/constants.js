@@ -73,6 +73,7 @@ export const CARD_TYPE_DEFAULT_SIZE = {
   audio: { w: 320, h: 140 },
   spreadsheet: { w: 320, h: 240 },
   '3d-model': { w: 340, h: 240 },
+  'bim-model': { w: 380, h: 260 },
   bookmark: { w: 280, h: 200 },
   agent_chat: { w: 360, h: 280 },
   flow: { w: 360, h: 240 },

@@ -753,6 +753,7 @@ export const STAGED_TYPE_GROUP_ORDER = [
   'video',
   'audio',
   '3d-model',
+  'bim-model',
   'spreadsheet',
   'bookmark',
   'user_note',

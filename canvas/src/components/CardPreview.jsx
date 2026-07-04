@@ -28,6 +28,7 @@ import { StudioPreview } from '../features/studio/components/StudioPreview.jsx';
 import { Bot } from 'lucide-react';
 import { ThreeDModelSummary } from '../features/threeDArtifact/components/ThreeDModelSummary.jsx';
 import { ThreeDSnapshotPreview } from '../features/threeDArtifact/components/ThreeDSnapshotPreview.jsx';
+import { BimModelSummary } from '../features/bim/components/BimModelSummary.jsx';
 import { canAutoLoadThreeDSource, assessThreeDPreviewFeasibility } from '../features/threeDArtifact/utils/previewFeasibility.js';
 import { threeDSnapshotIsCurrent } from '../features/threeDArtifact/utils/snapshotCache.js';
 import { resolveEnvironmentPreset } from '../features/threeDArtifact/utils/environmentConfig.js';
@@ -481,6 +482,16 @@ export function CardPreview({
           />
         </Suspense>
       </div>
+    );
+  }
+
+  if (cardType === 'bim-model') {
+    return (
+      <BimModelSummary
+        card={card}
+        version={pinned}
+        compact={compact}
+      />
     );
   }
 

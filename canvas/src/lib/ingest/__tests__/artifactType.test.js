@@ -18,6 +18,10 @@ describe('artifactTypeFromCardType', () => {
     expect(artifactTypeFromCardType('3d-model', 'glb')).toBe('3d_model');
   });
 
+  it('maps BIM model cards to bim_model artifacts', () => {
+    expect(artifactTypeFromCardType('bim-model', 'ifc')).toBe('bim_model');
+  });
+
   it('maps generic file by extension', () => {
     expect(artifactTypeFromCardType('file', 'mp3')).toBe('audio');
     expect(artifactTypeFromCardType('file', 'mp4')).toBe('video');
@@ -39,5 +43,6 @@ describe('artifactTypeFromFile', () => {
     expect(artifactTypeFromFile('settings.json')).toBe('doc');
     expect(artifactTypeFromFile('script.py')).toBe('doc');
     expect(artifactTypeFromFile('chair.glb')).toBe('3d_model');
+    expect(artifactTypeFromFile('clinic.ifc')).toBe('bim_model');
   });
 });
