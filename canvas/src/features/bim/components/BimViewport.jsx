@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Axis3D, Box, Camera, Eye, EyeOff, Grid3x3, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, SunMedium } from 'lucide-react';
+import { Axis3D, Box, Camera, Eye, EyeOff, Grid3x3, Layers, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, SunMedium } from 'lucide-react';
 import { MOUSE } from 'three';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -42,6 +42,19 @@ import {
   updateWireframeEdgeResolution,
   updateWireframeEdgeVisuals,
 } from '../bim-core/bimWireframeOverlay.js';
+import {
+  applyClayBaseMaterials,
+  CLAY_GHOST_MATERIAL,
+  CLAY_SELECTED_MATERIAL,
+  createClayComposer,
+  disposeClayComposer,
+  renderClayFrame,
+  resolveClayWireframeStyle,
+  resizeClayComposer,
+  setupClayLighting,
+  teardownClayLighting,
+  updateClayLightingIntensity,
+} from '../bim-core/bimClayRender.js';
 import { createPickTimer, isBimPickDebugEnabled, logBimPickMappingFailure } from '../bim-core/bimPickDebug.js';
 import {
   chunkLocalIds,
@@ -63,7 +76,93 @@ import {
   WIREFRAME_LINE_WEIGHT_MIN,
   WIREFRAME_OPACITY_MAX,
   WIREFRAME_OPACITY_MIN,
+  CLAY_AO_BIAS_MIN,
+  CLAY_AO_BIAS_MAX,
+  CLAY_AO_DISTANCE_MIN,
+  CLAY_AO_DISTANCE_MAX,
+  CLAY_AO_INTENSITY_MIN,
+  CLAY_AO_INTENSITY_MAX,
+  CLAY_AO_RADIUS_MIN,
+  CLAY_AO_RADIUS_MAX,
+  CLAY_GLASS_OPACITY_MIN,
+  CLAY_GLASS_OPACITY_MAX,
+  CLAY_LIGHT_INTENSITY_MIN,
+  CLAY_LIGHT_INTENSITY_MAX,
 } from '../bim-core/types.js';
+
+function formatClaySliderValue(kind, value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '—';
+  switch (kind) {
+    case 'aoIntensity':
+      return numeric.toFixed(1);
+    case 'aoRadius':
+      return numeric.toFixed(2);
+    case 'aoBias':
+      return numeric >= 0.01 ? numeric.toFixed(2) : numeric.toFixed(5);
+    case 'aoDistance':
+      return numeric.toFixed(3);
+    case 'lightIntensity':
+      return numeric.toFixed(2);
+    case 'glassOpacity':
+      return numeric.toFixed(2);
+    default:
+      return String(numeric);
+  }
+}
+
+function claySliderAtLimit(value, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  if (numeric <= min) return 'min';
+  if (numeric >= max) return 'max';
+  return null;
+}
+
+function ClaySliderControl({
+  label,
+  value,
+  min,
+  max,
+  step,
+  title,
+  ariaLabel,
+  sliderClassName = 'w-16',
+  valueClassName = 'min-w-[2.25rem]',
+  formatKind,
+  onChange,
+}) {
+  const formatted = formatClaySliderValue(formatKind, value);
+  const atLimit = claySliderAtLimit(value, min, max);
+  const limitTitle = atLimit === 'max'
+    ? `At slider maximum (${formatted}) — range may need extending`
+    : atLimit === 'min'
+      ? `At slider minimum (${formatted})`
+      : `${formatted} (range ${formatClaySliderValue(formatKind, min)}–${formatClaySliderValue(formatKind, max)})`;
+
+  return (
+    <label className="inline-flex items-center gap-1 text-[10px] text-secondary" title={title}>
+      <span className="text-muted uppercase tracking-wider">{label}</span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={onChange}
+        className={`${sliderClassName} accent-accent`}
+        aria-label={ariaLabel}
+        aria-valuetext={formatted}
+      />
+      <span
+        className={`${valueClassName} text-right font-mono tabular-nums text-[9px] leading-none ${atLimit ? 'text-accent' : 'text-muted'}`}
+        title={limitTitle}
+      >
+        {formatted}
+      </span>
+    </label>
+  );
+}
 
 function syncModelBounds(modelRoot, boundsRef) {
   if (!modelRoot) return;
@@ -199,6 +298,15 @@ export function BimViewport({
   wireframeLineWeight = 2,
   wireframeOpacity = 0.88,
   wireframeColor = '#0f172a',
+  renderStyle = 'standard',
+  clayAoIntensity = 2,
+  clayAoRadius = 2,
+  clayAoBias = 0.01,
+  clayAoDistance = 0.1,
+  clayLightIntensity = 0.55,
+  claySurfaceColor = '#f8f8f8',
+  clayGlassOpacity = 0.18,
+  clayBackgroundColor = '#ffffff',
   showEnvironment = false,
   lightingMode = 'studio',
   environmentPreset = 'studio',
@@ -209,6 +317,8 @@ export function BimViewport({
   onMeasurementsVisibleChange = () => {},
   onWireframeModeChange = () => {},
   onWireframeStyleChange = () => {},
+  onRenderStyleChange = () => {},
+  onClayStyleChange = () => {},
   onLightingChange = () => {},
 }) {
   const total = preparedModel?.elements?.length ?? 0;
@@ -265,6 +375,16 @@ export function BimViewport({
     opacity: wireframeOpacity,
     color: wireframeColor,
   });
+  const renderStyleRef = useRef(renderStyle);
+  const clayStyleRef = useRef({
+    aoIntensity: clayAoIntensity,
+    aoRadius: clayAoRadius,
+    aoBias: clayAoBias,
+    aoDistance: clayAoDistance,
+    backgroundColor: clayBackgroundColor,
+  });
+  const clayComposerRef = useRef(null);
+  const clayLightingStateRef = useRef(null);
   const wireframeEdgesRef = useRef(null);
   const wireframeBuildSeqRef = useRef(0);
   const wireframeBuildInFlightRef = useRef(false);
@@ -526,6 +646,20 @@ export function BimViewport({
       }
     }
   }, []);
+
+  useEffect(() => {
+    renderStyleRef.current = renderStyle;
+  }, [renderStyle]);
+
+  useEffect(() => {
+    clayStyleRef.current = {
+      aoIntensity: clayAoIntensity,
+      aoRadius: clayAoRadius,
+      aoBias: clayAoBias,
+      aoDistance: clayAoDistance,
+      backgroundColor: clayBackgroundColor,
+    };
+  }, [clayAoBias, clayAoDistance, clayAoIntensity, clayAoRadius, clayBackgroundColor]);
 
   useEffect(() => {
     wireframeModeRef.current = wireframeMode;
@@ -827,7 +961,36 @@ export function BimViewport({
         ensureWireframeEdgesAttached(overlayScene, modelRef.current?.object ?? null, wireframeEdges);
       }
 
-      if (wireframeModeRef.current && wireframeEdges?.parent && overlayScene) {
+      if (renderStyleRef.current === 'clay' && clayComposerRef.current) {
+        const clayStyle = clayStyleRef.current;
+        const wfStyle = wireframeStyleRef.current;
+        const wfOpts = resolveClayWireframeStyle({
+          lineWeight: wfStyle.lineWeight,
+          opacity: wfStyle.opacity,
+          color: wfStyle.color,
+        });
+        renderClayFrame({
+          renderer,
+          clayComposerState: clayComposerRef.current,
+          scene,
+          overlayScene,
+          camera: activeCamera,
+          wireframeEdges,
+          wireframeEnabled: wireframeModeRef.current,
+          wireframeOptions: {
+            ...wfOpts,
+            cameraDistance,
+            modelRadius: bounds?.radius,
+          },
+          backgroundColor: clayStyle.backgroundColor,
+          aoIntensity: clayStyle.aoIntensity,
+          aoRadius: clayStyle.aoRadius,
+          aoBias: clayStyle.aoBias,
+          aoDistance: clayStyle.aoDistance,
+          cameraDistance,
+          modelRadius: bounds?.radius,
+        });
+      } else if (wireframeModeRef.current && wireframeEdges?.parent && overlayScene) {
         const style = wireframeStyleRef.current;
         renderWireframeOverlay(renderer, scene, overlayScene, activeCamera, wireframeEdges, {
           cameraDistance,
@@ -863,6 +1026,10 @@ export function BimViewport({
       wireframeBuildSeqRef.current += 1;
       disposeWireframeEdges(wireframeEdgesRef.current);
       wireframeEdgesRef.current = null;
+      disposeClayComposer(clayComposerRef.current);
+      clayComposerRef.current = null;
+      teardownClayLighting(sceneRef.current, clayLightingStateRef.current);
+      clayLightingStateRef.current = null;
       const fragmentsToDispose = fragmentsRef.current;
       if (animationRef.current) window.cancelAnimationFrame(animationRef.current);
       resizeObserver.disconnect();
@@ -894,6 +1061,8 @@ export function BimViewport({
     if (!scene || !renderer || loadState !== 'ready') return undefined;
 
     const seq = ++lightingApplySeqRef.current;
+
+    if (renderStyleRef.current === 'clay') return undefined;
 
     async function applyLighting() {
       disposeEnvironmentRef.current();
@@ -937,7 +1106,53 @@ export function BimViewport({
     return () => {
       lightingApplySeqRef.current += 1;
     };
-  }, [loadState, showEnvironment, lightingMode, environmentPreset]);
+  }, [loadState, showEnvironment, lightingMode, environmentPreset, renderStyle]);
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (!scene || !renderer || !camera || loadState !== 'ready') return undefined;
+
+    if (renderStyle !== 'clay') {
+      teardownClayLighting(scene, clayLightingStateRef.current);
+      clayLightingStateRef.current = null;
+      disposeClayComposer(clayComposerRef.current);
+      clayComposerRef.current = null;
+      return undefined;
+    }
+
+    disposeEnvironmentRef.current();
+    disposeEnvironmentRef.current = () => {};
+    if (directLightsRef.current) {
+      removeLightGroup(scene, directLightsRef.current);
+      directLightsRef.current = null;
+    }
+    setLightGroupVisible(legacyLightsRef.current, false);
+    setHdriToneMapping(renderer, false);
+    scene.environment = null;
+
+    teardownClayLighting(scene, clayLightingStateRef.current);
+    clayLightingStateRef.current = setupClayLighting(scene, {
+      backgroundColor: clayBackgroundColor,
+      lightIntensity: clayLightIntensity,
+    });
+    const { width, height } = getRendererDrawingSize(renderer);
+    disposeClayComposer(clayComposerRef.current);
+    clayComposerRef.current = createClayComposer(renderer, scene, camera, width, height);
+
+    return () => {
+      teardownClayLighting(scene, clayLightingStateRef.current);
+      clayLightingStateRef.current = null;
+      disposeClayComposer(clayComposerRef.current);
+      clayComposerRef.current = null;
+    };
+  }, [clayBackgroundColor, clayLightIntensity, loadState, renderStyle]);
+
+  useEffect(() => {
+    if (renderStyle !== 'clay') return;
+    updateClayLightingIntensity(clayLightingStateRef.current, clayLightIntensity);
+  }, [clayLightIntensity, renderStyle]);
 
   useEffect(() => {
     const controls = controlsRef.current;
@@ -966,22 +1181,35 @@ export function BimViewport({
     const cache = idCacheRef.current;
 
     async function applySelection() {
-      const needsVisibilityReset = displayMode === 'isolate' || displayMode === 'ghostOthers' || displayMode === 'colorBy';
+      const isClay = renderStyle === 'clay';
+      const effectiveDisplayMode = isClay && displayMode === 'colorBy' ? 'highlight' : displayMode;
+      const ghostMaterial = isClay ? CLAY_GHOST_MATERIAL : GHOST_MATERIAL;
+      const selectedMaterial = isClay ? CLAY_SELECTED_MATERIAL : SELECTED_MATERIAL;
+      const needsVisibilityReset = effectiveDisplayMode === 'isolate' || effectiveDisplayMode === 'ghostOthers' || effectiveDisplayMode === 'colorBy';
       await model.resetHighlight();
       if (needsVisibilityReset) await model.resetVisible();
       timer.mark('reset');
       if (!shouldApplySelectionRun(runSeq, applySelectionSeqRef.current)) return;
+
+      if (isClay) {
+        const allLocalIds = localIdsRef.current.length > 0 ? localIdsRef.current : await model.getLocalIds();
+        await applyClayBaseMaterials(model, preparedModel, cache, allLocalIds, {
+          surfaceColor: claySurfaceColor,
+          glassOpacity: clayGlassOpacity,
+        });
+        if (!shouldApplySelectionRun(runSeq, applySelectionSeqRef.current)) return;
+      }
 
       const resultElements = (preparedModel?.elements ?? []).filter((element) => highlightElementIds.includes(element.id));
       const selectedOnly = selectedElement ? [selectedElement] : [];
       const targetElements = resultElements.length > 0 ? resultElements : selectedOnly;
 
       if (targetElements.length === 0) {
-        if (displayMode === 'ghostOthers') {
+        if (effectiveDisplayMode === 'ghostOthers') {
           const allLocalIds = localIdsRef.current.length > 0 ? localIdsRef.current : await model.getLocalIds();
           for (const chunk of chunkLocalIds(allLocalIds)) {
             if (!shouldApplySelectionRun(runSeq, applySelectionSeqRef.current)) return;
-            await model.highlight(chunk, GHOST_MATERIAL);
+            await model.highlight(chunk, ghostMaterial);
           }
         }
         timer.finish({ displayMode, targetCount: 0, localIdCount: 0 });
@@ -1004,7 +1232,7 @@ export function BimViewport({
         ? idMap.get(selectedElement.ifcGlobalId)
         : localIds[0];
 
-      if (displayMode === 'colorBy') {
+      if (effectiveDisplayMode === 'colorBy') {
         const groups = new Map();
         targetElements.forEach((element) => {
           const value = String(propertyValueForElement(preparedModel, element, colorByProperty));
@@ -1025,23 +1253,23 @@ export function BimViewport({
           }
           groupIndex += 1;
         }
-      } else if (displayMode === 'isolate') {
+      } else if (effectiveDisplayMode === 'isolate') {
         await model.setVisible(undefined, false);
         await model.setVisible(localIds, true);
-      } else if (displayMode === 'ghostOthers') {
+      } else if (effectiveDisplayMode === 'ghostOthers') {
         const allLocalIds = localIdsRef.current.length > 0 ? localIdsRef.current : await model.getLocalIds();
         const selectedSet = new Set(localIds);
         const otherLocalIds = allLocalIds.filter((candidate) => !selectedSet.has(candidate));
         for (const chunk of chunkLocalIds(otherLocalIds)) {
           if (!shouldApplySelectionRun(runSeq, applySelectionSeqRef.current)) return;
-          await model.highlight(chunk, GHOST_MATERIAL);
+          await model.highlight(chunk, ghostMaterial);
         }
       }
 
       if (!shouldApplySelectionRun(runSeq, applySelectionSeqRef.current)) return;
-      if (displayMode !== 'colorBy') await model.highlight(localIds, SELECTED_MATERIAL);
+      if (effectiveDisplayMode !== 'colorBy') await model.highlight(localIds, selectedMaterial);
       if (selectedElement && isValidFragmentsLocalId(primaryLocalId)) {
-        await model.highlight([primaryLocalId], SELECTED_MATERIAL);
+        await model.highlight([primaryLocalId], selectedMaterial);
       }
 
       timer.mark('highlight');
@@ -1053,7 +1281,17 @@ export function BimViewport({
         setRenderError(error?.message || 'Could not apply BIM selection.');
       }
     });
-  }, [colorByProperty, displayMode, highlightElementIds, loadState, preparedModel, selectedElement]);
+  }, [
+    clayGlassOpacity,
+    claySurfaceColor,
+    colorByProperty,
+    displayMode,
+    highlightElementIds,
+    loadState,
+    preparedModel,
+    renderStyle,
+    selectedElement,
+  ]);
 
   const handleCanvasPointerDown = useCallback((event) => {
     if (event.button !== 0) return;
@@ -1251,6 +1489,10 @@ export function BimViewport({
     onWireframeModeChange(!wireframeMode);
   }, [onWireframeModeChange, wireframeMode]);
 
+  const handleToggleClay = useCallback(() => {
+    onRenderStyleChange(renderStyle === 'clay' ? 'standard' : 'clay');
+  }, [onRenderStyleChange, renderStyle]);
+
   const handleRemoveMeasurement = useCallback((measurementId) => {
     onMeasurementsChangeRef.current(
       measurementsRef.current.filter((entry) => entry.id !== measurementId),
@@ -1329,12 +1571,97 @@ export function BimViewport({
           </button>
           <button
             type="button"
-            title={bimLightingToolbarLabel({ showEnvironment, environmentPreset })}
+            title={renderStyle === 'clay' ? 'Lighting disabled in clay mode' : bimLightingToolbarLabel({ showEnvironment, environmentPreset })}
             onClick={handleToggleLighting}
-            className={`rounded border border-border p-1 ${showEnvironment ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+            disabled={renderStyle === 'clay'}
+            className={`rounded border border-border p-1 ${showEnvironment && renderStyle !== 'clay' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'} ${renderStyle === 'clay' ? 'opacity-40 cursor-not-allowed' : ''}`}
           >
             <SunMedium size={14} strokeWidth={1.7} />
           </button>
+          <button
+            type="button"
+            title="Clay render (Arctic)"
+            onClick={handleToggleClay}
+            className={`rounded border border-border p-1 ${renderStyle === 'clay' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+          >
+            <Layers size={14} strokeWidth={1.7} />
+          </button>
+          {renderStyle === 'clay' ? (
+            <div className="flex max-w-[42rem] flex-wrap items-center gap-x-1.5 gap-y-1 border-l border-border pl-1.5 ml-0.5" aria-label="Clay style controls">
+              <ClaySliderControl
+                label="AO"
+                value={clayAoIntensity}
+                min={CLAY_AO_INTENSITY_MIN}
+                max={CLAY_AO_INTENSITY_MAX}
+                step={0.5}
+                formatKind="aoIntensity"
+                sliderClassName="w-20"
+                title="AO strength — darker crevice shading"
+                ariaLabel="Clay AO intensity"
+                onChange={(event) => onClayStyleChange({ clayAoIntensity: Number(event.target.value) })}
+              />
+              <ClaySliderControl
+                label="R"
+                value={clayAoRadius}
+                min={CLAY_AO_RADIUS_MIN}
+                max={CLAY_AO_RADIUS_MAX}
+                step={0.05}
+                formatKind="aoRadius"
+                sliderClassName="w-20"
+                title="AO sample radius — wider soft shadows"
+                ariaLabel="Clay AO radius"
+                onChange={(event) => onClayStyleChange({ clayAoRadius: Number(event.target.value) })}
+              />
+              <ClaySliderControl
+                label="B"
+                value={clayAoBias}
+                min={CLAY_AO_BIAS_MIN}
+                max={CLAY_AO_BIAS_MAX}
+                step={0.01}
+                formatKind="aoBias"
+                valueClassName="min-w-[2.5rem]"
+                title="AO bias — tighter crevice detection"
+                ariaLabel="Clay AO bias"
+                onChange={(event) => onClayStyleChange({ clayAoBias: Number(event.target.value) })}
+              />
+              <ClaySliderControl
+                label="D"
+                value={clayAoDistance}
+                min={CLAY_AO_DISTANCE_MIN}
+                max={CLAY_AO_DISTANCE_MAX}
+                step={0.005}
+                formatKind="aoDistance"
+                title="AO distance — depth span of contact shadows"
+                ariaLabel="Clay AO distance"
+                onChange={(event) => onClayStyleChange({ clayAoDistance: Number(event.target.value) })}
+              />
+              <ClaySliderControl
+                label="Lit"
+                value={clayLightIntensity}
+                min={CLAY_LIGHT_INTENSITY_MIN}
+                max={CLAY_LIGHT_INTENSITY_MAX}
+                step={0.1}
+                formatKind="lightIntensity"
+                title="Skylight fill — lower lets AO read stronger"
+                ariaLabel="Clay light intensity"
+                onChange={(event) => onClayStyleChange({ clayLightIntensity: Number(event.target.value) })}
+              />
+              <ClaySliderControl
+                label="Gls"
+                value={clayGlassOpacity}
+                min={CLAY_GLASS_OPACITY_MIN}
+                max={CLAY_GLASS_OPACITY_MAX}
+                step={0.01}
+                formatKind="glassOpacity"
+                sliderClassName="w-14"
+                title="Glazing opacity"
+                ariaLabel="Clay glass opacity"
+                onChange={(event) => onClayStyleChange({ clayGlassOpacity: Number(event.target.value) })}
+              />
+              <input type="color" value={claySurfaceColor} onChange={(event) => onClayStyleChange({ claySurfaceColor: event.target.value })} title="Clay surface colour" aria-label="Clay surface colour" className="h-6 w-6 cursor-pointer rounded border border-border bg-surface p-0.5" />
+              <input type="color" value={clayBackgroundColor} onChange={(event) => onClayStyleChange({ clayBackgroundColor: event.target.value })} title="Clay background colour" aria-label="Clay background colour" className="h-6 w-6 cursor-pointer rounded border border-border bg-surface p-0.5" />
+            </div>
+          ) : null}
           <button
             type="button"
             title="Wireframe overlay (visible edges)"

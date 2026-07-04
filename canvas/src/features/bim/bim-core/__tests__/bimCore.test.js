@@ -125,6 +125,15 @@ describe('BIM core fingerprinting and cache', () => {
       wireframeLineWeight: 2,
       wireframeOpacity: 0.88,
       wireframeColor: '#0f172a',
+      renderStyle: 'standard',
+      clayAoIntensity: 2,
+      clayAoRadius: 2,
+      clayAoBias: 0.01,
+      clayAoDistance: 0.1,
+      clayLightIntensity: 0.55,
+      claySurfaceColor: '#f8f8f8',
+      clayGlassOpacity: 0.18,
+      clayBackgroundColor: '#ffffff',
     });
 
     const state = normalizeBimWorkspaceState({
@@ -137,6 +146,14 @@ describe('BIM core fingerprinting and cache', () => {
     expect(state.environmentPreset).toBe('city');
     expect(state.lightingMode).toBe('bright');
     expect(state.wireframeMode).toBe(true);
+  });
+
+  it('normalizes clay style workspace fields', () => {
+    const state = normalizeBimWorkspaceState({ renderStyle: 'clay', clayAoIntensity: 99, clayAoRadius: 99 });
+    expect(state.renderStyle).toBe('clay');
+    expect(state.clayAoIntensity).toBe(20);
+    expect(state.clayAoRadius).toBe(10);
+    expect(state.clayBackgroundColor).toBe('#ffffff');
   });
 
   it('normalizes wireframe style workspace fields', () => {

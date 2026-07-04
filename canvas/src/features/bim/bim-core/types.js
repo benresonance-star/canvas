@@ -21,6 +21,80 @@ export const WIREFRAME_OPACITY_MAX = 1;
 export const WIREFRAME_OPACITY_DEFAULT = 0.88;
 export const WIREFRAME_COLOR_DEFAULT = '#0f172a';
 
+export const BIM_RENDER_STYLES = ['standard', 'clay'];
+export const CLAY_BACKGROUND_DEFAULT = '#ffffff';
+export const CLAY_SURFACE_COLOR_DEFAULT = '#f8f8f8';
+export const CLAY_AO_INTENSITY_MIN = 0;
+export const CLAY_AO_INTENSITY_MAX = 20;
+export const CLAY_AO_INTENSITY_DEFAULT = 2;
+export const CLAY_AO_RADIUS_MIN = 0.05;
+export const CLAY_AO_RADIUS_MAX = 10;
+export const CLAY_AO_RADIUS_DEFAULT = 2;
+export const CLAY_AO_BIAS_MIN = 0.01;
+export const CLAY_AO_BIAS_MAX = 1;
+export const CLAY_AO_BIAS_DEFAULT = 0.01;
+export const CLAY_AO_DISTANCE_MIN = 0.005;
+export const CLAY_AO_DISTANCE_MAX = 0.3;
+export const CLAY_AO_DISTANCE_DEFAULT = 0.1;
+export const CLAY_LIGHT_INTENSITY_MIN = 0;
+export const CLAY_LIGHT_INTENSITY_MAX = 10;
+export const CLAY_LIGHT_INTENSITY_DEFAULT = 0.55;
+export const CLAY_GLASS_OPACITY_MIN = 0.05;
+export const CLAY_GLASS_OPACITY_MAX = 0.5;
+export const CLAY_GLASS_OPACITY_DEFAULT = 0.18;
+
+function clampClayValue(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, numeric));
+}
+
+export function normalizeClayStyle(state = {}) {
+  const backgroundColor = String(state?.clayBackgroundColor ?? CLAY_BACKGROUND_DEFAULT);
+  const surfaceColor = String(state?.claySurfaceColor ?? CLAY_SURFACE_COLOR_DEFAULT);
+  return {
+    renderStyle: BIM_RENDER_STYLES.includes(state?.renderStyle) ? state.renderStyle : 'standard',
+    clayAoIntensity: clampClayValue(
+      state?.clayAoIntensity,
+      CLAY_AO_INTENSITY_MIN,
+      CLAY_AO_INTENSITY_MAX,
+      CLAY_AO_INTENSITY_DEFAULT,
+    ),
+    clayAoRadius: clampClayValue(
+      state?.clayAoRadius,
+      CLAY_AO_RADIUS_MIN,
+      CLAY_AO_RADIUS_MAX,
+      CLAY_AO_RADIUS_DEFAULT,
+    ),
+    clayAoBias: clampClayValue(
+      state?.clayAoBias,
+      CLAY_AO_BIAS_MIN,
+      CLAY_AO_BIAS_MAX,
+      CLAY_AO_BIAS_DEFAULT,
+    ),
+    clayAoDistance: clampClayValue(
+      state?.clayAoDistance,
+      CLAY_AO_DISTANCE_MIN,
+      CLAY_AO_DISTANCE_MAX,
+      CLAY_AO_DISTANCE_DEFAULT,
+    ),
+    clayLightIntensity: clampClayValue(
+      state?.clayLightIntensity,
+      CLAY_LIGHT_INTENSITY_MIN,
+      CLAY_LIGHT_INTENSITY_MAX,
+      CLAY_LIGHT_INTENSITY_DEFAULT,
+    ),
+    clayGlassOpacity: clampClayValue(
+      state?.clayGlassOpacity,
+      CLAY_GLASS_OPACITY_MIN,
+      CLAY_GLASS_OPACITY_MAX,
+      CLAY_GLASS_OPACITY_DEFAULT,
+    ),
+    clayBackgroundColor: /^#[0-9a-fA-F]{6}$/.test(backgroundColor) ? backgroundColor : CLAY_BACKGROUND_DEFAULT,
+    claySurfaceColor: /^#[0-9a-fA-F]{6}$/.test(surfaceColor) ? surfaceColor : CLAY_SURFACE_COLOR_DEFAULT,
+  };
+}
+
 function clampWireframeValue(value, min, max, fallback) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
@@ -135,6 +209,7 @@ export function normalizeBimWorkspaceState(state = {}) {
     measurementsVisible: state?.measurementsVisible !== false,
     wireframeMode: state?.wireframeMode === true,
     ...normalizeWireframeStyle(state),
+    ...normalizeClayStyle(state),
     ...normalizeBimLightingState(state),
     savedQueries,
     lastOpenedAt: state?.lastOpenedAt ?? null,

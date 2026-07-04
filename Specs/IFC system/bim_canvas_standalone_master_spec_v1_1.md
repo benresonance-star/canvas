@@ -1223,6 +1223,7 @@ canvas/src/features/bim/
     types.js
     bql.js                   # validateBqlQuery + executeBqlQuery
     bimWireframeOverlay.js   # feature-edge overlay (LineSegments2 + two-pass render)
+    bimClayRender.js         # Arctic/clay presentation (material override + SSAO + wireframe pass)
     bimCamera.js             # perspective / orthographic camera helpers
     bimLighting.js           # HDRI environment + legacy/direct lights
     bimMeasurementController.js
@@ -1251,15 +1252,31 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 - Reopen of unchanged model reuses cached prepared artifacts when fingerprint matches; user can force rebuild via `BimQueryPanel`.
 - Live extraction feed during first-open preparation.
 - 3D viewport: orbit/pan/zoom, fit, raycast pick, highlight / isolate / ghost others.
-- Viewport toolbar: perspective ↔ orthographic toggle, FOV input, HDRI lighting cycle, measurement tools (vertex/edge snap, segment/polyline), wireframe overlay toggle.
-- **Wireframe overlay** (2026-07-04): optional camera-visible feature edges composited over lit/ghost/highlight views — independent of display mode. Built from Fragments `getItemsGeometry()` into `LineSegments2` + `LineMaterial` (screen-space px width). Two-pass render: main scene first, then overlay scene with `autoClear: false`. When wireframe is on, toolbar exposes **line weight** (0.5–6 px), **transparency** (5–100%), and **colour** controls; values persist in workspace state (`wireframeMode`, `wireframeLineWeight`, `wireframeOpacity`, `wireframeColor`). Live style updates apply without edge rebuild.
+- Viewport toolbar: perspective ↔ orthographic toggle, FOV input, HDRI lighting cycle, measurement tools (vertex/edge snap, segment/polyline), wireframe overlay toggle, **clay render (Arctic)** toggle.
+- **Wireframe overlay** (2026-07-04): optional camera-visible feature edges composited over lit/ghost/highlight views — independent of display mode. Built from Fragments `getItemsGeometry()` into `LineSegments2` + `LineMaterial` (screen-space px width). Two-pass render: main scene first, then overlay scene with `autoClear: false`. When wireframe is on, toolbar exposes **line weight** (0.5–6 px), **transparency** (5–100%), and **colour** controls; values persist in workspace state (`wireframeMode`, `wireframeLineWeight`, `wireframeOpacity`, `wireframeColor`). Live style updates apply without edge rebuild. Composes with clay/Arctic mode (see below).
+- **Clay render / Arctic presentation** (2026-07-05): optional `renderStyle: 'clay'` orthogonal to `displayMode` and `wireframeMode`. Rhino-style white-model presentation for design review:
+  - **Stage 1 — material override:** all Fragments geometry highlighted with uniform clay surface colour; glazing IFC classes (`IfcWindow`, `IfcPlate`, `IfcCurtainWall`, `IfcDoor`, …) get semi-transparent glass override.
+  - **Stage 2–3 — SSAO post-process:** `EffectComposer` → `RenderPass` → `SSAOPass` (`OUTPUT.Default`) → `OutputPass`. Camera `near`/`far` tightened to model bounds each frame (required because default BIM `far: 100000` collapses SSAO linear depth).
+  - **Stage 4 — optional wireframe:** when wireframe is also on, SSAO colour pass renders first, then a geometry depth prepass repopulates the framebuffer depth buffer, then `renderWireframeOverlayPass()` draws hidden-line edges (`depthTest: true`) using the user's wireframe weight/opacity/colour.
+  - Clay mode disables HDRI/sun lighting; uses low hemisphere + directional skylight fill instead.
+  - Toolbar controls when clay is active (live numeric readouts beside sliders; accent highlight when pinned at min/max):
+    | Control | Field | Range | Default |
+    |---|---|---|---|
+    | AO | `clayAoIntensity` | 0–20 | 2 |
+    | R | `clayAoRadius` | 0.05–10 | 2 |
+    | B | `clayAoBias` | 0.01–1 | 0.01 |
+    | D | `clayAoDistance` | 0.005–0.3 | 0.1 |
+    | Lit | `clayLightIntensity` | 0–10 | 0.55 |
+    | Gls | `clayGlassOpacity` | 0.05–0.5 | 0.18 |
+    | Surface / background | `claySurfaceColor`, `clayBackgroundColor` | hex | `#f8f8f8` / `#ffffff` |
+  - State normalised via `normalizeClayStyle()` in `types.js`; clay preset via `getClayPresetWorkspacePatch()` (does not force wireframe off).
 - Bidirectional selection sync between table, viewport, and inspector via `ifcGlobalId`.
 - Element table includes storey column; search and IFC class filter.
 - Inspector shows grouped Psets/quantities, provenance, and semantic assembly membership for member elements.
 - **BQL executor** (`executeBqlQuery`) runs against prepared model index with `physicalElements`, `semanticAssemblies`, and `allBimObjects` scopes.
 - **BimQueryPanel** provides JSON BQL editor with presets (all beams, ground floor, windows incl. `WindowAssembly`).
 - Query results drive viewer display mode and filter the element table; evidence bundle returned per result.
-- Workspace state (camera, selection, filters, display mode, projection mode, measurements, wireframe mode + style, lighting, panel toggles) persisted in IndexedDB per fingerprint.
+- Workspace state (camera, selection, filters, display mode, projection mode, measurements, wireframe mode + style, **render style + clay tuning**, lighting, panel toggles) persisted in IndexedDB per fingerprint.
 - Graceful degradation: if Fragments conversion fails, evidence table and inspector still work; viewport shows an error banner.
 
 ### Folder sync, dock, and artifact ingest (2026-07-04)

@@ -245,6 +245,30 @@ describe('BIM UI components', () => {
     expect(html).toContain('Wireframe colour');
   });
 
+  it('renders clay style controls when clay render is active', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimViewport, {
+        preparedModel: {
+          metadata: { fragmentsStatus: 'success', fragmentsSourceKind: 'fragments' },
+          fragmentsBlob: new Blob([new Uint8Array([1, 2, 3])]),
+          elements: [element],
+        },
+        selectedElement: null,
+        displayMode: 'highlight',
+        renderStyle: 'clay',
+        onDisplayModeChange: () => {},
+        onRenderStyleChange: () => {},
+      }),
+    );
+    expect(html).toContain('Clay render (Arctic)');
+    expect(html).toContain('Clay style controls');
+    expect(html).toContain('Clay AO bias');
+    expect(html).toContain('Clay light intensity');
+    expect(html).toContain('Clay glass opacity');
+    expect(html).toContain('2.0');
+    expect(html).toContain('0.01');
+  });
+
   it('hides wireframe style controls when wireframe mode is off', () => {
     const html = renderToStaticMarkup(
       React.createElement(BimViewport, {

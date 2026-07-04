@@ -390,6 +390,34 @@ export function renderWireframeOverlay(renderer, mainScene, overlayScene, camera
   return true;
 }
 
+
+export function renderWireframeOverlayPass(renderer, overlayScene, camera, wireframeEdges, options = {}) {
+  if (!renderer || !overlayScene || !camera || !wireframeEdges?.parent) {
+    return false;
+  }
+  const size = typeof renderer.getDrawingBufferSize === 'function'
+    ? renderer.getDrawingBufferSize(new THREE.Vector2())
+    : null;
+  updateWireframeEdgeVisuals(wireframeEdges, {
+    width: size?.x,
+    height: size?.y,
+    cameraDistance: options.cameraDistance,
+    modelRadius: options.modelRadius,
+    lineWeight: options.lineWeight,
+    opacity: options.opacity,
+    color: options.color,
+  });
+  wireframeEdges.visible = true;
+  wireframeEdges.updateMatrixWorld(true);
+  wireframeEdges.material.depthTest = options.depthTest ?? WIREFRAME_OVERLAY_DEPTH_TEST;
+  wireframeEdges.material.depthWrite = false;
+  const previousAutoClear = renderer.autoClear;
+  renderer.autoClear = false;
+  renderer.render(overlayScene, camera);
+  renderer.autoClear = previousAutoClear;
+  return true;
+}
+
 export function createWireframeDepthMaterial() {
   return new THREE.MeshBasicMaterial({
     colorWrite: false,

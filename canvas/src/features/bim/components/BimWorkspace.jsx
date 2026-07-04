@@ -21,6 +21,7 @@ import { prepareBimModel } from '../bim-core/prepareBimModel.js';
 import { logBimPickWarning } from '../bim-core/bimPickDebug.js';
 import { findPreparedElementByGlobalId } from '../bim-core/fragmentsSelection.js';
 import { normalizeBimWorkspaceState } from '../bim-core/types.js';
+import { getClayPresetWorkspacePatch } from '../bim-core/bimClayRender.js';
 import { useBimModelSource } from '../hooks/useBimModelSource.js';
 import { BimElementTable } from './BimElementTable.jsx';
 import { BimInspector } from './BimInspector.jsx';
@@ -759,6 +760,15 @@ export function BimWorkspace({
             wireframeLineWeight={workspaceState.wireframeLineWeight}
             wireframeOpacity={workspaceState.wireframeOpacity}
             wireframeColor={workspaceState.wireframeColor}
+            renderStyle={workspaceState.renderStyle}
+            clayAoIntensity={workspaceState.clayAoIntensity}
+            clayAoRadius={workspaceState.clayAoRadius}
+            clayAoBias={workspaceState.clayAoBias}
+            clayAoDistance={workspaceState.clayAoDistance}
+            clayLightIntensity={workspaceState.clayLightIntensity}
+            claySurfaceColor={workspaceState.claySurfaceColor}
+            clayGlassOpacity={workspaceState.clayGlassOpacity}
+            clayBackgroundColor={workspaceState.clayBackgroundColor}
             showEnvironment={workspaceState.showEnvironment}
             lightingMode={workspaceState.lightingMode}
             environmentPreset={workspaceState.environmentPreset}
@@ -769,6 +779,11 @@ export function BimWorkspace({
             onMeasurementsVisibleChange={(measurementsVisible) => patchWorkspaceState({ measurementsVisible })}
             onWireframeModeChange={(wireframeMode) => patchWorkspaceState({ wireframeMode })}
             onWireframeStyleChange={(wireframeStylePatch) => patchWorkspaceState(wireframeStylePatch)}
+            onRenderStyleChange={(nextRenderStyle) => {
+              if (nextRenderStyle === 'clay') patchWorkspaceState(getClayPresetWorkspacePatch());
+              else patchWorkspaceState({ renderStyle: 'standard' });
+            }}
+            onClayStyleChange={(clayStylePatch) => patchWorkspaceState(clayStylePatch)}
             onLightingChange={(lightingPatch) => patchWorkspaceState(lightingPatch)}
           />
         </div>
