@@ -1,9 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import {
+  applyClayBaseMaterials,
+  applyClayViewportMaterials,
   applyClayCameraDepthRange,
+  blendClayColor,
+  blendClayScalar,
   buildClayBaseMaterial,
   buildClayGlassMaterial,
+  captureClayOriginalMaterialSnapshot,
+  canReuseClayBlendFastPath,
+  clearClayMaterialGroupCache,
   CLAY_BASE_MATERIAL,
   CLAY_SSAO_REFERENCE_DISTANCE_FACTOR,
   CLAY_SSAO_KERNEL_RADIUS_FLOOR,
@@ -12,12 +19,17 @@ import {
   CLAY_SSAO_DEPTH_SPAN_REFERENCE,
   CLAY_SELECTED_MATERIAL,
   getClayPresetWorkspacePatch,
+  fingerprintClayLocalIds,
+  invalidateClayMaterialSnapshot,
   copyRenderTargetDepthToScreen,
   copyClayComposerDepthToScreen,
   populateScreenDepthFromScene,
   resolveClayComposerDepthSource,
   renderClayFrame,
   resolveClayCameraDepthRange,
+  resolveClayHighlightMaterial,
+  resolveClayGlazingLocalIds,
+  resolveClayMaterialApplyParams,
   resolveClaySsaoSettings,
   resolveClayViewDistance,
   resolveClayWireframeStyle,
@@ -27,7 +39,12 @@ import {
   updateClaySsaoQuality,
   updateClayComposerSettings,
   updateClayLightingIntensity,
+  isClayGlassElement,
+  isTransparentMaterialDefinition,
+  readMaterialDefinitionColor,
+  hasMaterialDefinitionColor,
 } from '../bimClayRender.js';
+import { createFragmentsIdCache } from '../fragmentsSelection.js';
 import {
   CLAY_AO_BIAS_DEFAULT,
   CLAY_AO_BIAS_MAX,
@@ -40,6 +57,7 @@ import {
   CLAY_AO_RADIUS_MAX,
   CLAY_AO_RADIUS_MIN,
   CLAY_GLASS_OPACITY_DEFAULT,
+  CLAY_ORIGINAL_COLOR_BLEND_DEFAULT,
   CLAY_LIGHT_INTENSITY_DEFAULT,
   CLAY_SURFACE_COLOR_DEFAULT,
   normalizeClayStyle,
@@ -56,12 +74,609 @@ describe('bimClayRender', () => {
       clayLightIntensity: CLAY_LIGHT_INTENSITY_DEFAULT,
       claySurfaceColor: CLAY_SURFACE_COLOR_DEFAULT,
       clayGlassOpacity: CLAY_GLASS_OPACITY_DEFAULT,
+      clayOriginalColorBlend: CLAY_ORIGINAL_COLOR_BLEND_DEFAULT,
     });
   });
 
-  it('exports light clay base material', () => {
-    expect(CLAY_BASE_MATERIAL.customId).toBe('canvas-bim-clay-base');
-    expect(CLAY_BASE_MATERIAL.color.getHexString()).toBe('f8f8f8');
+  it('detects transparent fragment materials and IFC glazing classes', () => {
+    expect(isTransparentMaterialDefinition({ opacity: 0.4, transparent: true })).toBe(true);
+    expect(isTransparentMaterialDefinition({ opacity: 1, transparent: false })).toBe(false);
+    expect(isClayGlassElement({ ifcClass: 'IfcWindow' })).toBe(true);
+    expect(isClayGlassElement({ ifcClass: 'IfcWall' })).toBe(false);
+  });
+
+  it('blends clay colour and opacity toward surface material values', () => {
+    const original = new THREE.Color('#ff0000');
+    const surface = new THREE.Color('#ffffff');
+    const mid = blendClayColor(original, surface, 0.5);
+    expect(mid.r).toBeCloseTo(1, 5);
+    expect(mid.g).toBeCloseTo(0.5, 5);
+    expect(blendClayScalar(0.2, 0.8, 0.5)).toBeCloseTo(0.5, 5);
+  });
+
+  it('reads fragment material colours from strings and hex numbers', () => {
+    expect(readMaterialDefinitionColor({ color: '#336699' }).getHexString()).toBe('336699');
+    expect(readMaterialDefinitionColor({ color: 0xff0000 }).getHexString()).toBe('ff0000');
+    expect(hasMaterialDefinitionColor({ color: '#336699' })).toBe(true);
+  });
+
+  it('reads fragment colours when isColor is set but clone is missing', () => {
+    const fragmentsStyleColor = { isColor: true, r: 51, g: 102, b: 153 };
+    const parsed = readMaterialDefinitionColor({ color: fragmentsStyleColor });
+    expect(parsed?.isColor).toBe(true);
+    expect(parsed.getHexString()).toBe('7caacb');
+    expect(hasMaterialDefinitionColor({ color: fragmentsStyleColor })).toBe(true);
+  });
+
+  it('keeps native materials at partial Orig without IFC metadata', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => []),
+      highlight: vi.fn(async () => {}),
+    };
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2, 3], {
+      surfaceColor: '#ff0000',
+      originalColorBlend: 0.5,
+    });
+    expect(model.resetHighlight).toHaveBeenCalledTimes(1);
+    expect(model.highlight).not.toHaveBeenCalled();
+  });
+
+  it('skips highlights at 0% Orig without IFC metadata', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => []),
+      highlight: vi.fn(async () => {}),
+    };
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2, 3], {
+      surfaceColor: '#ff0000',
+      originalColorBlend: 0,
+    });
+    expect(model.resetHighlight).toHaveBeenCalledTimes(1);
+    expect(model.highlight).not.toHaveBeenCalled();
+  });
+
+  it('applies uniform surface colour at 100% Orig even without IFC metadata', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => []),
+      highlight: vi.fn(async () => {}),
+    };
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2, 3], {
+      surfaceColor: '#ff0000',
+      originalColorBlend: 1,
+    });
+    expect(model.resetHighlight).not.toHaveBeenCalled();
+    expect(model.highlight).toHaveBeenCalledTimes(1);
+    expect(model.highlight.mock.calls[0][0]).toEqual([1, 2, 3]);
+    expect(model.highlight.mock.calls[0][1].color.getHexString()).toBe('ff0000');
+    expect(globalThis.__canvasBimClayDebug).toMatchObject({
+      phase: 'applyClayBaseMaterials',
+      ok: true,
+      stats: expect.objectContaining({
+        highlightedLocalIdCount: 3,
+        surfaceBlend: 1,
+        surfaceColor: '#ff0000',
+      }),
+    });
+  });
+
+  it('returns null for partial Orig without IFC colour metadata', () => {
+    expect(resolveClayHighlightMaterial({
+      definition: { opacity: 1, transparent: false },
+      surfaceColor: '#aabbcc',
+      originalColorBlend: 0.5,
+    })).toBeNull();
+  });
+
+  it('skips highlights at partial Orig without IFC metadata', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => []),
+      highlight: vi.fn(async () => {}),
+    };
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2, 3], {
+      surfaceColor: '#aabbcc',
+      originalColorBlend: 0.5,
+    });
+    expect(model.resetHighlight).toHaveBeenCalledTimes(1);
+    expect(model.highlight).not.toHaveBeenCalled();
+  });
+
+  it('prefetches all fragment material groups in one call when available', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async (localIds) => {
+        if (localIds == null) {
+          return [{
+            localIds: [1, 2, 3],
+            definition: { color: new THREE.Color('#804020'), opacity: 1, transparent: false },
+          }];
+        }
+        return [];
+      }),
+      highlight: vi.fn(async () => {}),
+    };
+    clearClayMaterialGroupCache(model);
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2, 3], {
+      surfaceColor: '#ffffff',
+      originalColorBlend: 0.5,
+    });
+    expect(model.getItemsMaterialDefinition).toHaveBeenCalledWith(null);
+    expect(model.highlight).toHaveBeenCalledTimes(1);
+  });
+
+  it('always resets highlights at 0% Orig even during reapply', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => []),
+      highlight: vi.fn(async () => {}),
+    };
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2], {
+      surfaceColor: '#f8f8f8',
+      originalColorBlend: 0,
+    }, { reapplyOnly: true });
+    expect(model.resetHighlight).toHaveBeenCalledTimes(1);
+    expect(model.highlight).not.toHaveBeenCalled();
+  });
+
+  it('returns uniform surface material at 100% Orig without IFC colour metadata', () => {
+    const material = resolveClayHighlightMaterial({
+      definition: { opacity: 1, transparent: false },
+      surfaceColor: '#aabbcc',
+      originalColorBlend: 1,
+    });
+    expect(material.color.getHexString()).toBe('aabbcc');
+  });
+
+  it('re-captures clay material snapshot when fragment localIds change', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async (localIds) => {
+        if (localIds.includes(99)) {
+          return [{
+            localIds: [99],
+            definition: { color: new THREE.Color('#112233'), opacity: 1, transparent: false },
+          }];
+        }
+        return [];
+      }),
+    };
+    await captureClayOriginalMaterialSnapshot(model, [1, 2]);
+    expect(model.resetHighlight).not.toHaveBeenCalled();
+    const second = await captureClayOriginalMaterialSnapshot(model, [99]);
+    const cached = await captureClayOriginalMaterialSnapshot(model, [99]);
+    expect(readMaterialDefinitionColor(second.get(99))?.getHexString()).toBe('112233');
+    expect(readMaterialDefinitionColor(cached.get(99))?.getHexString()).toBe('112233');
+    expect(fingerprintClayLocalIds([1, 2])).not.toBe(fingerprintClayLocalIds([99]));
+  });
+
+  it('invalidates stale snapshot so prefetch can populate IFC colours', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => []),
+    };
+    await captureClayOriginalMaterialSnapshot(model, [5]);
+    invalidateClayMaterialSnapshot(model);
+    model.getItemsMaterialDefinition = vi.fn(async () => ([
+      {
+        localIds: [5],
+        definition: { color: new THREE.Color('#445566'), opacity: 1, transparent: false },
+      },
+    ]));
+    const refreshed = await captureClayOriginalMaterialSnapshot(model, [5]);
+    expect(hasMaterialDefinitionColor(refreshed.get(5))).toBe(true);
+  });
+
+  it('applyClayViewportMaterials syncs fragments before and after highlight apply', async () => {
+    const updateFragments = vi.fn(async () => true);
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => ([
+        {
+          localIds: [1],
+          definition: { color: new THREE.Color('#804020'), opacity: 1, transparent: false },
+        },
+      ])),
+      highlight: vi.fn(async () => {}),
+    };
+    const result = await applyClayViewportMaterials(
+      model,
+      { elements: [] },
+      {},
+      [1],
+      { surfaceColor: '#ffffff', originalColorBlend: 0.5 },
+      { updateFragments },
+    );
+    expect(updateFragments).toHaveBeenCalledTimes(2);
+    expect(model.highlight).toHaveBeenCalledTimes(1);
+    expect(model.highlight.mock.calls[0][1].color.getHexString()).toBe('cdc0bd');
+    expect(result.ok).toBe(true);
+    expect(result.stats.highlightedLocalIdCount).toBe(1);
+    expect(globalThis.__canvasBimClayDebug).toMatchObject({
+      phase: 'applyClayViewportMaterials',
+      updateBeforeOk: true,
+      updateAfterOk: true,
+    });
+  });
+
+  it('keeps quiet viewport applies from publishing intermediate base markers', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => []),
+      highlight: vi.fn(async () => {}),
+    };
+    await applyClayViewportMaterials(
+      model,
+      { elements: [] },
+      {},
+      [1, 2, 3],
+      { surfaceColor: '#ff0000', originalColorBlend: 1 },
+      { quietDebug: true },
+    );
+    expect(globalThis.__canvasBimClayDebug?.phase).not.toBe('applyClayBaseMaterials');
+  });
+
+  it('lerps known IFC colours toward the surface colour across partial blend values', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => ([
+        {
+          localIds: [1],
+          definition: { color: new THREE.Color('#804020'), opacity: 1, transparent: false },
+        },
+      ])),
+      highlight: vi.fn(async () => {}),
+    };
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1], {
+      surfaceColor: '#ffffff',
+      originalColorBlend: 0.5,
+    });
+    expect(model.resetHighlight).toHaveBeenCalledTimes(1);
+    expect(model.highlight).toHaveBeenCalledTimes(1);
+    expect(model.highlight.mock.calls[0][0]).toEqual([1]);
+    expect(model.highlight.mock.calls[0][1].color.getHexString()).toBe('cdc0bd');
+  });
+
+  it('transitions from IFC colour to mixed colour to Surf colour at 0%, 50%, and 100% Orig', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => ([
+        {
+          localIds: [1],
+          definition: { color: new THREE.Color('#336699'), opacity: 1, transparent: false },
+        },
+      ])),
+      highlight: vi.fn(async () => {}),
+    };
+
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1], {
+      surfaceColor: '#ff0000',
+      originalColorBlend: 0,
+    });
+    expect(model.resetHighlight).toHaveBeenCalledTimes(1);
+    expect(model.highlight).not.toHaveBeenCalled();
+
+    model.resetHighlight.mockClear();
+    model.highlight.mockClear();
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1], {
+      surfaceColor: '#ff0000',
+      originalColorBlend: 0.5,
+    });
+    expect(model.resetHighlight).toHaveBeenCalledTimes(1);
+    const mixedColor = model.highlight.mock.calls[0][1].color.getHexString();
+    expect(mixedColor).not.toBe('336699');
+    expect(mixedColor).not.toBe('ff0000');
+
+    model.resetHighlight.mockClear();
+    model.highlight.mockClear();
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1], {
+      surfaceColor: '#ff0000',
+      originalColorBlend: 1,
+    });
+    expect(model.resetHighlight).not.toHaveBeenCalled();
+    expect(model.highlight.mock.calls[0][1].color.getHexString()).toBe('ff0000');
+  });
+
+  it('resets all highlights when leaving full Surf for partial Orig', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => ([
+        {
+          localIds: [1],
+          definition: { color: new THREE.Color('#804020'), opacity: 1, transparent: false },
+        },
+      ])),
+      highlight: vi.fn(async () => {}),
+    };
+    clearClayMaterialGroupCache(model);
+
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2, 3], {
+      surfaceColor: '#ffffff',
+      originalColorBlend: 1,
+    });
+
+    model.resetHighlight.mockClear();
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2, 3], {
+      surfaceColor: '#ffffff',
+      originalColorBlend: 0.5,
+    });
+    expect(model.resetHighlight).toHaveBeenCalledTimes(1);
+    expect(model.resetHighlight.mock.calls[0]).toEqual([]);
+    expect(globalThis.__canvasBimClayDebug).toMatchObject({
+      stats: expect.objectContaining({
+        blendZone: 'partial',
+        resetCalled: true,
+        leavingFull: true,
+        highlightedLocalIdCount: 1,
+        nativeLeftCount: 2,
+      }),
+    });
+  });
+
+  it('resets before partial Orig reapply after fragments update', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => ([
+        {
+          localIds: [1],
+          definition: { color: new THREE.Color('#804020'), opacity: 1, transparent: false },
+        },
+      ])),
+      highlight: vi.fn(async () => {}),
+    };
+    clearClayMaterialGroupCache(model);
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2], {
+      surfaceColor: '#ffffff',
+      originalColorBlend: 0.25,
+    });
+    model.resetHighlight.mockClear();
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2], {
+      surfaceColor: '#ffffff',
+      originalColorBlend: 0.25,
+    }, { reapplyOnly: true });
+    expect(model.resetHighlight).toHaveBeenCalledTimes(1);
+    expect(globalThis.__canvasBimClayDebug).toMatchObject({
+      stats: expect.objectContaining({
+        frameReapply: true,
+        resetCalled: true,
+        reapplyOnly: true,
+      }),
+    });
+  });
+
+  it('resets highlights during partial Orig slider moves', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => ([
+        {
+          localIds: [1],
+          definition: { color: new THREE.Color('#804020'), opacity: 1, transparent: false },
+        },
+      ])),
+      highlight: vi.fn(async () => {}),
+    };
+    clearClayMaterialGroupCache(model);
+
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1], {
+      surfaceColor: '#ffffff',
+      originalColorBlend: 0.25,
+    });
+    expect(model.resetHighlight).toHaveBeenCalledTimes(1);
+
+    model.resetHighlight.mockClear();
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1], {
+      surfaceColor: '#ffffff',
+      originalColorBlend: 0.75,
+    });
+    expect(model.resetHighlight).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes blend zone and reset stats in clay debug markers', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => []),
+      highlight: vi.fn(async () => {}),
+    };
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2, 3], {
+      surfaceColor: '#f8f8f8',
+      originalColorBlend: 0.01,
+    });
+    expect(globalThis.__canvasBimClayDebug).toMatchObject({
+      phase: 'applyClayBaseMaterials',
+      ok: true,
+      stats: expect.objectContaining({
+        blendZone: 'partial',
+        resetCalled: true,
+        nativeLeftCount: 3,
+        highlightedLocalIdCount: 0,
+      }),
+    });
+  });
+
+  it('disables blend-only fast path when Orig leaves the full Surf zone', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => ([
+        {
+          localIds: [1],
+          definition: { color: new THREE.Color('#804020'), opacity: 1, transparent: false },
+        },
+      ])),
+      highlight: vi.fn(async () => {}),
+    };
+    clearClayMaterialGroupCache(model);
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1], {
+      surfaceColor: '#ffffff',
+      originalColorBlend: 1,
+    });
+    expect(canReuseClayBlendFastPath(model, [1], 1)).toBe(true);
+    expect(canReuseClayBlendFastPath(model, [1], 0.5)).toBe(false);
+  });
+
+  it('returns null for missing colours when no fallback is provided', () => {
+    expect(readMaterialDefinitionColor({ opacity: 1 }, null)).toBeNull();
+  });
+
+  it('continues blending toward surface colour below 100% Orig', () => {
+    const definition = { color: new THREE.Color('#804020'), opacity: 1, transparent: false };
+    const at95 = resolveClayHighlightMaterial({
+      definition,
+      surfaceColor: '#ffffff',
+      originalColorBlend: 0.95,
+    });
+    const at100 = resolveClayHighlightMaterial({
+      definition,
+      surfaceColor: '#ffffff',
+      originalColorBlend: 1,
+    });
+    expect(at95.color.getHexString()).not.toBe('ffffff');
+    expect(at95.color.getHexString()).not.toBe(at100.color.getHexString());
+    expect(at100.color.getHexString()).toBe('ffffff');
+  });
+
+  it('builds highlight materials from fragment definitions', () => {
+    const originalMaterial = resolveClayHighlightMaterial({
+      definition: { color: new THREE.Color('#336699'), opacity: 0.4, transparent: true },
+      surfaceColor: '#f8f8f8',
+      glassOpacity: 0.25,
+      originalColorBlend: 0,
+      isGlazing: true,
+    });
+    expect(originalMaterial.color.getHexString()).toBe('336699');
+    expect(originalMaterial.opacity).toBeCloseTo(0.4, 5);
+
+    const fullSurface = resolveClayHighlightMaterial({
+      definition: { color: new THREE.Color('#336699'), opacity: 0.4, transparent: true },
+      surfaceColor: '#f8f8f8',
+      glassOpacity: 0.25,
+      originalColorBlend: 1,
+      isGlazing: true,
+    });
+    expect(fullSurface.opacity).toBe(0.25);
+    expect(fullSurface.transparent).toBe(true);
+    expect(fullSurface.customId).toContain('canvas-bim-clay-glass');
+  });
+
+  it('resolves glazing local IDs from transparent materials and IFC classes', async () => {
+    const model = {
+      getItemsMaterialDefinition: vi.fn(async () => ([
+        {
+          localIds: [1, 2],
+          definition: { color: new THREE.Color('#ffffff'), opacity: 0.3, transparent: true },
+        },
+        {
+          localIds: [3],
+          definition: { color: new THREE.Color('#cccccc'), opacity: 1, transparent: false },
+        },
+      ])),
+      getLocalIdsByGuids: vi.fn(async (guids) => guids.map((guid) => (guid === 'door-guid' ? 4 : null))),
+      highlight: vi.fn(async () => {}),
+    };
+    const preparedModel = {
+      elements: [
+        { ifcGlobalId: 'door-guid', ifcClass: 'IfcDoor' },
+      ],
+    };
+    const glazingIds = await resolveClayGlazingLocalIds(
+      model,
+      preparedModel,
+      createFragmentsIdCache(),
+      [1, 2, 3, 4],
+    );
+    expect(glazingIds.sort()).toEqual([1, 2, 4]);
+  });
+
+  it('restores IFC materials when surface blend is 0%', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => []),
+      highlight: vi.fn(async () => {}),
+    };
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2], {
+      originalColorBlend: 0,
+    });
+    expect(model.resetHighlight).toHaveBeenCalledTimes(1);
+    expect(model.highlight).not.toHaveBeenCalled();
+  });
+
+  it('applies grouped clay materials from fragment material definitions', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => ([
+        {
+          localIds: [1],
+          definition: { color: new THREE.Color('#224466'), opacity: 1, transparent: false },
+        },
+        {
+          localIds: [2],
+          definition: { color: new THREE.Color('#88ccff'), opacity: 0.2, transparent: true },
+        },
+      ])),
+      highlight: vi.fn(async () => {}),
+    };
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2], {
+      surfaceColor: '#f8f8f8',
+      glassOpacity: 0.31,
+      originalColorBlend: 0.5,
+    });
+    expect(model.getItemsMaterialDefinition).toHaveBeenCalled();
+    expect(model.highlight).toHaveBeenCalled();
+    const customIds = model.highlight.mock.calls.map((call) => call[1].customId);
+    expect(customIds).toContain('canvas-bim-clay-base');
+    expect(customIds).toContain('canvas-bim-clay-glass');
+  });
+
+  it('applies uniform clay materials when surface blend is 100%', async () => {
+    const cache = createFragmentsIdCache();
+    cache.globalIdToLocalId.set('window-guid', 2);
+    cache.localIdToGlobalId.set(2, 'window-guid');
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => []),
+      getLocalIdsByGuids: vi.fn(async () => []),
+      highlight: vi.fn(async () => {}),
+    };
+    await applyClayBaseMaterials(
+      model,
+      { elements: [{ ifcGlobalId: 'window-guid', ifcClass: 'IfcWindow' }] },
+      cache,
+      [1, 2, 3],
+      {
+        surfaceColor: '#ff0000',
+        glassOpacity: 0.42,
+        originalColorBlend: 1,
+      },
+    );
+    expect(model.getItemsMaterialDefinition).toHaveBeenCalled();
+    expect(model.resetHighlight).not.toHaveBeenCalled();
+    expect(model.highlight.mock.calls[0][1].customId).toBe('canvas-bim-clay-base');
+    expect(model.highlight.mock.calls[0][1].color.getHexString()).toBe('ff0000');
+    expect(model.highlight.mock.calls.at(-1)[1].customId).toBe('canvas-bim-clay-glass');
+    expect(model.highlight.mock.calls.at(-1)[1].opacity).toBeCloseTo(0.42, 5);
+  });
+
+  it('accepts viewport workspace clay param keys', async () => {
+    const model = {
+      resetHighlight: vi.fn(async () => {}),
+      getItemsMaterialDefinition: vi.fn(async () => []),
+      highlight: vi.fn(async () => {}),
+    };
+    await applyClayBaseMaterials(model, { elements: [] }, {}, [1, 2], {
+      claySurfaceColor: '#ff0000',
+      clayGlassOpacity: 0.42,
+      clayOriginalColorBlend: 1,
+    });
+    expect(resolveClayMaterialApplyParams({
+      claySurfaceColor: '#112233',
+      clayGlassOpacity: 0.2,
+      clayOriginalColorBlend: 0.65,
+    })).toMatchObject({
+      surfaceColor: '#112233',
+      glassOpacity: 0.2,
+      originalColorBlend: 0.65,
+    });
+    expect(model.highlight.mock.calls[0][1].color.getHexString()).toBe('ff0000');
   });
 
   it('builds clay materials from style inputs', () => {

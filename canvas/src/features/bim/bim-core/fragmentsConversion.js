@@ -1,7 +1,9 @@
 export function fragmentsRuntimeModelId(fingerprint) {
   return `canvas-bim-${String(fingerprint ?? 'model')
+    .replace(/^canvas-bim-/, '')
     .replace(/[^a-zA-Z0-9_-]/g, '-')
-    .slice(0, 180)}`;
+    .slice(0, 32)
+    .replace(/^-+|-+$/g, '') || 'model'}`;
 }
 
 export async function convertIfcToFragmentsBlob(arrayBuffer, { modelId = null } = {}) {

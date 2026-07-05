@@ -58,8 +58,8 @@ Tell Cursor (or any agent on this repo):
 
 | Say | Agent runs | Result |
 |-----|------------|--------|
-| **start canvas** | `npm run dev:stack` from `canvas/` | Docker Desktop (if needed), Postgres, migrate, Ollama, API, Vite |
-| **restart canvas** | `npm run dev:stack:restart` | Stop API/Vite, then start again (assumes Docker already running) |
+| **start canvas** / **sc** | `npm run dev:stack` or `npm run sc` from `canvas/` | Docker Desktop (if needed), Postgres, migrate, Ollama, API, Vite |
+| **restart canvas** / **rc** | `npm run dev:stack:restart` or `npm run rc` | Stop API/Vite, then start again (assumes Docker already running) |
 | **stop canvas** | `npm run dev:stack:stop` | Stop API/Vite (Docker containers keep running) |
 
 **start canvas** means: launch Docker Desktop when needed, then wait until the app is up at http://localhost:5173 and the API health check passes at http://localhost:3001/health.

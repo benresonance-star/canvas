@@ -20,6 +20,8 @@ export function formatClaySliderValue(kind, value) {
       return numeric.toFixed(2);
     case 'glassOpacity':
       return numeric.toFixed(2);
+    case 'originalColorBlend':
+      return `${Math.round(numeric * 100)}%`;
     case 'wireframeTransparency':
       return `${Math.round(numeric * 100)}%`;
     case 'lineWeight':

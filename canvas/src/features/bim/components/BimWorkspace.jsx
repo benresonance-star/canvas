@@ -189,6 +189,7 @@ export function BimWorkspace({
       workspaceState.clayLightIntensity,
       workspaceState.claySurfaceColor,
       workspaceState.clayGlassOpacity,
+      workspaceState.clayOriginalColorBlend,
       workspaceState.showEnvironment,
       workspaceState.lightingMode,
       workspaceState.environmentPreset,
@@ -908,6 +909,7 @@ export function BimWorkspace({
             clayLightIntensity={workspaceState.clayLightIntensity}
             claySurfaceColor={workspaceState.claySurfaceColor}
             clayGlassOpacity={workspaceState.clayGlassOpacity}
+            clayOriginalColorBlend={workspaceState.clayOriginalColorBlend}
             viewportBackgroundColor={workspaceState.viewportBackgroundColor}
             showEnvironment={workspaceState.showEnvironment}
             lightingMode={workspaceState.lightingMode}

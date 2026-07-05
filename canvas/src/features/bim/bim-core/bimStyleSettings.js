@@ -34,6 +34,7 @@ export function normalizeBimStyleSettings(state = {}) {
     clayLightIntensity: clay.clayLightIntensity,
     claySurfaceColor: clay.claySurfaceColor,
     clayGlassOpacity: clay.clayGlassOpacity,
+    clayOriginalColorBlend: clay.clayOriginalColorBlend,
     ...normalizeBimLightingState(state),
   };
 }

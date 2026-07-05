@@ -100,6 +100,9 @@ export const CLAY_LIGHT_INTENSITY_DEFAULT = 2.7;
 export const CLAY_GLASS_OPACITY_MIN = 0.05;
 export const CLAY_GLASS_OPACITY_MAX = 0.5;
 export const CLAY_GLASS_OPACITY_DEFAULT = 0.31;
+export const CLAY_ORIGINAL_COLOR_BLEND_MIN = 0;
+export const CLAY_ORIGINAL_COLOR_BLEND_MAX = 1;
+export const CLAY_ORIGINAL_COLOR_BLEND_DEFAULT = 1;
 
 function clampClayValue(value, min, max, fallback) {
   const numeric = Number(value);
@@ -171,6 +174,12 @@ export function normalizeClayStyle(state = {}) {
       CLAY_GLASS_OPACITY_MIN,
       CLAY_GLASS_OPACITY_MAX,
       CLAY_GLASS_OPACITY_DEFAULT,
+    ),
+    clayOriginalColorBlend: clampClayValue(
+      state?.clayOriginalColorBlend,
+      CLAY_ORIGINAL_COLOR_BLEND_MIN,
+      CLAY_ORIGINAL_COLOR_BLEND_MAX,
+      CLAY_ORIGINAL_COLOR_BLEND_DEFAULT,
     ),
     claySurfaceColor: /^#[0-9a-fA-F]{6}$/.test(surfaceColor) ? surfaceColor : CLAY_SURFACE_COLOR_DEFAULT,
   };

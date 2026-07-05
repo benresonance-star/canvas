@@ -386,8 +386,9 @@ async function main() {
   console.log(`  Ollama:   ${CONFIG.ollama.baseUrl}`);
   console.log(`  Postgres: ${databaseUrl}`);
   console.log('');
-  console.log('Stop: npm run dev:stack:stop  (or say "stop canvas")');
-  console.log('Restart: npm run dev:stack:restart  (or say "restart canvas")');
+  console.log('Start:   npm run sc   (or "start canvas")');
+  console.log('Stop:    npm run dev:stack:stop  (or "stop canvas")');
+  console.log('Restart: npm run rc  (or "restart canvas")');
   console.log('Logs: canvas/.dev-stack/logs/');
 }
 

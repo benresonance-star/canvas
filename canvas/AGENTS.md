@@ -13,7 +13,7 @@ Instructions for Cursor Composer and other coding agents working on this app.
 
 **Diagnostics canvas (2D + 3D):** When changing highlight, focus, ghost, or edge decoration behavior, update `useDiagnosticsGraphProjection` and verify both React Flow and WebGL renderers in the same PR.
 
-**Local dev stack:** [docs/DEV_STACK.md](docs/DEV_STACK.md) — agent prompts **start canvas** / **restart canvas** / **stop canvas**.
+**Local dev stack:** [docs/DEV_STACK.md](docs/DEV_STACK.md) — agent prompts **start canvas** (or **sc**) / **restart canvas** (or **rc**) / **stop canvas**.
 
 ## Mental model
 

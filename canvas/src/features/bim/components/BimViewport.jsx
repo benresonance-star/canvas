@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Axis3D, Box, Bot, Braces, Camera, Circle, EyeOff, Ghost, Grid3x3, Layers, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal, SunMedium } from 'lucide-react';
+import { Axis3D, Box, Bot, Braces, Camera, Circle, EyeOff, Ghost, Grid3x3, Layers, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal } from 'lucide-react';
 import { MOUSE } from 'three';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -29,9 +29,10 @@ import {
   serializeBimCameraState,
   swapBimCamera,
 } from '../bim-core/bimCamera.js';
+import { createBimCameraKeyboardNav } from '../bim-core/bimCameraKeyboardNav.js';
 import { createBimMeasurementController } from '../bim-core/bimMeasurementController.js';
 import { createBimMeasurementOverlay } from '../bim-core/bimMeasurementOverlay.js';
-import { bimLightingToolbarLabel, cycleBimLightingState } from '../bim-core/bimLighting.js';
+import { cycleBimLightingState } from '../bim-core/bimLighting.js';
 import { BimStyleSettingsHud } from './BimStyleSettingsHud.jsx';
 import { BimAgentHud } from './BimAgentHud.jsx';
 import { BimBqlHud } from './BimBqlHud.jsx';
@@ -47,7 +48,12 @@ import {
 } from '../bim-core/bimWireframeOverlay.js';
 import {
   applyClayBaseMaterials,
+  applyClayViewportMaterials,
   applyViewportBackground,
+  canReuseClayBlendFastPath,
+  clearClayMaterialGroupCache,
+  invalidateClayMaterialSnapshot,
+  scheduleClayMaterialGroupsPrefetch,
   CLAY_GHOST_MATERIAL,
   CLAY_SELECTED_MATERIAL,
   createClayComposer,
@@ -55,6 +61,7 @@ import {
   renderClayFrame,
   resolveClayViewDistance,
   resolveClayWireframeStyle,
+  resolveClayMaterialApplyParams,
   resizeClayComposer,
   setupClayLighting,
   teardownClayLighting,
@@ -62,6 +69,7 @@ import {
   updateClaySsaoQuality,
 } from '../bim-core/bimClayRender.js';
 import { createPickTimer, isBimPickDebugEnabled, logBimPickMappingFailure } from '../bim-core/bimPickDebug.js';
+import { createClayApplyTimer, publishClayDebugMarker, publishClayFrameDebugSnapshot, getClayEffectDebugMarker } from '../bim-core/bimClayDebug.js';
 import {
   chunkLocalIds,
   isFragmentsRaycastHit,
@@ -105,6 +113,7 @@ import {
   CLAY_AO_RESOLUTION_DEFAULT,
   CLAY_AO_SAMPLES_DEFAULT,
   CLAY_GLASS_OPACITY_DEFAULT,
+  CLAY_ORIGINAL_COLOR_BLEND_DEFAULT,
   CLAY_LIGHT_INTENSITY_DEFAULT,
   CLAY_SURFACE_COLOR_DEFAULT,
   VIEWPORT_BACKGROUND_DEFAULT,
@@ -187,7 +196,7 @@ function getViewportError(preparedModel) {
 }
 
 function isFragmentsModelNotFound(error) {
-  return String(error?.message ?? error).includes('Fragments: Model not found');
+  return isFragmentsModelNotFoundError(error);
 }
 
 function isStaleFragmentsLifecycleError(error) {
@@ -210,9 +219,14 @@ import {
   BIM_VIEWPORT_LOAD_PHASES,
   FRAGMENTS_BOOT_IDLE_TIMEOUT_MS,
   FRAGMENTS_MODEL_REGISTRATION_RETRY_DELAYS_MS,
+  configureFragmentsManagerForBimViewport,
   hasViewportLayoutSize,
+  isFragmentsModelNotFoundError,
   isFragmentsModelRegistered,
+  loadFragmentsModelWithRetries,
+  resolveBimViewportRuntimeModelId,
   syncFragmentsForViewportBoot,
+  waitForAnimationFrame,
   waitForFragmentsModelIdle,
   waitForFragmentsModelRegistered,
   waitForViewportLayout,
@@ -240,6 +254,16 @@ function materialForColor(color, customId) {
     transparent: true,
     customId,
   };
+}
+
+function BimViewportToolbarSeparator() {
+  return (
+    <div
+      className="mx-3 h-5 w-px shrink-0 bg-border"
+      role="separator"
+      aria-orientation="vertical"
+    />
+  );
 }
 
 export function BimViewport({
@@ -289,6 +313,7 @@ export function BimViewport({
   clayLightIntensity = CLAY_LIGHT_INTENSITY_DEFAULT,
   claySurfaceColor = CLAY_SURFACE_COLOR_DEFAULT,
   clayGlassOpacity = CLAY_GLASS_OPACITY_DEFAULT,
+  clayOriginalColorBlend = CLAY_ORIGINAL_COLOR_BLEND_DEFAULT,
   viewportBackgroundColor = VIEWPORT_BACKGROUND_DEFAULT,
   showEnvironment = false,
   lightingMode = 'studio',
@@ -345,6 +370,9 @@ export function BimViewport({
   const rendererRef = useRef(null);
   const cameraRef = useRef(null);
   const controlsRef = useRef(null);
+  const keyboardNavRef = useRef(null);
+  const pointerWalkTargetRef = useRef(null);
+  const pointerWalkRaycastSeqRef = useRef(0);
   const sceneRef = useRef(null);
   const fragmentsRef = useRef(null);
   const modelRef = useRef(null);
@@ -354,6 +382,14 @@ export function BimViewport({
   const idCacheRef = useRef(createFragmentsIdCache());
   const pickSeqRef = useRef(0);
   const applySelectionSeqRef = useRef(0);
+  const clayApplySeqRef = useRef(0);
+  const clayApplyInFlightRef = useRef(false);
+  const clayReapplyInFlightRef = useRef(false);
+  const clayMaterialParamsRef = useRef({
+    claySurfaceColor,
+    clayGlassOpacity,
+    clayOriginalColorBlend,
+  });
   const hiddenStoreysRef = useRef(hiddenStoreys);
   const hiddenLayersRef = useRef(hiddenLayers);
   const sectionStateRef = useRef(normalizeBimSectionState(section ?? {}));
@@ -442,6 +478,8 @@ export function BimViewport({
   const [bqlHudOpen, setBqlHudOpen] = useState(false);
   const [layersHudOpen, setLayersHudOpen] = useState(false);
   const [sectionHudOpen, setSectionHudOpen] = useState(false);
+  const [selectionRefreshNonce, setSelectionRefreshNonce] = useState(0);
+  const [clayLocalIdsReadyNonce, setClayLocalIdsReadyNonce] = useState(0);
   const [viewportBounds, setViewportBounds] = useState(() => ({
     radius: modelBoundsRef.current.radius,
     center: {
@@ -480,6 +518,12 @@ export function BimViewport({
   useEffect(() => {
     fitToModelOnLoadRef.current = fitToModelOnLoad;
   }, [fitToModelOnLoad]);
+
+  clayMaterialParamsRef.current = {
+    claySurfaceColor,
+    clayGlassOpacity,
+    clayOriginalColorBlend,
+  };
 
   useEffect(() => {
     hiddenStoreysRef.current = hiddenStoreys;
@@ -993,6 +1037,8 @@ export function BimViewport({
     const effectSeq = ++viewportEffectSeqRef.current;
     const isEffectActive = () => !disposed && effectSeq === viewportEffectSeqRef.current;
     let updatePending = false;
+    let updatePendingStartedAt = 0;
+    const FRAGMENTS_UPDATE_FRAME_TIMEOUT_MS = 12000;
     modelReadyRef.current = false;
     viewportSizedRef.current = false;
     loadedFragmentsModelIdRef.current = null;
@@ -1000,9 +1046,14 @@ export function BimViewport({
     setLoadState('loading');
     setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.preparing);
 
-    const fragments = new FragmentsModels(fragmentsWorkerUrl);
-    fragments.settings.graphicsQuality = 1;
-    fragmentsRef.current = fragments;
+    let fragments = null;
+    const createFragmentsManager = () => {
+      const nextFragments = new FragmentsModels(fragmentsWorkerUrl);
+      configureFragmentsManagerForBimViewport(nextFragments);
+      fragments = nextFragments;
+      fragmentsRef.current = nextFragments;
+      return nextFragments;
+    };
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(viewportBackgroundRef.current);
@@ -1063,6 +1114,44 @@ export function BimViewport({
     };
     controls.addEventListener('end', emitSceneCameraChange);
 
+    const schedulePointerWalkTargetRaycast = (clientX, clientY) => {
+      const seq = ++pointerWalkRaycastSeqRef.current;
+      void (async () => {
+        const model = modelRef.current;
+        const activeCamera = cameraRef.current;
+        const activeRenderer = rendererRef.current;
+        if (!model || !activeCamera || !activeRenderer || !modelReadyRef.current) return;
+        try {
+          const hit = await model.raycast({
+            camera: activeCamera,
+            mouse: new THREE.Vector2(clientX, clientY),
+            dom: activeRenderer.domElement,
+          });
+          if (seq !== pointerWalkRaycastSeqRef.current) return;
+          if (hit?.point) {
+            pointerWalkTargetRef.current = hit.point.isVector3
+              ? hit.point.clone()
+              : new THREE.Vector3(hit.point.x, hit.point.y, hit.point.z);
+            return;
+          }
+          pointerWalkTargetRef.current = null;
+        } catch {
+          if (seq === pointerWalkRaycastSeqRef.current) pointerWalkTargetRef.current = null;
+        }
+      })();
+    };
+
+    const keyboardNav = createBimCameraKeyboardNav({
+      domElement: container,
+      getCamera: () => cameraRef.current,
+      getControls: () => controlsRef.current,
+      getEnabled: () => modelReadyRef.current && !measureModeActiveRef.current,
+      getPointerWalkTarget: () => pointerWalkTargetRef.current,
+      onPointerMove: schedulePointerWalkTargetRaycast,
+      onCameraMoved: emitSceneCameraChange,
+    });
+    keyboardNavRef.current = keyboardNav;
+
     legacyLightsRef.current = createBimLegacyLights(scene);
 
     const resize = () => {
@@ -1090,6 +1179,7 @@ export function BimViewport({
       { retryModelRegistration = false, requireModelReady = true } = {},
     ) => {
       if (!isEffectActive() || (requireModelReady && !modelReadyRef.current)) return false;
+      if (!fragments) return false;
       const modelId = loadedFragmentsModelIdRef.current ?? modelRef.current?.modelId;
       if (!modelId || !isFragmentsModelRegistered(fragments, modelId)) {
         return false;
@@ -1134,6 +1224,56 @@ export function BimViewport({
         hiddenLayers: layers,
       });
     };
+    const shouldSkipClayFragmentFrameLoop = () => {
+      if (renderStyleRef.current !== 'clay') return false;
+      const orig = Number(clayMaterialParamsRef.current?.clayOriginalColorBlend) || 0;
+      if (orig < 1) return false;
+      const hasLayerFilter = hiddenStoreysRef.current.length > 0 || hiddenLayersRef.current.length > 0;
+      const hasSectionClip = sectionStateRef.current?.enabled === true;
+      return !hasLayerFilter && !hasSectionClip;
+    };
+    const reapplyClayMaterialsAfterUpdate = async () => {
+      if (renderStyleRef.current !== 'clay') return;
+      if (clayReapplyInFlightRef.current) return;
+      const model = modelRef.current;
+      if (!model || !modelReadyRef.current) return;
+      const allLocalIds = localIdsRef.current;
+      if (!allLocalIds?.length) return;
+
+      clayReapplyInFlightRef.current = true;
+      try {
+        const baseResult = await applyClayBaseMaterials(
+          model,
+          preparedModelRef.current,
+          idCacheRef.current,
+          allLocalIds,
+          clayMaterialParamsRef.current,
+          {
+            reapplyOnly: true,
+            debugSource: 'reapply',
+            quietDebug: true,
+          },
+        );
+        const updateOk = await updateFragments(true, { retryModelRegistration: true });
+        applyViewportBackground(sceneRef.current, rendererRef.current, viewportBackgroundRef.current);
+        if (baseResult.ok && updateOk === false) {
+          const timer = createClayApplyTimer('reapplyClayMaterialsAfterUpdate');
+          timer.finish({
+            source: 'reapply',
+            ok: false,
+            reason: 'update-fragments-failed',
+            stats: baseResult.stats,
+            updateBeforeOk: null,
+            updateAfterOk: updateOk,
+            localIdsCount: allLocalIds.length,
+          });
+        } else if (baseResult.ok) {
+          publishClayFrameDebugSnapshot(baseResult.stats, { localIdsCount: allLocalIds.length });
+        }
+      } finally {
+        clayReapplyInFlightRef.current = false;
+      }
+    };
     updateFragmentsRef.current = updateFragments;
     const resizeAndRefresh = () => {
       const rect = container.getBoundingClientRect();
@@ -1152,7 +1292,10 @@ export function BimViewport({
       }
 
       void updateFragments(true, { retryModelRegistration: true })
-        .then(() => reapplyLayerStoreyVisibilityAfterUpdate())
+        .then(async () => {
+          await reapplyClayMaterialsAfterUpdate();
+          await reapplyLayerStoreyVisibilityAfterUpdate();
+        })
         .catch((error) => {
         if (!disposed && !isStaleFragmentsLifecycleError(error)) {
           setRenderError(error?.message || 'Could not update BIM view.');
@@ -1171,20 +1314,37 @@ export function BimViewport({
         const buffer = await preparedModelRef.current.fragmentsBlob.arrayBuffer();
         if (!isEffectActive()) return;
         setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.loadingGeometry);
-        const runtimeModelId = preparedModelRef.current.metadata?.fragmentsModelId
-          ?? preparedModelRef.current.metadata?.fingerprint
-          ?? `bim-${Date.now()}`;
+        const runtimeModelId = resolveBimViewportRuntimeModelId(preparedModelRef.current);
         loadedFragmentsModelIdRef.current = runtimeModelId;
         const activeCamera = cameraRef.current;
-        const model = await fragments.load(buffer, {
-          modelId: runtimeModelId,
-          camera: activeCamera,
+        const loadResult = await loadFragmentsModelWithRetries(createFragmentsManager, (activeFragments) => (
+          activeFragments.load(buffer.slice(0), {
+            modelId: runtimeModelId,
+            camera: activeCamera,
+          })
+        ), {
+          disposed: () => !isEffectActive(),
         });
+        if (!isEffectActive() || loadResult.status === 'disposed') return;
+        if (loadResult.status !== 'loaded' || !loadResult.model || !loadResult.fragments) {
+          setRenderError('Fragments geometry load stalled. Reload the model.');
+          setLoadState('error');
+          return;
+        }
+        fragments = loadResult.fragments;
+        fragmentsRef.current = fragments;
+        const model = loadResult.model;
+        if (!isEffectActive()) {
+          await model.dispose().catch(() => {});
+          return;
+        }
+        await waitForAnimationFrame();
         if (!isEffectActive()) {
           await model.dispose().catch(() => {});
           return;
         }
         modelRef.current = model;
+        clearClayMaterialGroupCache(model);
         model.useCamera(activeCamera);
         model.getClippingPlanesEvent = () => activeClippingPlanesRef.current;
         scene.add(model.object);
@@ -1239,6 +1399,11 @@ export function BimViewport({
           }
 
           setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.finishing);
+          localIdsRef.current = [];
+
+          await waitForAnimationFrame();
+          await waitForAnimationFrame();
+          if (!isEffectActive()) return;
           modelReadyRef.current = true;
           syncSectionClippingRef.current();
           renderer.render(scene, cameraRef.current);
@@ -1252,17 +1417,27 @@ export function BimViewport({
             void rebuildWireframeEdges();
           }
           void model.getLocalIds().then(async (ids) => {
-            if (!disposed && modelRef.current === model) {
-              localIdsRef.current = ids;
-              if (wireframeModeRef.current && !wireframeEdgesRef.current) {
-                void rebuildWireframeEdges();
-              }
-              try {
-                await populateFragmentsIdCache(model, idCacheRef.current, ids);
-              } catch (error) {
-                if (!disposed && !isStaleFragmentsLifecycleError(error)) {
-                  setRenderError(error?.message || 'Could not build BIM ID cache.');
+            if (disposed || modelRef.current !== model) return;
+            localIdsRef.current = ids;
+            if (wireframeModeRef.current && !wireframeEdgesRef.current) {
+              void rebuildWireframeEdges();
+            }
+            try {
+              scheduleClayMaterialGroupsPrefetch(model, ids, () => {
+                if (!isEffectActive() || renderStyleRef.current !== 'clay') return;
+                invalidateClayMaterialSnapshot(model);
+                const orig = Number(clayMaterialParamsRef.current?.clayOriginalColorBlend) || 0;
+                if (orig > 0 && orig < 1) {
+                  setClayLocalIdsReadyNonce((nonce) => nonce + 1);
                 }
+              });
+              await populateFragmentsIdCache(model, idCacheRef.current, ids);
+              if (renderStyleRef.current === 'clay') {
+                setClayLocalIdsReadyNonce((nonce) => nonce + 1);
+              }
+            } catch (error) {
+              if (!disposed && !isStaleFragmentsLifecycleError(error)) {
+                setRenderError(error?.message || 'Could not build BIM ID cache.');
               }
             }
           }).catch((error) => {
@@ -1293,7 +1468,9 @@ export function BimViewport({
         }
       } catch (error) {
         if (!disposed) {
-          setRenderError(error?.message || 'Could not load Fragments model.');
+          setRenderError(isFragmentsModelNotFound(error)
+            ? 'Fragments worker lost the model during load. Reload or rebuild the BIM cache.'
+            : error?.message || 'Could not load Fragments model.');
           setLoadState('error');
         }
       }
@@ -1394,22 +1571,48 @@ export function BimViewport({
     };
 
     let animateStarted = false;
+    let lastFrameTime = performance.now();
     const startAnimateLoop = () => {
       if (animateStarted || disposed) return;
       animateStarted = true;
+      lastFrameTime = performance.now();
       animate();
     };
 
     const animate = () => {
       if (disposed) return;
+      const now = performance.now();
+      const deltaSeconds = Math.min((now - lastFrameTime) / 1000, 0.1);
+      lastFrameTime = now;
+      keyboardNav.update(deltaSeconds);
       controls.update();
       const hasLayerFilter = hiddenStoreysRef.current.length > 0 || hiddenLayersRef.current.length > 0;
       const hasSectionClip = sectionStateRef.current?.enabled === true;
 
+      if (shouldSkipClayFragmentFrameLoop()) {
+        if (wireframeModeRef.current && wireframeEdgesRef.current) {
+          ensureWireframeEdgesAttached(
+            wireframeOverlaySceneRef.current,
+            modelRef.current?.object ?? null,
+            wireframeEdgesRef.current,
+          );
+        }
+        renderViewportFrame();
+        animationRef.current = window.requestAnimationFrame(animate);
+        return;
+      }
+
       if (modelReadyRef.current && !updatePending) {
         updatePending = true;
-        void updateFragments(false, { retryModelRegistration: true })
-          .then(() => reapplyLayerStoreyVisibilityAfterUpdate())
+        updatePendingStartedAt = performance.now();
+        void Promise.race([
+          updateFragments(false, { retryModelRegistration: true }),
+          delay(FRAGMENTS_UPDATE_FRAME_TIMEOUT_MS),
+        ])
+          .then(async () => {
+            await reapplyClayMaterialsAfterUpdate();
+            await reapplyLayerStoreyVisibilityAfterUpdate();
+          })
           .catch((error) => {
             if (!disposed && !isStaleFragmentsLifecycleError(error)) {
               setRenderError(error?.message || 'Could not update BIM view.');
@@ -1428,6 +1631,13 @@ export function BimViewport({
             if (!disposed) animationRef.current = window.requestAnimationFrame(animate);
           });
         return;
+      }
+
+      if (
+        updatePending
+        && performance.now() - updatePendingStartedAt > FRAGMENTS_UPDATE_FRAME_TIMEOUT_MS
+      ) {
+        updatePending = false;
       }
 
       if (updatePending && (hasLayerFilter || hasSectionClip)) {
@@ -1478,6 +1688,10 @@ export function BimViewport({
       resizeObserver.disconnect();
       window.removeEventListener('resize', resizeAndRefresh);
       controls.removeEventListener('end', emitSceneCameraChange);
+      keyboardNav.dispose();
+      keyboardNavRef.current = null;
+      pointerWalkTargetRef.current = null;
+      pointerWalkRaycastSeqRef.current += 1;
       controls.dispose();
       measurementControllerRef.current?.dispose();
       measurementControllerRef.current = null;
@@ -1629,7 +1843,7 @@ export function BimViewport({
       disposeClayComposer(clayComposerRef.current);
       clayComposerRef.current = null;
     };
-  }, [clayLightIntensity, loadState, renderStyle]);
+  }, [clayLightIntensity, loadState, renderStyle, viewportBackgroundColor]);
 
   useEffect(() => {
     if (renderStyle !== 'clay') return;
@@ -1676,19 +1890,12 @@ export function BimViewport({
         || effectiveDisplayMode === 'colorBy'
         || (isolateOnSelect && !selectedElement)
         || (!shouldIsolate && effectiveDisplayMode === 'highlight');
-      await model.resetHighlight();
+      if (!isClay) {
+        await model.resetHighlight();
+      }
       if (needsVisibilityReset) await model.resetVisible();
       timer.mark('reset');
       if (!shouldApplySelectionRun(runSeq, applySelectionSeqRef.current)) return;
-
-      if (isClay) {
-        const allLocalIds = localIdsRef.current.length > 0 ? localIdsRef.current : await model.getLocalIds();
-        await applyClayBaseMaterials(model, preparedModel, cache, allLocalIds, {
-          surfaceColor: claySurfaceColor,
-          glassOpacity: clayGlassOpacity,
-        });
-        if (!shouldApplySelectionRun(runSeq, applySelectionSeqRef.current)) return;
-      }
 
       const resultElements = (preparedModel?.elements ?? []).filter((element) => highlightElementIds.includes(element.id));
       const selectedOnly = selectedElement ? [selectedElement] : [];
@@ -1777,8 +1984,6 @@ export function BimViewport({
       }
     });
   }, [
-    clayGlassOpacity,
-    claySurfaceColor,
     colorByProperty,
     displayMode,
     isolateOnSelect,
@@ -1790,6 +1995,123 @@ export function BimViewport({
     preparedModel,
     renderStyle,
     selectedElement,
+    selectionRefreshNonce,
+  ]);
+
+  useEffect(() => {
+    const model = modelRef.current;
+    if (!model || !modelReadyRef.current || loadState !== 'ready' || renderStyle !== 'clay') return undefined;
+
+    const debounceTimer = globalThis.setTimeout(() => {
+      const runSeq = ++clayApplySeqRef.current;
+
+      async function applyClayMaterials() {
+        const shouldCancel = () => runSeq !== clayApplySeqRef.current;
+        const waitDeadline = Date.now() + 3000;
+        while (clayApplyInFlightRef.current && Date.now() < waitDeadline) {
+          if (shouldCancel()) return;
+          await delay(16);
+        }
+        if (shouldCancel()) return;
+        if (clayApplyInFlightRef.current) {
+          clayApplyInFlightRef.current = false;
+        }
+        clayApplyInFlightRef.current = true;
+        publishClayDebugMarker({
+          source: 'effect',
+          phase: 'clayMaterialsEffect',
+          ok: null,
+          status: 'starting',
+          runSeq,
+        });
+        const timer = createClayApplyTimer('clayMaterialsEffect');
+        try {
+          let allLocalIds = localIdsRef.current.length > 0 ? localIdsRef.current : await model.getLocalIds();
+          if (!allLocalIds?.length) {
+            await delay(50);
+            allLocalIds = localIdsRef.current.length > 0 ? localIdsRef.current : await model.getLocalIds();
+          }
+          localIdsRef.current = allLocalIds ?? [];
+          if (shouldCancel()) {
+            return;
+          }
+          if (!allLocalIds?.length) {
+            publishClayDebugMarker({
+              source: 'effect',
+              phase: 'clayMaterialsEffect',
+              ok: false,
+              reason: 'empty-local-ids',
+              runSeq,
+            });
+            return;
+          }
+          timer.mark('local-ids');
+          const { originalColorBlend } = resolveClayMaterialApplyParams(clayMaterialParamsRef.current);
+          const blendOnly = canReuseClayBlendFastPath(model, allLocalIds, originalColorBlend);
+          const result = await applyClayViewportMaterials(
+            model,
+            preparedModelRef.current,
+            idCacheRef.current,
+            allLocalIds,
+            clayMaterialParamsRef.current,
+            {
+              updateFragments: updateFragmentsRef.current,
+              debugSource: 'effect',
+              blendOnly,
+              shouldCancel,
+              quietDebug: true,
+            },
+          );
+          if (shouldCancel()) {
+            return;
+          }
+          applyViewportBackground(sceneRef.current, rendererRef.current, viewportBackgroundRef.current);
+          timer.finish({
+            source: 'effect',
+            ok: result.ok,
+            runSeq,
+            stats: result.stats,
+            updateBeforeOk: result.updateBeforeOk,
+            updateAfterOk: result.updateAfterOk,
+            blendOnly: result.blendOnly,
+            localIdsCount: result.localIdsCount,
+            totalMs: result.totalMs,
+          });
+        } catch (error) {
+          if (!shouldCancel()) {
+            publishClayDebugMarker({
+              source: 'effect',
+              phase: 'clayMaterialsEffect',
+              ok: false,
+              runSeq,
+              error: error?.message ?? String(error),
+            });
+          }
+          throw error;
+        } finally {
+          clayApplyInFlightRef.current = false;
+        }
+      }
+
+      void applyClayMaterials().catch((error) => {
+        clayApplyInFlightRef.current = false;
+        if (runSeq === clayApplySeqRef.current && !isStaleFragmentsLifecycleError(error)) {
+          setRenderError(error?.message || 'Could not apply clay materials.');
+        }
+      });
+    }, 0);
+
+    return () => {
+      globalThis.clearTimeout(debounceTimer);
+      ++clayApplySeqRef.current;
+    };
+  }, [
+    clayGlassOpacity,
+    clayOriginalColorBlend,
+    claySurfaceColor,
+    clayLocalIdsReadyNonce,
+    loadState,
+    renderStyle,
   ]);
 
   const handleCanvasPointerDown = useCallback((event) => {
@@ -2089,13 +2411,15 @@ export function BimViewport({
 
   return (
     <div className="h-full min-h-0 flex flex-col bg-preview-bg">
-      <div className="shrink-0 flex items-center justify-between border-b border-border bg-surface px-3 py-2">
+      <div className="shrink-0 border-b border-border bg-surface">
+        <div className="flex items-center justify-between px-3 py-2">
         <div className="text-[10px] uppercase tracking-wider text-muted truncate">
           {measureStatus ?? (selectedElement
             ? 'Left-click empty space or Esc to deselect · Right-drag orbit · Middle-drag pan'
             : `IFC Fragments View - ${total} elements · Left-click select · Right-drag orbit · Middle-drag pan`)}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center">
+          <div className="flex items-center gap-1">
           <button
             type="button"
             title={leftPanelOpen ? 'Collapse element list' : 'Expand element list'}
@@ -2112,12 +2436,36 @@ export function BimViewport({
           >
             {rightPanelOpen ? <PanelRightClose size={14} strokeWidth={1.7} /> : <PanelRight size={14} strokeWidth={1.7} />}
           </button>
+          </div>
+          <BimViewportToolbarSeparator />
+          <div className="flex items-center gap-1">
+          <MeasurementToolbarControls
+            measureModeActive={measureModeActive}
+            measureSnapMode={measureSnapMode}
+            measureKind={measureKind}
+            measureUnits={measureUnits}
+            onToggleMeasureMode={handleToggleMeasureMode}
+            onMeasureSnapModeChange={onMeasureSnapModeChange}
+            onMeasureKindChange={onMeasureKindChange}
+            onMeasureUnitsChange={onMeasureUnitsChange}
+            compact
+            buttonClassName={(active) => `rounded border border-border p-1 ${
+              active ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
+            }`}
+            activeButtonClassName="rounded border border-border p-1 bg-accent text-on-accent"
+          />
+          </div>
+          <BimViewportToolbarSeparator />
+          <div className="flex items-center gap-1">
           <button type="button" title="Reset visibility" onClick={resetVisibility} className="rounded border border-border p-1 text-secondary hover:bg-surface-muted">
             <RotateCcw size={14} strokeWidth={1.7} />
           </button>
           <button type="button" title="Fit to model" onClick={fitModel} className="rounded border border-border p-1 text-secondary hover:bg-surface-muted">
             <LocateFixed size={14} strokeWidth={1.7} />
           </button>
+          </div>
+          <BimViewportToolbarSeparator />
+          <div className="flex items-center gap-1">
           {projectionMode === 'perspective' && (
             <input
               type="number"
@@ -2145,30 +2493,9 @@ export function BimViewport({
               ? <Axis3D size={14} strokeWidth={1.7} />
               : <Camera size={14} strokeWidth={1.7} />}
           </button>
-          <button
-            type="button"
-            title={renderStyle === 'clay' ? 'Lighting disabled in clay mode' : bimLightingToolbarLabel({ showEnvironment, environmentPreset })}
-            onClick={handleToggleLighting}
-            disabled={renderStyle === 'clay'}
-            className={`rounded border border-border p-1 ${showEnvironment && renderStyle !== 'clay' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'} ${renderStyle === 'clay' ? 'opacity-40 cursor-not-allowed' : ''}`}
-          >
-            <SunMedium size={14} strokeWidth={1.7} />
-          </button>
-          <MeasurementToolbarControls
-            measureModeActive={measureModeActive}
-            measureSnapMode={measureSnapMode}
-            measureKind={measureKind}
-            measureUnits={measureUnits}
-            onToggleMeasureMode={handleToggleMeasureMode}
-            onMeasureSnapModeChange={onMeasureSnapModeChange}
-            onMeasureKindChange={onMeasureKindChange}
-            onMeasureUnitsChange={onMeasureUnitsChange}
-            compact
-            buttonClassName={(active) => `rounded border border-border p-1 ${
-              active ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
-            }`}
-            activeButtonClassName="rounded border border-border p-1 bg-accent text-on-accent"
-          />
+          </div>
+          <BimViewportToolbarSeparator />
+          <div className="flex items-center gap-1">
           <button
             type="button"
             title="Wireframe overlay (visible edges)"
@@ -2227,6 +2554,9 @@ export function BimViewport({
           >
             <SlidersHorizontal size={14} strokeWidth={1.7} />
           </button>
+          </div>
+          <BimViewportToolbarSeparator />
+          <div className="flex items-center gap-1">
           <button
             type="button"
             title={bqlHudOpen ? 'Hide BQL query' : 'Show BQL query'}
@@ -2267,11 +2597,14 @@ export function BimViewport({
           >
             <Layers size={14} strokeWidth={1.7} />
           </button>
+          </div>
+        </div>
         </div>
       </div>
       <div
         ref={containerRef}
-        className="flex-1 min-h-0 relative overflow-hidden"
+        tabIndex={0}
+        className="flex-1 min-h-0 relative overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
       >
         <canvas
           ref={canvasRef}
@@ -2371,9 +2704,17 @@ export function BimViewport({
             {styleHudOpen && (
               <BimStyleSettingsHud
                 renderStyle={renderStyle}
-                wireframeMode={wireframeMode}
                 viewportBackgroundColor={viewportBackgroundColor}
                 onViewportBackgroundChange={onViewportBackgroundChange}
+                showEnvironment={showEnvironment}
+                environmentPreset={environmentPreset}
+                onToggleLighting={handleToggleLighting}
+                projectId={projectId}
+                cardId={cardId}
+                artifactId={artifactId}
+                styleSettings={styleSettings}
+                onApplyStyleSettings={onApplyStyleSettings}
+                wireframeMode={wireframeMode}
                 clayAoIntensity={clayAoIntensity}
                 clayAoRadius={clayAoRadius}
                 clayAoBias={clayAoBias}
@@ -2383,17 +2724,13 @@ export function BimViewport({
                 clayLightIntensity={clayLightIntensity}
                 claySurfaceColor={claySurfaceColor}
                 clayGlassOpacity={clayGlassOpacity}
+                clayOriginalColorBlend={clayOriginalColorBlend}
                 onClayStyleChange={onClayStyleChange}
                 wireframeLineWeight={wireframeLineWeight}
                 wireframeOpacity={wireframeOpacity}
                 wireframeColor={wireframeColor}
                 wireframeHiddenLines={wireframeHiddenLines}
                 onWireframeStyleChange={onWireframeStyleChange}
-                projectId={projectId}
-                cardId={cardId}
-                artifactId={artifactId}
-                styleSettings={styleSettings}
-                onApplyStyleSettings={onApplyStyleSettings}
               />
             )}
           </div>

@@ -205,7 +205,49 @@ describe('BIM UI components', () => {
     expect(html).toContain('value="m"');
   });
 
-  it('renders the HDRI lighting toggle in the BIM viewport', () => {
+  it('renders the HDRI lighting toggle in the style settings HUD for standard render', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimStyleSettingsHud, {
+        renderStyle: 'standard',
+        viewportBackgroundColor: '#ffffff',
+        onViewportBackgroundChange: () => {},
+        showEnvironment: false,
+        environmentPreset: 'studio',
+        onToggleLighting: () => {},
+        wireframeMode: false,
+      }),
+    );
+    expect(html).toContain('Lighting: off');
+  });
+
+  it('hides HDRI lighting in the style settings HUD for clay render', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimStyleSettingsHud, {
+        renderStyle: 'clay',
+        viewportBackgroundColor: '#ffffff',
+        onViewportBackgroundChange: () => {},
+        showEnvironment: false,
+        environmentPreset: 'studio',
+        onToggleLighting: () => {},
+        wireframeMode: false,
+        clayAoIntensity: 0,
+        clayAoRadius: 0.0005,
+        clayAoBias: 0.05,
+        clayAoDistance: 0.17,
+        clayAoSamples: 256,
+        clayAoResolution: 1,
+        clayLightIntensity: 2,
+        claySurfaceColor: '#ffffff',
+        clayGlassOpacity: 0.5,
+        clayOriginalColorBlend: 1,
+        onClayStyleChange: () => {},
+      }),
+    );
+    expect(html).not.toContain('Lighting: off');
+    expect(html).toContain('Viewport background colour');
+  });
+
+  it('places side panel toggles before measurement controls in the BIM viewport', () => {
     const html = renderToStaticMarkup(
       React.createElement(BimViewport, {
         preparedModel: {
@@ -218,15 +260,13 @@ describe('BIM UI components', () => {
         },
         selectedElement: null,
         displayMode: 'highlight',
-        showEnvironment: false,
-        environmentPreset: 'studio',
         onDisplayModeChange: () => {},
       }),
     );
-    expect(html).toContain('Lighting: off');
+    expect(html.indexOf('Collapse element list')).toBeLessThan(html.indexOf('Measure'));
   });
 
-  it('renders the style settings switch for highlight mode without clay or wireframe', () => {
+  it('renders style toolbar controls for highlight mode without clay or wireframe', () => {
     const html = renderToStaticMarkup(
       React.createElement(BimViewport, {
         preparedModel: {
@@ -245,9 +285,12 @@ describe('BIM UI components', () => {
       }),
     );
     expect(html).toContain('Show style settings panel');
+    expect(html).not.toContain('Viewport background colour');
+    expect(html).not.toContain('Clay style controls');
+    expect(html).not.toContain('Wireframe style controls');
   });
 
-  it('renders the style settings switch for ghost mode without clay or wireframe', () => {
+  it('renders style toolbar controls for ghost mode without clay or wireframe', () => {
     const html = renderToStaticMarkup(
       React.createElement(BimViewport, {
         preparedModel: {
@@ -266,15 +309,19 @@ describe('BIM UI components', () => {
       }),
     );
     expect(html).toContain('Show style settings panel');
+    expect(html).not.toContain('Viewport background colour');
   });
 
-  it('renders shared style settings in the floating HUD for highlight mode', () => {
+  it('renders shared style settings in the style settings HUD for highlight mode', () => {
     const html = renderToStaticMarkup(
       React.createElement(BimStyleSettingsHud, {
         renderStyle: 'standard',
         wireframeMode: false,
         viewportBackgroundColor: '#171412',
         onViewportBackgroundChange: () => {},
+        showEnvironment: false,
+        environmentPreset: 'studio',
+        onToggleLighting: () => {},
       }),
     );
     expect(html).toContain('Style settings');
@@ -283,7 +330,7 @@ describe('BIM UI components', () => {
     expect(html).not.toContain('Wireframe style controls');
   });
 
-  it('renders the wireframe toggle and style settings switch in the BIM viewport', () => {
+  it('renders the wireframe toggle and style settings icon in the BIM viewport', () => {
     const html = renderToStaticMarkup(
       React.createElement(BimViewport, {
         preparedModel: {
@@ -341,6 +388,7 @@ describe('BIM UI components', () => {
         clayLightIntensity: 2,
         claySurfaceColor: '#cccccc',
         clayGlassOpacity: 0.35,
+        clayOriginalColorBlend: 0.5,
         onClayStyleChange: () => {},
       }),
     );
@@ -348,11 +396,13 @@ describe('BIM UI components', () => {
     expect(html).toContain('Clay AO bias');
     expect(html).toContain('Clay light intensity');
     expect(html).toContain('Clay glass opacity');
+    expect(html).toContain('Clay surface material blend');
     expect(html).toContain('2.00');
     expect(html).toContain('0.35');
+    expect(html).toContain('50%');
   });
 
-  it('renders the clay toggle and style settings switch when clay render is active', () => {
+  it('renders the clay toggle and style settings icon when clay render is active', () => {
     const html = renderToStaticMarkup(
       React.createElement(BimViewport, {
         preparedModel: {

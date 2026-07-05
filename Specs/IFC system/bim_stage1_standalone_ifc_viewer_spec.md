@@ -266,11 +266,12 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Property/quantity extraction | Yes — `rel-defines-by-properties` + quantity sets |
 | Storey extraction | Yes — `storeyId` on element records and shown in table column |
 | Viewer rendering | Yes — `BimViewport.jsx` (Fragments + Three.js); boot gated on layout + worker registration via `bimViewportBoot.js` |
-| Wireframe overlay | Yes — feature-edge overlay over lit/ghost/highlight/clay; toolbar style controls when enabled (weight, transparency, colour, Hdn/All); persisted in workspace state (`wireframeHiddenLines` default true) |
-| Clay / Arctic render | Yes — `renderStyle: 'clay'` with SSAO + optional wireframe compositing; circle icon toggle in rounded-square toolbar button |
+| Wireframe overlay | Yes — feature-edge overlay over lit/ghost/highlight/clay; **style settings HUD** controls when enabled (weight, transparency, colour, Hdn/All); persisted in workspace state (`wireframeHiddenLines` default true) |
+| Clay / Arctic render | Yes — `renderStyle: 'clay'` with SSAO + optional wireframe compositing; circle icon toggle in display toolbar group; **Orig** blends native IFC colours toward Surf (partial only where IFC colour metadata exists; 100% uniform Surf) |
 | Viewport boot | Yes — `bimViewportBoot.js` (layout wait, registration, fast sync, phased loading UI) |
 | Default open state | Yes — highlight display mode, standard render, all storeys/layers visible, **section cut off** (`BIM_VIEWER_DEFAULTS` + `applyBimViewerDefaults`) |
-| Style settings HUD | Yes — background colour + presets always available; clay/wireframe sliders when active (`BimStyleSettingsHud.jsx`) |
+| Style settings HUD | Yes — toolbar sliders icon toggles floating panel; background + presets always; HDRI lighting (standard only); clay/wireframe sliders + clay debug when active (`BimStyleSettingsHud.jsx`, `BimStyleToolbarControls.jsx`, `BimClayDebugPanel.jsx`) |
+| Viewport toolbar layout | Yes — grouped sections with separators: panels → measure → view → camera → display → tools |
 | Storey / layer HUD | Yes — `BimLayersHud.jsx` + `bimLayerVisibility.js` |
 | Style presets (server) | Yes — Postgres `bim_style_presets` + REST under `/bim/projects/:projectId/style-presets` |
 | Floating BQL / agent HUDs | Yes — `BimBqlHud.jsx`, `BimAgentHud.jsx` in viewport top-right stack |
@@ -278,7 +279,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Viewport loading feedback | Yes — phased boot overlay (`BIM_VIEWPORT_LOAD_PHASES`) with spinner + element count |
 | Perspective / orthographic | Yes — toolbar toggle + camera state persistence |
 | Measurements | Yes — vertex/edge snap, segment + polyline, units toggle; shared `MeasurementUi` with 3D artifact viewer |
-| HDRI lighting | Yes — environment preset cycle (off / studio / city / …) |
+| HDRI lighting | Yes — environment preset cycle (off / studio / city / …); **style settings HUD** (standard render only) |
 | Picking/selection | Yes — raycast + GlobalId mapping |
 | Element table | Yes — name, class, GlobalId, type, storey; search + class filter |
 | Properties inspector | Yes — grouped Psets, provenance, assembly membership |
@@ -308,8 +309,8 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Repository | `canvas/src/features/bim/bim-core/bimRepository.js` |
 | Workspace UI | `canvas/src/features/bim/components/BimWorkspace.jsx` |
 | Wireframe overlay | `canvas/src/features/bim/bim-core/bimWireframeOverlay.js` |
-| Clay / Arctic render | `canvas/src/features/bim/bim-core/bimClayRender.js` |
-| Style settings | `canvas/src/features/bim/bim-core/bimStyleSettings.js` |
+| Clay / Arctic render | `canvas/src/features/bim/bim-core/bimClayRender.js`, `bimClayDebug.js` |
+| Style settings | `canvas/src/features/bim/bim-core/bimStyleSettings.js`, `components/BimStyleSettingsHud.jsx`, `BimStyleToolbarControls.jsx`, `BimClayDebugPanel.jsx` |
 | Layer visibility | `canvas/src/features/bim/bim-core/bimLayerVisibility.js`, `bimElementLayers.js` |
 | Section cut | `canvas/src/features/bim/bim-core/bimSectioning.js`, `bimScreenDepth.js`, `components/BimSectionHud.jsx` |
 | Viewport boot | `canvas/src/features/bim/bim-core/bimViewportBoot.js` |
