@@ -1253,11 +1253,14 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 - Live extraction feed during first-open preparation.
 - 3D viewport: orbit/pan/zoom, fit, raycast pick, highlight / isolate / ghost others.
 - Viewport toolbar: perspective ↔ orthographic toggle, FOV input, HDRI lighting cycle, measurement tools (vertex/edge snap, segment/polyline), wireframe overlay toggle, **clay render (Arctic)** toggle.
-- **Wireframe overlay** (2026-07-04): optional camera-visible feature edges composited over lit/ghost/highlight views — independent of display mode. Built from Fragments `getItemsGeometry()` into `LineSegments2` + `LineMaterial` (screen-space px width). Two-pass render: main scene first, then overlay scene with `autoClear: false`. When wireframe is on, toolbar exposes **line weight** (0.5–6 px), **transparency** (5–100%), and **colour** controls; values persist in workspace state (`wireframeMode`, `wireframeLineWeight`, `wireframeOpacity`, `wireframeColor`). Live style updates apply without edge rebuild. Composes with clay/Arctic mode (see below).
+- **Wireframe overlay** (2026-07-04, updated 2026-07-05): optional camera-visible feature edges composited over lit/ghost/highlight/clay views — independent of display mode. Built from Fragments `getItemsGeometry()` into `LineSegments2` + `LineMaterial` (screen-space px width). **Standard (lit/ghost) path:** main scene render (colour + depth), then overlay scene with `autoClear: false` and transparent blending. **Edge mode toggle (`Hdn` / `All`):** persisted as `wireframeHiddenLines` (default `true`). **Hdn** — hidden-line / edge-aware overlay (`depthTest: true`, occludes edges behind surfaces). **All** — full wireframe (`depthTest: false`, draws all feature edges including through walls). When wireframe is on, toolbar exposes **line weight** (0.5–6 px), **transparency** (`Trn`, 0–100%), **colour**, and **Hdn/All**. Transparency semantics: **100% = invisible lines (base render only)**, **0% = solid outlines**. Values persist in workspace state (`wireframeMode`, `wireframeLineWeight`, `wireframeOpacity`, `wireframeColor`, `wireframeHiddenLines`). **Full wireframe opacity:** dense overlapping edges use a curved map capped at `WIREFRAME_DENSE_OPACITY_MAX` (0.38) so the transparency slider is usable across the full range; hidden-line mode uses linear transparency. Live style updates apply without edge rebuild. Line material uses `toneMapped: false` when composited over tone-mapped output.
 - **Clay render / Arctic presentation** (2026-07-05): optional `renderStyle: 'clay'` orthogonal to `displayMode` and `wireframeMode`. Rhino-style white-model presentation for design review:
   - **Stage 1 — material override:** all Fragments geometry highlighted with uniform clay surface colour; glazing IFC classes (`IfcWindow`, `IfcPlate`, `IfcCurtainWall`, `IfcDoor`, …) get semi-transparent glass override.
-  - **Stage 2–3 — SSAO post-process:** `EffectComposer` → `RenderPass` → `SSAOPass` (`OUTPUT.Default`) → `OutputPass`. Camera `near`/`far` tightened to model bounds each frame (required because default BIM `far: 100000` collapses SSAO linear depth).
-  - **Stage 4 — optional wireframe:** when wireframe is also on, SSAO colour pass renders first, then a geometry depth prepass repopulates the framebuffer depth buffer, then `renderWireframeOverlayPass()` draws hidden-line edges (`depthTest: true`) using the user's wireframe weight/opacity/colour.
+  - **Stage 2–3 — SSAO post-process:** `EffectComposer` → `RenderPass` → `SSAOPass` (`OUTPUT.Default`) → `OutputPass` (`needsSwap: false` so RenderPass depth stays in `readBuffer`). Composer sized to **logical** viewport pixels (`getRendererLogicalSize()`); camera `near`/`far` tightened to model bounds each frame (required because default BIM `far: 100000` collapses SSAO linear depth).
+  - **Stage 4 — optional wireframe:** when wireframe is also on, SSAO colour pass renders to screen first, then:
+    - **Hdn:** `populateScreenDepthFromScene()` — re-render Fragments geometry to the default framebuffer with **colour writes locked off** and depth cleared/written (Fragments ignores `scene.overrideMaterial`, so override-based depth prepass must not be used). Then `renderWireframeOverlayPass()` with `depthTest: true`.
+    - **All:** skip depth population; `renderWireframeOverlayPass()` with `depthTest: false` and transparent blend over clay.
+    - Wireframe skipped when line opacity ≤ 0 (100% transparency).
   - Clay mode disables HDRI/sun lighting; uses low hemisphere + directional skylight fill instead.
   - Toolbar controls when clay is active (live numeric readouts beside sliders; accent highlight when pinned at min/max):
     | Control | Field | Range | Default |
@@ -1276,7 +1279,7 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 - **BQL executor** (`executeBqlQuery`) runs against prepared model index with `physicalElements`, `semanticAssemblies`, and `allBimObjects` scopes.
 - **BimQueryPanel** provides JSON BQL editor with presets (all beams, ground floor, windows incl. `WindowAssembly`).
 - Query results drive viewer display mode and filter the element table; evidence bundle returned per result.
-- Workspace state (camera, selection, filters, display mode, projection mode, measurements, wireframe mode + style, **render style + clay tuning**, lighting, panel toggles) persisted in IndexedDB per fingerprint.
+- Workspace state (camera, selection, filters, display mode, projection mode, measurements, wireframe mode + style (`wireframeHiddenLines` included), **render style + clay tuning**, lighting, panel toggles) persisted in IndexedDB per fingerprint.
 - Graceful degradation: if Fragments conversion fails, evidence table and inspector still work; viewport shows an error banner.
 
 ### Folder sync, dock, and artifact ingest (2026-07-04)
@@ -1310,7 +1313,7 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 | Filesystem cache (`model-cache/<fingerprint>/`) | IndexedDB via `createIndexedDbBimRepository()` |
 | Embedded SQL (`bim-index.db`) | In-memory JS objects stored in IndexedDB |
 | NL BIM agent side panel | Partial — `BimQueryPanel` agent chat + local rule fallback shipped; full side-panel UX deferred |
-| Wireframe overlay | Shipped — toggle + style controls; selected-element edge highlight deferred |
+| Wireframe overlay | Shipped — toggle + style controls (weight, transparency, colour, Hdn/All); clay + wireframe compositing with depth-only screen pass for hidden lines; selected-element edge highlight deferred |
 | `colorBy` display mode | Validated in BQL but not applied in viewport |
 | Workspace state on card `version.bim` | Read on init; persist to IndexedDB only (no write-back to card metadata) |
 | IFC schema in fingerprint | Hardcoded `'unknown'` until schema detection lands |

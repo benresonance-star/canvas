@@ -210,9 +210,9 @@ export function getWireframeLineWidthForDistance(distance, modelRadius, baseWidt
   const radius = Math.max(modelRadius, 1);
   const normalized = distance / radius;
   if (normalized <= 1.2) return baseWidth;
-  if (normalized >= 8) return baseWidth * 2.75;
+  if (normalized >= 8) return baseWidth * 1.75;
   const t = (normalized - 1.2) / (8 - 1.2);
-  return baseWidth * (1 + t * 1.75);
+  return baseWidth * (1 + t * 0.75);
 }
 
 export function updateWireframeEdgeResolution(lines, width, height) {
@@ -240,8 +240,12 @@ export function updateWireframeEdgeVisuals(lines, {
     material.linewidth = baseWidth;
   }
   if (Number.isFinite(opacity)) {
-    material.opacity = opacity;
-    material.transparent = opacity < 1;
+    const clampedOpacity = Math.max(0, opacity);
+    material.opacity = clampedOpacity;
+    material.transparent = clampedOpacity < 1;
+    material.blending = THREE.NormalBlending;
+    material.depthWrite = false;
+    material.toneMapped = false;
   }
   if (color) {
     material.color.set(color);
@@ -354,6 +358,20 @@ export function ensureWireframeEdgesAttached(overlayScene, modelRoot, lines) {
   return true;
 }
 
+export function renderSceneDepthPrepass(renderer, scene, camera) {
+  if (!renderer || !scene || !camera) return false;
+
+  const previousOverride = scene.overrideMaterial;
+  const previousAutoClear = renderer.autoClear;
+  scene.overrideMaterial = createWireframeDepthMaterial();
+  renderer.autoClear = false;
+  renderer.clearDepth();
+  renderer.render(scene, camera);
+  scene.overrideMaterial = previousOverride;
+  renderer.autoClear = previousAutoClear;
+  return true;
+}
+
 export function renderWireframeOverlay(renderer, mainScene, overlayScene, camera, wireframeEdges, options = {}) {
   if (!renderer || !mainScene || !camera) {
     return false;
@@ -366,34 +384,22 @@ export function renderWireframeOverlay(renderer, mainScene, overlayScene, camera
     return true;
   }
 
-  const size = typeof renderer.getDrawingBufferSize === 'function'
-    ? renderer.getDrawingBufferSize(new THREE.Vector2())
-    : null;
-  updateWireframeEdgeVisuals(wireframeEdges, {
-    width: size?.x,
-    height: size?.y,
-    cameraDistance: options.cameraDistance,
-    modelRadius: options.modelRadius,
-    lineWeight: options.lineWeight,
-    opacity: options.opacity,
-    color: options.color,
+  const hiddenLines = options.hiddenLines !== false;
+  const result = renderWireframeOverlayPass(renderer, overlayScene, camera, wireframeEdges, {
+    ...options,
+    depthTest: hiddenLines,
   });
-
-  wireframeEdges.visible = true;
-  wireframeEdges.updateMatrixWorld(true);
-  wireframeEdges.material.depthTest = WIREFRAME_OVERLAY_DEPTH_TEST;
-  wireframeEdges.material.depthWrite = false;
-  const previousAutoClear = renderer.autoClear;
-  renderer.autoClear = false;
-  renderer.render(overlayScene, camera);
-  renderer.autoClear = previousAutoClear;
-  return true;
+  renderer.resetState?.();
+  return result;
 }
 
 
 export function renderWireframeOverlayPass(renderer, overlayScene, camera, wireframeEdges, options = {}) {
   if (!renderer || !overlayScene || !camera || !wireframeEdges?.parent) {
     return false;
+  }
+  if (Number.isFinite(options.opacity) && options.opacity <= 0) {
+    return true;
   }
   const size = typeof renderer.getDrawingBufferSize === 'function'
     ? renderer.getDrawingBufferSize(new THREE.Vector2())
@@ -411,6 +417,9 @@ export function renderWireframeOverlayPass(renderer, overlayScene, camera, wiref
   wireframeEdges.updateMatrixWorld(true);
   wireframeEdges.material.depthTest = options.depthTest ?? WIREFRAME_OVERLAY_DEPTH_TEST;
   wireframeEdges.material.depthWrite = false;
+  if (wireframeEdges.material.depthTest) {
+    wireframeEdges.material.depthFunc = THREE.LessEqualDepth;
+  }
   const previousAutoClear = renderer.autoClear;
   renderer.autoClear = false;
   renderer.render(overlayScene, camera);

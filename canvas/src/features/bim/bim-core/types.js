@@ -16,10 +16,51 @@ export const BIM_PROJECTION_MODES = ['perspective', 'orthographic'];
 export const WIREFRAME_LINE_WEIGHT_MIN = 0.5;
 export const WIREFRAME_LINE_WEIGHT_MAX = 6;
 export const WIREFRAME_LINE_WEIGHT_DEFAULT = 2;
-export const WIREFRAME_OPACITY_MIN = 0.05;
+export const WIREFRAME_OPACITY_MIN = 0;
 export const WIREFRAME_OPACITY_MAX = 1;
 export const WIREFRAME_OPACITY_DEFAULT = 0.88;
+export const WIREFRAME_TRANSPARENCY_MIN = 0;
+export const WIREFRAME_TRANSPARENCY_MAX = 1;
 export const WIREFRAME_COLOR_DEFAULT = '#0f172a';
+export const WIREFRAME_HIDDEN_LINES_DEFAULT = true;
+/** Max per-line opacity for full (all-edges) wireframe — overlapping lines compound quickly. */
+export const WIREFRAME_DENSE_OPACITY_MAX = 0.38;
+export const WIREFRAME_DENSE_OPACITY_EXPONENT = 2.75;
+
+/** Line opacity from transparency (0 = solid lines, 1 = invisible lines / clay only). */
+export function wireframeLineOpacityFromTransparency(transparency, { denseEdges = false } = {}) {
+  const numeric = Number(transparency);
+  if (!Number.isFinite(numeric)) {
+    return wireframeLineOpacityFromTransparency(WIREFRAME_TRANSPARENCY_MIN, { denseEdges });
+  }
+  const clamped = Math.min(
+    WIREFRAME_TRANSPARENCY_MAX,
+    Math.max(WIREFRAME_TRANSPARENCY_MIN, numeric),
+  );
+  const visibility = WIREFRAME_OPACITY_MAX - clamped;
+  if (denseEdges) {
+    return WIREFRAME_DENSE_OPACITY_MAX * visibility ** WIREFRAME_DENSE_OPACITY_EXPONENT;
+  }
+  return visibility;
+}
+
+/** Transparency from line opacity (inverse of wireframeLineOpacityFromTransparency). */
+export function wireframeTransparencyFromLineOpacity(opacity, { denseEdges = false } = {}) {
+  const numeric = Number(opacity);
+  if (!Number.isFinite(numeric)) {
+    return wireframeTransparencyFromLineOpacity(WIREFRAME_OPACITY_DEFAULT, { denseEdges });
+  }
+  const clamped = Math.min(
+    WIREFRAME_OPACITY_MAX,
+    Math.max(WIREFRAME_OPACITY_MIN, numeric),
+  );
+  if (denseEdges) {
+    if (clamped <= 0) return WIREFRAME_TRANSPARENCY_MAX;
+    const visibility = Math.min(1, clamped / WIREFRAME_DENSE_OPACITY_MAX);
+    return WIREFRAME_TRANSPARENCY_MAX - visibility ** (1 / WIREFRAME_DENSE_OPACITY_EXPONENT);
+  }
+  return WIREFRAME_TRANSPARENCY_MAX - clamped;
+}
 
 export const BIM_RENDER_STYLES = ['standard', 'clay'];
 export const CLAY_BACKGROUND_DEFAULT = '#ffffff';
@@ -27,15 +68,16 @@ export const CLAY_SURFACE_COLOR_DEFAULT = '#f8f8f8';
 export const CLAY_AO_INTENSITY_MIN = 0;
 export const CLAY_AO_INTENSITY_MAX = 20;
 export const CLAY_AO_INTENSITY_DEFAULT = 2;
-export const CLAY_AO_RADIUS_MIN = 0.05;
-export const CLAY_AO_RADIUS_MAX = 10;
-export const CLAY_AO_RADIUS_DEFAULT = 2;
-export const CLAY_AO_BIAS_MIN = 0.01;
+export const CLAY_AO_RADIUS_MIN = 0.0005;
+export const CLAY_AO_RADIUS_MAX = 0.05;
+export const CLAY_AO_RADIUS_DEFAULT = 0.02;
+export const CLAY_SSAO_KERNEL_RADIUS_FLOOR = CLAY_AO_RADIUS_MIN;
+export const CLAY_AO_BIAS_MIN = 0.1;
 export const CLAY_AO_BIAS_MAX = 1;
-export const CLAY_AO_BIAS_DEFAULT = 0.01;
+export const CLAY_AO_BIAS_DEFAULT = 0.2;
 export const CLAY_AO_DISTANCE_MIN = 0.005;
-export const CLAY_AO_DISTANCE_MAX = 0.3;
-export const CLAY_AO_DISTANCE_DEFAULT = 0.1;
+export const CLAY_AO_DISTANCE_MAX = 0.5;
+export const CLAY_AO_DISTANCE_DEFAULT = 0.12;
 export const CLAY_LIGHT_INTENSITY_MIN = 0;
 export const CLAY_LIGHT_INTENSITY_MAX = 10;
 export const CLAY_LIGHT_INTENSITY_DEFAULT = 0.55;
@@ -117,6 +159,7 @@ export function normalizeWireframeStyle(state = {}) {
       WIREFRAME_OPACITY_DEFAULT,
     ),
     wireframeColor: /^#[0-9a-fA-F]{6}$/.test(color) ? color : WIREFRAME_COLOR_DEFAULT,
+    wireframeHiddenLines: state?.wireframeHiddenLines !== false,
   };
 }
 

@@ -4,14 +4,23 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { renderWireframeOverlayPass, createWireframeDepthMaterial } from './bimWireframeOverlay.js';
+import { renderWireframeOverlayPass } from './bimWireframeOverlay.js';
 import { chunkLocalIds } from './bimPickPipeline.js';
 import { resolveFragmentsLocalIdsByGlobalIds, isValidFragmentsLocalId } from './fragmentsSelection.js';
 import {
   CLAY_AO_BIAS_DEFAULT,
+  CLAY_AO_BIAS_MAX,
+  CLAY_AO_BIAS_MIN,
   CLAY_AO_DISTANCE_DEFAULT,
+  CLAY_AO_DISTANCE_MAX,
+  CLAY_AO_DISTANCE_MIN,
   CLAY_AO_INTENSITY_DEFAULT,
+  CLAY_AO_INTENSITY_MAX,
+  CLAY_AO_INTENSITY_MIN,
   CLAY_AO_RADIUS_DEFAULT,
+  CLAY_AO_RADIUS_MAX,
+  CLAY_AO_RADIUS_MIN,
+  CLAY_SSAO_KERNEL_RADIUS_FLOOR,
   CLAY_BACKGROUND_DEFAULT,
   CLAY_GLASS_OPACITY_DEFAULT,
   CLAY_LIGHT_INTENSITY_DEFAULT,
@@ -32,6 +41,7 @@ export {
   CLAY_AO_RADIUS_DEFAULT,
   CLAY_AO_RADIUS_MAX,
   CLAY_AO_RADIUS_MIN,
+  CLAY_SSAO_KERNEL_RADIUS_FLOOR,
   CLAY_BACKGROUND_DEFAULT,
   CLAY_GLASS_OPACITY_DEFAULT,
   CLAY_GLASS_OPACITY_MAX,
@@ -45,7 +55,7 @@ export {
 
 export const CLAY_WIREFRAME_LINE_WEIGHT_DEFAULT = 1.25;
 export const CLAY_WIREFRAME_COLOR_DEFAULT = '#000000';
-export const CLAY_WIREFRAME_OPACITY_DEFAULT = 1;
+export const CLAY_WIREFRAME_OPACITY_DEFAULT = 0.45;
 
 export const CLAY_GLASS_IFC_CLASSES = new Set([
   'IfcWindow',
@@ -105,6 +115,7 @@ export function isClayGlassElement(element) {
 }
 
 export function resolveClayWireframeStyle(style = {}) {
+  const hiddenLines = style.hiddenLines !== false;
   return {
     lineWeight: Number.isFinite(style.lineWeight)
       ? style.lineWeight
@@ -113,20 +124,129 @@ export function resolveClayWireframeStyle(style = {}) {
       ? style.opacity
       : CLAY_WIREFRAME_OPACITY_DEFAULT,
     color: style.color ?? CLAY_WIREFRAME_COLOR_DEFAULT,
-    depthTest: true,
+    hiddenLines,
+    depthTest: hiddenLines,
   };
+}
+
+/**
+ * Ensures an offscreen render target has an initialized WebGL framebuffer.
+ */
+function ensureRenderTargetFramebuffer(renderer, target) {
+  if (!renderer || !target) return null;
+  let props = renderer.properties?.get(target);
+  if (props?.__webglFramebuffer) return props.__webglFramebuffer;
+  const previous = renderer.getRenderTarget();
+  renderer.setRenderTarget(target);
+  renderer.setRenderTarget(previous);
+  props = renderer.properties?.get(target);
+  return props?.__webglFramebuffer ?? null;
+}
+
+export function resolveClayComposerDepthSource(clayComposerState) {
+  return clayComposerState?.composer?.readBuffer
+    ?? clayComposerState?.composer?.writeBuffer
+    ?? null;
+}
+
+export function resolveClayComposerDepthSources(clayComposerState) {
+  const composer = clayComposerState?.composer;
+  if (!composer) return [];
+  const targets = [composer.readBuffer, composer.writeBuffer];
+  return targets.filter((target, index) => target && targets.indexOf(target) === index);
+}
+
+export function copyClayComposerDepthToScreen(renderer, clayComposerState, width, height) {
+  const sources = resolveClayComposerDepthSources(clayComposerState);
+  for (const source of sources) {
+    if (copyRenderTargetDepthToScreen(renderer, source, width, height)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Copies depth from an offscreen render target into the screen depth buffer.
+ * Used after the clay composer beauty pass so wireframe edges can depth-test
+ * against Fragments geometry without repainting the SSAO output.
+ */
+export function copyRenderTargetDepthToScreen(renderer, sourceTarget, width, height) {
+  if (!renderer || !sourceTarget || !width || !height) return false;
+  if (!sourceTarget.depthBuffer && !sourceTarget.depthTexture) return false;
+
+  const gl = renderer.getContext?.();
+  if (!gl || typeof gl.blitFramebuffer !== 'function') return false;
+
+  const readFramebuffer = ensureRenderTargetFramebuffer(renderer, sourceTarget);
+  if (!readFramebuffer) return false;
+
+  const w = Math.floor(width);
+  const h = Math.floor(height);
+  const previousRenderTarget = renderer.getRenderTarget();
+  renderer.setRenderTarget(null);
+
+  const blitVariants = [
+    [0, h, 0, h],
+    [0, h, h, 0],
+  ];
+
+  let copied = false;
+  for (const [srcY0, srcY1, dstY0, dstY1] of blitVariants) {
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, readFramebuffer);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    gl.blitFramebuffer(
+      0, srcY0, w, srcY1,
+      0, dstY0, w, dstY1,
+      gl.DEPTH_BUFFER_BIT,
+      gl.NEAREST,
+    );
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    copied = true;
+    if (!gl.getError || gl.getError() === gl.NO_ERROR) {
+      break;
+    }
+  }
+
+  renderer.setRenderTarget(previousRenderTarget);
+  return copied;
+}
+
+/** @deprecated Use copyRenderTargetDepthToScreen */
+export const copySsaoDepthToScreen = copyRenderTargetDepthToScreen;
+
+export function resolveClayViewDistance(camera, controlsTarget, boundsCenter) {
+  if (camera?.position && controlsTarget) {
+    return camera.position.distanceTo(controlsTarget);
+  }
+  if (camera?.position && boundsCenter) {
+    return camera.position.distanceTo(boundsCenter);
+  }
+  return undefined;
+}
+
+/** Canonical view distance for slider tuning — AO scales from this reference. */
+export const CLAY_SSAO_REFERENCE_DISTANCE_FACTOR = 1.25;
+
+export function resolveClayCameraDepthRange({ cameraDistance, modelRadius } = {}) {
+  const radius = Math.max(modelRadius ?? 10, 1);
+  const viewDistance = Math.max(cameraDistance ?? radius * 1.5, radius * 0.005);
+  const margin = Math.max(radius * 0.06, viewDistance * 0.9);
+
+  const near = Math.max(0.001, viewDistance - margin);
+  const far = Math.max(near + 0.08, viewDistance + margin);
+  return { near, far, distance: viewDistance, margin };
 }
 
 export function applyClayCameraDepthRange(camera, { cameraDistance, modelRadius } = {}) {
   if (!camera) return () => {};
 
-  const radius = Math.max(modelRadius ?? 10, 1);
-  const distance = Math.max(cameraDistance ?? radius * 2, radius * 0.5);
   const saved = { near: camera.near, far: camera.far };
-  const margin = radius * 2.75;
+  const { near, far } = resolveClayCameraDepthRange({ cameraDistance, modelRadius });
 
-  camera.near = Math.max(0.05, distance - margin);
-  camera.far = Math.max(camera.near + 1, distance + margin);
+  camera.near = near;
+  camera.far = far;
   camera.updateProjectionMatrix();
 
   return () => {
@@ -190,17 +310,21 @@ export function teardownClayLighting(scene, clayLightingState) {
 export function createClayComposer(renderer, scene, camera, width, height) {
   if (!renderer || !scene || !camera) return null;
 
+  const logicalWidth = Math.max(1, width);
+  const logicalHeight = Math.max(1, height);
   const composer = new EffectComposer(renderer);
-  composer.setSize(Math.max(1, width), Math.max(1, height));
+  composer.setSize(logicalWidth, logicalHeight);
 
   const renderPass = new RenderPass(scene, camera);
   composer.addPass(renderPass);
 
-  const ssaoPass = new SSAOPass(scene, camera, Math.max(1, width), Math.max(1, height));
+  const ssaoPass = new SSAOPass(scene, camera, logicalWidth, logicalHeight);
   ssaoPass.output = SSAOPass.OUTPUT.Default;
   composer.addPass(ssaoPass);
 
   const outputPass = new OutputPass();
+  // Keep RenderPass depth in readBuffer — a post-swap writeBuffer is empty depth.
+  outputPass.needsSwap = false;
   composer.addPass(outputPass);
 
   return { composer, renderPass, ssaoPass, outputPass };
@@ -214,22 +338,69 @@ export function resizeClayComposer(clayComposerState, width, height) {
   clayComposerState.ssaoPass?.setSize?.(safeWidth, safeHeight);
 }
 
+function clampClaySliderNorm(value, min, max) {
+  if (!Number.isFinite(value) || max <= min) return 0;
+  return Math.min(1, Math.max(0, (value - min) / (max - min)));
+}
+
+/**
+ * Maps clay AO slider values to Three.js SSAOPass settings (pure, unit-testable).
+ */
+export function resolveClaySsaoSettings({
+  aoIntensity = CLAY_AO_INTENSITY_DEFAULT,
+  aoRadius = CLAY_AO_RADIUS_DEFAULT,
+  aoBias = CLAY_AO_BIAS_DEFAULT,
+  aoDistance = CLAY_AO_DISTANCE_DEFAULT,
+  cameraDistance,
+  modelRadius,
+} = {}) {
+  const radius = Math.max(modelRadius ?? 10, 1);
+  const viewDistance = Math.max(cameraDistance ?? radius * 1.5, radius * 0.005);
+  const referenceDistance = radius * CLAY_SSAO_REFERENCE_DISTANCE_FACTOR;
+  const viewScale = viewDistance / referenceDistance;
+
+  const strength = clampClaySliderNorm(
+    aoIntensity,
+    CLAY_AO_INTENSITY_MIN,
+    CLAY_AO_INTENSITY_MAX,
+  );
+  const radiusNorm = clampClaySliderNorm(aoRadius, CLAY_AO_RADIUS_MIN, CLAY_AO_RADIUS_MAX);
+  const biasNorm = clampClaySliderNorm(aoBias, CLAY_AO_BIAS_MIN, CLAY_AO_BIAS_MAX);
+  const distanceNorm = clampClaySliderNorm(aoDistance, CLAY_AO_DISTANCE_MIN, CLAY_AO_DISTANCE_MAX);
+
+  const baseKernel = (0.5 + radiusNorm * 15) * (radius / 8) * (0.85 + strength * 0.35);
+  const kernelRadius = Math.max(CLAY_SSAO_KERNEL_RADIUS_FLOOR, baseKernel * viewScale);
+  const minDistance = 0.0005 + biasNorm * 0.08;
+  const distanceBase = 0.02 + distanceNorm * 0.98;
+  const maxDistance = Math.min(1, distanceBase * (0.35 + strength * 1.65));
+
+  return { kernelRadius, minDistance, maxDistance, viewScale };
+}
+
 export function updateClayComposerSettings(clayComposerState, {
   aoIntensity = CLAY_AO_INTENSITY_DEFAULT,
   aoRadius = CLAY_AO_RADIUS_DEFAULT,
   aoBias = CLAY_AO_BIAS_DEFAULT,
   aoDistance = CLAY_AO_DISTANCE_DEFAULT,
   camera,
+  cameraDistance,
   modelRadius,
 } = {}) {
   const ssaoPass = clayComposerState?.ssaoPass;
   if (!ssaoPass || !camera) return;
 
-  const radius = Math.max(modelRadius ?? 10, 1);
+  const { kernelRadius, minDistance, maxDistance } = resolveClaySsaoSettings({
+    aoIntensity,
+    aoRadius,
+    aoBias,
+    aoDistance,
+    cameraDistance,
+    modelRadius,
+  });
 
-  ssaoPass.kernelRadius = Math.max(0.25, aoRadius * (radius / 12));
-  ssaoPass.minDistance = aoBias;
-  ssaoPass.maxDistance = Math.min(1, aoDistance * (0.55 + aoIntensity * 0.045));
+  ssaoPass.kernelRadius = kernelRadius;
+  ssaoPass.minDistance = minDistance;
+  ssaoPass.maxDistance = maxDistance;
 
   ssaoPass.ssaoMaterial.uniforms.cameraNear.value = camera.near;
   ssaoPass.ssaoMaterial.uniforms.cameraFar.value = camera.far;
@@ -293,26 +464,30 @@ export async function applyClayBaseMaterials(
   }
 }
 
-let clayDepthOverrideMaterial = null;
 
-function getClayDepthOverrideMaterial() {
-  if (!clayDepthOverrideMaterial) {
-    clayDepthOverrideMaterial = createWireframeDepthMaterial();
-  }
-  return clayDepthOverrideMaterial;
-}
-
-export function renderClayDepthPrepass(renderer, scene, camera) {
+export function populateScreenDepthFromScene(renderer, scene, camera) {
   if (!renderer || !scene || !camera) return false;
 
-  const previousOverride = scene.overrideMaterial;
+  const colorBuffer = renderer.state?.buffers?.color;
+  const depthBuffer = renderer.state?.buffers?.depth;
+  if (!colorBuffer || !depthBuffer) return false;
+
   const previousAutoClear = renderer.autoClear;
-  scene.overrideMaterial = getClayDepthOverrideMaterial();
+  const previousRenderTarget = renderer.getRenderTarget();
+
+  renderer.setRenderTarget(null);
   renderer.autoClear = false;
+  depthBuffer.setTest(true);
+  depthBuffer.setMask(true);
+  colorBuffer.setMask(false);
+  colorBuffer.setLocked(true);
   renderer.clearDepth();
   renderer.render(scene, camera);
-  scene.overrideMaterial = previousOverride;
+  colorBuffer.setLocked(false);
+  colorBuffer.setMask(true);
+
   renderer.autoClear = previousAutoClear;
+  renderer.setRenderTarget(previousRenderTarget);
   return true;
 }
 
@@ -346,16 +521,28 @@ export function renderClayFrame({
       aoBias,
       aoDistance,
       camera,
+      cameraDistance,
       modelRadius,
     });
     clayComposerState.composer.render();
 
-    if (wireframeEnabled && wireframeEdges?.parent && overlayScene) {
+    const wireframeOpacity = wireframeOptions.opacity;
+    const shouldDrawWireframe = wireframeEnabled
+      && wireframeEdges?.parent
+      && overlayScene
+      && (!Number.isFinite(wireframeOpacity) || wireframeOpacity > 0);
+    if (shouldDrawWireframe) {
       renderer.setRenderTarget(null);
-      if (wireframeOptions.depthTest !== false) {
-        renderClayDepthPrepass(renderer, scene, camera);
+      const hiddenLines = wireframeOptions.hiddenLines !== false;
+      let depthTest = hiddenLines;
+      if (hiddenLines) {
+        depthTest = populateScreenDepthFromScene(renderer, scene, camera);
       }
-      renderWireframeOverlayPass(renderer, overlayScene, camera, wireframeEdges, wireframeOptions);
+      renderWireframeOverlayPass(renderer, overlayScene, camera, wireframeEdges, {
+        ...wireframeOptions,
+        depthTest,
+      });
+      renderer.resetState?.();
     }
   } finally {
     restoreCameraDepth();

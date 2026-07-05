@@ -163,6 +163,8 @@ describe('bimWireframeOverlay', () => {
     const renderer = {
       autoClear: true,
       render: vi.fn(),
+      setClearColor: vi.fn(),
+      clear: vi.fn(),
       getDrawingBufferSize: vi.fn(() => ({ x: 1280, y: 720 })),
     };
     const root = new THREE.Group();
@@ -175,11 +177,42 @@ describe('bimWireframeOverlay', () => {
 
     attachWireframeEdgesToScene(overlayScene, root, edges);
 
-    expect(renderWireframeOverlay(renderer, scene, overlayScene, camera, edges)).toBe(true);
+    expect(renderWireframeOverlay(renderer, scene, overlayScene, camera, edges, {
+      hiddenLines: false,
+    })).toBe(true);
     expect(renderer.render).toHaveBeenCalledTimes(2);
     expect(renderer.render).toHaveBeenNthCalledWith(1, scene, camera);
     expect(renderer.render).toHaveBeenNthCalledWith(2, overlayScene, camera);
+    expect(edges.material.depthTest).toBe(false);
     expect(renderer.autoClear).toBe(true);
+
+    disposeWireframeEdges(edges);
+  });
+
+  it('composites hidden-line wireframe over the scene render with depth test', () => {
+    const scene = new THREE.Scene();
+    const overlayScene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    const renderer = {
+      autoClear: true,
+      render: vi.fn(),
+      getDrawingBufferSize: vi.fn(() => ({ x: 1280, y: 720 })),
+    };
+    const root = new THREE.Group();
+    root.add(new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshBasicMaterial(),
+    ));
+    const edges = buildWireframeEdges(root);
+    attachWireframeEdgesToScene(overlayScene, root, edges);
+
+    expect(renderWireframeOverlay(renderer, scene, overlayScene, camera, edges, {
+      hiddenLines: true,
+      opacity: 0.75,
+    })).toBe(true);
+    expect(renderer.render).toHaveBeenCalledTimes(2);
+    expect(edges.material.depthTest).toBe(true);
+    expect(edges.material.transparent).toBe(true);
 
     disposeWireframeEdges(edges);
   });

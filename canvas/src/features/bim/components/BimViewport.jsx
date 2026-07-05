@@ -49,6 +49,7 @@ import {
   createClayComposer,
   disposeClayComposer,
   renderClayFrame,
+  resolveClayViewDistance,
   resolveClayWireframeStyle,
   resizeClayComposer,
   setupClayLighting,
@@ -74,8 +75,8 @@ import { BimSelectedElementHud } from './BimSelectedElementHud.jsx';
 import {
   WIREFRAME_LINE_WEIGHT_MAX,
   WIREFRAME_LINE_WEIGHT_MIN,
-  WIREFRAME_OPACITY_MAX,
-  WIREFRAME_OPACITY_MIN,
+  wireframeLineOpacityFromTransparency,
+  wireframeTransparencyFromLineOpacity,
   CLAY_AO_BIAS_MIN,
   CLAY_AO_BIAS_MAX,
   CLAY_AO_DISTANCE_MIN,
@@ -97,7 +98,7 @@ function formatClaySliderValue(kind, value) {
     case 'aoIntensity':
       return numeric.toFixed(1);
     case 'aoRadius':
-      return numeric.toFixed(2);
+      return numeric < 0.01 ? numeric.toFixed(4) : numeric.toFixed(2);
     case 'aoBias':
       return numeric >= 0.01 ? numeric.toFixed(2) : numeric.toFixed(5);
     case 'aoDistance':
@@ -105,6 +106,10 @@ function formatClaySliderValue(kind, value) {
     case 'lightIntensity':
       return numeric.toFixed(2);
     case 'glassOpacity':
+      return numeric.toFixed(2);
+    case 'wireframeTransparency':
+      return `${Math.round(numeric * 100)}%`;
+    case 'lineWeight':
       return numeric.toFixed(2);
     default:
       return String(numeric);
@@ -117,6 +122,25 @@ function claySliderAtLimit(value, min, max) {
   if (numeric <= min) return 'min';
   if (numeric >= max) return 'max';
   return null;
+}
+
+function WireframeHiddenLinesToggle({ hiddenLines, onChange }) {
+  return (
+    <button
+      type="button"
+      title={hiddenLines
+        ? 'Hidden edges — visible outlines only. Click for full wireframe (all edges).'
+        : 'Full wireframe — all edges visible. Click for hidden edges (visible outlines only).'}
+      onClick={() => onChange({ wireframeHiddenLines: !hiddenLines })}
+      className={`rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${
+        hiddenLines ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
+      }`}
+      aria-pressed={hiddenLines}
+      aria-label={hiddenLines ? 'Hidden wireframe edges enabled' : 'Full wireframe enabled'}
+    >
+      {hiddenLines ? 'Hdn' : 'All'}
+    </button>
+  );
 }
 
 function ClaySliderControl({
@@ -175,6 +199,10 @@ function syncModelBounds(modelRoot, boundsRef) {
   };
 }
 
+function resolveBimViewDistance(camera, controls, bounds) {
+  return resolveClayViewDistance(camera, controls?.target, bounds?.center);
+}
+
 function getRendererDrawingSize(renderer) {
   if (!renderer) return { width: 1, height: 1 };
   if (typeof renderer.getDrawingBufferSize === 'function') {
@@ -186,6 +214,12 @@ function getRendererDrawingSize(renderer) {
     return { width: Math.max(1, size.x), height: Math.max(1, size.y) };
   }
   return { width: 1, height: 1 };
+}
+
+function getRendererLogicalSize(renderer) {
+  if (!renderer?.getSize) return { width: 1, height: 1 };
+  const size = renderer.getSize(new THREE.Vector2());
+  return { width: Math.max(1, size.x), height: Math.max(1, size.y) };
 }
 
 const SELECTED_MATERIAL = {
@@ -298,11 +332,12 @@ export function BimViewport({
   wireframeLineWeight = 2,
   wireframeOpacity = 0.88,
   wireframeColor = '#0f172a',
+  wireframeHiddenLines = true,
   renderStyle = 'standard',
   clayAoIntensity = 2,
-  clayAoRadius = 2,
-  clayAoBias = 0.01,
-  clayAoDistance = 0.1,
+  clayAoRadius = 0.02,
+  clayAoBias = 0.2,
+  clayAoDistance = 0.12,
   clayLightIntensity = 0.55,
   claySurfaceColor = '#f8f8f8',
   clayGlassOpacity = 0.18,
@@ -374,6 +409,7 @@ export function BimViewport({
     lineWeight: wireframeLineWeight,
     opacity: wireframeOpacity,
     color: wireframeColor,
+    hiddenLines: wireframeHiddenLines,
   });
   const renderStyleRef = useRef(renderStyle);
   const clayStyleRef = useRef({
@@ -623,9 +659,7 @@ export function BimViewport({
       updateWireframeEdgeVisuals(edges, {
         width: resolutionWidth,
         height: resolutionHeight,
-        cameraDistance: camera && bounds?.center
-          ? camera.position.distanceTo(bounds.center)
-          : undefined,
+        cameraDistance: resolveBimViewDistance(camera, controlsRef.current, bounds),
         modelRadius: bounds?.radius,
         lineWeight: wireframeStyleRef.current.lineWeight,
         opacity: wireframeStyleRef.current.opacity,
@@ -678,6 +712,7 @@ export function BimViewport({
       lineWeight: wireframeLineWeight,
       opacity: wireframeOpacity,
       color: wireframeColor,
+      hiddenLines: wireframeHiddenLines,
     };
     const edges = wireframeEdgesRef.current;
     if (!edges) return;
@@ -687,15 +722,13 @@ export function BimViewport({
     updateWireframeEdgeVisuals(edges, {
       width,
       height,
-      cameraDistance: camera && bounds?.center
-        ? camera.position.distanceTo(bounds.center)
-        : undefined,
+      cameraDistance: resolveBimViewDistance(camera, controlsRef.current, bounds),
       modelRadius: bounds?.radius,
       lineWeight: wireframeLineWeight,
       opacity: wireframeOpacity,
       color: wireframeColor,
     });
-  }, [wireframeLineWeight, wireframeOpacity, wireframeColor]);
+  }, [wireframeLineWeight, wireframeOpacity, wireframeColor, wireframeHiddenLines]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -783,6 +816,9 @@ export function BimViewport({
       }
       measurementOverlayRef.current?.resize(width, height);
       updateWireframeEdgeVisuals(wireframeEdgesRef.current, { width, height });
+      if (renderStyleRef.current === 'clay' && clayComposerRef.current) {
+        resizeClayComposer(clayComposerRef.current, width, height);
+      }
       syncOrbitControlsAfterCameraFit(controls);
     };
     const updateFragments = async (force = false, { retryModelRegistration = false } = {}) => {
@@ -940,9 +976,7 @@ export function BimViewport({
       const wireframeEdges = wireframeEdgesRef.current;
       const overlayScene = wireframeOverlaySceneRef.current;
       const bounds = modelBoundsRef.current;
-      const cameraDistance = activeCamera && bounds?.center
-        ? activeCamera.position.distanceTo(bounds.center)
-        : undefined;
+      const cameraDistance = resolveBimViewDistance(activeCamera, controlsRef.current, bounds);
 
       if (
         wireframeModeRef.current
@@ -968,6 +1002,7 @@ export function BimViewport({
           lineWeight: wfStyle.lineWeight,
           opacity: wfStyle.opacity,
           color: wfStyle.color,
+          hiddenLines: wfStyle.hiddenLines,
         });
         renderClayFrame({
           renderer,
@@ -998,6 +1033,7 @@ export function BimViewport({
           lineWeight: style.lineWeight,
           opacity: style.opacity,
           color: style.color,
+          hiddenLines: style.hiddenLines,
         });
       } else {
         renderer.render(scene, activeCamera);
@@ -1137,7 +1173,7 @@ export function BimViewport({
       backgroundColor: clayBackgroundColor,
       lightIntensity: clayLightIntensity,
     });
-    const { width, height } = getRendererDrawingSize(renderer);
+    const { width, height } = getRendererLogicalSize(renderer);
     disposeClayComposer(clayComposerRef.current);
     clayComposerRef.current = createClayComposer(renderer, scene, camera, width, height);
 
@@ -1605,7 +1641,7 @@ export function BimViewport({
                 value={clayAoRadius}
                 min={CLAY_AO_RADIUS_MIN}
                 max={CLAY_AO_RADIUS_MAX}
-                step={0.05}
+                step={0.0005}
                 formatKind="aoRadius"
                 sliderClassName="w-20"
                 title="AO sample radius — wider soft shadows"
@@ -1660,6 +1696,54 @@ export function BimViewport({
               />
               <input type="color" value={claySurfaceColor} onChange={(event) => onClayStyleChange({ claySurfaceColor: event.target.value })} title="Clay surface colour" aria-label="Clay surface colour" className="h-6 w-6 cursor-pointer rounded border border-border bg-surface p-0.5" />
               <input type="color" value={clayBackgroundColor} onChange={(event) => onClayStyleChange({ clayBackgroundColor: event.target.value })} title="Clay background colour" aria-label="Clay background colour" className="h-6 w-6 cursor-pointer rounded border border-border bg-surface p-0.5" />
+              {wireframeMode ? (
+                <>
+                  <ClaySliderControl
+                    label="Wt"
+                    value={wireframeLineWeight}
+                    min={WIREFRAME_LINE_WEIGHT_MIN}
+                    max={WIREFRAME_LINE_WEIGHT_MAX}
+                    step={0.25}
+                    formatKind="lineWeight"
+                    sliderClassName="w-14"
+                    title="Wireframe line weight"
+                    ariaLabel="Clay wireframe line weight"
+                    onChange={(event) => onWireframeStyleChange({
+                      wireframeLineWeight: Number(event.target.value),
+                    })}
+                  />
+                  <ClaySliderControl
+                    label="Trn"
+                    value={wireframeTransparencyFromLineOpacity(wireframeOpacity, {
+                      denseEdges: !wireframeHiddenLines,
+                    })}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    formatKind="wireframeTransparency"
+                    sliderClassName="w-16"
+                    title="Wireframe transparency — 100% shows clay only, 0% shows solid outlines"
+                    ariaLabel="Clay wireframe transparency"
+                    onChange={(event) => onWireframeStyleChange({
+                      wireframeOpacity: wireframeLineOpacityFromTransparency(Number(event.target.value), {
+                        denseEdges: !wireframeHiddenLines,
+                      }),
+                    })}
+                  />
+                  <input
+                    type="color"
+                    value={wireframeColor}
+                    onChange={(event) => onWireframeStyleChange({ wireframeColor: event.target.value })}
+                    title="Wireframe colour"
+                    aria-label="Clay wireframe colour"
+                    className="h-6 w-6 cursor-pointer rounded border border-border bg-surface p-0.5"
+                  />
+                  <WireframeHiddenLinesToggle
+                    hiddenLines={wireframeHiddenLines}
+                    onChange={onWireframeStyleChange}
+                  />
+                </>
+              ) : null}
             </div>
           ) : null}
           <button
@@ -1695,17 +1779,21 @@ export function BimViewport({
               </label>
               <label
                 className="inline-flex items-center gap-1 text-[10px] text-secondary"
-                title="Wireframe transparency"
+                title="Wireframe transparency — 100% shows the base render only, 0% shows solid outlines"
               >
-                <span className="text-muted uppercase tracking-wider">α</span>
+                <span className="text-muted uppercase tracking-wider">Trn</span>
                 <input
                   type="range"
-                  min={Math.round(WIREFRAME_OPACITY_MIN * 100)}
-                  max={Math.round(WIREFRAME_OPACITY_MAX * 100)}
+                  min={0}
+                  max={100}
                   step={5}
-                  value={Math.round(wireframeOpacity * 100)}
+                  value={Math.round(wireframeTransparencyFromLineOpacity(wireframeOpacity, {
+                    denseEdges: !wireframeHiddenLines,
+                  }) * 100)}
                   onChange={(event) => onWireframeStyleChange({
-                    wireframeOpacity: Number(event.target.value) / 100,
+                    wireframeOpacity: wireframeLineOpacityFromTransparency(Number(event.target.value) / 100, {
+                      denseEdges: !wireframeHiddenLines,
+                    }),
                   })}
                   className="w-14 accent-accent"
                   aria-label="Wireframe transparency"
@@ -1718,6 +1806,10 @@ export function BimViewport({
                 title="Wireframe colour"
                 aria-label="Wireframe colour"
                 className="h-6 w-6 cursor-pointer rounded border border-border bg-surface p-0.5"
+              />
+              <WireframeHiddenLinesToggle
+                hiddenLines={wireframeHiddenLines}
+                onChange={onWireframeStyleChange}
               />
             </div>
           ) : null}

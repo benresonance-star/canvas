@@ -760,6 +760,7 @@ export function BimWorkspace({
             wireframeLineWeight={workspaceState.wireframeLineWeight}
             wireframeOpacity={workspaceState.wireframeOpacity}
             wireframeColor={workspaceState.wireframeColor}
+            wireframeHiddenLines={workspaceState.wireframeHiddenLines}
             renderStyle={workspaceState.renderStyle}
             clayAoIntensity={workspaceState.clayAoIntensity}
             clayAoRadius={workspaceState.clayAoRadius}

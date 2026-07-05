@@ -266,7 +266,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Property/quantity extraction | Yes — `rel-defines-by-properties` + quantity sets |
 | Storey extraction | Yes — `storeyId` on element records and shown in table column |
 | Viewer rendering | Yes — `BimViewport.jsx` (Fragments + Three.js) |
-| Wireframe overlay | Yes — feature-edge overlay over lit/ghost/highlight; toolbar style controls when enabled (weight, transparency, colour); persisted in workspace state |
+| Wireframe overlay | Yes — feature-edge overlay over lit/ghost/highlight/clay; toolbar style controls when enabled (weight, transparency, colour, Hdn/All); persisted in workspace state (`wireframeHiddenLines` default true) |
 | Perspective / orthographic | Yes — toolbar toggle + camera state persistence |
 | Measurements | Yes — vertex/edge snap, segment + polyline, units toggle; shared `MeasurementUi` with 3D artifact viewer |
 | HDRI lighting | Yes — environment preset cycle (off / studio / city / …) |
@@ -274,7 +274,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Element table | Yes — name, class, GlobalId, type, storey; search + class filter |
 | Properties inspector | Yes — grouped Psets, provenance, assembly membership |
 | Viewer ↔ table sync | Yes — bidirectional via `ifcGlobalId` |
-| Workspace state persistence | Yes — IndexedDB per fingerprint (camera, panels, filters, display mode, projection, measurements, wireframe mode + style, lighting) |
+| Workspace state persistence | Yes — IndexedDB per fingerprint (camera, panels, filters, display mode, projection, measurements, wireframe mode + style incl. hidden-lines toggle, clay render style, lighting) |
 | Live extraction feed | Yes — progress events during first-open preparation |
 | Folder sync → dock | Yes — `.ifc` scanned as `bim-model`; stages to sync holding tray after Sync → Apply (or auto-apply on folder connect). See master spec §29.3 *Folder sync, dock, and artifact ingest* |
 | Workspace tree visibility | Yes — after 2026-07-04 ingest fix (`project_id` + cluster membership on `/artifacts/ingest`) |
@@ -299,6 +299,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Repository | `canvas/src/features/bim/bim-core/bimRepository.js` |
 | Workspace UI | `canvas/src/features/bim/components/BimWorkspace.jsx` |
 | Wireframe overlay | `canvas/src/features/bim/bim-core/bimWireframeOverlay.js` |
+| Clay / Arctic render | `canvas/src/features/bim/bim-core/bimClayRender.js` |
 | Query panel | `canvas/src/features/bim/components/BimQueryPanel.jsx` |
 | Canvas routing | `canvas/src/components/ModalContent.jsx`, `CardPreview.jsx` |
 | Tests | `canvas/src/features/bim/bim-core/__tests__/`, `canvas/src/components/__tests__/BimArtifactRoutes.test.js` |

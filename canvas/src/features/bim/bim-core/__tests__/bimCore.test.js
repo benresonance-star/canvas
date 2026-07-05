@@ -12,7 +12,13 @@ import {
   summarizeBimModelForAgent,
 } from '../bimLlmAgent.js';
 import { executeBqlQuery, validateBqlQuery } from '../bql.js';
-import { normalizeBimWorkspaceState } from '../types.js';
+import {
+  CLAY_AO_BIAS_DEFAULT,
+  CLAY_AO_DISTANCE_DEFAULT,
+  normalizeBimWorkspaceState,
+  wireframeLineOpacityFromTransparency,
+  wireframeTransparencyFromLineOpacity,
+} from '../types.js';
 import {
   resolveFragmentsGlobalIdByLocalId,
   resolveFragmentsLocalIdByGlobalId,
@@ -127,9 +133,9 @@ describe('BIM core fingerprinting and cache', () => {
       wireframeColor: '#0f172a',
       renderStyle: 'standard',
       clayAoIntensity: 2,
-      clayAoRadius: 2,
-      clayAoBias: 0.01,
-      clayAoDistance: 0.1,
+      clayAoRadius: 0.02,
+      clayAoBias: CLAY_AO_BIAS_DEFAULT,
+      clayAoDistance: CLAY_AO_DISTANCE_DEFAULT,
       clayLightIntensity: 0.55,
       claySurfaceColor: '#f8f8f8',
       clayGlassOpacity: 0.18,
@@ -152,7 +158,7 @@ describe('BIM core fingerprinting and cache', () => {
     const state = normalizeBimWorkspaceState({ renderStyle: 'clay', clayAoIntensity: 99, clayAoRadius: 99 });
     expect(state.renderStyle).toBe('clay');
     expect(state.clayAoIntensity).toBe(20);
-    expect(state.clayAoRadius).toBe(10);
+    expect(state.clayAoRadius).toBe(0.05);
     expect(state.clayBackgroundColor).toBe('#ffffff');
   });
 
@@ -174,6 +180,26 @@ describe('BIM core fingerprinting and cache', () => {
     expect(custom.wireframeLineWeight).toBe(1.5);
     expect(custom.wireframeOpacity).toBe(0.4);
     expect(custom.wireframeColor).toBe('#ff5500');
+    expect(custom.wireframeHiddenLines).toBe(true);
+  });
+
+  it('maps wireframe transparency to line opacity', () => {
+    expect(wireframeLineOpacityFromTransparency(0)).toBe(1);
+    expect(wireframeLineOpacityFromTransparency(1)).toBe(0);
+    expect(wireframeLineOpacityFromTransparency(0.5)).toBe(0.5);
+    expect(wireframeTransparencyFromLineOpacity(0.88)).toBeCloseTo(0.12, 5);
+  });
+
+  it('remaps dense full wireframe transparency with a lower opacity ceiling', () => {
+    expect(wireframeLineOpacityFromTransparency(0, { denseEdges: true })).toBeCloseTo(0.38, 5);
+    expect(wireframeLineOpacityFromTransparency(1, { denseEdges: true })).toBe(0);
+    expect(wireframeLineOpacityFromTransparency(0.5, { denseEdges: true })).toBeLessThan(0.08);
+    expect(wireframeTransparencyFromLineOpacity(0.38, { denseEdges: true })).toBeCloseTo(0, 5);
+  });
+
+  it('allows fully transparent wireframe lines', () => {
+    const state = normalizeBimWorkspaceState({ wireframeOpacity: -1 });
+    expect(state.wireframeOpacity).toBe(0);
   });
 
   it('normalizes measurement workspace fields', () => {
