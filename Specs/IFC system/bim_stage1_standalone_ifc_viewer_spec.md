@@ -248,7 +248,7 @@ Persist locally:
 
 ---
 
-# 14. Implementation status (2026-07-04, updated)
+# 14. Implementation status (2026-07-05, updated)
 
 Stage 1 capabilities are **shipped inside Canvas** as the first host, before the standalone `desktop-bim-app` shell exists.
 
@@ -265,8 +265,14 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Raw element extraction | Yes — 18 common IFC classes via web-ifc |
 | Property/quantity extraction | Yes — `rel-defines-by-properties` + quantity sets |
 | Storey extraction | Yes — `storeyId` on element records and shown in table column |
-| Viewer rendering | Yes — `BimViewport.jsx` (Fragments + Three.js) |
+| Viewer rendering | Yes — `BimViewport.jsx` (Fragments + Three.js); boot gated on layout + worker registration via `bimViewportBoot.js` |
 | Wireframe overlay | Yes — feature-edge overlay over lit/ghost/highlight/clay; toolbar style controls when enabled (weight, transparency, colour, Hdn/All); persisted in workspace state (`wireframeHiddenLines` default true) |
+| Clay / Arctic render | Yes — `renderStyle: 'clay'` with SSAO + optional wireframe compositing; circle icon toggle in rounded-square toolbar button |
+| Default open state | Yes — highlight display mode, standard render, all storeys/layers visible (`BIM_VIEWER_DEFAULTS`) |
+| Style settings HUD | Yes — background colour + presets always available; clay/wireframe sliders when active (`BimStyleSettingsHud.jsx`) |
+| Storey / layer HUD | Yes — `BimLayersHud.jsx` + `bimLayerVisibility.js` |
+| Style presets (server) | Yes — Postgres `bim_style_presets` + REST under `/bim/projects/:projectId/style-presets` |
+| Floating BQL / agent HUDs | Yes — `BimBqlHud.jsx`, `BimAgentHud.jsx` in viewport top-right stack |
 | Perspective / orthographic | Yes — toolbar toggle + camera state persistence |
 | Measurements | Yes — vertex/edge snap, segment + polyline, units toggle; shared `MeasurementUi` with 3D artifact viewer |
 | HDRI lighting | Yes — environment preset cycle (off / studio / city / …) |
@@ -300,7 +306,11 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Workspace UI | `canvas/src/features/bim/components/BimWorkspace.jsx` |
 | Wireframe overlay | `canvas/src/features/bim/bim-core/bimWireframeOverlay.js` |
 | Clay / Arctic render | `canvas/src/features/bim/bim-core/bimClayRender.js` |
-| Query panel | `canvas/src/features/bim/components/BimQueryPanel.jsx` |
+| Style settings | `canvas/src/features/bim/bim-core/bimStyleSettings.js` |
+| Layer visibility | `canvas/src/features/bim/bim-core/bimLayerVisibility.js`, `bimElementLayers.js` |
+| Viewport boot | `canvas/src/features/bim/bim-core/bimViewportBoot.js` |
+| Style presets API | `canvas/server/routes/bim.js`, `canvas/server/repositories/bim-style-presets.js` |
+| Query panel | `canvas/src/features/bim/components/BimQueryPanel.jsx`, `BimBqlHud.jsx` |
 | Canvas routing | `canvas/src/components/ModalContent.jsx`, `CardPreview.jsx` |
 | Tests | `canvas/src/features/bim/bim-core/__tests__/`, `canvas/src/components/__tests__/BimArtifactRoutes.test.js` |
 

@@ -1,6 +1,11 @@
 import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { getCardPixelSize, filterCardsForViewport } from '../lib/cards.js';
 import { clientToWorldPoint, clampCanvasZoom } from '../lib/canvasView.js';
+import {
+  applyCanvasWheelPan,
+  applyCanvasWheelZoom,
+  resolveCanvasWheelAction,
+} from '../lib/canvasWheelInteraction.js';
 import { beginCardDragSession, endCardDragSession } from '../lib/cardDragSession.js';
 import { beginCanvasInteraction, endCanvasInteraction } from '../lib/canvasInteraction.js';
 import { clearStuckPointerHover } from '../lib/clearStuckHover.js';
@@ -30,7 +35,9 @@ import {
 } from '../lib/canvasPointerGeometry.js';
 import {
   exceedsPanGestureThreshold,
-  isCanvasPanModifier,
+  isMiddleMouseButton,
+  shouldIgnoreMiddleMousePan,
+  shouldStartCanvasPan,
 } from '../lib/canvasPanModifier.js';
 
 const PROMPT_INPUT_CARD_TYPES = new Set(['user_note', 'user_task', 'markdown', 'note']);
@@ -252,26 +259,24 @@ export function Canvas({
   const handleWheel = useCallback((e) => {
     if (e.target.closest('[data-artifact-scroll]')) return;
 
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const delta = -e.deltaY * 0.002;
-      const newZoom = clampCanvasZoom(view.zoom * (1 + delta));
-      const rect = canvasRef.current.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
-      const worldX = (mx - view.x) / view.zoom;
-      const worldY = (my - view.y) / view.zoom;
-      setView({
-        x: mx - worldX * newZoom,
-        y: my - worldY * newZoom,
-        zoom: newZoom,
-      });
-      scheduleViewCommit();
+    e.preventDefault();
+    const rect = canvasRef.current.getBoundingClientRect();
+    if (resolveCanvasWheelAction(e) === 'zoom') {
+      setView(applyCanvasWheelZoom(
+        view,
+        {
+          deltaY: e.deltaY,
+          clientX: e.clientX,
+          clientY: e.clientY,
+          left: rect.left,
+          top: rect.top,
+        },
+        clampCanvasZoom,
+      ));
     } else {
-      e.preventDefault();
-      setView(v => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
-      scheduleViewCommit();
+      setView(applyCanvasWheelPan(view, { deltaX: e.deltaX, deltaY: e.deltaY }));
     }
+    scheduleViewCommit();
   }, [view, setView, scheduleViewCommit]);
 
   useEffect(() => () => {
@@ -381,10 +386,37 @@ export function Canvas({
     endCanvasInteraction('resize');
   }, []);
 
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return undefined;
+
+    const onMiddleMousePanPointerDown = (e) => {
+      if (!isMiddleMouseButton(e)) return;
+      if (shouldIgnoreMiddleMousePan(e.target)) return;
+      if (linkDragRef.current) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (draggingCardRef.current || resizingCardRef.current || draggingClusterRef.current) {
+        abortDragForPan();
+      }
+      if (panningRef.current) return;
+
+      beginPanGesture(e);
+    };
+
+    el.addEventListener('pointerdown', onMiddleMousePanPointerDown, true);
+    return () => el.removeEventListener('pointerdown', onMiddleMousePanPointerDown, true);
+  }, [abortDragForPan, beginPanGesture]);
+
   const onMouseDown = (e) => {
     if (linkDrag) return;
     if (e.target === canvasRef.current || e.target.dataset.canvasBg) {
-      beginPanGesture(e);
+      if (e.button === 0 || shouldStartCanvasPan(e)) {
+        if (isMiddleMouseButton(e)) e.preventDefault();
+        beginPanGesture(e);
+      }
     }
   };
 
@@ -450,7 +482,7 @@ export function Canvas({
     if (!panning) return undefined;
 
     const onPointerEnd = (e) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 && e.button !== 1) return;
       if (draggingCardRef.current || resizingCardRef.current || draggingClusterRef.current) return;
       finishPanGesture();
     };
@@ -843,13 +875,13 @@ export function Canvas({
   }, []);
 
   const startClusterMove = (hull, e) => {
-    if (e.button !== 0) return;
-    if (isCanvasPanModifier(e)) {
+    if (shouldStartCanvasPan(e)) {
       if (linkDrag) return;
       e.preventDefault();
       beginPanGesture(e);
       return;
     }
+    if (e.button !== 0) return;
     if (readOnly || linkDrag || !hull.memberCardIds?.length) return;
     const cardById = new Map(cards.map((c) => [c.id, c]));
     const startPositions = new Map();
@@ -880,12 +912,14 @@ export function Canvas({
   };
 
   const startCardDrag = (e, card) => {
-    if (linkDrag || e.button !== 0) return;
-    if (isCanvasPanModifier(e)) {
+    if (linkDrag) return;
+    if (shouldStartCanvasPan(e)) {
       e.preventDefault();
+      e.stopPropagation();
       beginPanGesture(e);
       return;
     }
+    if (e.button !== 0) return;
     if (readOnly) return;
     if (cardDragIgnoresTarget(e.target)) {
       return;
@@ -912,13 +946,13 @@ export function Canvas({
   };
 
   const startLinkDrag = (e, card) => {
-    if (e.button !== 0) return;
-    if (isCanvasPanModifier(e)) {
+    if (shouldStartCanvasPan(e)) {
       if (linkDrag) return;
       e.preventDefault();
       beginPanGesture(e);
       return;
     }
+    if (e.button !== 0) return;
     if (readOnly) return;
     e.stopPropagation();
     e.preventDefault();
@@ -942,13 +976,13 @@ export function Canvas({
   };
 
   const startResize = (e, card, corner) => {
-    if (e.button !== 0) return;
-    if (isCanvasPanModifier(e)) {
+    if (shouldStartCanvasPan(e)) {
       if (linkDrag) return;
       e.preventDefault();
       beginPanGesture(e);
       return;
     }
+    if (e.button !== 0) return;
     if (readOnly || linkDrag) return;
     e.stopPropagation();
     e.preventDefault();
@@ -1058,6 +1092,9 @@ export function Canvas({
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
       onMouseLeave={onMouseUp}
+      onAuxClick={(e) => {
+        if (isMiddleMouseButton(e)) e.preventDefault();
+      }}
       onContextMenu={(e) => {
         onCanvasContextMenu?.(e);
       }}

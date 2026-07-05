@@ -1,10 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as THREE from 'three';
 import {
   applyClayCameraDepthRange,
   buildClayBaseMaterial,
   buildClayGlassMaterial,
   CLAY_BASE_MATERIAL,
   CLAY_SSAO_REFERENCE_DISTANCE_FACTOR,
+  CLAY_SSAO_KERNEL_RADIUS_FLOOR,
+  CLAY_SSAO_VIEW_SCALE_MIN,
+  CLAY_SSAO_VIEW_SCALE_MAX,
+  CLAY_SSAO_DEPTH_SPAN_REFERENCE,
   CLAY_SELECTED_MATERIAL,
   getClayPresetWorkspacePatch,
   copyRenderTargetDepthToScreen,
@@ -16,6 +21,10 @@ import {
   resolveClaySsaoSettings,
   resolveClayViewDistance,
   resolveClayWireframeStyle,
+  resolveClaySsaoPassSize,
+  resolveClaySsaoKernelSize,
+  applyClaySsaoSampleCount,
+  updateClaySsaoQuality,
   updateClayComposerSettings,
   updateClayLightingIntensity,
 } from '../bimClayRender.js';
@@ -26,8 +35,13 @@ import {
   CLAY_AO_DISTANCE_DEFAULT,
   CLAY_AO_DISTANCE_MAX,
   CLAY_AO_DISTANCE_MIN,
+  CLAY_AO_INTENSITY_DEFAULT,
+  CLAY_AO_RADIUS_DEFAULT,
   CLAY_AO_RADIUS_MAX,
   CLAY_AO_RADIUS_MIN,
+  CLAY_GLASS_OPACITY_DEFAULT,
+  CLAY_LIGHT_INTENSITY_DEFAULT,
+  CLAY_SURFACE_COLOR_DEFAULT,
   normalizeClayStyle,
 } from '../types.js';
 
@@ -35,14 +49,13 @@ describe('bimClayRender', () => {
   it('normalizes clay style defaults', () => {
     expect(normalizeClayStyle({})).toMatchObject({
       renderStyle: 'standard',
-      clayAoIntensity: 2,
-      clayAoRadius: 0.02,
+      clayAoIntensity: CLAY_AO_INTENSITY_DEFAULT,
+      clayAoRadius: CLAY_AO_RADIUS_DEFAULT,
       clayAoBias: CLAY_AO_BIAS_DEFAULT,
       clayAoDistance: CLAY_AO_DISTANCE_DEFAULT,
-      clayLightIntensity: 0.55,
-      claySurfaceColor: '#f8f8f8',
-      clayGlassOpacity: 0.18,
-      clayBackgroundColor: '#ffffff',
+      clayLightIntensity: CLAY_LIGHT_INTENSITY_DEFAULT,
+      claySurfaceColor: CLAY_SURFACE_COLOR_DEFAULT,
+      clayGlassOpacity: CLAY_GLASS_OPACITY_DEFAULT,
     });
   });
 
@@ -70,12 +83,48 @@ describe('bimClayRender', () => {
     });
   });
 
-  it('returns clay preset with normalized clay defaults', () => {
+  it('returns Rhino Arctic clay preset when entering clay mode', () => {
     expect(getClayPresetWorkspacePatch()).toMatchObject({
       renderStyle: 'clay',
-      clayAoIntensity: 2,
-      clayAoRadius: 0.02,
+      clayAoIntensity: 0,
+      clayAoRadius: 0.0005,
+      clayAoBias: 0.05,
+      clayAoDistance: 0.17,
+      clayAoSamples: 256,
+      clayLightIntensity: 2.7,
+      clayGlassOpacity: 0.31,
+      viewportBackgroundColor: '#ffffff',
+      wireframeMode: false,
+      wireframeColor: '#919191',
+      wireframeOpacity: 0.5,
+      wireframeLineWeight: 1.25,
+      lightingMode: 'soft',
+      environmentPreset: 'sunset',
     });
+  });
+
+  it('fits the model bounding sphere inside the clay depth range when viewed from outside', () => {
+    const range = resolveClayCameraDepthRange({
+      cameraPosition: new THREE.Vector3(0, 1.6, 80),
+      boundsCenter: new THREE.Vector3(0, 1.6, 0),
+      modelRadius: 40,
+    });
+    expect(range.insideBounds).toBe(false);
+    expect(range.far).toBeGreaterThanOrEqual(80 - 0.5);
+    expect(range.far - range.near).toBeLessThan(120);
+  });
+
+  it('uses a tight local frustum when zoomed inside the model bounds', () => {
+    const range = resolveClayCameraDepthRange({
+      cameraPosition: new THREE.Vector3(0, 1.6, 0),
+      boundsCenter: new THREE.Vector3(12, 1.6, 0),
+      cameraDistance: 4,
+      modelRadius: 40,
+    });
+    expect(range.insideBounds).toBe(true);
+    expect(range.near).toBeGreaterThan(0.02);
+    expect(range.far - range.near).toBeLessThan(50);
+    expect(range.far / range.near).toBeLessThan(2000);
   });
 
   it('tightens camera depth range for clay SSAO', () => {
@@ -102,10 +151,29 @@ describe('bimClayRender', () => {
     const radius = 25;
     const reference = radius * CLAY_SSAO_REFERENCE_DISTANCE_FACTOR;
     const close = resolveClaySsaoSettings({ modelRadius: radius, cameraDistance: 3 });
-    const far = resolveClaySsaoSettings({ modelRadius: radius, cameraDistance: 80 });
-    expect(far.kernelRadius).toBeGreaterThan(close.kernelRadius);
-    expect(far.kernelRadius / close.kernelRadius).toBeCloseTo(80 / 3, 0);
-    expect(close.viewScale).toBeCloseTo(3 / reference, 2);
+    const mid = resolveClaySsaoSettings({ modelRadius: radius, cameraDistance: 35 });
+    const far = resolveClaySsaoSettings({ modelRadius: radius, cameraDistance: 90 });
+    expect(close.viewScale).toBe(CLAY_SSAO_VIEW_SCALE_MIN);
+    expect(mid.viewScale).toBeCloseTo(35 / reference, 2);
+    expect(far.viewScale).toBe(CLAY_SSAO_VIEW_SCALE_MAX);
+    expect(far.kernelRadius).toBeGreaterThanOrEqual(close.kernelRadius);
+    expect(close.kernelRadius).toBeGreaterThan(CLAY_SSAO_KERNEL_RADIUS_FLOOR * 8);
+  });
+
+  it('scales SSAO distance thresholds down for wide camera depth spans', () => {
+    const tight = resolveClaySsaoSettings({
+      modelRadius: 40,
+      cameraNear: 0.5,
+      cameraFar: 35,
+    });
+    const wide = resolveClaySsaoSettings({
+      modelRadius: 40,
+      cameraNear: 0.001,
+      cameraFar: 120,
+    });
+    expect(wide.minDistance).toBeLessThan(tight.minDistance);
+    expect(wide.maxDistance).toBeLessThan(tight.maxDistance);
+    expect(wide.minDistance).toBeCloseTo(tight.minDistance * (CLAY_SSAO_DEPTH_SPAN_REFERENCE / (120 - 0.001)), 4);
   });
 
   it('maps clay AO sliders to responsive SSAO settings', () => {
@@ -117,7 +185,7 @@ describe('bimClayRender', () => {
       modelRadius: 24,
     });
     const high = resolveClaySsaoSettings({
-      aoIntensity: 20,
+      aoIntensity: 100,
       aoRadius: CLAY_AO_RADIUS_MAX,
       aoBias: CLAY_AO_BIAS_MAX,
       aoDistance: CLAY_AO_DISTANCE_MAX,
@@ -126,8 +194,8 @@ describe('bimClayRender', () => {
     expect(high.maxDistance).toBeGreaterThan(low.maxDistance * 2);
     expect(high.kernelRadius).toBeGreaterThan(low.kernelRadius);
     expect(high.minDistance).toBeGreaterThan(low.minDistance);
-    expect(CLAY_AO_BIAS_DEFAULT).toBeGreaterThan(CLAY_AO_BIAS_MIN);
-    expect(CLAY_AO_BIAS_MIN).toBe(0.1);
+    expect(CLAY_AO_BIAS_DEFAULT).toBeGreaterThanOrEqual(CLAY_AO_BIAS_MIN);
+    expect(CLAY_AO_BIAS_MIN).toBe(0.05);
   });
 
   it('updates clay composer SSAO settings from camera and model radius', () => {
@@ -138,11 +206,21 @@ describe('bimClayRender', () => {
       projectionMatrixInverse: { elements: new Array(16).fill(0), copy: () => {} },
     };
     const state = {
+      baseWidth: 1920,
+      baseHeight: 1080,
       ssaoPass: {
+        width: 1920,
+        height: 1080,
         kernelRadius: 8,
         maxDistance: 0.1,
         minDistance: 0.002,
+        kernel: new Array(32).fill(null),
+        setSize: vi.fn(function setSize(width, height) {
+          this.width = width;
+          this.height = height;
+        }),
         ssaoMaterial: {
+          defines: { KERNEL_SIZE: 32 },
           uniforms: {
             cameraNear: { value: 0 },
             cameraFar: { value: 0 },
@@ -151,7 +229,9 @@ describe('bimClayRender', () => {
             kernelRadius: { value: 0 },
             minDistance: { value: 0 },
             maxDistance: { value: 0 },
+            kernel: { value: new Array(32).fill(null) },
           },
+          needsUpdate: false,
         },
         depthRenderMaterial: {
           uniforms: {
@@ -162,17 +242,60 @@ describe('bimClayRender', () => {
       },
     };
     updateClayComposerSettings(state, {
-      aoIntensity: 2.5,
+      aoIntensity: 12.5,
       aoRadius: 0.02,
       aoBias: 0.2,
-      aoDistance: 0.12,
+      aoDistance: CLAY_AO_DISTANCE_DEFAULT,
       camera,
       modelRadius: 24,
     });
     expect(state.ssaoPass.kernelRadius).toBeGreaterThanOrEqual(4);
     expect(state.ssaoPass.minDistance).toBeGreaterThan(0.009);
-    expect(state.ssaoPass.maxDistance).toBeGreaterThan(0.13);
+    expect(state.ssaoPass.maxDistance).toBeGreaterThan(0.03);
+    expect(state.ssaoPass.maxDistance).toBeLessThanOrEqual(0.13);
     expect(state.ssaoPass.ssaoMaterial.uniforms.cameraFar.value).toBe(120);
+  });
+
+  it('clamps AO sample count and resolution scale', () => {
+    expect(resolveClaySsaoKernelSize(4)).toBe(8);
+    expect(resolveClaySsaoKernelSize(80)).toBe(80);
+    expect(resolveClaySsaoKernelSize(512)).toBe(256);
+    expect(resolveClaySsaoPassSize(1920, 1080, 0.5)).toEqual({
+      width: 960,
+      height: 540,
+      scale: 0.5,
+    });
+  });
+
+  it('updates SSAO sample count and pass resolution from clay quality sliders', () => {
+    const ssaoPass = {
+      width: 1920,
+      height: 1080,
+      kernel: new Array(32).fill(null),
+      setSize: vi.fn(function setSize(width, height) {
+        this.width = width;
+        this.height = height;
+      }),
+      ssaoMaterial: {
+        defines: { KERNEL_SIZE: 32 },
+        uniforms: {
+          kernel: { value: new Array(32).fill(null) },
+        },
+        needsUpdate: false,
+      },
+    };
+    const clayComposerState = {
+      baseWidth: 1920,
+      baseHeight: 1080,
+      ssaoPass,
+    };
+
+    updateClaySsaoQuality(clayComposerState, { aoSamples: 16, aoResolution: 0.5 });
+
+    expect(ssaoPass.ssaoMaterial.defines.KERNEL_SIZE).toBe(16);
+    expect(ssaoPass.kernel).toHaveLength(16);
+    expect(ssaoPass.setSize).toHaveBeenCalledWith(960, 540);
+    expect(applyClaySsaoSampleCount(ssaoPass, 16)).toBe(true);
   });
 
   it('updates clay lighting intensity from style input', () => {

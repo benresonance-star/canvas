@@ -39,8 +39,31 @@ async function resolveVersionBlob(version, folderHandle) {
   return null;
 }
 
+/** Stable IFC source identity — ignores viewport/style patches on the version object. */
+export function buildBimSourceIdentity(version) {
+  if (!version) return '';
+  return [
+    version.content_hash ?? '',
+    version.previewCacheKey ?? '',
+    version.relativePath ?? '',
+    version.objectUrl ?? '',
+    version.dataUrl ?? '',
+    version.filename ?? '',
+  ].join('|');
+}
+
 export function useBimModelSource(version, { folderHandle = null } = {}) {
-  const [source, setSource] = useState({ blob: null, loading: false, error: null });
+  const versionRef = useRef(version);
+  versionRef.current = version;
+  const sourceIdentity = buildBimSourceIdentity(version);
+  const loadedIdentityRef = useRef(null);
+  const [source, setSource] = useState({
+    blob: null,
+    arrayBuffer: null,
+    objectUrl: null,
+    loading: false,
+    error: null,
+  });
   const objectUrlRef = useRef(null);
 
   const clearObjectUrl = useCallback(() => {
@@ -48,28 +71,53 @@ export function useBimModelSource(version, { folderHandle = null } = {}) {
     objectUrlRef.current = null;
   }, []);
 
-  const load = useCallback(async () => {
-    setSource((state) => ({ ...state, loading: true, error: null }));
+  const load = useCallback(async ({ force = false } = {}) => {
+    if (!force && loadedIdentityRef.current === sourceIdentity) {
+      return;
+    }
+
+    setSource((state) => {
+      if (!force && loadedIdentityRef.current === sourceIdentity && state.arrayBuffer) {
+        return state;
+      }
+      return { ...state, loading: true, error: null };
+    });
+
     try {
-      const blob = await resolveVersionBlob(version, folderHandle);
+      const blob = await resolveVersionBlob(versionRef.current, folderHandle);
       if (!blob) throw new Error('IFC source file is not available. Reconnect the project folder and try again.');
       const arrayBuffer = await blob.arrayBuffer();
       clearObjectUrl();
       objectUrlRef.current = URL.createObjectURL(blob);
-      const next = { blob, arrayBuffer, objectUrl: objectUrlRef.current, loading: false, error: null };
+      loadedIdentityRef.current = sourceIdentity;
+      const next = {
+        blob,
+        arrayBuffer,
+        objectUrl: objectUrlRef.current,
+        loading: false,
+        error: null,
+      };
       setSource(next);
       return next;
     } catch (error) {
-      const next = { blob: null, arrayBuffer: null, objectUrl: null, loading: false, error: error?.message || 'Could not load IFC source' };
+      loadedIdentityRef.current = null;
+      const next = {
+        blob: null,
+        arrayBuffer: null,
+        objectUrl: null,
+        loading: false,
+        error: error?.message || 'Could not load IFC source',
+      };
       setSource(next);
       return next;
     }
-  }, [clearObjectUrl, folderHandle, version]);
+  }, [clearObjectUrl, folderHandle, sourceIdentity]);
 
   useEffect(() => {
     void load();
-    return clearObjectUrl;
-  }, [clearObjectUrl, load]);
+  }, [load]);
 
-  return { ...source, reload: load };
+  useEffect(() => () => clearObjectUrl(), [clearObjectUrl]);
+
+  return { ...source, reload: () => load({ force: true }) };
 }

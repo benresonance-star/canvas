@@ -6,6 +6,11 @@ import { BimElementTable } from '../BimElementTable.jsx';
 import { BimInspector } from '../BimInspector.jsx';
 import { BimAgentResponsePanel, BimQueryPanel } from '../BimQueryPanel.jsx';
 import { BimViewport } from '../BimViewport.jsx';
+import { BimStyleSettingsHud } from '../BimStyleSettingsHud.jsx';
+import { BimAgentHud } from '../BimAgentHud.jsx';
+import { BimBqlHud } from '../BimBqlHud.jsx';
+import { BimLayersHud } from '../BimLayersHud.jsx';
+import { BIM_AGENT_INFO } from '../bimAgentPanelShared.js';
 
 describe('BIM UI components', () => {
   const element = {
@@ -220,7 +225,64 @@ describe('BIM UI components', () => {
     expect(html).toContain('Lighting: off');
   });
 
-  it('renders the wireframe toggle in the BIM viewport', () => {
+  it('renders the style settings switch for highlight mode without clay or wireframe', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimViewport, {
+        preparedModel: {
+          metadata: {
+            fragmentsStatus: 'success',
+            fragmentsSourceKind: 'fragments',
+          },
+          fragmentsBlob: new Blob([new Uint8Array([1, 2, 3])]),
+          elements: [element],
+        },
+        selectedElement: null,
+        displayMode: 'highlight',
+        renderStyle: 'standard',
+        wireframeMode: false,
+        onDisplayModeChange: () => {},
+      }),
+    );
+    expect(html).toContain('Show style settings panel');
+  });
+
+  it('renders the style settings switch for ghost mode without clay or wireframe', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimViewport, {
+        preparedModel: {
+          metadata: {
+            fragmentsStatus: 'success',
+            fragmentsSourceKind: 'fragments',
+          },
+          fragmentsBlob: new Blob([new Uint8Array([1, 2, 3])]),
+          elements: [element],
+        },
+        selectedElement: null,
+        displayMode: 'ghostOthers',
+        renderStyle: 'standard',
+        wireframeMode: false,
+        onDisplayModeChange: () => {},
+      }),
+    );
+    expect(html).toContain('Show style settings panel');
+  });
+
+  it('renders shared style settings in the floating HUD for highlight mode', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimStyleSettingsHud, {
+        renderStyle: 'standard',
+        wireframeMode: false,
+        viewportBackgroundColor: '#171412',
+        onViewportBackgroundChange: () => {},
+      }),
+    );
+    expect(html).toContain('Style settings');
+    expect(html).toContain('Viewport background colour');
+    expect(html).not.toContain('Clay style controls');
+    expect(html).not.toContain('Wireframe style controls');
+  });
+
+  it('renders the wireframe toggle and style settings switch in the BIM viewport', () => {
     const html = renderToStaticMarkup(
       React.createElement(BimViewport, {
         preparedModel: {
@@ -239,13 +301,57 @@ describe('BIM UI components', () => {
       }),
     );
     expect(html).toContain('Wireframe overlay (visible edges)');
+    expect(html).toContain('Show style settings panel');
+    expect(html).not.toContain('Wireframe style controls');
+  });
+
+  it('renders wireframe style controls in the floating style HUD', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimStyleSettingsHud, {
+        wireframeMode: true,
+        viewportBackgroundColor: '#ffffff',
+        onViewportBackgroundChange: () => {},
+        wireframeLineWeight: 1,
+        wireframeOpacity: 0.5,
+        wireframeColor: '#000000',
+        wireframeHiddenLines: true,
+        onWireframeStyleChange: () => {},
+      }),
+    );
     expect(html).toContain('Wireframe style controls');
     expect(html).toContain('Wireframe line weight');
     expect(html).toContain('Wireframe transparency');
     expect(html).toContain('Wireframe colour');
   });
 
-  it('renders clay style controls when clay render is active', () => {
+  it('renders clay style controls in the floating style HUD', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimStyleSettingsHud, {
+        renderStyle: 'clay',
+        wireframeMode: false,
+        viewportBackgroundColor: '#ffffff',
+        onViewportBackgroundChange: () => {},
+        clayAoIntensity: 10,
+        clayAoRadius: 0.05,
+        clayAoBias: 0.17,
+        clayAoDistance: 0.23,
+        clayAoSamples: 256,
+        clayAoResolution: 1,
+        clayLightIntensity: 2,
+        claySurfaceColor: '#cccccc',
+        clayGlassOpacity: 0.35,
+        onClayStyleChange: () => {},
+      }),
+    );
+    expect(html).toContain('Clay style controls');
+    expect(html).toContain('Clay AO bias');
+    expect(html).toContain('Clay light intensity');
+    expect(html).toContain('Clay glass opacity');
+    expect(html).toContain('2.00');
+    expect(html).toContain('0.35');
+  });
+
+  it('renders the clay toggle and style settings switch when clay render is active', () => {
     const html = renderToStaticMarkup(
       React.createElement(BimViewport, {
         preparedModel: {
@@ -261,12 +367,31 @@ describe('BIM UI components', () => {
       }),
     );
     expect(html).toContain('Clay render (Arctic)');
-    expect(html).toContain('Clay style controls');
-    expect(html).toContain('Clay AO bias');
-    expect(html).toContain('Clay light intensity');
-    expect(html).toContain('Clay glass opacity');
-    expect(html).toContain('2.0');
-    expect(html).toContain('0.01');
+    expect(html).toContain('Show style settings panel');
+    expect(html).toContain('Show layers panel');
+    expect(html).not.toContain('Clay style controls');
+  });
+
+  it('renders the layers HUD with storey and layer toggles', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimLayersHud, {
+        catalog: {
+          storeys: [{ id: 'Level 01', label: 'Level 01', count: 12 }],
+          layers: [{ id: 'Structure', label: 'Structure', count: 8 }],
+        },
+        hiddenStoreys: [],
+        hiddenLayers: ['Structure'],
+        onToggleStorey: () => {},
+        onToggleLayer: () => {},
+        onShowAllStoreys: () => {},
+        onHideAllStoreys: () => {},
+        onShowAllLayers: () => {},
+        onHideAllLayers: () => {},
+      }),
+    );
+    expect(html).toContain('Layers &amp; storeys');
+    expect(html).toContain('Level 01');
+    expect(html).toContain('Structure');
   });
 
   it('hides wireframe style controls when wireframe mode is off', () => {
@@ -300,12 +425,6 @@ describe('BIM UI components', () => {
           warnings: [],
           objectRefs: [{ id: 'ifc:1' }, { id: 'ifc:2' }, { id: 'ifc:3' }],
         },
-        agentRunState: {
-          status: 'ready',
-          message: 'Provider unavailable; answered with local BIM rules.',
-          model: 'local/bim-bql-rules-v0.1',
-          responderLabel: 'Local BIM rules',
-        },
         onRunQuery: () => {},
         onClearQuery: () => {},
         onRebuildCache: () => {},
@@ -318,6 +437,32 @@ describe('BIM UI components', () => {
     );
 
     expect(html).toContain('BQL query JSON');
+    expect(html).not.toContain('BIM Evidence Agent');
+    expect(html).toContain('Color by storey');
+    expect(html).toContain('Saved walls');
+  });
+
+  it('renders the BIM agent controls in the floating agent HUD', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimAgentHud, {
+        agentText: '',
+        onAgentTextChange: () => {},
+        responderId: 'local-bim-rules',
+        onResponderIdChange: () => {},
+        selectedResponderLabel: `Local BIM Rules/${BIM_AGENT_INFO.model}`,
+        responderLabel: 'Local BIM rules/local/bim-bql-rules-v0.1',
+        providerStatus: { status: 'ready', label: 'ready', message: 'Local BIM Rules ready.' },
+        agentRunState: {
+          status: 'ready',
+          message: 'Provider unavailable; answered with local BIM rules.',
+          model: 'local/bim-bql-rules-v0.1',
+          responderLabel: 'Local BIM rules',
+        },
+        onAskSelectedResponder: () => {},
+        onRefreshAgentProviderState: () => {},
+      }),
+    );
+
     expect(html).toContain('BIM Evidence Agent');
     expect(html).toContain('local/bim-bql-rules-v0.1');
     expect(html).toContain('Local BIM Rules');
@@ -326,10 +471,27 @@ describe('BIM UI components', () => {
     expect(html).toContain('Responder: Local BIM rules/local/bim-bql-rules-v0.1');
     expect(html).toContain('Provider status: ready');
     expect(html).toContain('Ask selected BIM responder');
-    expect(html).not.toContain('Ask provider BIM agent');
     expect(html).toContain('prepared IFC index');
-    expect(html).toContain('Color by storey');
-    expect(html).toContain('Saved walls');
+  });
+
+  it('renders the BIM agent toggle in the viewport toolbar', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimViewport, {
+        preparedModel: {
+          metadata: { fragmentsStatus: 'success', fragmentsSourceKind: 'fragments' },
+          fragmentsBlob: new Blob([new Uint8Array([1, 2, 3])]),
+          elements: [element],
+        },
+        selectedElement: null,
+        displayMode: 'highlight',
+        onDisplayModeChange: () => {},
+      }),
+    );
+
+    expect(html).toContain('Show BIM agent panel');
+    expect(html).toContain('Show BQL query panel');
+    expect(html).not.toContain('BIM Evidence Agent');
+    expect(html).not.toContain('BQL query JSON');
   });
 
   it('renders the agent response panel with generated BQL', () => {
@@ -509,17 +671,22 @@ describe('BIM UI components', () => {
 
   it('shows provider did not run state when a selected provider is API offline', () => {
     const html = renderToStaticMarkup(
-      React.createElement(BimQueryPanel, {
-        queryResult: null,
-        onRunQuery: () => {},
-        onClearQuery: () => {},
-        onRebuildCache: () => {},
-        initialResponderId: 'ollama-gemma-26b',
-        agentProviderState: {
-          status: 'offline',
+      React.createElement(BimAgentHud, {
+        agentText: '',
+        onAgentTextChange: () => {},
+        responderId: 'ollama-gemma-26b',
+        onResponderIdChange: () => {},
+        selectedResponderLabel: 'Gemma 26B Local/gemma4:26b',
+        responderLabel: 'Gemma 26B Local/gemma4:26b',
+        providerStatus: {
+          status: 'apiOffline',
+          label: 'API offline',
           message: 'Canvas API offline. Start with npm run dev:stack or npm run server.',
-          connectors: [],
         },
+        agentRunState: { status: 'idle', message: null },
+        onAskSelectedResponder: () => {},
+        onRefreshAgentProviderState: () => {},
+        selectedConnector: { id: 'ollama-gemma-26b', label: 'Gemma 26B Local', model: 'gemma4:26b' },
       }),
     );
 
@@ -530,26 +697,22 @@ describe('BIM UI components', () => {
 
   it('shows model missing readiness for unpulled Gemma', () => {
     const html = renderToStaticMarkup(
-      React.createElement(BimQueryPanel, {
-        queryResult: null,
-        onRunQuery: () => {},
-        onClearQuery: () => {},
-        onRebuildCache: () => {},
-        initialResponderId: 'ollama-gemma-26b',
-        agentProviderState: {
-          status: 'ready',
-          message: 'Canvas API ready.',
-          connectors: [{
-            id: 'ollama-gemma-26b',
-            label: 'Gemma 26B Local',
-            provider: 'ollama',
-            model: 'gemma4:26b',
-            configured: true,
-            usable: false,
-            needsPull: true,
-            healthError: 'Ollama is running, but gemma4:26b is not pulled.',
-          }],
+      React.createElement(BimAgentHud, {
+        agentText: '',
+        onAgentTextChange: () => {},
+        responderId: 'ollama-gemma-26b',
+        onResponderIdChange: () => {},
+        selectedResponderLabel: 'Gemma 26B Local/gemma4:26b',
+        responderLabel: 'Gemma 26B Local/gemma4:26b',
+        providerStatus: {
+          status: 'modelMissing',
+          label: 'model not pulled',
+          message: 'gemma4:26b not pulled. Pull the model before asking Gemma 26B Local.',
         },
+        agentRunState: { status: 'idle', message: null },
+        onAskSelectedResponder: () => {},
+        onRefreshAgentProviderState: () => {},
+        selectedConnector: { id: 'ollama-gemma-26b', label: 'Gemma 26B Local', model: 'gemma4:26b' },
       }),
     );
 

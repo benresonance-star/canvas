@@ -20,6 +20,12 @@ import {
   CLAY_AO_RADIUS_DEFAULT,
   CLAY_AO_RADIUS_MAX,
   CLAY_AO_RADIUS_MIN,
+  CLAY_AO_SAMPLES_DEFAULT,
+  CLAY_AO_SAMPLES_MAX,
+  CLAY_AO_SAMPLES_MIN,
+  CLAY_AO_RESOLUTION_DEFAULT,
+  CLAY_AO_RESOLUTION_MAX,
+  CLAY_AO_RESOLUTION_MIN,
   CLAY_SSAO_KERNEL_RADIUS_FLOOR,
   CLAY_BACKGROUND_DEFAULT,
   CLAY_GLASS_OPACITY_DEFAULT,
@@ -27,6 +33,7 @@ import {
   CLAY_SURFACE_COLOR_DEFAULT,
   normalizeClayStyle,
 } from './types.js';
+import { applyBimStyleSettings } from './bimStyleSettings.js';
 
 export {
   CLAY_AO_BIAS_DEFAULT,
@@ -228,22 +235,71 @@ export function resolveClayViewDistance(camera, controlsTarget, boundsCenter) {
 
 /** Canonical view distance for slider tuning — AO scales from this reference. */
 export const CLAY_SSAO_REFERENCE_DISTANCE_FACTOR = 1.25;
+/** Floor/ceiling for zoom-responsive AO — keep full kernel when zoomed in (depth range handles precision). */
+export const CLAY_SSAO_VIEW_SCALE_MIN = 1;
+export const CLAY_SSAO_VIEW_SCALE_MAX = 2.75;
+/** Max camera far:near ratio for SSAO depth precision (geometry still fits in frustum). */
+export const CLAY_SSAO_MAX_DEPTH_RATIO = 8000;
+/** Reference frustum span for scaling SSAO min/max distance thresholds. */
+export const CLAY_SSAO_DEPTH_SPAN_REFERENCE = 45;
 
-export function resolveClayCameraDepthRange({ cameraDistance, modelRadius } = {}) {
+export function resolveClayCameraDepthRange({
+  cameraDistance,
+  modelRadius,
+  cameraPosition,
+  boundsCenter,
+} = {}) {
   const radius = Math.max(modelRadius ?? 10, 1);
-  const viewDistance = Math.max(cameraDistance ?? radius * 1.5, radius * 0.005);
-  const margin = Math.max(radius * 0.06, viewDistance * 0.9);
+  const padding = 1.12;
 
-  const near = Math.max(0.001, viewDistance - margin);
-  const far = Math.max(near + 0.08, viewDistance + margin);
-  return { near, far, distance: viewDistance, margin };
+  let centerDistance = Math.max(cameraDistance ?? radius * 1.5, radius * 0.005);
+  if (cameraPosition?.distanceTo && boundsCenter) {
+    centerDistance = Math.max(cameraPosition.distanceTo(boundsCenter), radius * 0.01);
+  }
+
+  const extent = radius * padding;
+  const orbitDistance = Math.max(cameraDistance ?? centerDistance, radius * 0.01);
+  const insideBounds = centerDistance < extent;
+
+  let near;
+  let far;
+
+  if (insideBounds) {
+    // Zoomed inside the padded bounds: use a local frustum so SSAO keeps depth precision.
+    near = Math.max(0.02, orbitDistance * 0.04);
+    far = Math.max(near + 3, orbitDistance + radius * 0.6);
+    far = Math.max(far, centerDistance + extent * 0.35);
+    const maxSpan = Math.max(radius * 0.85, orbitDistance + radius * 0.45);
+    if (far - near > maxSpan) {
+      far = near + maxSpan;
+    }
+  } else {
+    near = Math.max(0.001, centerDistance - extent);
+    far = Math.max(near + 0.1, centerDistance + extent);
+  }
+
+  const maxDepthRatio = CLAY_SSAO_MAX_DEPTH_RATIO;
+  if (far / near > maxDepthRatio) {
+    near = Math.max(0.001, far / maxDepthRatio);
+  }
+
+  return { near, far, distance: centerDistance, margin: extent, insideBounds };
 }
 
-export function applyClayCameraDepthRange(camera, { cameraDistance, modelRadius } = {}) {
+export function applyClayCameraDepthRange(camera, {
+  cameraDistance,
+  modelRadius,
+  boundsCenter,
+} = {}) {
   if (!camera) return () => {};
 
   const saved = { near: camera.near, far: camera.far };
-  const { near, far } = resolveClayCameraDepthRange({ cameraDistance, modelRadius });
+  const { near, far } = resolveClayCameraDepthRange({
+    cameraDistance,
+    modelRadius,
+    cameraPosition: camera.position,
+    boundsCenter,
+  });
 
   camera.near = near;
   camera.far = far;
@@ -327,15 +383,104 @@ export function createClayComposer(renderer, scene, camera, width, height) {
   outputPass.needsSwap = false;
   composer.addPass(outputPass);
 
-  return { composer, renderPass, ssaoPass, outputPass };
+  return { composer, renderPass, ssaoPass, outputPass, baseWidth: logicalWidth, baseHeight: logicalHeight };
 }
 
-export function resizeClayComposer(clayComposerState, width, height) {
+export function resolveClaySsaoKernelSize(aoSamples = CLAY_AO_SAMPLES_DEFAULT) {
+  const numeric = Number(aoSamples);
+  if (!Number.isFinite(numeric)) return CLAY_AO_SAMPLES_DEFAULT;
+  return Math.min(
+    CLAY_AO_SAMPLES_MAX,
+    Math.max(CLAY_AO_SAMPLES_MIN, Math.round(numeric)),
+  );
+}
+
+export function resolveClaySsaoResolutionScale(aoResolution = CLAY_AO_RESOLUTION_DEFAULT) {
+  const numeric = Number(aoResolution);
+  if (!Number.isFinite(numeric)) return CLAY_AO_RESOLUTION_DEFAULT;
+  return Math.min(
+    CLAY_AO_RESOLUTION_MAX,
+    Math.max(CLAY_AO_RESOLUTION_MIN, numeric),
+  );
+}
+
+export function resolveClaySsaoPassSize(width, height, aoResolution = CLAY_AO_RESOLUTION_DEFAULT) {
+  const safeWidth = Math.max(1, width);
+  const safeHeight = Math.max(1, height);
+  const scale = resolveClaySsaoResolutionScale(aoResolution);
+  return {
+    width: Math.max(1, Math.floor(safeWidth * scale)),
+    height: Math.max(1, Math.floor(safeHeight * scale)),
+    scale,
+  };
+}
+
+export function applyClaySsaoSampleCount(ssaoPass, aoSamples = CLAY_AO_SAMPLES_DEFAULT) {
+  if (!ssaoPass?.ssaoMaterial) return false;
+
+  const kernelSize = resolveClaySsaoKernelSize(aoSamples);
+  const currentSize = ssaoPass.ssaoMaterial.defines?.KERNEL_SIZE;
+  if (currentSize === kernelSize && ssaoPass.kernel?.length === kernelSize) {
+    return true;
+  }
+
+  const kernel = [];
+  for (let index = 0; index < kernelSize; index += 1) {
+    const sample = new THREE.Vector3();
+    sample.x = Math.random() * 2 - 1;
+    sample.y = Math.random() * 2 - 1;
+    sample.z = Math.random();
+    sample.normalize();
+    let sampleScale = index / kernelSize;
+    sampleScale = THREE.MathUtils.lerp(0.1, 1, sampleScale * sampleScale);
+    sample.multiplyScalar(sampleScale);
+    kernel.push(sample);
+  }
+
+  ssaoPass.kernel = kernel;
+  if (!ssaoPass.ssaoMaterial.defines) {
+    ssaoPass.ssaoMaterial.defines = {};
+  }
+  ssaoPass.ssaoMaterial.defines.KERNEL_SIZE = kernelSize;
+  if (!ssaoPass.ssaoMaterial.uniforms.kernel) {
+    ssaoPass.ssaoMaterial.uniforms.kernel = { value: kernel };
+  } else {
+    ssaoPass.ssaoMaterial.uniforms.kernel.value = kernel;
+  }
+  ssaoPass.ssaoMaterial.needsUpdate = true;
+  return true;
+}
+
+export function updateClaySsaoQuality(clayComposerState, {
+  aoSamples = CLAY_AO_SAMPLES_DEFAULT,
+  aoResolution = CLAY_AO_RESOLUTION_DEFAULT,
+} = {}) {
+  const ssaoPass = clayComposerState?.ssaoPass;
+  if (!ssaoPass) return;
+
+  applyClaySsaoSampleCount(ssaoPass, aoSamples);
+
+  const baseWidth = clayComposerState.baseWidth ?? ssaoPass.width ?? 1;
+  const baseHeight = clayComposerState.baseHeight ?? ssaoPass.height ?? 1;
+  const { width, height } = resolveClaySsaoPassSize(baseWidth, baseHeight, aoResolution);
+  if (ssaoPass.width !== width || ssaoPass.height !== height) {
+    if (typeof ssaoPass.setSize === 'function') {
+      ssaoPass.setSize(width, height);
+    } else {
+      ssaoPass.width = width;
+      ssaoPass.height = height;
+    }
+  }
+}
+
+export function resizeClayComposer(clayComposerState, width, height, quality = {}) {
   if (!clayComposerState?.composer) return;
   const safeWidth = Math.max(1, width);
   const safeHeight = Math.max(1, height);
+  clayComposerState.baseWidth = safeWidth;
+  clayComposerState.baseHeight = safeHeight;
   clayComposerState.composer.setSize(safeWidth, safeHeight);
-  clayComposerState.ssaoPass?.setSize?.(safeWidth, safeHeight);
+  updateClaySsaoQuality(clayComposerState, quality);
 }
 
 function clampClaySliderNorm(value, min, max) {
@@ -353,11 +498,17 @@ export function resolveClaySsaoSettings({
   aoDistance = CLAY_AO_DISTANCE_DEFAULT,
   cameraDistance,
   modelRadius,
+  cameraNear,
+  cameraFar,
 } = {}) {
   const radius = Math.max(modelRadius ?? 10, 1);
   const viewDistance = Math.max(cameraDistance ?? radius * 1.5, radius * 0.005);
   const referenceDistance = radius * CLAY_SSAO_REFERENCE_DISTANCE_FACTOR;
-  const viewScale = viewDistance / referenceDistance;
+  const rawViewScale = viewDistance / referenceDistance;
+  const viewScale = Math.min(
+    CLAY_SSAO_VIEW_SCALE_MAX,
+    Math.max(CLAY_SSAO_VIEW_SCALE_MIN, rawViewScale),
+  );
 
   const strength = clampClaySliderNorm(
     aoIntensity,
@@ -370,9 +521,18 @@ export function resolveClaySsaoSettings({
 
   const baseKernel = (0.5 + radiusNorm * 15) * (radius / 8) * (0.85 + strength * 0.35);
   const kernelRadius = Math.max(CLAY_SSAO_KERNEL_RADIUS_FLOOR, baseKernel * viewScale);
-  const minDistance = 0.0005 + biasNorm * 0.08;
+  let minDistance = 0.0005 + biasNorm * 0.08;
   const distanceBase = 0.02 + distanceNorm * 0.98;
-  const maxDistance = Math.min(1, distanceBase * (0.35 + strength * 1.65));
+  let maxDistance = Math.min(1, distanceBase * (0.35 + strength * 1.65));
+
+  const depthSpan = Number.isFinite(cameraFar) && Number.isFinite(cameraNear) && cameraFar > cameraNear
+    ? cameraFar - cameraNear
+    : null;
+  if (depthSpan) {
+    const spanScale = Math.min(1, CLAY_SSAO_DEPTH_SPAN_REFERENCE / depthSpan);
+    minDistance *= spanScale;
+    maxDistance *= spanScale;
+  }
 
   return { kernelRadius, minDistance, maxDistance, viewScale };
 }
@@ -382,12 +542,16 @@ export function updateClayComposerSettings(clayComposerState, {
   aoRadius = CLAY_AO_RADIUS_DEFAULT,
   aoBias = CLAY_AO_BIAS_DEFAULT,
   aoDistance = CLAY_AO_DISTANCE_DEFAULT,
+  aoSamples = CLAY_AO_SAMPLES_DEFAULT,
+  aoResolution = CLAY_AO_RESOLUTION_DEFAULT,
   camera,
   cameraDistance,
   modelRadius,
 } = {}) {
   const ssaoPass = clayComposerState?.ssaoPass;
   if (!ssaoPass || !camera) return;
+
+  updateClaySsaoQuality(clayComposerState, { aoSamples, aoResolution });
 
   const { kernelRadius, minDistance, maxDistance } = resolveClaySsaoSettings({
     aoIntensity,
@@ -396,6 +560,8 @@ export function updateClayComposerSettings(clayComposerState, {
     aoDistance,
     cameraDistance,
     modelRadius,
+    cameraNear: camera.near,
+    cameraFar: camera.far,
   });
 
   ssaoPass.kernelRadius = kernelRadius;
@@ -421,14 +587,22 @@ export function disposeClayComposer(clayComposerState) {
   clayComposerState.composer?.dispose?.();
 }
 
-export function applyClaySceneBackground(scene, renderer, backgroundColor = CLAY_BACKGROUND_DEFAULT) {
+export function applyViewportBackground(scene, renderer, backgroundColor = CLAY_BACKGROUND_DEFAULT) {
+  const color = new THREE.Color(backgroundColor);
   if (scene) {
-    scene.background = new THREE.Color(backgroundColor);
+    if (scene.background?.isColor) {
+      scene.background.copy(color);
+    } else {
+      scene.background = color;
+    }
   }
   if (renderer) {
-    renderer.setClearColor(backgroundColor, 1);
+    renderer.setClearColor(color, 1);
   }
 }
+
+/** @deprecated Use applyViewportBackground */
+export const applyClaySceneBackground = applyViewportBackground;
 
 export async function applyClayBaseMaterials(
   model,
@@ -505,21 +679,30 @@ export function renderClayFrame({
   aoRadius = CLAY_AO_RADIUS_DEFAULT,
   aoBias = CLAY_AO_BIAS_DEFAULT,
   aoDistance = CLAY_AO_DISTANCE_DEFAULT,
+  aoSamples = CLAY_AO_SAMPLES_DEFAULT,
+  aoResolution = CLAY_AO_RESOLUTION_DEFAULT,
   cameraDistance,
   modelRadius,
+  boundsCenter,
 } = {}) {
   if (!renderer || !clayComposerState?.composer || !scene || !camera) {
     return false;
   }
 
-  applyClaySceneBackground(scene, renderer, backgroundColor);
-  const restoreCameraDepth = applyClayCameraDepthRange(camera, { cameraDistance, modelRadius });
+  applyViewportBackground(scene, renderer, backgroundColor);
+  const restoreCameraDepth = applyClayCameraDepthRange(camera, {
+    cameraDistance,
+    modelRadius,
+    boundsCenter,
+  });
   try {
     updateClayComposerSettings(clayComposerState, {
       aoIntensity,
       aoRadius,
       aoBias,
       aoDistance,
+      aoSamples,
+      aoResolution,
       camera,
       cameraDistance,
       modelRadius,
@@ -551,6 +734,29 @@ export function renderClayFrame({
   return true;
 }
 
+/** Saved "Rhino Arctic" style preset — applied when entering clay mode. */
+export const RHINO_ARCTIC_CLAY_STYLE = {
+  renderStyle: 'clay',
+  viewportBackgroundColor: '#ffffff',
+  clayAoIntensity: 0,
+  clayAoRadius: 0.0005,
+  clayAoBias: 0.05,
+  clayAoDistance: 0.17,
+  clayAoSamples: 256,
+  clayAoResolution: 1,
+  clayLightIntensity: 2.7,
+  claySurfaceColor: '#f8f8f8',
+  clayGlassOpacity: 0.31,
+  wireframeMode: false,
+  wireframeColor: '#919191',
+  wireframeOpacity: 0.5,
+  wireframeLineWeight: 1.25,
+  wireframeHiddenLines: true,
+  showEnvironment: true,
+  lightingMode: 'soft',
+  environmentPreset: 'sunset',
+};
+
 export function getClayPresetWorkspacePatch() {
-  return normalizeClayStyle({ renderStyle: 'clay' });
+  return applyBimStyleSettings({}, RHINO_ARCTIC_CLAY_STYLE);
 }

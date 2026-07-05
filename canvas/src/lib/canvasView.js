@@ -1,7 +1,7 @@
 import { getCardPixelSize } from './cards.js';
 
 export const CANVAS_ZOOM_MIN = 0.1;
-export const CANVAS_ZOOM_MAX = 3;
+export const CANVAS_ZOOM_MAX = 8;
 
 export const CANVAS_ZOOM_PERCENT_MIN = Math.round(CANVAS_ZOOM_MIN * 100);
 export const CANVAS_ZOOM_PERCENT_MAX = Math.round(CANVAS_ZOOM_MAX * 100);

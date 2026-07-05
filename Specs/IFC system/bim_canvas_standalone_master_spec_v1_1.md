@@ -1,7 +1,7 @@
 # BIM Canvas + Standalone Master Spec
 ## Unified OpenBIM Viewer, Agent, Query, Connector, and 3D Artifact Platform
 **Version:** v1.1 master merge  
-**Date:** 2026-07-04  
+**Date:** 2026-07-05  
 **Status:** Master implementation spec for Codex / engineering  
 **Primary scope:** Shared BIM core powering both **Canvas BIM** and **Standalone Desktop BIM**  
 **Audience:** product, architecture, frontend, BIM platform, agent, connector, and infra engineers
@@ -1224,6 +1224,10 @@ canvas/src/features/bim/
     bql.js                   # validateBqlQuery + executeBqlQuery
     bimWireframeOverlay.js   # feature-edge overlay (LineSegments2 + two-pass render)
     bimClayRender.js         # Arctic/clay presentation (material override + SSAO + wireframe pass)
+    bimStyleSettings.js      # shared style normalisation + card/IndexedDB patch helpers
+    bimLayerVisibility.js    # storey/layer hide lists + apply to element table / viewport
+    bimElementLayers.js      # derive layer groups from prepared model index
+    bimViewportBoot.js       # layout wait, Fragments registration/sync boot helpers
     bimCamera.js             # perspective / orthographic camera helpers
     bimLighting.js           # HDRI environment + legacy/direct lights
     bimMeasurementController.js
@@ -1235,10 +1239,19 @@ canvas/src/features/bim/
     BimViewport.jsx
     BimElementTable.jsx
     BimInspector.jsx
-    BimQueryPanel.jsx        # manual JSON BQL editor + presets
+    BimQueryPanel.jsx        # manual JSON BQL editor + presets (also embedded in BimBqlHud)
     BimModelSummary.jsx
+    BimStyleSettingsHud.jsx  # floating style panel (background, presets, clay/wireframe sliders)
+    BimStylePresetsMenu.jsx  # save/load project style presets
+    BimLayersHud.jsx         # floating storey/layer visibility panel
+    BimBqlHud.jsx            # viewport-top-right BQL HUD shell
+    BimAgentHud.jsx          # viewport-top-right BIM agent HUD shell
+  api/
+    bimApi.js                # REST client for style presets
   hooks/
     useBimModelSource.js
+    useBimBqlPanel.js
+    useBimAgentPanel.js
 ```
 
 Canvas integration: `CardPreview.jsx`, `ModalContent.jsx`, `TypeIcon.jsx`, `filename.js`, `constants.js`, `readFile.js`, `previewHydrate.js`, `artifactType.js`, `syncIngest.js`, `syncStaging.js`.
@@ -1262,17 +1275,24 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
     - **All:** skip depth population; `renderWireframeOverlayPass()` with `depthTest: false` and transparent blend over clay.
     - Wireframe skipped when line opacity ≤ 0 (100% transparency).
   - Clay mode disables HDRI/sun lighting; uses low hemisphere + directional skylight fill instead.
+  - Toolbar **clay toggle** uses a circle icon in a rounded-square button (same active styling as highlight / wireframe / layers).
   - Toolbar controls when clay is active (live numeric readouts beside sliders; accent highlight when pinned at min/max):
     | Control | Field | Range | Default |
     |---|---|---|---|
-    | AO | `clayAoIntensity` | 0–20 | 2 |
-    | R | `clayAoRadius` | 0.05–10 | 2 |
-    | B | `clayAoBias` | 0.01–1 | 0.01 |
-    | D | `clayAoDistance` | 0.005–0.3 | 0.1 |
+    | AO | `clayAoIntensity` | 0–100 | 0 |
+    | R | `clayAoRadius` | 0.0005–0.05 | 0.0005 |
+    | B | `clayAoBias` | 0.05–0.2 | 0.05 |
+    | D | `clayAoDistance` | 0–1 | 0.17 |
     | Lit | `clayLightIntensity` | 0–10 | 0.55 |
     | Gls | `clayGlassOpacity` | 0.05–0.5 | 0.18 |
     | Surface / background | `claySurfaceColor`, `clayBackgroundColor` | hex | `#f8f8f8` / `#ffffff` |
   - State normalised via `normalizeClayStyle()` in `types.js`; clay preset via `getClayPresetWorkspacePatch()` (does not force wireframe off).
+- **Default viewer open state** (2026-07-05): each workspace open applies `BIM_VIEWER_DEFAULTS` via `applyBimViewerDefaults()` in `types.js` — `displayMode: 'highlight'`, `renderStyle: 'standard'`, empty `hiddenStoreys` / `hiddenLayers`, `isolateOnSelect: false`. Camera, panel layout, measurements, lighting, and saved queries still restore from IndexedDB / card metadata; display mode, render style, and layer/storey visibility reset to defaults on every open.
+- **Style settings HUD** (2026-07-05): toolbar sliders button is always visible (highlight, ghost, standard, clay, wireframe). Floating `BimStyleSettingsHud` always exposes viewport **background colour** and the **style presets** menu; clay and wireframe slider sections render only when those modes are active.
+- **Storey / layer visibility** (2026-07-05): toolbar layers button opens `BimLayersHud` — toggles per-storey and per-layer visibility (`bimLayerVisibility.js`, `bimElementLayers.js`); hidden lists persist in workspace state.
+- **Style presets API** (2026-07-05): Postgres table `bim_style_presets` (migration `0025_bim_style_presets.sql`); REST routes under `/bim/projects/:projectId/style-presets` (list/create) and `/bim/style-presets/:presetId` (get/patch/delete). Client `bimApi.js` + `BimStylePresetsMenu.jsx`; debounced write-back of current style bundle to card `version.bim.styleSettings`.
+- **Floating viewport HUDs** (2026-07-05): BQL and BIM agent panels moved from the sidebar into the viewport top-right HUD stack (`BimBqlHud.jsx`, `BimAgentHud.jsx`) alongside style settings.
+- **Viewport boot reliability** (2026-07-05): `bimViewportBoot.js` gates first paint on (1) non-zero container layout via `ResizeObserver` on container + ancestors (up to 20s), (2) Fragments worker model registration (`fragments.models.list` + `onModelLoaded`), (3) `model.isBusy === false`, (4) retried `fragments.update()` until success. `updateFragments()` skips worker calls when the model is not yet registered (avoids worker `Model not found` races). React Strict Mode double-mount is ignored via per-effect sequence ids; the animation loop starts only after boot succeeds and `loadState` becomes `ready`.
 - Bidirectional selection sync between table, viewport, and inspector via `ifcGlobalId`.
 - Element table includes storey column; search and IFC class filter.
 - Inspector shows grouped Psets/quantities, provenance, and semantic assembly membership for member elements.
@@ -1315,7 +1335,7 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 | NL BIM agent side panel | Partial — `BimQueryPanel` agent chat + local rule fallback shipped; full side-panel UX deferred |
 | Wireframe overlay | Shipped — toggle + style controls (weight, transparency, colour, Hdn/All); clay + wireframe compositing with depth-only screen pass for hidden lines; selected-element edge highlight deferred |
 | `colorBy` display mode | Validated in BQL but not applied in viewport |
-| Workspace state on card `version.bim` | Read on init; persist to IndexedDB only (no write-back to card metadata) |
+| Workspace state on card `version.bim` | Style settings (`version.bim.styleSettings`) read on init and debounced write-back on change; other workspace fields remain IndexedDB-only |
 | IFC schema in fingerprint | Hardcoded `'unknown'` until schema detection lands |
 | Element coverage | 18 common IFC classes, not full schema scan |
 | Assembly-level viewer selection | BQL can match assemblies; viewport highlights physical members only |

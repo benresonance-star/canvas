@@ -20,12 +20,16 @@ import {
 import { prepareBimModel } from '../bim-core/prepareBimModel.js';
 import { logBimPickWarning } from '../bim-core/bimPickDebug.js';
 import { findPreparedElementByGlobalId } from '../bim-core/fragmentsSelection.js';
-import { normalizeBimWorkspaceState } from '../bim-core/types.js';
+import { applyBimViewerDefaults, normalizeBimWorkspaceState } from '../bim-core/types.js';
+import { applyBimStyleSettings, extractBimStyleSettings } from '../bim-core/bimStyleSettings.js';
 import { getClayPresetWorkspacePatch } from '../bim-core/bimClayRender.js';
+import { requestActionSync } from '../../../lib/actionSync.js';
 import { useBimModelSource } from '../hooks/useBimModelSource.js';
+import { useBimAgentPanel } from '../hooks/useBimAgentPanel.js';
+import { useBimBqlPanel } from '../hooks/useBimBqlPanel.js';
+import { LOCAL_BIM_RULES_RESPONDER_ID } from './bimAgentPanelShared.js';
 import { BimElementTable } from './BimElementTable.jsx';
 import { BimInspector } from './BimInspector.jsx';
-import { BimQueryPanel } from './BimQueryPanel.jsx';
 import { BimViewport } from './BimViewport.jsx';
 
 const PHASE_LABELS = {
@@ -111,12 +115,28 @@ function BimExtractionFeed({ events }) {
   );
 }
 
+const BIM_STYLE_SYNC_DEBOUNCE_MS = 800;
+
+function applyCardUpdate(onUpdateCard, cardId, updates) {
+  if (!onUpdateCard || !cardId) return;
+  if (onUpdateCard.length >= 2) {
+    onUpdateCard(cardId, updates);
+  } else {
+    onUpdateCard(updates);
+  }
+}
+
 export function BimWorkspace({
   card,
   version,
   folderHandle = null,
+  projectId = null,
+  onUpdateCard = null,
 }) {
+  const resolvedProjectId = projectId ?? card?.projectId ?? null;
   const source = useBimModelSource(version, { folderHandle });
+  const versionRef = useRef(version);
+  versionRef.current = version;
   const repositoryRef = useRef(null);
   if (!repositoryRef.current) repositoryRef.current = createIndexedDbBimRepository();
   const [phase, setPhase] = useState('preparing');
@@ -124,7 +144,12 @@ export function BimWorkspace({
   const [error, setError] = useState(null);
   const [prepared, setPrepared] = useState(null);
   const [fingerprint, setFingerprint] = useState(null);
-  const [workspaceState, setWorkspaceState] = useState(() => normalizeBimWorkspaceState(version?.bim?.workspaceState));
+  const loadedFingerprintRef = useRef(null);
+  const [workspaceState, setWorkspaceState] = useState(() => applyBimViewerDefaults({
+    ...(version?.bim?.workspaceState ?? {}),
+    ...(version?.bim?.styleSettings ?? {}),
+  }));
+  const styleSyncTimerRef = useRef(null);
   const [extractionFeed, setExtractionFeed] = useState([]);
   const [queryResult, setQueryResult] = useState(null);
   const [semanticAliasMemory, setSemanticAliasMemory] = useState({});
@@ -143,6 +168,85 @@ export function BimWorkspace({
     secretsConfigured: false,
   });
 
+  const styleSettings = useMemo(
+    () => extractBimStyleSettings(workspaceState),
+    [
+      workspaceState.renderStyle,
+      workspaceState.displayMode,
+      workspaceState.isolateOnSelect,
+      workspaceState.viewportBackgroundColor,
+      workspaceState.wireframeMode,
+      workspaceState.wireframeLineWeight,
+      workspaceState.wireframeOpacity,
+      workspaceState.wireframeColor,
+      workspaceState.wireframeHiddenLines,
+      workspaceState.clayAoIntensity,
+      workspaceState.clayAoRadius,
+      workspaceState.clayAoBias,
+      workspaceState.clayAoDistance,
+      workspaceState.clayAoSamples,
+      workspaceState.clayAoResolution,
+      workspaceState.clayLightIntensity,
+      workspaceState.claySurfaceColor,
+      workspaceState.clayGlassOpacity,
+      workspaceState.showEnvironment,
+      workspaceState.lightingMode,
+      workspaceState.environmentPreset,
+    ],
+  );
+
+  const patchVersionBim = useCallback((bimPatch) => {
+    if (!card?.id || !version?.version || !onUpdateCard) return;
+    const nextBim = {
+      ...(version.bim ?? {}),
+      ...bimPatch,
+    };
+    applyCardUpdate(onUpdateCard, card.id, {
+      versions: (card.versions ?? []).map((candidate) => (
+        candidate.version === version.version
+          ? { ...candidate, bim: nextBim }
+          : candidate
+      )),
+    });
+  }, [card, onUpdateCard, version]);
+
+  const scheduleStyleSync = useCallback(() => {
+    if (!resolvedProjectId) return;
+    if (styleSyncTimerRef.current) {
+      clearTimeout(styleSyncTimerRef.current);
+    }
+    styleSyncTimerRef.current = setTimeout(() => {
+      styleSyncTimerRef.current = null;
+      void requestActionSync('structuralChange', { projectId: resolvedProjectId });
+    }, BIM_STYLE_SYNC_DEBOUNCE_MS);
+  }, [resolvedProjectId]);
+
+  useEffect(() => () => {
+    if (styleSyncTimerRef.current) {
+      clearTimeout(styleSyncTimerRef.current);
+    }
+  }, []);
+
+  const lastPersistedStyleRef = useRef(JSON.stringify(styleSettings));
+
+  useEffect(() => {
+    if (!onUpdateCard || !card?.id) return undefined;
+    const serialized = JSON.stringify(styleSettings);
+    if (serialized === lastPersistedStyleRef.current) return undefined;
+    const timer = window.setTimeout(() => {
+      lastPersistedStyleRef.current = serialized;
+      patchVersionBim({ styleSettings });
+      scheduleStyleSync();
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [
+    card?.id,
+    onUpdateCard,
+    patchVersionBim,
+    scheduleStyleSync,
+    styleSettings,
+  ]);
+
   const appendExtractionEvent = (event) => {
     setExtractionFeed((feed) => [
       ...feed.slice(-59),
@@ -157,7 +261,8 @@ export function BimWorkspace({
   };
 
   useEffect(() => {
-    if (!source.arrayBuffer || !version?.content_hash) return undefined;
+    const contentHash = version?.content_hash;
+    if (!source.arrayBuffer || !contentHash) return undefined;
     let cancelled = false;
     async function run() {
       setError(null);
@@ -165,7 +270,7 @@ export function BimWorkspace({
       try {
         const result = await prepareBimModel({
           arrayBuffer: source.arrayBuffer,
-          version,
+          version: versionRef.current,
           repository: repositoryRef.current,
           onPhase: (nextPhase) => {
             if (!cancelled) setPhase(nextPhase);
@@ -175,14 +280,18 @@ export function BimWorkspace({
           },
         });
         if (cancelled) return;
+        if (loadedFingerprintRef.current === result.fingerprint) {
+          return;
+        }
         const savedState = await repositoryRef.current.getWorkspaceState(result.fingerprint);
         if (cancelled) return;
+        loadedFingerprintRef.current = result.fingerprint;
         setPrepared(result.preparedModel);
         setSemanticAliasMemory({});
         setCacheStatus(result.reused ? 'loaded_cache' : 'prepared');
-        setWorkspaceState((current) => normalizeBimWorkspaceState({
-          ...current,
+        setWorkspaceState(() => applyBimViewerDefaults({
           ...(savedState ?? {}),
+          ...(versionRef.current?.bim?.styleSettings ?? {}),
           lastOpenedAt: new Date().toISOString(),
         }));
         setFingerprint(result.fingerprint);
@@ -194,7 +303,7 @@ export function BimWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [prepRunId, source.arrayBuffer, version]);
+  }, [prepRunId, source.arrayBuffer, version?.content_hash]);
 
   useEffect(() => {
     if (!fingerprint) return;
@@ -298,7 +407,7 @@ export function BimWorkspace({
       tableSearch: '',
       ifcClassFilter: '',
     };
-    if (result.viewerState?.mode) {
+    if (result.viewerState?.mode && result.viewerState.mode !== 'isolate') {
       statePatch.displayMode = result.viewerState.mode;
     }
     if (options.savedQueryId) {
@@ -601,6 +710,26 @@ export function BimWorkspace({
     }
   };
 
+  const queryDraftHandlerRef = useRef(null);
+  const registerQueryDraftHandler = useCallback((handler) => {
+    queryDraftHandlerRef.current = handler;
+  }, []);
+
+  const bimAgent = useBimAgentPanel({
+    onRunQuery: runBqlQuery,
+    onRunLocalAgent: runLocalBimAgent,
+    onRunLlmAgent: runLlmBimAgent,
+    agentRunState,
+    agentProviderState,
+    onApplyQueryDraft: (queryText, { query, run = true } = {}) => {
+      queryDraftHandlerRef.current?.(queryText, { query, run });
+    },
+  });
+
+  const selectedAgentConnector = bimAgent.responderId === LOCAL_BIM_RULES_RESPONDER_ID
+    ? null
+    : getConnectorById(bimAgent.responderId) ?? getConnectorById(DEFAULT_SINGLE_CONNECTOR_ID);
+
   const clearBqlQuery = () => {
     setQueryResult(null);
   };
@@ -635,6 +764,19 @@ export function BimWorkspace({
     setPhase('preparing');
     setPrepRunId((runId) => runId + 1);
   };
+
+  const bimBql = useBimBqlPanel({
+    queryResult,
+    onRunQuery: runBqlQuery,
+    onClearQuery: clearBqlQuery,
+    onRebuildCache: rebuildBimCache,
+    savedQueries: workspaceState.savedQueries,
+    onSaveQuery: saveBqlQuery,
+    onDeleteSavedQuery: deleteSavedBqlQuery,
+    rebuildDisabled: !fingerprint,
+    onRegisterQueryDraftHandler: registerQueryDraftHandler,
+    onAgentFeedback: bimAgent.setAgentFeedback,
+  });
 
   const leftPanelOpen = workspaceState.panels?.left !== false;
   const rightPanelOpen = workspaceState.panels?.right !== false;
@@ -690,21 +832,6 @@ export function BimWorkspace({
           {extractionFeed.at(-1)?.message}
         </div>
       )}
-      <BimQueryPanel
-        queryResult={queryResult}
-        onRunQuery={runBqlQuery}
-        onRunLocalAgent={runLocalBimAgent}
-        onRunLlmAgent={runLlmBimAgent}
-        agentRunState={agentRunState}
-        agentProviderState={agentProviderState}
-        onRefreshAgentProviderState={refreshAgentProviderState}
-        onClearQuery={clearBqlQuery}
-        onRebuildCache={rebuildBimCache}
-        savedQueries={workspaceState.savedQueries}
-        onSaveQuery={saveBqlQuery}
-        onDeleteSavedQuery={deleteSavedBqlQuery}
-        rebuildDisabled={!fingerprint}
-      />
       {prepared.warnings?.length > 0 && (
         <div className="shrink-0 border-b border-border bg-warning/10 px-3 py-1 text-[10px] text-warning">
           {prepared.warnings.join(' ')}
@@ -727,6 +854,7 @@ export function BimWorkspace({
               onSearchChange={(tableSearch) => patchWorkspaceState({ tableSearch })}
               onIfcClassFilterChange={(ifcClassFilter) => patchWorkspaceState({ ifcClassFilter })}
               onSelectElement={(selectedObjectId) => {
+                setQueryResult(null);
                 patchWorkspaceState({ selectedObjectId, selectedObjectKind: 'physicalElement' });
               }}
             />
@@ -738,7 +866,11 @@ export function BimWorkspace({
             selectedElement={selectedElement}
             selectedProperties={selectedProperties}
             highlightElementIds={queryElementIds}
+            queryViewerMode={queryResult?.viewerState?.mode ?? null}
             displayMode={workspaceState.displayMode}
+            isolateOnSelect={workspaceState.isolateOnSelect}
+            hiddenStoreys={workspaceState.hiddenStoreys}
+            hiddenLayers={workspaceState.hiddenLayers}
             colorByProperty={queryResult?.viewerState?.colorByProperty}
             leftPanelOpen={leftPanelOpen}
             rightPanelOpen={rightPanelOpen}
@@ -747,6 +879,9 @@ export function BimWorkspace({
             onToggleLeftPanel={() => togglePanel('left')}
             onToggleRightPanel={() => togglePanel('right')}
             onDisplayModeChange={(displayMode) => patchWorkspaceState({ displayMode })}
+            onIsolateOnSelectChange={(isolateOnSelect) => patchWorkspaceState({ isolateOnSelect })}
+            onHiddenStoreysChange={(hiddenStoreys) => patchWorkspaceState({ hiddenStoreys })}
+            onHiddenLayersChange={(hiddenLayers) => patchWorkspaceState({ hiddenLayers })}
             onSelectElementByGlobalId={selectElementByGlobalId}
             onDeselectElement={deselectElement}
             onCameraChange={(camera) => patchWorkspaceState({ camera })}
@@ -766,10 +901,12 @@ export function BimWorkspace({
             clayAoRadius={workspaceState.clayAoRadius}
             clayAoBias={workspaceState.clayAoBias}
             clayAoDistance={workspaceState.clayAoDistance}
+            clayAoSamples={workspaceState.clayAoSamples}
+            clayAoResolution={workspaceState.clayAoResolution}
             clayLightIntensity={workspaceState.clayLightIntensity}
             claySurfaceColor={workspaceState.claySurfaceColor}
             clayGlassOpacity={workspaceState.clayGlassOpacity}
-            clayBackgroundColor={workspaceState.clayBackgroundColor}
+            viewportBackgroundColor={workspaceState.viewportBackgroundColor}
             showEnvironment={workspaceState.showEnvironment}
             lightingMode={workspaceState.lightingMode}
             environmentPreset={workspaceState.environmentPreset}
@@ -785,7 +922,45 @@ export function BimWorkspace({
               else patchWorkspaceState({ renderStyle: 'standard' });
             }}
             onClayStyleChange={(clayStylePatch) => patchWorkspaceState(clayStylePatch)}
+            onViewportBackgroundChange={(viewportBackgroundColor) => patchWorkspaceState({ viewportBackgroundColor })}
             onLightingChange={(lightingPatch) => patchWorkspaceState(lightingPatch)}
+            projectId={resolvedProjectId}
+            cardId={card?.id}
+            artifactId={version?.artifactId ?? card?.artifactId ?? null}
+            styleSettings={styleSettings}
+            onApplyStyleSettings={(settings) => {
+              setWorkspaceState((state) => normalizeBimWorkspaceState({
+                ...state,
+                ...applyBimStyleSettings(state, settings),
+              }));
+            }}
+            agentText={bimAgent.agentText}
+            onAgentTextChange={bimAgent.setAgentText}
+            agentResponderId={bimAgent.responderId}
+            onAgentResponderIdChange={bimAgent.setResponderId}
+            agentSelectedResponderLabel={bimAgent.selectedResponderLabel}
+            agentResponderLabel={bimAgent.responderLabel}
+            agentProviderStatus={bimAgent.providerStatus}
+            agentRunState={agentRunState}
+            agentResponse={bimAgent.agentResponse}
+            agentStatusLine={bimAgent.statusLine}
+            onAskSelectedAgent={bimAgent.askSelectedResponder}
+            onRefreshAgentProviderState={refreshAgentProviderState}
+            selectedAgentConnector={selectedAgentConnector}
+            bqlQueryText={bimBql.queryText}
+            onBqlQueryTextChange={bimBql.setQueryText}
+            bqlSelectedSavedQueryId={bimBql.selectedSavedQueryId}
+            bqlSavedQueries={bimBql.savedQueries}
+            bqlRebuildDisabled={bimBql.rebuildDisabled}
+            bqlStatusLine={bimBql.statusLine}
+            bqlStatusIsError={bimBql.statusIsError}
+            onBqlRunQuery={bimBql.run}
+            onBqlSaveQuery={bimBql.saveQuery}
+            onBqlClearQuery={bimBql.onClearQuery}
+            onBqlDeleteSelectedQuery={bimBql.deleteSelectedQuery}
+            onBqlRebuildCache={bimBql.onRebuildCache}
+            onBqlApplyPreset={bimBql.applyPreset}
+            onBqlLoadSavedQuery={bimBql.loadSavedQuery}
           />
         </div>
         <div className="h-full min-h-0 overflow-hidden" style={{ gridColumn: 3 }}>

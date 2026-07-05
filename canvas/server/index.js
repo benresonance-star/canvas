@@ -20,6 +20,7 @@ import { registerLiveArtifactRoutes } from './routes/liveArtifacts.js';
 import { registerAgentTypeRoutes } from './routes/agentTypes.js';
 import { registerAgentsRoutes } from './routes/agents.js';
 import { registerMusicRoutes } from './routes/music.js';
+import { registerBimRoutes } from './routes/bim.js';
 import { registerStateMachineRoutes } from './routes/stateMachines.js';
 import { registerDiagnosticsConcentrateLayoutRoutes } from './routes/diagnosticsConcentrateLayouts.js';
 
@@ -51,6 +52,7 @@ registerStateMachineRoutes(app, routeDeps);
 registerAgentTypeRoutes(app, routeDeps);
 registerAgentsRoutes(app, routeDeps);
 registerMusicRoutes(app, routeDeps);
+registerBimRoutes(app, routeDeps);
 registerAgentTemplateRoutes(app);
 registerAgentRoutes(app);
 

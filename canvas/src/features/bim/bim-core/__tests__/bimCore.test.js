@@ -15,7 +15,14 @@ import { executeBqlQuery, validateBqlQuery } from '../bql.js';
 import {
   CLAY_AO_BIAS_DEFAULT,
   CLAY_AO_DISTANCE_DEFAULT,
+  CLAY_AO_INTENSITY_DEFAULT,
+  CLAY_AO_RADIUS_DEFAULT,
+  CLAY_GLASS_OPACITY_DEFAULT,
+  CLAY_LIGHT_INTENSITY_DEFAULT,
+  CLAY_SURFACE_COLOR_DEFAULT,
   normalizeBimWorkspaceState,
+  applyBimViewerDefaults,
+  BIM_VIEWER_DEFAULTS,
   wireframeLineOpacityFromTransparency,
   wireframeTransparencyFromLineOpacity,
 } from '../types.js';
@@ -122,8 +129,20 @@ describe('BIM core fingerprinting and cache', () => {
     expect(normalizeBimWorkspaceState({}).projectionMode).toBe('perspective');
   });
 
+  it('migrates legacy displayMode isolate without enabling isolate on select', () => {
+    expect(normalizeBimWorkspaceState({ displayMode: 'isolate' })).toMatchObject({
+      displayMode: 'highlight',
+      isolateOnSelect: false,
+    });
+    expect(normalizeBimWorkspaceState({ displayMode: 'isolate', isolateOnSelect: true })).toMatchObject({
+      displayMode: 'highlight',
+      isolateOnSelect: true,
+    });
+  });
+
   it('normalizes lighting workspace fields with HDRI off by default', () => {
     expect(normalizeBimWorkspaceState({})).toMatchObject({
+      displayMode: 'highlight',
       showEnvironment: false,
       environmentPreset: 'studio',
       lightingMode: 'studio',
@@ -132,14 +151,19 @@ describe('BIM core fingerprinting and cache', () => {
       wireframeOpacity: 0.88,
       wireframeColor: '#0f172a',
       renderStyle: 'standard',
-      clayAoIntensity: 2,
-      clayAoRadius: 0.02,
+      clayAoIntensity: CLAY_AO_INTENSITY_DEFAULT,
+      clayAoRadius: CLAY_AO_RADIUS_DEFAULT,
       clayAoBias: CLAY_AO_BIAS_DEFAULT,
       clayAoDistance: CLAY_AO_DISTANCE_DEFAULT,
-      clayLightIntensity: 0.55,
+      clayAoSamples: 256,
+      clayAoResolution: 1,
+      clayLightIntensity: CLAY_LIGHT_INTENSITY_DEFAULT,
       claySurfaceColor: '#f8f8f8',
-      clayGlassOpacity: 0.18,
-      clayBackgroundColor: '#ffffff',
+      clayGlassOpacity: CLAY_GLASS_OPACITY_DEFAULT,
+      viewportBackgroundColor: '#171412',
+      hiddenStoreys: [],
+      hiddenLayers: [],
+      isolateOnSelect: false,
     });
 
     const state = normalizeBimWorkspaceState({
@@ -154,12 +178,35 @@ describe('BIM core fingerprinting and cache', () => {
     expect(state.wireframeMode).toBe(true);
   });
 
+  it('applyBimViewerDefaults resets display mode, render style, and layer visibility', () => {
+    expect(applyBimViewerDefaults({
+      displayMode: 'ghostOthers',
+      renderStyle: 'clay',
+      hiddenStoreys: ['Level 01'],
+      hiddenLayers: ['Structure'],
+      isolateOnSelect: true,
+      camera: { position: [1, 2, 3], target: [0, 0, 0], up: [0, 1, 0], fov: 45, zoom: 1 },
+    })).toMatchObject({
+      ...BIM_VIEWER_DEFAULTS,
+      camera: { position: [1, 2, 3], target: [0, 0, 0], up: [0, 1, 0], fov: 45, zoom: 1 },
+    });
+  });
+
   it('normalizes clay style workspace fields', () => {
     const state = normalizeBimWorkspaceState({ renderStyle: 'clay', clayAoIntensity: 99, clayAoRadius: 99 });
     expect(state.renderStyle).toBe('clay');
-    expect(state.clayAoIntensity).toBe(20);
+    expect(state.clayAoIntensity).toBe(99);
     expect(state.clayAoRadius).toBe(0.05);
-    expect(state.clayBackgroundColor).toBe('#ffffff');
+  });
+
+  it('normalizes viewport background and migrates legacy clayBackgroundColor', () => {
+    expect(normalizeBimWorkspaceState({}).viewportBackgroundColor).toBe('#171412');
+    expect(normalizeBimWorkspaceState({
+      clayBackgroundColor: '#112233',
+    }).viewportBackgroundColor).toBe('#112233');
+    expect(normalizeBimWorkspaceState({
+      viewportBackgroundColor: '#abcdef',
+    }).viewportBackgroundColor).toBe('#abcdef');
   });
 
   it('normalizes wireframe style workspace fields', () => {

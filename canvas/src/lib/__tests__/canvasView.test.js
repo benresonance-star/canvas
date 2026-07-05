@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CANVAS_ZOOM_MAX,
   CANVAS_ZOOM_MIN,
+  CANVAS_ZOOM_PERCENT_MAX,
   clampCanvasZoom,
   clampZoomPercent,
   clientToWorldPoint,
@@ -39,16 +40,16 @@ describe('isPointInRect', () => {
 describe('clampCanvasZoom', () => {
   it('clamps to min and max', () => {
     expect(clampCanvasZoom(0.05)).toBe(CANVAS_ZOOM_MIN);
-    expect(clampCanvasZoom(5)).toBe(CANVAS_ZOOM_MAX);
+    expect(clampCanvasZoom(10)).toBe(CANVAS_ZOOM_MAX);
     expect(clampCanvasZoom(1)).toBe(1);
   });
 });
 
 describe('clampZoomPercent', () => {
-  it('clamps to 10–300', () => {
+  it('clamps to configured percent bounds', () => {
     expect(clampZoomPercent(5)).toBe(10);
     expect(clampZoomPercent(10)).toBe(10);
-    expect(clampZoomPercent(400)).toBe(300);
+    expect(clampZoomPercent(900)).toBe(CANVAS_ZOOM_PERCENT_MAX);
     expect(clampZoomPercent(50)).toBe(50);
   });
 });
@@ -246,7 +247,7 @@ describe('fitCanvasViewToExtent', () => {
   });
 
   it('shifts center upward when bottom padding is larger', () => {
-    const bounds = { minX: 0, minY: 0, maxX: 100, maxY: 100, width: 100, height: 100 };
+    const bounds = { minX: 0, minY: 0, maxX: 300, maxY: 100, width: 300, height: 100 };
     const symmetric = fitCanvasViewToExtent(
       bounds,
       { width: 400, height: 400 },

@@ -1,5 +1,6 @@
 import { normalizeMeasurements, normalizeMeasureUnits } from '../../threeDArtifact/utils/measureSnap.js';
 import { normalizeBimLightingState } from './bimLighting.js';
+import { normalizeHiddenLayerState } from './bimLayerVisibility.js';
 
 export const BIM_PREPARATION_PHASES = [
   'preparing',
@@ -63,27 +64,41 @@ export function wireframeTransparencyFromLineOpacity(opacity, { denseEdges = fal
 }
 
 export const BIM_RENDER_STYLES = ['standard', 'clay'];
+export const BIM_VIEWER_DEFAULTS = {
+  displayMode: 'highlight',
+  renderStyle: 'standard',
+  hiddenStoreys: [],
+  hiddenLayers: [],
+  isolateOnSelect: false,
+};
+export const VIEWPORT_BACKGROUND_DEFAULT = '#171412';
 export const CLAY_BACKGROUND_DEFAULT = '#ffffff';
 export const CLAY_SURFACE_COLOR_DEFAULT = '#f8f8f8';
 export const CLAY_AO_INTENSITY_MIN = 0;
-export const CLAY_AO_INTENSITY_MAX = 20;
-export const CLAY_AO_INTENSITY_DEFAULT = 2;
+export const CLAY_AO_INTENSITY_MAX = 100;
+export const CLAY_AO_INTENSITY_DEFAULT = 0;
 export const CLAY_AO_RADIUS_MIN = 0.0005;
 export const CLAY_AO_RADIUS_MAX = 0.05;
-export const CLAY_AO_RADIUS_DEFAULT = 0.02;
+export const CLAY_AO_RADIUS_DEFAULT = 0.0005;
 export const CLAY_SSAO_KERNEL_RADIUS_FLOOR = CLAY_AO_RADIUS_MIN;
-export const CLAY_AO_BIAS_MIN = 0.1;
-export const CLAY_AO_BIAS_MAX = 1;
-export const CLAY_AO_BIAS_DEFAULT = 0.2;
-export const CLAY_AO_DISTANCE_MIN = 0.005;
-export const CLAY_AO_DISTANCE_MAX = 0.5;
-export const CLAY_AO_DISTANCE_DEFAULT = 0.12;
+export const CLAY_AO_BIAS_MIN = 0.05;
+export const CLAY_AO_BIAS_MAX = 0.2;
+export const CLAY_AO_BIAS_DEFAULT = 0.05;
+export const CLAY_AO_DISTANCE_MIN = 0;
+export const CLAY_AO_DISTANCE_MAX = 1;
+export const CLAY_AO_DISTANCE_DEFAULT = 0.17;
+export const CLAY_AO_SAMPLES_MIN = 8;
+export const CLAY_AO_SAMPLES_MAX = 256;
+export const CLAY_AO_SAMPLES_DEFAULT = 256;
+export const CLAY_AO_RESOLUTION_MIN = 0.25;
+export const CLAY_AO_RESOLUTION_MAX = 1;
+export const CLAY_AO_RESOLUTION_DEFAULT = 1;
 export const CLAY_LIGHT_INTENSITY_MIN = 0;
 export const CLAY_LIGHT_INTENSITY_MAX = 10;
-export const CLAY_LIGHT_INTENSITY_DEFAULT = 0.55;
+export const CLAY_LIGHT_INTENSITY_DEFAULT = 2.7;
 export const CLAY_GLASS_OPACITY_MIN = 0.05;
 export const CLAY_GLASS_OPACITY_MAX = 0.5;
-export const CLAY_GLASS_OPACITY_DEFAULT = 0.18;
+export const CLAY_GLASS_OPACITY_DEFAULT = 0.31;
 
 function clampClayValue(value, min, max, fallback) {
   const numeric = Number(value);
@@ -91,8 +106,20 @@ function clampClayValue(value, min, max, fallback) {
   return Math.min(max, Math.max(min, numeric));
 }
 
+export function normalizeViewportStyle(state = {}) {
+  const backgroundColor = String(
+    state?.viewportBackgroundColor
+    ?? state?.clayBackgroundColor
+    ?? VIEWPORT_BACKGROUND_DEFAULT,
+  );
+  return {
+    viewportBackgroundColor: /^#[0-9a-fA-F]{6}$/.test(backgroundColor)
+      ? backgroundColor
+      : VIEWPORT_BACKGROUND_DEFAULT,
+  };
+}
+
 export function normalizeClayStyle(state = {}) {
-  const backgroundColor = String(state?.clayBackgroundColor ?? CLAY_BACKGROUND_DEFAULT);
   const surfaceColor = String(state?.claySurfaceColor ?? CLAY_SURFACE_COLOR_DEFAULT);
   return {
     renderStyle: BIM_RENDER_STYLES.includes(state?.renderStyle) ? state.renderStyle : 'standard',
@@ -120,6 +147,18 @@ export function normalizeClayStyle(state = {}) {
       CLAY_AO_DISTANCE_MAX,
       CLAY_AO_DISTANCE_DEFAULT,
     ),
+    clayAoSamples: clampClayValue(
+      state?.clayAoSamples,
+      CLAY_AO_SAMPLES_MIN,
+      CLAY_AO_SAMPLES_MAX,
+      CLAY_AO_SAMPLES_DEFAULT,
+    ),
+    clayAoResolution: clampClayValue(
+      state?.clayAoResolution,
+      CLAY_AO_RESOLUTION_MIN,
+      CLAY_AO_RESOLUTION_MAX,
+      CLAY_AO_RESOLUTION_DEFAULT,
+    ),
     clayLightIntensity: clampClayValue(
       state?.clayLightIntensity,
       CLAY_LIGHT_INTENSITY_MIN,
@@ -132,7 +171,6 @@ export function normalizeClayStyle(state = {}) {
       CLAY_GLASS_OPACITY_MAX,
       CLAY_GLASS_OPACITY_DEFAULT,
     ),
-    clayBackgroundColor: /^#[0-9a-fA-F]{6}$/.test(backgroundColor) ? backgroundColor : CLAY_BACKGROUND_DEFAULT,
     claySurfaceColor: /^#[0-9a-fA-F]{6}$/.test(surfaceColor) ? surfaceColor : CLAY_SURFACE_COLOR_DEFAULT,
   };
 }
@@ -231,10 +269,16 @@ export function normalizeBimWorkspaceState(state = {}) {
         lastRunAt: entry.lastRunAt ?? null,
       }))
     : [];
+  const rawDisplayMode = BIM_DISPLAY_MODES.includes(state?.displayMode) ? state.displayMode : 'highlight';
+  const displayMode = rawDisplayMode === 'isolate' ? 'highlight' : rawDisplayMode;
+  const isolateOnSelect = state?.isolateOnSelect === true;
   return {
     selectedObjectId: state?.selectedObjectId ?? null,
     selectedObjectKind: state?.selectedObjectKind ?? 'physicalElement',
-    displayMode: BIM_DISPLAY_MODES.includes(state?.displayMode) ? state.displayMode : 'highlight',
+    displayMode,
+    isolateOnSelect,
+    hiddenStoreys: normalizeHiddenLayerState(state?.hiddenStoreys),
+    hiddenLayers: normalizeHiddenLayerState(state?.hiddenLayers),
     tableSearch: String(state?.tableSearch ?? ''),
     ifcClassFilter: String(state?.ifcClassFilter ?? ''),
     panels: {
@@ -251,6 +295,7 @@ export function normalizeBimWorkspaceState(state = {}) {
     measureKind: state?.measureKind === 'polyline' ? 'polyline' : 'segment',
     measurementsVisible: state?.measurementsVisible !== false,
     wireframeMode: state?.wireframeMode === true,
+    ...normalizeViewportStyle(state),
     ...normalizeWireframeStyle(state),
     ...normalizeClayStyle(state),
     ...normalizeBimLightingState(state),
@@ -258,6 +303,14 @@ export function normalizeBimWorkspaceState(state = {}) {
     lastOpenedAt: state?.lastOpenedAt ?? null,
     updatedAt: state?.updatedAt ?? null,
   };
+}
+
+/** Reset viewport display fields to the standard open defaults (highlight, all layers on). */
+export function applyBimViewerDefaults(state = {}) {
+  return normalizeBimWorkspaceState({
+    ...state,
+    ...BIM_VIEWER_DEFAULTS,
+  });
 }
 
 export function componentTypeToAssemblyKind(componentType) {
