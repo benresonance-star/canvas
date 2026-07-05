@@ -183,18 +183,13 @@ describe('bimClayRender', () => {
     expect(model.highlight).not.toHaveBeenCalled();
   });
 
-  it('prefetches all fragment material groups in one call when available', async () => {
+  it('prefetches fragment material groups in batched local-id calls', async () => {
     const model = {
       resetHighlight: vi.fn(async () => {}),
-      getItemsMaterialDefinition: vi.fn(async (localIds) => {
-        if (localIds == null) {
-          return [{
-            localIds: [1, 2, 3],
-            definition: { color: new THREE.Color('#804020'), opacity: 1, transparent: false },
-          }];
-        }
-        return [];
-      }),
+      getItemsMaterialDefinition: vi.fn(async (localIds) => ([{
+        localIds,
+        definition: { color: new THREE.Color('#804020'), opacity: 1, transparent: false },
+      }])),
       highlight: vi.fn(async () => {}),
     };
     clearClayMaterialGroupCache(model);
@@ -202,7 +197,8 @@ describe('bimClayRender', () => {
       surfaceColor: '#ffffff',
       originalColorBlend: 0.5,
     });
-    expect(model.getItemsMaterialDefinition).toHaveBeenCalledWith(null);
+    expect(model.getItemsMaterialDefinition).toHaveBeenCalled();
+    expect(model.getItemsMaterialDefinition).not.toHaveBeenCalledWith(null);
     expect(model.highlight).toHaveBeenCalledTimes(1);
   });
 

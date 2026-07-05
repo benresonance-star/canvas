@@ -234,9 +234,9 @@ The executor, not the agent, decides final query result membership.
 
 ---
 
-# 14. Implementation status (2026-07-04, updated)
+# 14. Implementation status (2026-07-05, updated)
 
-BQL **validator**, **executor**, and **manual query UI** are shipped. NL agent translation, saved queries, and `colorBy` viewport application remain deferred.
+BQL **validator**, **executor**, **manual query UI**, **NL agent translation**, and **saved queries** are shipped. **`colorBy` viewport application** remains deferred.
 
 ## 14.1 Shipped
 
@@ -257,17 +257,19 @@ BQL **validator**, **executor**, and **manual query UI** are shipped. NL agent t
 | Manual query panel with presets | Yes | `BimQueryPanel.jsx` |
 | Windows preset (`IfcWindow` + `WindowAssembly`) | Yes | `BimQueryPanel.jsx` |
 | Invalid BQL rejected before execution | Yes | `executeBqlQuery` returns `status: 'error'` |
+| Agent → BQL translation (local rules) | Yes | `bimAgent.js` |
+| Agent → BQL translation (LLM connectors) | Yes | `bimLlmAgent.js`, `useBimAgentPanel.js` |
+| NL BIM agent HUD | Yes | `BimAgentHud.jsx` |
+| Saved queries (persist, load, delete; max 20) | Yes | `BimWorkspace.jsx`, `useBimBqlPanel.js`, `BimBqlHud.jsx` |
 
 ## 14.2 Not yet shipped
 
 | Requirement | Status |
 |---|---|
-| Agent → BQL translation layer | Not built |
-| NL BIM agent side panel | Not built |
-| Saved queries / reruns | Not built |
 | `colorBy` view instruction application | Validated but not applied in viewport |
 | Assembly-only viewport highlight (multi-member) | Partial — physical member ids only |
+| BQL query history | Not built (saved named queries only) |
 
 ## 14.3 Next move
 
-Wire a NL BIM agent side panel to: interpret user intent → produce BQL → validate → execute → apply viewer/table state. Add `colorBy` rendering and saved query persistence.
+Apply `colorBy` rendering in the viewport. Add assembly-level highlight for multi-member assemblies. Add query history beyond saved named queries.

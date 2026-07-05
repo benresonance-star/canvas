@@ -3,11 +3,13 @@ import {
   attemptFragmentsBootUpdate,
   attemptFragmentsModelLoad,
   configureFragmentsManagerForBimViewport,
+  delay,
   ensureFragmentsUpdated,
   hasViewportLayoutSize,
   isRetryableFragmentsBootError,
   isFragmentsModelRegistered,
   loadFragmentsModelWithRetries,
+  resetFragmentsBootUpdateQueue,
   resolveBimViewportRuntimeModelId,
   syncFragmentsForViewportBoot,
 } from '../bimViewportBoot.js';
@@ -15,6 +17,7 @@ import {
 describe('bim viewport boot helpers', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    resetFragmentsBootUpdateQueue();
   });
 
   afterEach(() => {
@@ -106,7 +109,7 @@ describe('bim viewport boot helpers', () => {
 
     const syncedPromise = attemptFragmentsBootUpdate(updateFragments, {}, 50);
 
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(2050);
     await expect(syncedPromise).resolves.toBe(false);
     expect(updateFragments).toHaveBeenCalledTimes(1);
   });
@@ -224,6 +227,27 @@ describe('bim viewport boot helpers', () => {
     expect(models[1].dispose).toHaveBeenCalledTimes(1);
     expect(managers[0].dispose).toHaveBeenCalledTimes(1);
     expect(managers[1].dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes overlapping boot updates before starting the next attempt', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const updateFragments = vi.fn(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await delay(100);
+      active -= 1;
+      return true;
+    });
+
+    const first = attemptFragmentsBootUpdate(updateFragments, {}, 200);
+    const second = attemptFragmentsBootUpdate(updateFragments, {}, 200);
+
+    await vi.runAllTimersAsync();
+    await Promise.all([first, second]);
+
+    expect(maxActive).toBe(1);
+    expect(updateFragments).toHaveBeenCalledTimes(2);
   });
 
   it('returns timeout after all fragments model load attempts stall', async () => {

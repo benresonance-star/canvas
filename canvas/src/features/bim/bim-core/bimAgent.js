@@ -30,6 +30,145 @@ function normalizeInput(input) {
   return String(input ?? '').trim().replace(/\s+/g, ' ');
 }
 
+function normalizeStoreyText(value) {
+  return normalizeInput(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function titleStoreyLabel(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (match) => match.toUpperCase());
+}
+
+export function buildBimStoreyCatalog(preparedModel) {
+  const counts = new Map();
+  for (const element of preparedModel?.elements ?? []) {
+    const label = String(element?.storeyId ?? '').trim();
+    if (!label) continue;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([value, count], index) => ({
+      id: value,
+      value,
+      label: titleStoreyLabel(value),
+      normalized: normalizeStoreyText(value),
+      count,
+      order: index,
+    }))
+    .sort((left, right) => left.order - right.order);
+}
+
+function detectStoreyReference(text) {
+  const explicit = text.match(/\b(?:on|at|in)\s+(?:the\s+)?(ground floor|basement|roof(?:\s+(?:level|floor|storey|story))?|level\s*\d+|floor\s*\d+|storey\s*\d+|story\s*\d+|first floor|second floor|upper floor)\b/i);
+  if (explicit) return explicit[1].trim();
+  if (/\bground\b/i.test(text)) return 'ground floor';
+  if (/\broof\s+(level|floor|storey|story)?\b/i.test(text)) return 'roof';
+  if (/\bfirst floor\b/i.test(text)) return 'first floor';
+  if (/\bsecond floor\b/i.test(text)) return 'second floor';
+  if (/\bupper floor\b/i.test(text)) return 'upper floor';
+  return null;
+}
+
+function matchingStoreyChoice(reference, catalog) {
+  const normalized = normalizeStoreyText(reference);
+  if (!normalized) return null;
+  return catalog.find((entry) => entry.normalized === normalized)
+    ?? catalog.find((entry) => entry.normalized.includes(normalized) || normalized.includes(entry.normalized))
+    ?? null;
+}
+
+function probableStoreyChoice(reference, catalog) {
+  const normalized = normalizeStoreyText(reference);
+  if (normalized === 'first floor') {
+    return matchingStoreyChoice('level 1', catalog)
+      ?? catalog.find((entry) => /\blevel\s*1\b/i.test(entry.normalized))
+      ?? catalog[1]
+      ?? null;
+  }
+  if (normalized === 'second floor') {
+    return matchingStoreyChoice('level 2', catalog)
+      ?? catalog.find((entry) => /\blevel\s*2\b/i.test(entry.normalized))
+      ?? catalog[2]
+      ?? null;
+  }
+  if (normalized === 'upper floor') {
+    return catalog.find((entry) => !/\bground\b/i.test(entry.normalized) && !/\broof\b/i.test(entry.normalized))
+      ?? catalog.at(-1)
+      ?? null;
+  }
+  return null;
+}
+
+function listStoreyChoices(choices) {
+  if (choices.length <= 1) return choices[0]?.label ?? '';
+  if (choices.length === 2) return `${choices[0].label} and ${choices[1].label}`;
+  return `${choices.slice(0, -1).map((choice) => choice.label).join(', ')} and ${choices.at(-1).label}`;
+}
+
+export function maybeClarifyBimStoreyReference(utterance, preparedModel) {
+  const text = normalizeInput(utterance);
+  const reference = detectStoreyReference(text);
+  const choices = buildBimStoreyCatalog(preparedModel);
+  if (!reference || choices.length === 0) return null;
+
+  const exact = matchingStoreyChoice(reference, choices);
+  const probable = exact ? null : probableStoreyChoice(reference, choices);
+  const normalizedReference = normalizeStoreyText(reference);
+  const needsClarification = !exact || ['first floor', 'second floor', 'upper floor'].includes(normalizedReference);
+  if (!needsClarification) return null;
+
+  const suggested = probable ?? exact ?? choices[0] ?? null;
+  return {
+    kind: 'storey',
+    status: suggested ? (probable || exact ? 'probable' : 'missing') : 'missing',
+    originalUtterance: text,
+    originalReference: reference,
+    suggestedValue: suggested?.value ?? null,
+    suggestedLabel: suggested?.label ?? null,
+    choices: choices.map((choice) => ({
+      value: choice.value,
+      label: choice.label,
+      count: choice.count,
+    })),
+    question: suggested
+      ? `I found ${listStoreyChoices(choices)}. Do you mean ${suggested.label}?`
+      : `I found ${listStoreyChoices(choices)}. Which storey do you mean?`,
+  };
+}
+
+export function resolveBimStoreyClarificationAnswer(answer, clarification) {
+  if (!clarification || clarification.kind !== 'storey') return null;
+  const text = normalizeStoreyText(answer);
+  if (!text) return null;
+  const choices = clarification.choices ?? [];
+  const suggested = choices.find((choice) => choice.value === clarification.suggestedValue) ?? choices[0] ?? null;
+  if (/^(yes|y|yeah|yep|correct|that|that one|ok|okay)$/i.test(text)) return suggested;
+  const exactChoice = choices.find((choice) => {
+    const normalizedChoice = normalizeStoreyText(choice.value);
+    const normalizedLabel = normalizeStoreyText(choice.label);
+    return normalizedChoice === text || normalizedLabel === text;
+  });
+  if (exactChoice) return exactChoice;
+  const ordinalMatch = text.match(/\b(?:the\s+)?(first|second|third|1st|2nd|3rd|1|2|3|middle|last)\b/i);
+  if (ordinalMatch) {
+    const token = ordinalMatch[1].toLowerCase();
+    if (token === 'first' || token === '1st' || token === '1') return choices[0] ?? null;
+    if (token === 'second' || token === '2nd' || token === '2' || token === 'middle') return choices[1] ?? choices[0] ?? null;
+    if (token === 'third' || token === '3rd' || token === '3') return choices[2] ?? choices.at(-1) ?? null;
+    if (token === 'last') return choices.at(-1) ?? null;
+  }
+  return choices.find((choice) => {
+    const normalizedChoice = normalizeStoreyText(choice.value);
+    const normalizedLabel = normalizeStoreyText(choice.label);
+    return normalizedChoice.includes(text)
+      || text.includes(normalizedChoice)
+      || normalizedLabel.includes(text)
+      || text.includes(normalizedLabel);
+  }) ?? null;
+}
+
 function detectIfcClass(text) {
   const match = CLASS_PATTERNS.find((entry) => entry.pattern.test(text));
   if (match) return match;
@@ -164,7 +303,7 @@ function detectAggregate(text) {
   return null;
 }
 
-export function draftBqlFromNaturalLanguage(input) {
+export function draftBqlFromNaturalLanguage(input, { storeyOverride = null } = {}) {
   const text = normalizeInput(input);
   if (!text) {
     return {
@@ -176,7 +315,7 @@ export function draftBqlFromNaturalLanguage(input) {
   }
 
   const target = detectIfcClass(text);
-  const storey = detectStorey(text);
+  const storey = storeyOverride ?? detectStorey(text);
   const nameContains = detectNameContains(text);
   const objectNameTarget = detectObjectNameTarget(text);
   const propertyPredicates = FIRE_RATED_PATTERN.test(text)

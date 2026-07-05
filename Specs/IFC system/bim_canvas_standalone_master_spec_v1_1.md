@@ -1191,7 +1191,7 @@ xeokit / XKT remains a deferred benchmark fallback only. It shall not be introdu
 
 ---
 
-# 29. Implementation status (2026-07-04, updated)
+# 29. Implementation status (2026-07-05, updated)
 
 The first vertical slice ships **inside Canvas** as `canvas/src/features/bim/`, ahead of the standalone desktop shell. Delivery order is intentionally **Canvas-first** (Stage 4 capabilities) while reusing the shared-core module layout described in §23.
 
@@ -1201,7 +1201,8 @@ The first vertical slice ships **inside Canvas** as `canvas/src/features/bim/`, 
 |---|---|---|
 | Stage 0 — foundations | **Done** | Stack locked: web-ifc + That Open Fragments + Three.js; pipeline version constants in `versions.js` |
 | Stage 1 — IFC evidence viewer MVP | **Mostly done (Canvas host)** | Prep pipeline, cache, viewer, table (incl. storey column), inspector, selection sync, cache rebuild shipped; standalone shell and filesystem cache layout deferred |
-| Stage 2 — BQL + agent | **Partial** | BQL validator + executor + manual query panel + query-driven viewer/table + agent chat in query panel shipped; saved queries and `colorBy` application deferred |
+| Stage 2 — BQL + agent | **Mostly done** | BQL validator + executor + manual query panel + query-driven viewer/table shipped; **`BimAgentHud`** with local NL rules + Canvas agent connectors (OpenAI/Ollama), validator → executor → viewer/table loop; saved BQL queries (max 20, persisted in workspace). **`colorBy` viewport application** still deferred |
+| Stage 2b — 4D/5D analysis HUDs | **Partial (MVP)** | Canvas-first construction-sequence and cost-takeoff HUDs; not full CPM/Gantt or estimating platform — see §29.3 |
 | Stage 3 — semantic assemblies | **Partial** | Archicad `Canvas.*` projection, member inspector, and BQL window query (`IfcWindow` + `WindowAssembly`) shipped; assembly table, assembly selection, and assembly inspector deferred |
 | Stage 4 — Canvas integration | **Done (MVP)** | `bim-model` artifact type, card preview, modal workspace, ingest/sync hooks |
 | Stage 5+ | **Not started** | Revit connector, inference, multi-model, exports |
@@ -1236,6 +1237,9 @@ canvas/src/features/bim/
     bimMeasurementOverlay.js
     bimMeasurementPick.js
     bimAgent.js / bimLlmAgent.js / bimAgentResponse.js / bimSemanticResolver.js
+    bim4d.js                 # construction-sequence model + task element resolution
+    bim5d.js                 # cost-plan takeoff + IFC quantity rollup
+    bimResultSets.js         # persisted named element/assembly sets (4D/5D linkage)
   components/
     BimWorkspace.jsx
     BimViewport.jsx
@@ -1251,6 +1255,8 @@ canvas/src/features/bim/
     BimSectionHud.jsx        # floating section-cut panel (plane height, fills, edges, storey presets)
     BimBqlHud.jsx            # viewport-top-right BQL HUD shell
     BimAgentHud.jsx          # viewport-top-right BIM agent HUD shell
+    Bim4dHud.jsx             # floating 4D sequence/task HUD
+    Bim5dHud.jsx             # floating 5D cost-plan takeoff HUD
   api/
     bimApi.js                # REST client for style presets
   hooks/
@@ -1270,7 +1276,7 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 - Reopen of unchanged model reuses cached prepared artifacts when fingerprint matches; user can force rebuild via `BimQueryPanel`.
 - Live extraction feed during first-open preparation.
 - 3D viewport: orbit/pan/zoom, fit, raycast pick, highlight / isolate / ghost others.
-- Viewport toolbar: grouped by vertical separators (`mx-3` padding). **Section order (left → right):** (1) side-panel toggles (element list + inspector), (2) measurement (ruler + unit), (3) view (reset visibility + fit), (4) camera (FOV when perspective + orthographic toggle), (5) display (wireframe, clay, highlight, ghost, isolate, **style settings** sliders icon), (6) tools (BQL, agent, section, layers). Perspective ↔ orthographic toggle and FOV input live in the camera group; HDRI lighting moved into the style settings HUD (standard render only).
+- Viewport toolbar: grouped by vertical separators (`mx-3` padding). **Section order (left → right):** (1) side-panel toggles (element list + inspector), (2) measurement (ruler + unit), (3) view (reset visibility + fit), (4) camera (FOV when perspective + orthographic toggle), (5) display (wireframe, clay, highlight, ghost, isolate, **style settings** sliders icon), (6) tools (BQL, agent, **4D**, **5D**, section, layers). Perspective ↔ orthographic toggle and FOV input live in the camera group; HDRI lighting moved into the style settings HUD (standard render only).
 - **Wireframe overlay** (2026-07-04, updated 2026-07-05): optional camera-visible feature edges composited over lit/ghost/highlight/clay views — independent of display mode. Built from Fragments `getItemsGeometry()` into `LineSegments2` + `LineMaterial` (screen-space px width). **Standard (lit/ghost) path:** main scene render (colour + depth), then overlay scene with `autoClear: false` and transparent blending. **Edge mode toggle (`Hdn` / `All`):** persisted as `wireframeHiddenLines` (default `true`). **Hdn** — hidden-line / edge-aware overlay (`depthTest: true`, occludes edges behind surfaces). **All** — full wireframe (`depthTest: false`, draws all feature edges including through walls). When wireframe is on, the **style settings HUD** exposes **line weight** (0.5–6 px), **transparency** (`Trn`, 0–100%), **colour**, and **Hdn/All**. Transparency semantics: **100% = invisible lines (base render only)**, **0% = solid outlines**. Values persist in workspace state (`wireframeMode`, `wireframeLineWeight`, `wireframeOpacity`, `wireframeColor`, `wireframeHiddenLines`). **Full wireframe opacity:** dense overlapping edges use a curved map capped at `WIREFRAME_DENSE_OPACITY_MAX` (0.38) so the transparency slider is usable across the full range; hidden-line mode uses linear transparency. Live style updates apply without edge rebuild. Line material uses `toneMapped: false` when composited over tone-mapped output.
 - **Clay render / Arctic presentation** (2026-07-05): optional `renderStyle: 'clay'` orthogonal to `displayMode` and `wireframeMode`. Rhino-style white-model presentation for design review:
   - **Stage 1 — material override:** all Fragments geometry highlighted with uniform clay surface colour; glazing IFC classes (`IfcWindow`, `IfcPlate`, `IfcCurtainWall`, `IfcDoor`, …) get semi-transparent glass override.
@@ -1308,7 +1314,12 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 - **BQL executor** (`executeBqlQuery`) runs against prepared model index with `physicalElements`, `semanticAssemblies`, and `allBimObjects` scopes.
 - **BimQueryPanel** provides JSON BQL editor with presets (all beams, ground floor, windows incl. `WindowAssembly`).
 - Query results drive viewer display mode and filter the element table; evidence bundle returned per result.
-- Workspace state (camera, selection, filters, display mode, projection mode, measurements, wireframe mode + style (`wireframeHiddenLines` included), **render style + clay tuning**, **section cut state**, lighting, panel toggles) persisted in IndexedDB per fingerprint.
+- **Saved BQL queries** (2026-07-05): `saveBqlQuery` persists up to 20 named queries in workspace state (`savedQueries`); save/load/delete in `BimBqlHud` and `BimQueryPanel` via `useBimBqlPanel.js`.
+- **BIM agent HUD** (2026-07-05): floating `BimAgentHud` with chat transcript and connector picker. Local regex/NL → BQL drafting via `draftBqlFromNaturalLanguage` in `bimAgent.js`; LLM path via existing Canvas agent connectors (`bimLlmAgent.js`, `useBimAgentPanel.js`) with JSON parse → validate → auto-repair loop. Storey clarification flow; formatted responses via `buildBimAgentResponse` in `bimAgentResponse.js`. **`colorBy` not applied in viewport** (validated in BQL only).
+- **Saved result sets** (2026-07-05): `savedResultSets` in workspace state; create from current selection or BQL results; consumed by 4D task linking and 5D `groupBy: 'resultSet'`.
+- **4D sequencing (MVP)** (2026-07-05): toolbar calendar button opens `Bim4dHud`. **Shipped:** sequence/task CRUD (limits: 12 sequences / 200 tasks), prev/next active-task stepping, link tasks to element IDs, assembly IDs, and saved result sets, active-task viewport highlight (`ghostOthers`). **Deferred:** `ghostFuture` / `hideFuture` visibility modes, playback animation (`playing`, `speed`), Gantt / timeline UI, full date/status editing UI.
+- **5D takeoff (MVP)** (2026-07-05): toolbar dollar button opens `Bim5dHud`. **Shipped:** cost plans with rate rows, IFC quantity rollup (Area / Volume / Length from `ifc-quantity` properties), group-by class / type / storey / layer / semantic type / classification / result set, row click → viewport element highlight. **Deferred:** rate-row match-criteria editor in HUD (backend supports `match.ifcClass/storey/...`), external cost DB, export.
+- Workspace state (camera, selection, filters, display mode, projection mode, measurements, wireframe mode + style (`wireframeHiddenLines` included), **render style + clay tuning**, **section cut state**, **saved queries**, **saved result sets**, **4D sequences**, **5D cost plans**, lighting, panel toggles) persisted in IndexedDB per fingerprint.
 - Graceful degradation: if Fragments conversion fails, evidence table and inspector still work; viewport shows an error banner.
 
 ### Folder sync, dock, and artifact ingest (2026-07-04)
@@ -1341,9 +1352,12 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 | `/packages/bim-core` + `/packages/bim-viewer-ui` split | Monolithic `features/bim/` module |
 | Filesystem cache (`model-cache/<fingerprint>/`) | IndexedDB via `createIndexedDbBimRepository()` |
 | Embedded SQL (`bim-index.db`) | In-memory JS objects stored in IndexedDB |
-| NL BIM agent side panel | Partial — `BimQueryPanel` agent chat + local rule fallback shipped; full side-panel UX deferred |
+| NL BIM agent side panel | **Shipped (MVP)** — `BimAgentHud` with local rules + LLM connectors; validator → executor → viewer/table loop; `colorBy` viewport apply still deferred |
+| 4D construction sequencing | **Partial (MVP)** — sequence/task HUD + active-task highlight; not full CPM/Gantt, playback, or future-task visibility modes |
+| 5D cost takeoff | **Partial (MVP)** — cost-plan HUD + IFC quantity rollup; not full rate matching UI, external cost DB, or export |
 | Wireframe overlay | Shipped — toggle + style controls (weight, transparency, colour, Hdn/All); clay + wireframe compositing with depth-only screen pass for hidden lines; selected-element edge highlight deferred |
 | `colorBy` display mode | Validated in BQL but not applied in viewport |
+| Saved BQL queries | Shipped — up to 20 persisted in workspace; save/load/delete in BQL HUD |
 | Workspace state on card `version.bim` | Style settings (`version.bim.styleSettings`) read on init and debounced write-back on change; other workspace fields remain IndexedDB-only |
 | IFC schema in fingerprint | Hardcoded `'unknown'` until schema detection lands |
 | Element coverage | 18 common IFC classes, not full schema scan |
@@ -1351,9 +1365,10 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 
 ## 29.5 Next engineering moves
 
-1. NL BIM agent side panel wired to validator → executor → viewer/table apply loop.
-2. `colorBy` view instruction application in viewport.
-3. Assembly-aware table mode and assembly-level selection/inspector.
-4. Saved queries and query history.
-5. Extract `bim-core` / `bim-viewer-ui` packages when Canvas + standalone both need the code.
-6. Standalone `desktop-bim-app` shell reusing the same core.
+1. `colorBy` view instruction application in viewport.
+2. Assembly-aware table mode and assembly-level selection/inspector.
+3. 4D playback + future-task visibility modes (`ghostFuture` / `hideFuture`) + timeline / Gantt UI.
+4. 5D rate matching UI (match-criteria editor) + export.
+5. BQL query history (beyond saved named queries).
+6. Extract `bim-core` / `bim-viewer-ui` packages when Canvas + standalone both need the code.
+7. Standalone `desktop-bim-app` shell reusing the same core.

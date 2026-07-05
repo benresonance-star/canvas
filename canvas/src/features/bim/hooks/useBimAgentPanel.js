@@ -9,6 +9,22 @@ import {
   prettyQuery,
 } from '../components/bimAgentPanelShared.js';
 
+let nextChatMessageId = 0;
+function createChatMessageId(prefix) {
+  nextChatMessageId += 1;
+  return `${prefix}-${nextChatMessageId}`;
+}
+
+function assistantChatContent(response) {
+  if (!response) return 'No answer yet.';
+  if (response.status === 'running') return 'Thinking...';
+  return response.answer
+    || response.resultSummary
+    || response.workSummary
+    || response.warnings?.[0]
+    || 'No answer yet.';
+}
+
 export function useBimAgentPanel({
   onRunQuery,
   onRunLocalAgent,
@@ -21,7 +37,36 @@ export function useBimAgentPanel({
   const [agentText, setAgentText] = useState('');
   const [agentFeedback, setAgentFeedback] = useState(null);
   const [agentResponse, setAgentResponse] = useState(null);
+  const [chatMessages, setChatMessages] = useState([]);
   const [responderId, setResponderId] = useState(initialResponderId);
+  const [pendingClarification, setPendingClarification] = useState(null);
+
+  const beginAgentTurn = (question) => {
+    const trimmed = String(question ?? '').trim();
+    if (!trimmed) return null;
+    const assistantId = createChatMessageId('assistant');
+    setChatMessages((prev) => [
+      ...prev,
+      { id: createChatMessageId('user'), role: 'user', content: trimmed },
+      { id: assistantId, role: 'assistant', content: 'Thinking...', status: 'running' },
+    ]);
+    setAgentText('');
+    return { question: trimmed, assistantId };
+  };
+
+  const finishAgentTurn = (assistantId, response) => {
+    setAgentResponse(response);
+    setChatMessages((prev) => prev.map((message) => (
+      message.id === assistantId
+        ? {
+            ...message,
+            content: assistantChatContent(response),
+            response,
+            status: response?.status ?? 'ready',
+          }
+        : message
+    )));
+  };
 
   const selectedConnector = responderId === LOCAL_BIM_RULES_RESPONDER_ID
     ? null
@@ -45,14 +90,30 @@ export function useBimAgentPanel({
     onApplyQueryDraft(prettyQuery(query), { query, run });
   };
 
-  const askAgent = () => {
+  const askAgent = (question, assistantId) => {
     const selectedResponder = `Local BIM Rules/${BIM_AGENT_INFO.model}`;
     if (onRunLocalAgent) {
-      const draft = onRunLocalAgent(agentText);
+      const draft = onRunLocalAgent(question, { pendingClarification });
+      if (draft.status === 'clarification') {
+        setPendingClarification(draft.clarification);
+        setAgentFeedback(draft.clarification?.question ?? 'Clarification needed.');
+        finishAgentTurn(assistantId, buildBimAgentResponse({
+          question,
+          selectedResponder,
+          actualResponder: selectedResponder,
+          status: 'clarification',
+          workSummary: draft.workSummary ?? 'Local rules need clarification',
+          warnings: draft.warnings ?? [],
+          providerStatus: 'ready',
+          providerStatusMessage: 'Local BIM Rules ready.',
+          clarification: draft.clarification,
+        }));
+        return;
+      }
       if (!draft.ok) {
         setAgentFeedback(draft.warnings.join(' '));
-        setAgentResponse(buildBimAgentResponse({
-          question: agentText,
+        finishAgentTurn(assistantId, buildBimAgentResponse({
+          question,
           selectedResponder,
           actualResponder: selectedResponder,
           status: 'error',
@@ -64,10 +125,11 @@ export function useBimAgentPanel({
         }));
         return;
       }
+      setPendingClarification(null);
       applyQueryDraft(draft.query, { run: false });
       setAgentFeedback(draft.intentSummary);
-      setAgentResponse(buildBimAgentResponse({
-        question: agentText,
+      finishAgentTurn(assistantId, buildBimAgentResponse({
+        question,
         selectedResponder,
         actualResponder: selectedResponder,
         status: draft.result?.status === 'error' ? 'error' : 'ready',
@@ -81,11 +143,11 @@ export function useBimAgentPanel({
       }));
       return;
     }
-    const draft = draftBqlFromNaturalLanguage(agentText);
+    const draft = draftBqlFromNaturalLanguage(question);
     if (!draft.ok) {
       setAgentFeedback(draft.warnings.join(' '));
-      setAgentResponse(buildBimAgentResponse({
-        question: agentText,
+      finishAgentTurn(assistantId, buildBimAgentResponse({
+        question,
         selectedResponder,
         actualResponder: selectedResponder,
         status: 'error',
@@ -98,10 +160,11 @@ export function useBimAgentPanel({
       return;
     }
     applyQueryDraft(draft.query, { run: true });
+    setPendingClarification(null);
     setAgentFeedback(draft.intentSummary);
     const result = onRunQuery(draft.query);
-    setAgentResponse(buildBimAgentResponse({
-      question: agentText,
+    finishAgentTurn(assistantId, buildBimAgentResponse({
+      question,
       selectedResponder,
       actualResponder: selectedResponder,
       status: result?.status === 'error' ? 'error' : 'ready',
@@ -116,15 +179,34 @@ export function useBimAgentPanel({
   };
 
   const answerWithLocalFallback = ({
+    question,
+    assistantId,
     selectedResponder,
     providerStatus: currentProviderStatus,
     workSummary = 'Provider did not run; local rules answered',
   }) => {
-    const fallback = onRunLocalAgent ? onRunLocalAgent(agentText) : draftBqlFromNaturalLanguage(agentText);
+    const fallback = onRunLocalAgent ? onRunLocalAgent(question, { pendingClarification }) : draftBqlFromNaturalLanguage(question);
+    if (fallback.status === 'clarification') {
+      setPendingClarification(fallback.clarification);
+      setAgentFeedback(fallback.clarification?.question ?? currentProviderStatus.message);
+      finishAgentTurn(assistantId, buildBimAgentResponse({
+        question,
+        selectedResponder,
+        actualResponder: `Local BIM Rules/${BIM_AGENT_INFO.model}`,
+        status: 'clarification',
+        workSummary: 'Provider did not run; local rules need clarification',
+        warnings: [currentProviderStatus.message, ...(fallback.warnings ?? [])],
+        providerStatus: currentProviderStatus.status,
+        providerStatusMessage: currentProviderStatus.message,
+        didProviderRun: false,
+        clarification: fallback.clarification,
+      }));
+      return;
+    }
     if (!fallback.ok) {
       setAgentFeedback(currentProviderStatus.message);
-      setAgentResponse(buildBimAgentResponse({
-        question: agentText,
+      finishAgentTurn(assistantId, buildBimAgentResponse({
+        question,
         selectedResponder,
         actualResponder: selectedResponder,
         status: 'error',
@@ -137,11 +219,12 @@ export function useBimAgentPanel({
       }));
       return;
     }
+    setPendingClarification(null);
     applyQueryDraft(fallback.query, { run: !(fallback.result || onRunLocalAgent) });
     const result = fallback.result ?? onRunQuery(fallback.query);
     setAgentFeedback(`${workSummary}. ${currentProviderStatus.message}`);
-    setAgentResponse(buildBimAgentResponse({
-      question: agentText,
+    finishAgentTurn(assistantId, buildBimAgentResponse({
+      question,
       selectedResponder,
       actualResponder: `Local BIM Rules/${BIM_AGENT_INFO.model}`,
       status: 'fallback',
@@ -157,9 +240,15 @@ export function useBimAgentPanel({
     }));
   };
 
-  const askLlmAgent = async (connectorId) => {
+  const askLlmAgent = async (question, assistantId, connectorId) => {
     if (!onRunLlmAgent) {
       setAgentFeedback('LLM BIM agent is not available.');
+      finishAgentTurn(assistantId, buildBimAgentResponse({
+        question,
+        status: 'error',
+        workSummary: 'LLM BIM agent is not available.',
+        warnings: ['LLM BIM agent is not available.'],
+      }));
       return;
     }
     const connector = getConnectorById(connectorId) ?? getConnectorById(DEFAULT_SINGLE_CONNECTOR_ID);
@@ -171,13 +260,15 @@ export function useBimAgentPanel({
     });
     if (currentProviderStatus.status !== 'ready') {
       answerWithLocalFallback({
+        question,
+        assistantId,
         selectedResponder,
         providerStatus: currentProviderStatus,
       });
       return;
     }
-    setAgentResponse(buildBimAgentResponse({
-      question: agentText,
+    finishAgentTurn(assistantId, buildBimAgentResponse({
+      question,
       selectedResponder,
       actualResponder: selectedResponder,
       status: 'running',
@@ -187,7 +278,24 @@ export function useBimAgentPanel({
       didProviderRun: true,
     }));
     try {
-      const draft = await onRunLlmAgent(agentText, connectorId);
+      const draft = await onRunLlmAgent(question, connectorId);
+      if (draft.status === 'clarification') {
+        setPendingClarification(draft.clarification);
+        setAgentFeedback(draft.clarification?.question ?? 'Clarification needed.');
+        finishAgentTurn(assistantId, buildBimAgentResponse({
+          question,
+          selectedResponder,
+          actualResponder: `Local BIM Rules/${BIM_AGENT_INFO.model}`,
+          status: 'clarification',
+          workSummary: draft.workSummary ?? 'Local rules need clarification',
+          warnings: draft.warnings ?? [],
+          providerStatus: draft.providerStatus ?? currentProviderStatus.status,
+          providerStatusMessage: draft.providerStatusMessage ?? currentProviderStatus.message,
+          didProviderRun: false,
+          clarification: draft.clarification,
+        }));
+        return;
+      }
       applyQueryDraft(draft.query, { run: false });
       setAgentFeedback(
         [
@@ -202,8 +310,8 @@ export function useBimAgentPanel({
       const providerStatusValue = draft.providerStatus ?? currentProviderStatus.status;
       const providerStatusMessage = draft.providerStatusMessage
         ?? (fallbackUsed ? 'Provider failed after the request started.' : currentProviderStatus.message);
-      setAgentResponse(buildBimAgentResponse({
-        question: agentText,
+      finishAgentTurn(assistantId, buildBimAgentResponse({
+        question,
         selectedResponder,
         actualResponder,
         status: fallbackUsed ? 'fallback' : (draft.result?.status === 'error' ? 'error' : 'ready'),
@@ -221,8 +329,8 @@ export function useBimAgentPanel({
       }));
     } catch (error) {
       setAgentFeedback(error?.message || 'LLM BIM agent failed.');
-      setAgentResponse(buildBimAgentResponse({
-        question: agentText,
+      finishAgentTurn(assistantId, buildBimAgentResponse({
+        question,
         selectedResponder,
         actualResponder: selectedResponder,
         status: 'error',
@@ -236,11 +344,13 @@ export function useBimAgentPanel({
   };
 
   const askSelectedResponder = () => {
-    if (responderId === LOCAL_BIM_RULES_RESPONDER_ID) {
-      askAgent();
+    const turn = beginAgentTurn(agentText);
+    if (!turn) return;
+    if (pendingClarification || responderId === LOCAL_BIM_RULES_RESPONDER_ID) {
+      askAgent(turn.question, turn.assistantId);
       return;
     }
-    void askLlmAgent(responderId);
+    void askLlmAgent(turn.question, turn.assistantId, responderId);
   };
 
   const statusLine = useMemo(
@@ -254,6 +364,7 @@ export function useBimAgentPanel({
     setAgentFeedback,
     agentFeedback,
     agentResponse,
+    chatMessages,
     responderId,
     setResponderId,
     providerStatus,

@@ -1,10 +1,10 @@
 export const FRAGMENTS_MODEL_REGISTRATION_RETRY_DELAYS_MS = [16, 50, 100, 200, 400, 800, 1200, 2000, 3000];
 export const FRAGMENTS_UPDATE_BOOT_TIMEOUT_MS = 20000;
-export const FRAGMENTS_BOOT_SYNC_TIMEOUT_MS = 8000;
-export const FRAGMENTS_BOOT_UPDATE_ATTEMPT_TIMEOUT_MS = 1200;
+export const FRAGMENTS_BOOT_SYNC_TIMEOUT_MS = 20000;
+export const FRAGMENTS_BOOT_UPDATE_ATTEMPT_TIMEOUT_MS = 8000;
 export const FRAGMENTS_MODEL_LOAD_ATTEMPT_TIMEOUT_MS = 20000;
 export const FRAGMENTS_MODEL_LOAD_ATTEMPTS_DEFAULT = 2;
-export const FRAGMENTS_BOOT_IDLE_TIMEOUT_MS = 2500;
+export const FRAGMENTS_BOOT_IDLE_TIMEOUT_MS = 10000;
 export const VIEWPORT_LAYOUT_WAIT_TIMEOUT_MS = 20000;
 
 export const BIM_VIEWPORT_LOAD_PHASES = {
@@ -164,6 +164,26 @@ export async function waitForFragmentsModelIdle(model, {
   return model.isBusy === false;
 }
 
+export async function primeViewportRendererForBoot(renderer, scene, camera) {
+  if (!renderer || !scene || !camera) return;
+  renderer.render(scene, camera);
+  await waitForAnimationFrame();
+  await waitForAnimationFrame();
+  renderer.render(scene, camera);
+}
+
+let fragmentsBootUpdateTail = Promise.resolve();
+
+function enqueueFragmentsBootUpdate(task) {
+  const next = fragmentsBootUpdateTail.then(task, task);
+  fragmentsBootUpdateTail = next.catch(() => {});
+  return next;
+}
+
+export function resetFragmentsBootUpdateQueue() {
+  fragmentsBootUpdateTail = Promise.resolve();
+}
+
 export async function syncFragmentsForViewportBoot(updateFragments, {
   disposed = () => false,
   maxWaitMs = FRAGMENTS_BOOT_SYNC_TIMEOUT_MS,
@@ -196,18 +216,25 @@ export async function ensureFragmentsUpdated(updateFragments, {
 }
 
 export async function attemptFragmentsBootUpdate(updateFragments, options = {}, timeoutMs = FRAGMENTS_BOOT_UPDATE_ATTEMPT_TIMEOUT_MS) {
-  let timedOut = false;
-  const updatePromise = Promise.resolve()
-    .then(() => updateFragments(true, options))
-    .catch((error) => {
-      if (timedOut) return false;
-      throw error;
+  return enqueueFragmentsBootUpdate(async () => {
+    let timedOut = false;
+    const updatePromise = Promise.resolve()
+      .then(() => updateFragments(true, options))
+      .catch((error) => {
+        if (timedOut) return false;
+        throw error;
+      });
+    const timeoutPromise = delay(timeoutMs).then(() => {
+      timedOut = true;
+      return false;
     });
-  const timeoutPromise = delay(timeoutMs).then(() => {
-    timedOut = true;
-    return false;
+    const raced = await Promise.race([updatePromise, timeoutPromise]);
+    await Promise.race([
+      updatePromise.catch(() => false),
+      timedOut ? delay(2000) : Promise.resolve(),
+    ]);
+    return Boolean(raced);
   });
-  return Boolean(await Promise.race([updatePromise, timeoutPromise]));
 }
 
 export async function attemptFragmentsModelLoad(loadModel, {

@@ -2,6 +2,9 @@ import { normalizeMeasurements, normalizeMeasureUnits } from '../../threeDArtifa
 import { normalizeBimLightingState } from './bimLighting.js';
 import { normalizeHiddenLayerState } from './bimLayerVisibility.js';
 import { normalizeBimSectionState } from './bimSectioning.js';
+import { normalizeBimResultSets } from './bimResultSets.js';
+import { normalizeBim4dSequences } from './bim4d.js';
+import { normalizeBim5dCostPlans } from './bim5d.js';
 
 export const BIM_PREPARATION_PHASES = [
   'preparing',
@@ -310,6 +313,12 @@ export function normalizeBimWorkspaceState(state = {}) {
     ...normalizeWireframeStyle(state),
     ...normalizeClayStyle(state),
     ...normalizeBimLightingState(state),
+    savedResultSets: normalizeBimResultSets(state?.savedResultSets),
+    bim4dSequences: normalizeBim4dSequences(state?.bim4dSequences),
+    active4dSequenceId: state?.active4dSequenceId == null ? null : String(state.active4dSequenceId),
+    active4dTaskId: state?.active4dTaskId == null ? null : String(state.active4dTaskId),
+    bim5dCostPlans: normalizeBim5dCostPlans(state?.bim5dCostPlans),
+    active5dCostPlanId: state?.active5dCostPlanId == null ? null : String(state.active5dCostPlanId),
     savedQueries,
     lastOpenedAt: state?.lastOpenedAt ?? null,
     updatedAt: state?.updatedAt ?? null,

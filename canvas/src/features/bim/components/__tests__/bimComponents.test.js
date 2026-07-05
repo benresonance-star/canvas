@@ -11,6 +11,8 @@ import { BimAgentHud } from '../BimAgentHud.jsx';
 import { BimBqlHud } from '../BimBqlHud.jsx';
 import { BimLayersHud } from '../BimLayersHud.jsx';
 import { BimSectionHud } from '../BimSectionHud.jsx';
+import { Bim4dHud } from '../Bim4dHud.jsx';
+import { Bim5dHud } from '../Bim5dHud.jsx';
 import { BIM_AGENT_INFO } from '../bimAgentPanelShared.js';
 
 describe('BIM UI components', () => {
@@ -181,6 +183,75 @@ describe('BIM UI components', () => {
     );
     expect(html).not.toContain('Field of view (degrees)');
     expect(html).toContain('Switch to perspective');
+  });
+
+  it('renders 4D sequencing controls with saved result sets and tasks', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(Bim4dHud, {
+        sequences: [
+          {
+            id: 'seq-1',
+            name: 'Fitout',
+            tasks: [
+              { id: 'task-1', name: 'Install walls', order: 0, resultSetIds: ['set-1'] },
+              { id: 'task-2', name: 'Install doors', order: 1 },
+            ],
+          },
+        ],
+        activeSequenceId: 'seq-1',
+        activeTaskId: 'task-1',
+        savedResultSets: [{ id: 'set-1', name: 'Wall package', elementIds: ['ifc:wall-1'] }],
+        selectedElementId: 'ifc:wall-1',
+        queryElementIds: ['ifc:wall-1'],
+        onCreateResultSet: () => {},
+        onCreateSequence: () => {},
+        onCreateTask: () => {},
+        onSetActiveSequence: () => {},
+        onSetActiveTask: () => {},
+        onStepTask: () => {},
+      }),
+    );
+
+    expect(html).toContain('4D sequencing');
+    expect(html).toContain('Fitout');
+    expect(html).toContain('Install walls');
+    expect(html).toContain('1 saved result set available');
+  });
+
+  it('renders 5D takeoff controls with cost totals and row actions', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(Bim5dHud, {
+        preparedModel: {
+          elements: [element],
+          properties: [
+            { id: 'q1', elementId: element.id, source: 'ifc-quantity', propertyName: 'NetSideArea', value: 12, unit: 'm2' },
+          ],
+        },
+        costPlans: [
+          {
+            id: 'plan-1',
+            name: 'Concept cost',
+            currency: 'AUD',
+            groupBy: 'ifcClass',
+            rateRows: [
+              { id: 'rate-1', label: 'Wall area', match: { ifcClass: 'IfcWall' }, quantityName: 'Area', unit: 'm2', unitCost: 50 },
+            ],
+          },
+        ],
+        activeCostPlanId: 'plan-1',
+        savedResultSets: [],
+        onCreateCostPlan: () => {},
+        onSetActiveCostPlan: () => {},
+        onPatchCostPlan: () => {},
+        onAddRateRow: () => {},
+        onSelectTakeoffRow: () => {},
+      }),
+    );
+
+    expect(html).toContain('5D takeoff');
+    expect(html).toContain('Concept cost');
+    expect(html).toContain('AUD 600');
+    expect(html).toContain('IfcWall');
   });
 
   it('renders measurement toolbar controls in the BIM viewport', () => {
@@ -548,8 +619,44 @@ describe('BIM UI components', () => {
     expect(html).toContain('Mode: Local BIM Rules/local/bim-bql-rules-v0.1');
     expect(html).toContain('Responder: Local BIM rules/local/bim-bql-rules-v0.1');
     expect(html).toContain('Provider status: ready');
-    expect(html).toContain('Ask selected BIM responder');
+    expect(html).toContain('Send to model');
     expect(html).toContain('prepared IFC index');
+    expect(html).toContain('Ask a BIM question to start a conversation.');
+  });
+
+  it('renders agent chat transcript and multiline input', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimAgentHud, {
+        agentText: 'How many slabs?',
+        onAgentTextChange: () => {},
+        chatMessages: [
+          { id: 'user-1', role: 'user', content: 'How many slabs?' },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: '12 slabs on ground floor found.',
+            status: 'ready',
+            response: {
+              question: 'How many slabs?',
+              answer: '12 slabs on ground floor found.',
+              status: 'ready',
+            },
+          },
+        ],
+        responderId: 'local-bim-rules',
+        onResponderIdChange: () => {},
+        selectedResponderLabel: `Local BIM Rules/${BIM_AGENT_INFO.model}`,
+        responderLabel: 'Local BIM rules/local/bim-bql-rules-v0.1',
+        providerStatus: { status: 'ready', label: 'ready', message: 'Local BIM Rules ready.' },
+        agentRunState: { status: 'idle', message: null },
+        onAskSelectedResponder: () => {},
+        onRefreshAgentProviderState: () => {},
+      }),
+    );
+
+    expect(html).toContain('How many slabs?');
+    expect(html).toContain('12 slabs on ground floor found.');
+    expect(html).toContain('BIM agent request');
   });
 
   it('renders the BIM agent toggle in the viewport toolbar', () => {
@@ -613,6 +720,41 @@ describe('BIM UI components', () => {
     expect(html).toContain('Local rules drafted BQL');
     expect(html).toContain('Evidence:');
     expect(html).toContain('Generated BQL');
+  });
+
+  it('renders clarification agent responses without generated BQL', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimAgentResponsePanel, {
+        response: {
+          question: 'How many slabs on first floor?',
+          answer: 'I found Ground Floor, Level 1 and Roof. Do you mean Level 1?',
+          selectedResponder: 'Local BIM Rules/local/bim-bql-rules-v0.1',
+          actualResponder: 'Local BIM Rules/local/bim-bql-rules-v0.1',
+          status: 'clarification',
+          workSummary: 'Local rules need storey clarification',
+          providerStatus: 'ready',
+          providerStatusMessage: 'Local BIM Rules ready.',
+          clarification: {
+            kind: 'storey',
+            question: 'I found Ground Floor, Level 1 and Roof. Do you mean Level 1?',
+            suggestedValue: 'LEVEL 1',
+            choices: [
+              { value: 'GROUND FLOOR', label: 'Ground Floor' },
+              { value: 'LEVEL 1', label: 'Level 1' },
+              { value: 'ROOF', label: 'Roof' },
+            ],
+          },
+          result: {
+            status: 'clarification',
+            summary: 'I found Ground Floor, Level 1 and Roof. Do you mean Level 1?',
+          },
+        },
+      }),
+    );
+
+    expect(html).toContain('I found Ground Floor, Level 1 and Roof. Do you mean Level 1?');
+    expect(html).toContain('Local rules need storey clarification');
+    expect(html).not.toContain('Generated BQL');
   });
 
   it('renders grouped agent response breakdowns', () => {

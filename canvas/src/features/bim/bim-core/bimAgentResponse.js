@@ -82,6 +82,7 @@ function summarizeGroups(groups = []) {
 }
 
 export function formatBimAgentAnswer({ query, result }) {
+  if (result?.status === 'clarification') return result.clarification?.question ?? '';
   if (!result) return null;
   const target = targetLabel(query);
   const count = result.objectRefs?.length ?? 0;
@@ -112,6 +113,7 @@ export function formatBimAgentAnswer({ query, result }) {
 }
 
 export function summarizeBimAgentEvidence({ query, result }) {
+  if (result?.status === 'clarification') return '';
   if (!result) return '';
   const target = targetLabel(query);
   if (result.aggregate) {
@@ -142,23 +144,29 @@ export function buildBimAgentResponse({
   didProviderRun = false,
   fallbackUsed = false,
   semanticResolution = null,
+  clarification = null,
 } = {}) {
+  const clarificationResult = clarification
+    ? { status: 'clarification', clarification, summary: clarification.question ?? '' }
+    : null;
+  const finalResult = result ?? clarificationResult;
   return {
     question,
-    answer: formatBimAgentAnswer({ query, result }) ?? '',
+    answer: clarification?.question ?? formatBimAgentAnswer({ query, result: finalResult }) ?? '',
     selectedResponder,
     actualResponder: actualResponder || selectedResponder,
     status,
     workSummary,
     warnings,
     query,
-    result,
-    resultSummary: result?.summary ?? '',
-    evidenceSummary: summarizeBimAgentEvidence({ query, result }),
+    result: finalResult,
+    resultSummary: finalResult?.summary ?? '',
+    evidenceSummary: summarizeBimAgentEvidence({ query, result: finalResult }),
     providerStatus,
     providerStatusMessage,
     didProviderRun,
     fallbackUsed,
     semanticResolution,
+    clarification,
   };
 }

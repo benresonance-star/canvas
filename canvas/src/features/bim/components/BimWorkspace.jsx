@@ -2,7 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getAgentHealth, listAgentConnectors, sendAgentChat } from '../../../lib/agentApi.js';
 import { DEFAULT_SINGLE_CONNECTOR_ID, getConnectorById } from '../../../lib/agentConnectors.js';
 import { createIndexedDbBimRepository } from '../bim-core/bimRepository.js';
-import { draftBqlFromNaturalLanguage } from '../bim-core/bimAgent.js';
+import {
+  draftBqlFromNaturalLanguage,
+  maybeClarifyBimStoreyReference,
+  resolveBimStoreyClarificationAnswer,
+} from '../bim-core/bimAgent.js';
 import {
   BIM_LLM_AGENT_SYSTEM_CONTEXT,
   buildBimLlmAgentRepairPrompt,
@@ -23,6 +27,13 @@ import { findPreparedElementByGlobalId } from '../bim-core/fragmentsSelection.js
 import { applyBimViewerDefaults, normalizeBimWorkspaceState } from '../bim-core/types.js';
 import { applyBimStyleSettings, extractBimStyleSettings } from '../bim-core/bimStyleSettings.js';
 import { getClayPresetWorkspacePatch } from '../bim-core/bimClayRender.js';
+import { createBimResultSetFromElements } from '../bim-core/bimResultSets.js';
+import {
+  createBim4dSequence,
+  createBim4dTask,
+  resolveBim4dTaskElementIds,
+} from '../bim-core/bim4d.js';
+import { createBim5dCostPlan } from '../bim-core/bim5d.js';
 import { requestActionSync } from '../../../lib/actionSync.js';
 import { useBimModelSource } from '../hooks/useBimModelSource.js';
 import { useBimAgentPanel } from '../hooks/useBimAgentPanel.js';
@@ -367,6 +378,35 @@ export function BimWorkspace({
       .map((ref) => ref.id) ?? [],
     [queryResult],
   );
+  const active4dSequence = useMemo(
+    () => (workspaceState.bim4dSequences ?? []).find((sequence) => sequence.id === workspaceState.active4dSequenceId)
+      ?? workspaceState.bim4dSequences?.[0]
+      ?? null,
+    [workspaceState.active4dSequenceId, workspaceState.bim4dSequences],
+  );
+  const active4dTask = useMemo(
+    () => active4dSequence?.tasks?.find((task) => task.id === workspaceState.active4dTaskId)
+      ?? active4dSequence?.tasks?.[0]
+      ?? null,
+    [active4dSequence, workspaceState.active4dTaskId],
+  );
+  const active4dElementIds = useMemo(
+    () => resolveBim4dTaskElementIds(
+      active4dTask,
+      workspaceState.savedResultSets ?? [],
+      prepared?.assemblyMembers ?? [],
+    ),
+    [active4dTask, prepared?.assemblyMembers, workspaceState.savedResultSets],
+  );
+  const [takeoffHighlightElementIds, setTakeoffHighlightElementIds] = useState([]);
+  const viewportHighlightElementIds = takeoffHighlightElementIds.length > 0
+    ? takeoffHighlightElementIds
+    : active4dElementIds.length > 0
+      ? active4dElementIds
+      : queryElementIds;
+  const viewportQueryMode = takeoffHighlightElementIds.length > 0 || active4dElementIds.length > 0
+    ? 'ghostOthers'
+    : queryResult?.viewerState?.mode ?? null;
   const tableElements = useMemo(() => {
     if (!prepared) return [];
     if (!queryResult) return prepared.elements;
@@ -467,11 +507,42 @@ export function BimWorkspace({
     return { draft: resolvedDraft, result };
   };
 
-  const runLocalBimAgent = (utterance) => {
+  const runLocalBimAgent = (utterance, options = {}) => {
     if (!prepared) throw new Error('BIM model is not ready yet.');
-    const draft = draftBqlFromNaturalLanguage(utterance);
+    const pendingClarification = options.pendingClarification ?? null;
+    let storeyOverride = options.storeyOverride ?? null;
+    let originalUtterance = utterance;
+    if (pendingClarification?.kind === 'storey') {
+      const resolvedChoice = resolveBimStoreyClarificationAnswer(utterance, pendingClarification);
+      if (!resolvedChoice) {
+        return {
+          ok: true,
+          status: 'clarification',
+          clarification: {
+            ...pendingClarification,
+            question: `${pendingClarification.question} Please answer with one of: ${pendingClarification.choices.map((choice) => choice.label).join(', ')}.`,
+          },
+          warnings: ['Clarification answer did not match a model storey.'],
+          workSummary: 'Local rules need storey clarification',
+        };
+      }
+      storeyOverride = resolvedChoice.value;
+      originalUtterance = pendingClarification.originalUtterance ?? utterance;
+    } else {
+      const clarification = maybeClarifyBimStoreyReference(utterance, prepared);
+      if (clarification) {
+        return {
+          ok: true,
+          status: 'clarification',
+          clarification,
+          warnings: [],
+          workSummary: 'Local rules need storey clarification',
+        };
+      }
+    }
+    const draft = draftBqlFromNaturalLanguage(originalUtterance, { storeyOverride });
     if (!draft.ok) return draft;
-    const executed = executeResolvedDraft(utterance, draft, 'local');
+    const executed = executeResolvedDraft(originalUtterance, draft, 'local');
     return {
       ...executed.draft,
       result: executed.result,
@@ -488,6 +559,21 @@ export function BimWorkspace({
 
   const runLlmBimAgent = async (utterance, connectorId) => {
     if (!prepared) throw new Error('BIM model is not ready yet.');
+    const clarification = maybeClarifyBimStoreyReference(utterance, prepared);
+    if (clarification) {
+      return {
+        ok: true,
+        status: 'clarification',
+        clarification,
+        warnings: [],
+        connectorLabel: 'Local BIM rules',
+        model: 'local/bim-bql-rules-v0.1',
+        didProviderRun: false,
+        providerStatus: 'ready',
+        providerStatusMessage: 'Local BIM Rules ready.',
+        workSummary: 'Local rules need storey clarification',
+      };
+    }
     const connector = getConnectorById(connectorId) ?? getConnectorById(DEFAULT_SINGLE_CONNECTOR_ID);
     if (!connector) throw new Error('No BIM agent connector is available.');
     setAgentRunState({
@@ -731,8 +817,163 @@ export function BimWorkspace({
     ? null
     : getConnectorById(bimAgent.responderId) ?? getConnectorById(DEFAULT_SINGLE_CONNECTOR_ID);
 
+  const getCurrentLinkedElementIds = () => {
+    if (queryElementIds.length > 0) return queryElementIds;
+    if (workspaceState.selectedObjectId) return [workspaceState.selectedObjectId];
+    return [];
+  };
+
+  const createResultSetFromCurrentContext = (name = 'Saved result set') => {
+    const elementIds = getCurrentLinkedElementIds();
+    if (elementIds.length === 0) return null;
+    const resultSet = createBimResultSetFromElements({
+      name,
+      elementIds,
+      sourceQuery: queryResult ? { objectCount: queryResult.objectRefs?.length ?? elementIds.length } : null,
+    });
+    patchWorkspaceState({
+      savedResultSets: [resultSet, ...(workspaceState.savedResultSets ?? [])].slice(0, 40),
+    });
+    return resultSet;
+  };
+
+  const create4dSequence = () => {
+    const sequence = createBim4dSequence({
+      name: `Sequence ${(workspaceState.bim4dSequences?.length ?? 0) + 1}`,
+    });
+    patchWorkspaceState({
+      bim4dSequences: [sequence, ...(workspaceState.bim4dSequences ?? [])],
+      active4dSequenceId: sequence.id,
+      active4dTaskId: null,
+    });
+  };
+
+  const setActive4dSequence = (sequenceId) => {
+    const sequence = (workspaceState.bim4dSequences ?? []).find((entry) => entry.id === sequenceId);
+    patchWorkspaceState({
+      active4dSequenceId: sequence?.id ?? null,
+      active4dTaskId: sequence?.tasks?.[0]?.id ?? null,
+    });
+  };
+
+  const setActive4dTask = (taskId) => {
+    patchWorkspaceState({ active4dTaskId: taskId || null });
+  };
+
+  const create4dTask = (name = 'Linked task') => {
+    const currentElementIds = getCurrentLinkedElementIds();
+    const sequences = workspaceState.bim4dSequences ?? [];
+    const sequence = active4dSequence ?? sequences[0] ?? createBim4dSequence({ name: 'Sequence 1' });
+    const taskName = String(name || 'Linked task').slice(0, 72);
+    const linkedResultSet = currentElementIds.length > 0 && queryElementIds.length > 0
+      ? createBimResultSetFromElements({
+          name: `${taskName} set`,
+          elementIds: currentElementIds,
+          sourceQuery: queryResult ? { objectCount: queryResult.objectRefs?.length ?? currentElementIds.length } : null,
+        })
+      : null;
+    const task = createBim4dTask({
+      name: taskName,
+      order: sequence.tasks?.length ?? 0,
+      elementIds: linkedResultSet ? [] : currentElementIds,
+      resultSetIds: linkedResultSet ? [linkedResultSet.id] : [],
+    });
+    const nextSequence = {
+      ...sequence,
+      tasks: [...(sequence.tasks ?? []), task],
+      updatedAt: new Date().toISOString(),
+    };
+    const nextSequences = sequences.some((entry) => entry.id === sequence.id)
+      ? sequences.map((entry) => (entry.id === sequence.id ? nextSequence : entry))
+      : [nextSequence, ...sequences];
+    patchWorkspaceState({
+      savedResultSets: linkedResultSet
+        ? [linkedResultSet, ...(workspaceState.savedResultSets ?? [])].slice(0, 40)
+        : workspaceState.savedResultSets,
+      bim4dSequences: nextSequences,
+      active4dSequenceId: nextSequence.id,
+      active4dTaskId: task.id,
+    });
+  };
+
+  const step4dTask = (delta) => {
+    if (!active4dSequence?.tasks?.length) return;
+    const currentIndex = Math.max(
+      0,
+      active4dSequence.tasks.findIndex((task) => task.id === (workspaceState.active4dTaskId ?? active4dTask?.id)),
+    );
+    const nextIndex = Math.min(active4dSequence.tasks.length - 1, Math.max(0, currentIndex + delta));
+    patchWorkspaceState({ active4dTaskId: active4dSequence.tasks[nextIndex]?.id ?? null });
+  };
+
+  const create5dCostPlan = () => {
+    const plan = createBim5dCostPlan({
+      name: `Cost plan ${(workspaceState.bim5dCostPlans?.length ?? 0) + 1}`,
+      currency: 'USD',
+    });
+    patchWorkspaceState({
+      bim5dCostPlans: [plan, ...(workspaceState.bim5dCostPlans ?? [])],
+      active5dCostPlanId: plan.id,
+    });
+  };
+
+  const setActive5dCostPlan = (planId) => {
+    patchWorkspaceState({ active5dCostPlanId: planId || null });
+  };
+
+  const patchActive5dCostPlan = (planPatch) => {
+    const activePlanId = workspaceState.active5dCostPlanId ?? workspaceState.bim5dCostPlans?.[0]?.id;
+    if (!activePlanId) return;
+    patchWorkspaceState({
+      bim5dCostPlans: (workspaceState.bim5dCostPlans ?? []).map((plan) => (
+        plan.id === activePlanId
+          ? { ...plan, ...planPatch, updatedAt: new Date().toISOString() }
+          : plan
+      )),
+    });
+  };
+
+  const add5dRateRow = (ratePatch) => {
+    const activePlanId = workspaceState.active5dCostPlanId ?? workspaceState.bim5dCostPlans?.[0]?.id;
+    if (!activePlanId) return;
+    const createdAt = Date.now();
+    const rate = {
+      id: `bim-5d-rate:${createdAt}:${Math.random().toString(36).slice(2, 8)}`,
+      label: String(ratePatch?.label || 'Rate row').slice(0, 96),
+      match: ratePatch?.match && typeof ratePatch.match === 'object' ? ratePatch.match : {},
+      quantityName: String(ratePatch?.quantityName || '').slice(0, 96),
+      unit: String(ratePatch?.unit || '').slice(0, 24),
+      unitCost: Number.isFinite(Number(ratePatch?.unitCost)) ? Number(ratePatch.unitCost) : 0,
+      costCategory: '',
+      costType: '',
+      classificationCode: '',
+      classificationSystem: '',
+      formula: '',
+      notes: '',
+    };
+    patchWorkspaceState({
+      bim5dCostPlans: (workspaceState.bim5dCostPlans ?? []).map((plan) => (
+        plan.id === activePlanId
+          ? { ...plan, rateRows: [...(plan.rateRows ?? []), rate], updatedAt: new Date().toISOString() }
+          : plan
+      )),
+    });
+  };
+
+  const select5dTakeoffRow = (row) => {
+    const elementIds = Array.isArray(row?.elementIds) ? row.elementIds : [];
+    setTakeoffHighlightElementIds(elementIds);
+    if (elementIds.length > 0) {
+      patchWorkspaceState({
+        selectedObjectId: elementIds[0],
+        selectedObjectKind: 'physicalElement',
+      });
+    }
+  };
+
   const clearBqlQuery = () => {
     setQueryResult(null);
+    setTakeoffHighlightElementIds([]);
   };
 
   const saveBqlQuery = (label, query) => {
@@ -866,8 +1107,8 @@ export function BimWorkspace({
             preparedModel={prepared}
             selectedElement={selectedElement}
             selectedProperties={selectedProperties}
-            highlightElementIds={queryElementIds}
-            queryViewerMode={queryResult?.viewerState?.mode ?? null}
+            highlightElementIds={viewportHighlightElementIds}
+            queryViewerMode={viewportQueryMode}
             displayMode={workspaceState.displayMode}
             isolateOnSelect={workspaceState.isolateOnSelect}
             hiddenStoreys={workspaceState.hiddenStoreys}
@@ -947,6 +1188,7 @@ export function BimWorkspace({
             agentProviderStatus={bimAgent.providerStatus}
             agentRunState={agentRunState}
             agentResponse={bimAgent.agentResponse}
+            agentChatMessages={bimAgent.chatMessages}
             agentStatusLine={bimAgent.statusLine}
             onAskSelectedAgent={bimAgent.askSelectedResponder}
             onRefreshAgentProviderState={refreshAgentProviderState}
@@ -965,6 +1207,23 @@ export function BimWorkspace({
             onBqlRebuildCache={bimBql.onRebuildCache}
             onBqlApplyPreset={bimBql.applyPreset}
             onBqlLoadSavedQuery={bimBql.loadSavedQuery}
+            savedResultSets={workspaceState.savedResultSets}
+            bim4dSequences={workspaceState.bim4dSequences}
+            active4dSequenceId={workspaceState.active4dSequenceId}
+            active4dTaskId={workspaceState.active4dTaskId}
+            onCreateResultSet={createResultSetFromCurrentContext}
+            onCreate4dSequence={create4dSequence}
+            onCreate4dTask={create4dTask}
+            onSetActive4dSequence={setActive4dSequence}
+            onSetActive4dTask={setActive4dTask}
+            onStep4dTask={step4dTask}
+            bim5dCostPlans={workspaceState.bim5dCostPlans}
+            active5dCostPlanId={workspaceState.active5dCostPlanId}
+            onCreate5dCostPlan={create5dCostPlan}
+            onSetActive5dCostPlan={setActive5dCostPlan}
+            onPatch5dCostPlan={patchActive5dCostPlan}
+            onAdd5dRateRow={add5dRateRow}
+            onSelect5dTakeoffRow={select5dTakeoffRow}
           />
         </div>
         <div className="h-full min-h-0 overflow-hidden" style={{ gridColumn: 3 }}>

@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { computeBimModelFingerprint } from '../fingerprint.js';
 import { createMemoryBimRepository } from '../bimRepository.js';
 import { prepareBimModel } from '../prepareBimModel.js';
-import { draftBqlFromNaturalLanguage } from '../bimAgent.js';
+import {
+  buildBimStoreyCatalog,
+  draftBqlFromNaturalLanguage,
+  maybeClarifyBimStoreyReference,
+  resolveBimStoreyClarificationAnswer,
+} from '../bimAgent.js';
 import { buildBimAgentResponse, formatBimAgentAnswer } from '../bimAgentResponse.js';
 import {
   buildBimLlmAgentRepairPrompt,
@@ -794,6 +799,70 @@ describe('BQL execution', () => {
 });
 
 describe('BIM natural-language agent drafting', () => {
+  const storeyPreparedModel = {
+    elements: [
+      { id: 'ifc:ground-slab', ifcClass: 'IfcSlab', storeyId: 'GROUND FLOOR' },
+      { id: 'ifc:level-1-slab', ifcClass: 'IfcSlab', storeyId: 'LEVEL 1' },
+      { id: 'ifc:roof-slab', ifcClass: 'IfcSlab', storeyId: 'ROOF' },
+    ],
+  };
+
+  it('builds a model-backed storey catalog for clarification choices', () => {
+    expect(buildBimStoreyCatalog(storeyPreparedModel)).toEqual([
+      expect.objectContaining({ value: 'GROUND FLOOR', label: 'Ground Floor', count: 1 }),
+      expect.objectContaining({ value: 'LEVEL 1', label: 'Level 1', count: 1 }),
+      expect.objectContaining({ value: 'ROOF', label: 'Roof', count: 1 }),
+    ]);
+  });
+
+  it('asks for clarification before treating first floor as level 1', () => {
+    const clarification = maybeClarifyBimStoreyReference('How many slabs on first floor?', storeyPreparedModel);
+
+    expect(clarification).toMatchObject({
+      kind: 'storey',
+      status: 'probable',
+      originalUtterance: 'How many slabs on first floor?',
+      suggestedValue: 'LEVEL 1',
+    });
+    expect(clarification.question).toBe('I found Ground Floor, Level 1 and Roof. Do you mean Level 1?');
+    expect(clarification.choices.map((choice) => choice.value)).toEqual(['GROUND FLOOR', 'LEVEL 1', 'ROOF']);
+  });
+
+  it('resolves storey clarification answers from yes, labels, ordinals, and alternatives', () => {
+    const clarification = maybeClarifyBimStoreyReference('How many slabs on first floor?', storeyPreparedModel);
+
+    expect(resolveBimStoreyClarificationAnswer('yes', clarification)).toMatchObject({ value: 'LEVEL 1' });
+    expect(resolveBimStoreyClarificationAnswer('level 1', clarification)).toMatchObject({ value: 'LEVEL 1' });
+    expect(resolveBimStoreyClarificationAnswer('the middle one', clarification)).toMatchObject({ value: 'LEVEL 1' });
+    expect(resolveBimStoreyClarificationAnswer('roof', clarification)).toMatchObject({ value: 'ROOF' });
+    expect(resolveBimStoreyClarificationAnswer('not sure', clarification)).toBe(null);
+  });
+
+  it('does not clarify exact level 1 or roof storey wording', () => {
+    expect(maybeClarifyBimStoreyReference('How many slabs on level 1?', storeyPreparedModel)).toBe(null);
+    expect(maybeClarifyBimStoreyReference('How many slabs on roof?', storeyPreparedModel)).toBe(null);
+
+    const levelDraft = draftBqlFromNaturalLanguage('How many slabs on level 1?');
+    const roofDraft = draftBqlFromNaturalLanguage('How many slabs on roof?');
+    expect(levelDraft.query.where).toMatchObject({ and: [{ ifcClass: 'IfcSlab' }, { storey: 'level 1' }] });
+    expect(roofDraft.query.where).toMatchObject({ and: [{ ifcClass: 'IfcSlab' }, { storey: 'roof' }] });
+  });
+
+  it('uses resolved clarification storey as the executed BQL filter', () => {
+    const draft = draftBqlFromNaturalLanguage('How many slabs on first floor?', { storeyOverride: 'LEVEL 1' });
+
+    expect(draft.ok).toBe(true);
+    expect(draft.query).toMatchObject({
+      select: 'count',
+      where: {
+        and: [
+          { ifcClass: 'IfcSlab' },
+          { storey: 'LEVEL 1' },
+        ],
+      },
+    });
+  });
+
   it('drafts a focused BQL query for beams on a storey', () => {
     const draft = draftBqlFromNaturalLanguage('show beams on ground floor');
 

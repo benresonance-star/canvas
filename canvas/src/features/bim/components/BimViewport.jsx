@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Axis3D, Box, Bot, Braces, Camera, Circle, EyeOff, Ghost, Grid3x3, Layers, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal } from 'lucide-react';
+import { Axis3D, Box, Bot, Braces, CalendarDays, Camera, Circle, DollarSign, EyeOff, Ghost, Grid3x3, Layers, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal } from 'lucide-react';
 import { MOUSE } from 'three';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -105,6 +105,8 @@ import {
 import { BimLayersHud } from './BimLayersHud.jsx';
 import { BimSectionHud } from './BimSectionHud.jsx';
 import { BimSelectedElementHud } from './BimSelectedElementHud.jsx';
+import { Bim4dHud } from './Bim4dHud.jsx';
+import { Bim5dHud } from './Bim5dHud.jsx';
 import {
   CLAY_AO_BIAS_DEFAULT,
   CLAY_AO_DISTANCE_DEFAULT,
@@ -224,6 +226,8 @@ import {
   isFragmentsModelNotFoundError,
   isFragmentsModelRegistered,
   loadFragmentsModelWithRetries,
+  primeViewportRendererForBoot,
+  resetFragmentsBootUpdateQueue,
   resolveBimViewportRuntimeModelId,
   syncFragmentsForViewportBoot,
   waitForAnimationFrame,
@@ -344,6 +348,7 @@ export function BimViewport({
   agentProviderStatus = { status: 'ready', label: 'ready', message: '' },
   agentRunState = { status: 'idle', message: null },
   agentResponse = null,
+  agentChatMessages = [],
   agentStatusLine = null,
   onAskSelectedAgent = () => {},
   onRefreshAgentProviderState = () => {},
@@ -362,6 +367,23 @@ export function BimViewport({
   onBqlRebuildCache = () => {},
   onBqlApplyPreset = () => {},
   onBqlLoadSavedQuery = () => {},
+  savedResultSets = [],
+  bim4dSequences = [],
+  active4dSequenceId = null,
+  active4dTaskId = null,
+  onCreateResultSet = () => {},
+  onCreate4dSequence = () => {},
+  onCreate4dTask = () => {},
+  onSetActive4dSequence = () => {},
+  onSetActive4dTask = () => {},
+  onStep4dTask = () => {},
+  bim5dCostPlans = [],
+  active5dCostPlanId = null,
+  onCreate5dCostPlan = () => {},
+  onSetActive5dCostPlan = () => {},
+  onPatch5dCostPlan = () => {},
+  onAdd5dRateRow = () => {},
+  onSelect5dTakeoffRow = () => {},
 }) {
   const total = preparedModel?.elements?.length ?? 0;
   const loadDetail = total > 0 ? `${total.toLocaleString()} elements` : null;
@@ -476,6 +498,8 @@ export function BimViewport({
   const [styleHudOpen, setStyleHudOpen] = useState(false);
   const [agentHudOpen, setAgentHudOpen] = useState(false);
   const [bqlHudOpen, setBqlHudOpen] = useState(false);
+  const [fourDHudOpen, setFourDHudOpen] = useState(false);
+  const [fiveDHudOpen, setFiveDHudOpen] = useState(false);
   const [layersHudOpen, setLayersHudOpen] = useState(false);
   const [sectionHudOpen, setSectionHudOpen] = useState(false);
   const [selectionRefreshNonce, setSelectionRefreshNonce] = useState(0);
@@ -1043,6 +1067,7 @@ export function BimViewport({
     viewportSizedRef.current = false;
     loadedFragmentsModelIdRef.current = null;
     idCacheRef.current = createFragmentsIdCache();
+    resetFragmentsBootUpdateQueue();
     setLoadState('loading');
     setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.preparing);
 
@@ -1387,6 +1412,9 @@ export function BimViewport({
             fitModel();
           }
 
+          await primeViewportRendererForBoot(renderer, scene, activeCamera);
+          if (!isEffectActive()) return;
+
           setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.syncing);
           const synced = await syncFragmentsForViewportBoot(updateFragments, {
             disposed: () => !isEffectActive(),
@@ -1423,6 +1451,8 @@ export function BimViewport({
               void rebuildWireframeEdges();
             }
             try {
+              await delay(750);
+              if (disposed || modelRef.current !== model) return;
               scheduleClayMaterialGroupsPrefetch(model, ids, () => {
                 if (!isEffectActive() || renderStyleRef.current !== 'clay') return;
                 invalidateClayMaterialSnapshot(model);
@@ -2579,6 +2609,26 @@ export function BimViewport({
           </button>
           <button
             type="button"
+            title={fourDHudOpen ? 'Hide 4D sequencing' : 'Show 4D sequencing'}
+            onClick={() => setFourDHudOpen((open) => !open)}
+            className={`rounded border border-border p-1 ${fourDHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+            aria-pressed={fourDHudOpen}
+            aria-label={fourDHudOpen ? 'Hide 4D sequencing panel' : 'Show 4D sequencing panel'}
+          >
+            <CalendarDays size={14} strokeWidth={1.7} />
+          </button>
+          <button
+            type="button"
+            title={fiveDHudOpen ? 'Hide 5D takeoff' : 'Show 5D takeoff'}
+            onClick={() => setFiveDHudOpen((open) => !open)}
+            className={`rounded border border-border p-1 ${fiveDHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+            aria-pressed={fiveDHudOpen}
+            aria-label={fiveDHudOpen ? 'Hide 5D takeoff panel' : 'Show 5D takeoff panel'}
+          >
+            <DollarSign size={14} strokeWidth={1.7} />
+          </button>
+          <button
+            type="button"
             title={sectionHudOpen ? 'Hide section panel' : 'Section cut'}
             onClick={handleToggleSectionHud}
             className={`rounded border border-border p-1 ${sectionHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
@@ -2664,12 +2714,13 @@ export function BimViewport({
             )}
           </div>
         )}
-        {loadState === 'ready' && (agentHudOpen || bqlHudOpen || styleHudOpen) && (
-          <div className="pointer-events-none absolute right-3 top-3 z-20 flex max-h-[calc(100%-1.5rem)] w-[min(calc(100%-1.5rem),24rem)] flex-col items-stretch gap-2 overflow-y-auto">
+        {loadState === 'ready' && (agentHudOpen || bqlHudOpen || styleHudOpen || fourDHudOpen || fiveDHudOpen) && (
+          <div className="pointer-events-none absolute right-3 top-3 z-20 flex max-h-[calc(100%-1.5rem)] w-[min(calc(100%-1.5rem),30rem)] flex-col items-stretch gap-2 overflow-y-auto">
             {agentHudOpen && (
               <BimAgentHud
                 agentText={agentText}
                 onAgentTextChange={onAgentTextChange}
+                chatMessages={agentChatMessages}
                 responderId={agentResponderId}
                 onResponderIdChange={onAgentResponderIdChange}
                 selectedResponderLabel={agentSelectedResponderLabel}
@@ -2699,6 +2750,35 @@ export function BimViewport({
                 onRebuildCache={onBqlRebuildCache}
                 onApplyPreset={onBqlApplyPreset}
                 onLoadSavedQuery={onBqlLoadSavedQuery}
+              />
+            )}
+            {fourDHudOpen && (
+              <Bim4dHud
+                sequences={bim4dSequences}
+                activeSequenceId={active4dSequenceId}
+                activeTaskId={active4dTaskId}
+                savedResultSets={savedResultSets}
+                selectedElementId={selectedElement?.id ?? null}
+                queryElementIds={highlightElementIds}
+                onCreateResultSet={onCreateResultSet}
+                onCreateSequence={onCreate4dSequence}
+                onCreateTask={onCreate4dTask}
+                onSetActiveSequence={onSetActive4dSequence}
+                onSetActiveTask={onSetActive4dTask}
+                onStepTask={onStep4dTask}
+              />
+            )}
+            {fiveDHudOpen && (
+              <Bim5dHud
+                preparedModel={preparedModel}
+                costPlans={bim5dCostPlans}
+                activeCostPlanId={active5dCostPlanId}
+                savedResultSets={savedResultSets}
+                onCreateCostPlan={onCreate5dCostPlan}
+                onSetActiveCostPlan={onSetActive5dCostPlan}
+                onPatchCostPlan={onPatch5dCostPlan}
+                onAddRateRow={onAdd5dRateRow}
+                onSelectTakeoffRow={onSelect5dTakeoffRow}
               />
             )}
             {styleHudOpen && (

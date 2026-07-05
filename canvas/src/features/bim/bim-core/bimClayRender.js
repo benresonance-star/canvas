@@ -337,10 +337,9 @@ export function invalidateClayMaterialSnapshotIfStale(model, allLocalIds = []) {
 export async function prefetchClayMaterialGroups(model, allLocalIds = []) {
   if (!model) return [];
   if (clayMaterialGroupCache.has(model)) return clayMaterialGroupCache.get(model);
-  let groups = await fetchClayMaterialGroups(model, null);
-  if (!groups.length && allLocalIds?.length) {
-    groups = await fetchClayMaterialGroups(model, allLocalIds);
-  }
+  const groups = allLocalIds?.length
+    ? await fetchClayMaterialGroups(model, allLocalIds)
+    : [];
   clayMaterialGroupCache.set(model, groups);
   return groups;
 }
@@ -468,15 +467,7 @@ export async function fetchClayMaterialGroups(model, localIds = null) {
   if (!model || typeof model.getItemsMaterialDefinition !== 'function') {
     return [];
   }
-  if (localIds == null) {
-    try {
-      const groups = await model.getItemsMaterialDefinition(null);
-      return Array.isArray(groups) ? groups : [];
-    } catch {
-      return [];
-    }
-  }
-  if (!localIds.length) {
+  if (localIds == null || !localIds.length) {
     return [];
   }
   const groups = [];
