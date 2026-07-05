@@ -62,7 +62,7 @@ function refList(value) {
 }
 
 function linePropertyEntries(line, elementId, sourceFileHash) {
-  const names = ['Name', 'Description', 'ObjectType', 'Tag', 'PredefinedType'];
+  const names = ['Name', 'Description', 'ObjectType', 'Tag', 'PredefinedType', 'Elevation', 'LongName'];
   return names
     .map((name) => {
       const value = scalar(line?.[name]);

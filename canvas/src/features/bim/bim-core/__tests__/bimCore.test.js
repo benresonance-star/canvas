@@ -185,9 +185,14 @@ describe('BIM core fingerprinting and cache', () => {
       hiddenStoreys: ['Level 01'],
       hiddenLayers: ['Structure'],
       isolateOnSelect: true,
+      section: { enabled: true, fillColor: '#abcdef' },
       camera: { position: [1, 2, 3], target: [0, 0, 0], up: [0, 1, 0], fov: 45, zoom: 1 },
     })).toMatchObject({
       ...BIM_VIEWER_DEFAULTS,
+      section: expect.objectContaining({
+        enabled: false,
+        fillColor: '#abcdef',
+      }),
       camera: { position: [1, 2, 3], target: [0, 0, 0], up: [0, 1, 0], fov: 45, zoom: 1 },
     });
   });

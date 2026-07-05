@@ -1227,7 +1227,9 @@ canvas/src/features/bim/
     bimStyleSettings.js      # shared style normalisation + card/IndexedDB patch helpers
     bimLayerVisibility.js    # storey/layer hide lists + apply to element table / viewport
     bimElementLayers.js      # derive layer groups from prepared model index
-    bimViewportBoot.js       # layout wait, Fragments registration/sync boot helpers
+    bimViewportBoot.js       # layout wait, Fragments registration/sync boot helpers, phased loading
+    bimSectioning.js         # section plane state, getSection overlay, storey preset heights
+    bimScreenDepth.js        # screen depth prepass (avoids clay/section circular import)
     bimCamera.js             # perspective / orthographic camera helpers
     bimLighting.js           # HDRI environment + legacy/direct lights
     bimMeasurementController.js
@@ -1244,6 +1246,7 @@ canvas/src/features/bim/
     BimStyleSettingsHud.jsx  # floating style panel (background, presets, clay/wireframe sliders)
     BimStylePresetsMenu.jsx  # save/load project style presets
     BimLayersHud.jsx         # floating storey/layer visibility panel
+    BimSectionHud.jsx        # floating section-cut panel (plane height, fills, edges, storey presets)
     BimBqlHud.jsx            # viewport-top-right BQL HUD shell
     BimAgentHud.jsx          # viewport-top-right BIM agent HUD shell
   api/
@@ -1287,19 +1290,20 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
     | Gls | `clayGlassOpacity` | 0.05–0.5 | 0.18 |
     | Surface / background | `claySurfaceColor`, `clayBackgroundColor` | hex | `#f8f8f8` / `#ffffff` |
   - State normalised via `normalizeClayStyle()` in `types.js`; clay preset via `getClayPresetWorkspacePatch()` (does not force wireframe off).
-- **Default viewer open state** (2026-07-05): each workspace open applies `BIM_VIEWER_DEFAULTS` via `applyBimViewerDefaults()` in `types.js` — `displayMode: 'highlight'`, `renderStyle: 'standard'`, empty `hiddenStoreys` / `hiddenLayers`, `isolateOnSelect: false`. Camera, panel layout, measurements, lighting, and saved queries still restore from IndexedDB / card metadata; display mode, render style, and layer/storey visibility reset to defaults on every open.
+- **Default viewer open state** (2026-07-05, updated): each workspace open applies `BIM_VIEWER_DEFAULTS` via `applyBimViewerDefaults()` in `types.js` — `displayMode: 'highlight'`, `renderStyle: 'standard'`, empty `hiddenStoreys` / `hiddenLayers`, `isolateOnSelect: false`, **`section.enabled: false`**. Camera, panel layout, measurements, lighting, saved queries, and section style fields (plane height, fill/edge colours) still restore from IndexedDB / card metadata; display mode, render style, layer/storey visibility, and section-cut **enabled** flag reset on every open.
 - **Style settings HUD** (2026-07-05): toolbar sliders button is always visible (highlight, ghost, standard, clay, wireframe). Floating `BimStyleSettingsHud` always exposes viewport **background colour** and the **style presets** menu; clay and wireframe slider sections render only when those modes are active.
 - **Storey / layer visibility** (2026-07-05): toolbar layers button opens `BimLayersHud` — toggles per-storey and per-layer visibility (`bimLayerVisibility.js`, `bimElementLayers.js`); hidden lists persist in workspace state.
 - **Style presets API** (2026-07-05): Postgres table `bim_style_presets` (migration `0025_bim_style_presets.sql`); REST routes under `/bim/projects/:projectId/style-presets` (list/create) and `/bim/style-presets/:presetId` (get/patch/delete). Client `bimApi.js` + `BimStylePresetsMenu.jsx`; debounced write-back of current style bundle to card `version.bim.styleSettings`.
 - **Floating viewport HUDs** (2026-07-05): BQL and BIM agent panels moved from the sidebar into the viewport top-right HUD stack (`BimBqlHud.jsx`, `BimAgentHud.jsx`) alongside style settings.
-- **Viewport boot reliability** (2026-07-05): `bimViewportBoot.js` gates first paint on (1) non-zero container layout via `ResizeObserver` on container + ancestors (up to 20s), (2) Fragments worker model registration (`fragments.models.list` + `onModelLoaded`), (3) `model.isBusy === false`, (4) retried `fragments.update()` until success. `updateFragments()` skips worker calls when the model is not yet registered (avoids worker `Model not found` races). React Strict Mode double-mount is ignored via per-effect sequence ids; the animation loop starts only after boot succeeds and `loadState` becomes `ready`.
+- **Section cut** (2026-07-05): toolbar slice button opens `BimSectionHud.jsx` — horizontal clipping plane on Fragments geometry plus optional fill/edge overlay from `model.getSection()`. State in `workspaceState.section` (`enabled`, `planes`, `showFills`, `showEdges`, colours, edge weight). **Off by default** on each workspace open (`applyBimViewerDefaults` forces `section.enabled: false` while preserving saved plane/style). Storey preset buttons place the plane at **IfcBuildingStorey Elevation + 1 m** (`SECTION_STOREY_PLANE_OFFSET`); `Elevation` / `LongName` extracted in `ifcProjection.js`. Overlay fills use `MeshBasicMaterial` with `DoubleSide` and `depthTest: false`; edges use `LineSegments2` with depth test against a screen-depth prepass (`bimScreenDepth.js`, shared with clay hidden-line wireframe). HUD sliders use stacked layout (`ClaySliderControl stacked`) so labels stay on one line above the range input.
+- **Viewport boot + loading feedback** (2026-07-05, updated): `bimViewportBoot.js` gates first paint on (1) non-zero container layout via `ResizeObserver` (up to 20s), (2) Fragments worker model registration, (3) optional short `model.isBusy` wait (2.5s cap), (4) `syncFragmentsForViewportBoot()` — immediate `fragments.update()` then retry up to 8s. Overlay shows phased status (`BIM_VIEWPORT_LOAD_PHASES`) with spinner and element count until `loadState === 'ready'`. `updateFragments()` skips worker calls when the model is not yet registered. React Strict Mode double-mount ignored via effect sequence ids; animation loop starts only after boot succeeds.
 - Bidirectional selection sync between table, viewport, and inspector via `ifcGlobalId`.
 - Element table includes storey column; search and IFC class filter.
 - Inspector shows grouped Psets/quantities, provenance, and semantic assembly membership for member elements.
 - **BQL executor** (`executeBqlQuery`) runs against prepared model index with `physicalElements`, `semanticAssemblies`, and `allBimObjects` scopes.
 - **BimQueryPanel** provides JSON BQL editor with presets (all beams, ground floor, windows incl. `WindowAssembly`).
 - Query results drive viewer display mode and filter the element table; evidence bundle returned per result.
-- Workspace state (camera, selection, filters, display mode, projection mode, measurements, wireframe mode + style (`wireframeHiddenLines` included), **render style + clay tuning**, lighting, panel toggles) persisted in IndexedDB per fingerprint.
+- Workspace state (camera, selection, filters, display mode, projection mode, measurements, wireframe mode + style (`wireframeHiddenLines` included), **render style + clay tuning**, **section cut state**, lighting, panel toggles) persisted in IndexedDB per fingerprint.
 - Graceful degradation: if Fragments conversion fails, evidence table and inspector still work; viewport shows an error banner.
 
 ### Folder sync, dock, and artifact ingest (2026-07-04)

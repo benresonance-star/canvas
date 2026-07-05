@@ -1,6 +1,7 @@
 import { normalizeMeasurements, normalizeMeasureUnits } from '../../threeDArtifact/utils/measureSnap.js';
 import { normalizeBimLightingState } from './bimLighting.js';
 import { normalizeHiddenLayerState } from './bimLayerVisibility.js';
+import { normalizeBimSectionState } from './bimSectioning.js';
 
 export const BIM_PREPARATION_PHASES = [
   'preparing',
@@ -279,6 +280,7 @@ export function normalizeBimWorkspaceState(state = {}) {
     isolateOnSelect,
     hiddenStoreys: normalizeHiddenLayerState(state?.hiddenStoreys),
     hiddenLayers: normalizeHiddenLayerState(state?.hiddenLayers),
+    section: normalizeBimSectionState(state?.section ?? {}),
     tableSearch: String(state?.tableSearch ?? ''),
     ifcClassFilter: String(state?.ifcClassFilter ?? ''),
     panels: {
@@ -310,6 +312,10 @@ export function applyBimViewerDefaults(state = {}) {
   return normalizeBimWorkspaceState({
     ...state,
     ...BIM_VIEWER_DEFAULTS,
+    section: normalizeBimSectionState({
+      ...(state?.section ?? {}),
+      enabled: false,
+    }),
   });
 }
 

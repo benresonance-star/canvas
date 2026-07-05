@@ -34,6 +34,8 @@ import {
   normalizeClayStyle,
 } from './types.js';
 import { applyBimStyleSettings } from './bimStyleSettings.js';
+import { populateScreenDepthFromScene } from './bimScreenDepth.js';
+export { populateScreenDepthFromScene } from './bimScreenDepth.js';
 
 export {
   CLAY_AO_BIAS_DEFAULT,
@@ -638,32 +640,6 @@ export async function applyClayBaseMaterials(
   }
 }
 
-
-export function populateScreenDepthFromScene(renderer, scene, camera) {
-  if (!renderer || !scene || !camera) return false;
-
-  const colorBuffer = renderer.state?.buffers?.color;
-  const depthBuffer = renderer.state?.buffers?.depth;
-  if (!colorBuffer || !depthBuffer) return false;
-
-  const previousAutoClear = renderer.autoClear;
-  const previousRenderTarget = renderer.getRenderTarget();
-
-  renderer.setRenderTarget(null);
-  renderer.autoClear = false;
-  depthBuffer.setTest(true);
-  depthBuffer.setMask(true);
-  colorBuffer.setMask(false);
-  colorBuffer.setLocked(true);
-  renderer.clearDepth();
-  renderer.render(scene, camera);
-  colorBuffer.setLocked(false);
-  colorBuffer.setMask(true);
-
-  renderer.autoClear = previousAutoClear;
-  renderer.setRenderTarget(previousRenderTarget);
-  return true;
-}
 
 export function renderClayFrame({
   renderer,

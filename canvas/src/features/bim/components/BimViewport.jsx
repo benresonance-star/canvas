@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Axis3D, Box, Bot, Braces, Camera, Circle, EyeOff, Ghost, Grid3x3, Layers, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, SlidersHorizontal, SunMedium } from 'lucide-react';
+import { Axis3D, Box, Bot, Braces, Camera, Circle, EyeOff, Ghost, Grid3x3, Layers, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal, SunMedium } from 'lucide-react';
 import { MOUSE } from 'three';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -77,7 +77,25 @@ import {
   resolvePickGuidFromHit,
 } from '../bim-core/fragmentsSelection.js';
 import { applyBimLayerStoreyVisibility, buildBimLayerCatalog } from '../bim-core/bimLayerVisibility.js';
+import {
+  applyRendererClippingPlanes,
+  buildSectionGeometriesFromModelSection,
+  buildViewportBoundsFromBox3,
+  createSectionOverlayGroup,
+  disposeSectionOverlay,
+  fetchModelSection,
+  flipPrimaryPlaneNormal,
+  normalizeBimSectionState,
+  patchPrimaryPlaneHeight,
+  renderSectionOverlayPass,
+  resolveSectionLocalIds,
+  resolveVisibleLocalIds,
+  sectionHeightRangeFromBounds,
+  sectionPlanesToThreePlanes,
+  updateSectionOverlayStyle,
+} from '../bim-core/bimSectioning.js';
 import { BimLayersHud } from './BimLayersHud.jsx';
+import { BimSectionHud } from './BimSectionHud.jsx';
 import { BimSelectedElementHud } from './BimSelectedElementHud.jsx';
 import {
   CLAY_AO_BIAS_DEFAULT,
@@ -92,15 +110,18 @@ import {
   VIEWPORT_BACKGROUND_DEFAULT,
 } from '../bim-core/types.js';
 
-function syncModelBounds(modelRoot, boundsRef) {
+function syncModelBounds(modelRoot, boundsRef, onBoundsChange) {
   if (!modelRoot) return;
   modelRoot.updateWorldMatrix(true, true);
   const box = new THREE.Box3().setFromObject(modelRoot);
-  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  const next = buildViewportBoundsFromBox3(box);
   boundsRef.current = {
-    radius: Math.max(sphere.radius, 1),
-    center: sphere.center.clone(),
+    radius: next.radius,
+    center: new THREE.Vector3(next.center.x, next.center.y, next.center.z),
+    min: next.min,
+    max: next.max,
   };
+  onBoundsChange?.(next);
 }
 
 function resolveBimViewDistance(camera, controls, bounds) {
@@ -186,11 +207,12 @@ function delay(ms) {
 }
 
 import {
-  ensureFragmentsUpdated,
+  BIM_VIEWPORT_LOAD_PHASES,
+  FRAGMENTS_BOOT_IDLE_TIMEOUT_MS,
   FRAGMENTS_MODEL_REGISTRATION_RETRY_DELAYS_MS,
   hasViewportLayoutSize,
   isFragmentsModelRegistered,
-  waitForAnimationFrame,
+  syncFragmentsForViewportBoot,
   waitForFragmentsModelIdle,
   waitForFragmentsModelRegistered,
   waitForViewportLayout,
@@ -230,6 +252,7 @@ export function BimViewport({
   isolateOnSelect = false,
   hiddenStoreys = [],
   hiddenLayers = [],
+  section = null,
   colorByProperty = null,
   leftPanelOpen = true,
   rightPanelOpen = true,
@@ -241,6 +264,7 @@ export function BimViewport({
   onIsolateOnSelectChange = () => {},
   onHiddenStoreysChange = () => {},
   onHiddenLayersChange = () => {},
+  onSectionChange = () => {},
   onSelectElementByGlobalId = () => {},
   onDeselectElement = () => {},
   onCameraChange = () => {},
@@ -315,6 +339,7 @@ export function BimViewport({
   onBqlLoadSavedQuery = () => {},
 }) {
   const total = preparedModel?.elements?.length ?? 0;
+  const loadDetail = total > 0 ? `${total.toLocaleString()} elements` : null;
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
@@ -331,6 +356,13 @@ export function BimViewport({
   const applySelectionSeqRef = useRef(0);
   const hiddenStoreysRef = useRef(hiddenStoreys);
   const hiddenLayersRef = useRef(hiddenLayers);
+  const sectionStateRef = useRef(normalizeBimSectionState(section ?? {}));
+  const activeClippingPlanesRef = useRef([]);
+  const sectionOverlaySceneRef = useRef(null);
+  const sectionOverlayGroupRef = useRef(null);
+  const sectionRebuildSeqRef = useRef(0);
+  const sectionRebuildInFlightRef = useRef(false);
+  const sectionRebuildQueuedRef = useRef(false);
   const onCameraChangeRef = useRef(onCameraChange);
   const onProjectionModeChangeRef = useRef(onProjectionModeChange);
   const projectionModeRef = useRef(projectionMode);
@@ -398,6 +430,7 @@ export function BimViewport({
   const selectedElementRef = useRef(selectedElement);
   const onDeselectElementRef = useRef(onDeselectElement);
   const [loadState, setLoadState] = useState(() => (getViewportError(preparedModel) ? 'error' : 'loading'));
+  const [loadPhase, setLoadPhase] = useState(BIM_VIEWPORT_LOAD_PHASES.preparing);
   const [renderError, setRenderError] = useState(() => getViewportError(preparedModel));
   const [pickStatus, setPickStatus] = useState(null);
   const [fovInput, setFovInput] = useState(String(initialCamera?.fov ?? BIM_DEFAULT_FOV));
@@ -408,8 +441,33 @@ export function BimViewport({
   const [agentHudOpen, setAgentHudOpen] = useState(false);
   const [bqlHudOpen, setBqlHudOpen] = useState(false);
   const [layersHudOpen, setLayersHudOpen] = useState(false);
+  const [sectionHudOpen, setSectionHudOpen] = useState(false);
+  const [viewportBounds, setViewportBounds] = useState(() => ({
+    radius: modelBoundsRef.current.radius,
+    center: {
+      x: modelBoundsRef.current.center.x,
+      y: modelBoundsRef.current.center.y,
+      z: modelBoundsRef.current.center.z,
+    },
+    min: { x: -1, y: -1, z: -1 },
+    max: { x: 1, y: 1, z: 1 },
+  }));
+  const normalizedSection = useMemo(
+    () => normalizeBimSectionState(section ?? {}, {
+      defaultPlaneY: sectionHeightRangeFromBounds(viewportBounds).defaultY,
+    }),
+    [section, viewportBounds],
+  );
+  const sectionClipKey = useMemo(() => JSON.stringify({
+    enabled: normalizedSection.enabled,
+    planes: normalizedSection.planes,
+  }), [normalizedSection.enabled, normalizedSection.planes]);
+  const sectionOverlayDebounceRef = useRef(null);
   const preparedModelRef = useRef(preparedModel);
   preparedModelRef.current = preparedModel;
+  const syncViewportBounds = useCallback((bounds) => {
+    if (bounds) setViewportBounds(bounds);
+  }, []);
   const preparedModelKey = preparedModel?.metadata?.fingerprint
     ?? preparedModel?.metadata?.fragmentsModelId
     ?? null;
@@ -582,9 +640,9 @@ export function BimViewport({
     } else {
       fitPerspectiveCameraToDefaultView(camera, controls, model.object, fitOptions);
     }
-    syncModelBounds(model.object, modelBoundsRef);
+    syncModelBounds(model.object, modelBoundsRef, syncViewportBounds);
     emitCameraChange();
-  }, [emitCameraChange]);
+  }, [emitCameraChange, syncViewportBounds]);
 
   const resetVisibility = useCallback(() => {
     const model = modelRef.current;
@@ -646,7 +704,7 @@ export function BimViewport({
       }
       wireframeEdgesRef.current = edges;
       disposeWireframeEdges(previousEdges);
-      syncModelBounds(model.object, modelBoundsRef);
+      syncModelBounds(model.object, modelBoundsRef, syncViewportBounds);
       const bounds = modelBoundsRef.current;
       const camera = cameraRef.current;
       updateWireframeEdgeVisuals(edges, {
@@ -673,6 +731,197 @@ export function BimViewport({
       }
     }
   }, []);
+
+  const syncSectionClipping = useCallback(() => {
+    const bounds = modelBoundsRef.current;
+    const normalized = normalizeBimSectionState(sectionStateRef.current, {
+      defaultPlaneY: bounds?.center?.y ?? 0,
+    });
+    activeClippingPlanesRef.current = sectionPlanesToThreePlanes(normalized);
+    applyRendererClippingPlanes(rendererRef.current, activeClippingPlanesRef.current);
+  }, []);
+
+  const rebuildSectionOverlay = useCallback(async () => {
+    syncSectionClipping();
+    const bounds = modelBoundsRef.current;
+    const normalized = normalizeBimSectionState(sectionStateRef.current, {
+      defaultPlaneY: sectionHeightRangeFromBounds({
+        min: bounds.min,
+        max: bounds.max,
+        center: bounds.center,
+        radius: bounds.radius,
+      }).defaultY,
+    });
+    const overlayScene = sectionOverlaySceneRef.current;
+
+    if (!normalized.enabled) {
+      disposeSectionOverlay(sectionOverlayGroupRef.current);
+      sectionOverlayGroupRef.current = null;
+      overlayScene?.clear?.();
+      return;
+    }
+
+    const model = modelRef.current;
+    if (!model || !modelReadyRef.current) return;
+
+    if (sectionRebuildInFlightRef.current) {
+      sectionRebuildQueuedRef.current = true;
+      return;
+    }
+
+    const buildSeq = ++sectionRebuildSeqRef.current;
+    sectionRebuildInFlightRef.current = true;
+    try {
+      const planes = sectionPlanesToThreePlanes(normalized);
+      if (planes.length === 0) {
+        disposeSectionOverlay(sectionOverlayGroupRef.current);
+        sectionOverlayGroupRef.current = null;
+        overlayScene?.clear?.();
+        return;
+      }
+
+      const localIds = await resolveSectionLocalIds(
+        model,
+        preparedModelRef.current,
+        idCacheRef.current,
+        hiddenStoreysRef.current,
+        hiddenLayersRef.current,
+      );
+      if (buildSeq !== sectionRebuildSeqRef.current) return;
+
+      let modelSection = await fetchModelSection(model, planes[0], localIds);
+      if ((!modelSection?.index || modelSection.index <= 0) && localIds?.length) {
+        modelSection = await fetchModelSection(model, planes[0], undefined);
+      }
+      if (buildSeq !== sectionRebuildSeqRef.current) return;
+
+      disposeSectionOverlay(sectionOverlayGroupRef.current);
+      sectionOverlayGroupRef.current = null;
+      overlayScene?.clear?.();
+
+      if (!modelSection) return;
+
+      const geometries = buildSectionGeometriesFromModelSection(modelSection);
+      const { width, height } = getRendererDrawingSize(rendererRef.current);
+      const group = createSectionOverlayGroup(geometries, normalized, {
+        width,
+        height,
+        planeNormal: planes[0]?.normal,
+        modelRadius: bounds?.radius,
+      });
+      sectionOverlayGroupRef.current = group;
+      overlayScene?.add(group);
+    } catch (error) {
+      if (buildSeq === sectionRebuildSeqRef.current) {
+        console.warn('Could not rebuild BIM section overlay.', error);
+      }
+    } finally {
+      if (buildSeq === sectionRebuildSeqRef.current) {
+        sectionRebuildInFlightRef.current = false;
+        if (sectionRebuildQueuedRef.current && sectionStateRef.current?.enabled) {
+          sectionRebuildQueuedRef.current = false;
+          void rebuildSectionOverlay();
+        }
+      }
+    }
+  }, [syncSectionClipping]);
+
+  const refreshSectionCut = useCallback(async ({ updateFragments = true } = {}) => {
+    syncSectionClipping();
+    if (!modelReadyRef.current) return;
+    try {
+      if (updateFragments) {
+        await updateFragmentsRef.current?.(true, { retryModelRegistration: true });
+      }
+      await rebuildSectionOverlay();
+    } catch (error) {
+      if (!isStaleFragmentsLifecycleError(error)) {
+        setRenderError(error?.message || 'Could not update BIM section cut.');
+      }
+    }
+  }, [rebuildSectionOverlay, syncSectionClipping]);
+
+  const scheduleSectionOverlayRebuild = useCallback((delayMs = 32) => {
+    if (sectionOverlayDebounceRef.current) {
+      window.clearTimeout(sectionOverlayDebounceRef.current);
+    }
+    sectionOverlayDebounceRef.current = window.setTimeout(() => {
+      sectionOverlayDebounceRef.current = null;
+      void rebuildSectionOverlay();
+    }, delayMs);
+  }, [rebuildSectionOverlay]);
+
+  const applyLiveSectionState = useCallback((nextSection, { rebuildOverlay = true, delayMs = 32 } = {}) => {
+    const normalized = normalizeBimSectionState(nextSection, {
+      defaultPlaneY: sectionHeightRangeFromBounds(viewportBounds).defaultY,
+    });
+    sectionStateRef.current = normalized;
+    syncSectionClipping();
+    onSectionChange(normalized);
+    if (rebuildOverlay && normalized.enabled && modelReadyRef.current) {
+      scheduleSectionOverlayRebuild(delayMs);
+    }
+  }, [onSectionChange, scheduleSectionOverlayRebuild, syncSectionClipping, viewportBounds]);
+
+  const prevSectionEnabledRef = useRef(normalizedSection.enabled);
+
+  useEffect(() => {
+    sectionStateRef.current = normalizeBimSectionState(section ?? {}, {
+      defaultPlaneY: sectionHeightRangeFromBounds(viewportBounds).defaultY,
+    });
+  }, [section, viewportBounds]);
+
+  useEffect(() => {
+    syncSectionClipping();
+  }, [section, syncSectionClipping]);
+
+  useEffect(() => {
+    if (!modelReadyRef.current) return undefined;
+    const wasEnabled = prevSectionEnabledRef.current;
+    const isEnabled = normalizedSection.enabled;
+    prevSectionEnabledRef.current = isEnabled;
+
+    if (!isEnabled) {
+      if (wasEnabled) {
+        void refreshSectionCut({ updateFragments: true });
+      }
+      return undefined;
+    }
+
+    if (!wasEnabled) {
+      void refreshSectionCut({ updateFragments: true });
+      return undefined;
+    }
+
+    scheduleSectionOverlayRebuild(32);
+    return () => {
+      if (sectionOverlayDebounceRef.current) {
+        window.clearTimeout(sectionOverlayDebounceRef.current);
+        sectionOverlayDebounceRef.current = null;
+      }
+    };
+  }, [sectionClipKey, normalizedSection.enabled, refreshSectionCut, scheduleSectionOverlayRebuild]);
+
+  useEffect(() => {
+    if (!modelReadyRef.current || !sectionStateRef.current?.enabled) return undefined;
+    scheduleSectionOverlayRebuild(0);
+    return undefined;
+  }, [
+    normalizedSection.showFills,
+    normalizedSection.showEdges,
+    scheduleSectionOverlayRebuild,
+  ]);
+
+  useEffect(() => {
+    if (!sectionStateRef.current?.enabled || !modelReadyRef.current) return undefined;
+    scheduleSectionOverlayRebuild(64);
+    return undefined;
+  }, [hiddenStoreys, hiddenLayers, scheduleSectionOverlayRebuild]);
+
+  const refreshSectionCutRef = useRef(() => {});
+  refreshSectionCutRef.current = refreshSectionCut;
+  const syncSectionClippingRef = useRef(syncSectionClipping);
+  syncSectionClippingRef.current = syncSectionClipping;
 
   useEffect(() => {
     renderStyleRef.current = renderStyle;
@@ -749,6 +998,7 @@ export function BimViewport({
     loadedFragmentsModelIdRef.current = null;
     idCacheRef.current = createFragmentsIdCache();
     setLoadState('loading');
+    setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.preparing);
 
     const fragments = new FragmentsModels(fragmentsWorkerUrl);
     fragments.settings.graphicsQuality = 1;
@@ -758,6 +1008,7 @@ export function BimViewport({
     scene.background = new THREE.Color(viewportBackgroundRef.current);
     sceneRef.current = scene;
     wireframeOverlaySceneRef.current = new THREE.Scene();
+    sectionOverlaySceneRef.current = new THREE.Scene();
 
     const savedCamera = fitToModelOnLoadRef.current ? null : initialCameraRef.current;
     const startProjectionMode = projectionModeRef.current;
@@ -916,8 +1167,10 @@ export function BimViewport({
 
     async function loadFragments() {
       try {
+        setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.reading);
         const buffer = await preparedModelRef.current.fragmentsBlob.arrayBuffer();
         if (!isEffectActive()) return;
+        setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.loadingGeometry);
         const runtimeModelId = preparedModelRef.current.metadata?.fragmentsModelId
           ?? preparedModelRef.current.metadata?.fingerprint
           ?? `bim-${Date.now()}`;
@@ -933,9 +1186,11 @@ export function BimViewport({
         }
         modelRef.current = model;
         model.useCamera(activeCamera);
+        model.getClippingPlanesEvent = () => activeClippingPlanesRef.current;
         scene.add(model.object);
-        syncModelBounds(model.object, modelBoundsRef);
+        syncModelBounds(model.object, modelBoundsRef, syncViewportBounds);
 
+        setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.registering);
         const registered = await waitForFragmentsModelRegistered(fragments, runtimeModelId, {
           disposed: () => !isEffectActive(),
         });
@@ -948,18 +1203,17 @@ export function BimViewport({
 
         await waitForFragmentsModelIdle(model, {
           disposed: () => !isEffectActive(),
+          timeoutMs: FRAGMENTS_BOOT_IDLE_TIMEOUT_MS,
         });
         if (!isEffectActive()) return;
 
         if (!disposed) {
+          setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.buildingView);
           const layoutReady = await waitForViewportLayout(container, {
             disposed: () => !isEffectActive(),
           });
           if (!isEffectActive()) return;
           if (layoutReady) viewportSizedRef.current = true;
-
-          await waitForAnimationFrame();
-          await waitForAnimationFrame();
 
           const rect = container.getBoundingClientRect();
           const hasSavedCamera = Boolean(savedCamera);
@@ -973,7 +1227,8 @@ export function BimViewport({
             fitModel();
           }
 
-          const synced = await ensureFragmentsUpdated(updateFragments, {
+          setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.syncing);
+          const synced = await syncFragmentsForViewportBoot(updateFragments, {
             disposed: () => !isEffectActive(),
           });
           if (!isEffectActive()) return;
@@ -983,11 +1238,16 @@ export function BimViewport({
             return;
           }
 
+          setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.finishing);
           modelReadyRef.current = true;
+          syncSectionClippingRef.current();
           renderer.render(scene, cameraRef.current);
           emitSceneCameraChange();
           setLoadState('ready');
           startAnimateLoop();
+          if (sectionStateRef.current?.enabled) {
+            void refreshSectionCutRef.current?.();
+          }
           if (wireframeModeRef.current) {
             void rebuildWireframeEdges();
           }
@@ -1041,6 +1301,7 @@ export function BimViewport({
 
     const renderViewportFrame = () => {
       if (disposed || !cameraRef.current) return;
+      if (scene.overrideMaterial) scene.overrideMaterial = null;
       syncMeasurementOverlay();
       const activeCamera = cameraRef.current;
       const wireframeEdges = wireframeEdgesRef.current;
@@ -1113,6 +1374,22 @@ export function BimViewport({
         applyViewportBackground(scene, renderer, viewportBackgroundRef.current);
         renderer.render(scene, activeCamera);
       }
+
+      const sectionGroup = sectionOverlayGroupRef.current;
+      if (sectionStateRef.current?.enabled && sectionGroup && sectionOverlaySceneRef.current) {
+        const { width, height } = getRendererDrawingSize(renderer);
+        updateSectionOverlayStyle(sectionGroup, sectionStateRef.current, {
+          width,
+          height,
+          cameraDistance,
+          modelRadius: bounds?.radius,
+        });
+        renderSectionOverlayPass(renderer, sectionOverlaySceneRef.current, activeCamera, {
+          mainScene: scene,
+          refreshDepth: true,
+        });
+      }
+
       measurementOverlayRef.current?.render(scene, activeCamera);
     };
 
@@ -1127,6 +1404,7 @@ export function BimViewport({
       if (disposed) return;
       controls.update();
       const hasLayerFilter = hiddenStoreysRef.current.length > 0 || hiddenLayersRef.current.length > 0;
+      const hasSectionClip = sectionStateRef.current?.enabled === true;
 
       if (modelReadyRef.current && !updatePending) {
         updatePending = true;
@@ -1152,7 +1430,7 @@ export function BimViewport({
         return;
       }
 
-      if (updatePending && hasLayerFilter) {
+      if (updatePending && (hasLayerFilter || hasSectionClip)) {
         animationRef.current = window.requestAnimationFrame(animate);
         return;
       }
@@ -1181,8 +1459,16 @@ export function BimViewport({
       directLightsRef.current = null;
       legacyLightsRef.current = null;
       wireframeBuildSeqRef.current += 1;
+      sectionRebuildSeqRef.current += 1;
+      if (sectionOverlayDebounceRef.current) {
+        window.clearTimeout(sectionOverlayDebounceRef.current);
+        sectionOverlayDebounceRef.current = null;
+      }
       disposeWireframeEdges(wireframeEdgesRef.current);
       wireframeEdgesRef.current = null;
+      disposeSectionOverlay(sectionOverlayGroupRef.current);
+      sectionOverlayGroupRef.current = null;
+      activeClippingPlanesRef.current = [];
       disposeClayComposer(clayComposerRef.current);
       clayComposerRef.current = null;
       teardownClayLighting(sceneRef.current, clayLightingStateRef.current);
@@ -1204,6 +1490,7 @@ export function BimViewport({
       controlsRef.current = null;
       sceneRef.current = null;
       wireframeOverlaySceneRef.current = null;
+      sectionOverlaySceneRef.current = null;
       fragmentsRef.current = null;
       modelRef.current = null;
       localIdsRef.current = [];
@@ -1737,6 +2024,39 @@ export function BimViewport({
     onHiddenLayersChange(layerCatalog.layers.map((entry) => entry.id));
   }, [layerCatalog.layers, onHiddenLayersChange]);
 
+  const handleToggleSectionHud = useCallback(() => {
+    setSectionHudOpen((open) => !open);
+  }, []);
+
+  const handlePatchSection = useCallback((patch) => {
+    applyLiveSectionState(normalizeBimSectionState({
+      ...normalizedSection,
+      ...patch,
+      planes: patch.planes ?? normalizedSection.planes,
+    }, { defaultPlaneY: sectionHeightRangeFromBounds(viewportBounds).defaultY }), {
+      rebuildOverlay: patch.enabled !== false,
+      delayMs: patch.enabled === false ? 0 : 32,
+    });
+  }, [applyLiveSectionState, normalizedSection, viewportBounds]);
+
+  const handleSetPlaneHeight = useCallback((y) => {
+    applyLiveSectionState(
+      patchPrimaryPlaneHeight(normalizedSection, y, viewportBounds),
+      { rebuildOverlay: true, delayMs: 32 },
+    );
+  }, [applyLiveSectionState, normalizedSection, viewportBounds]);
+
+  const handleFlipPlane = useCallback(() => {
+    applyLiveSectionState(flipPrimaryPlaneNormal(normalizedSection), { rebuildOverlay: true, delayMs: 0 });
+  }, [applyLiveSectionState, normalizedSection]);
+
+  const handleApplyStoreyPreset = useCallback((y) => {
+    applyLiveSectionState(
+      patchPrimaryPlaneHeight(normalizedSection, y, viewportBounds),
+      { rebuildOverlay: true, delayMs: 0 },
+    );
+  }, [applyLiveSectionState, normalizedSection, viewportBounds]);
+
   const handleToggleClay = useCallback(() => {
     onRenderStyleChange(renderStyle === 'clay' ? 'standard' : 'clay');
   }, [onRenderStyleChange, renderStyle]);
@@ -1929,6 +2249,16 @@ export function BimViewport({
           </button>
           <button
             type="button"
+            title={sectionHudOpen ? 'Hide section panel' : 'Section cut'}
+            onClick={handleToggleSectionHud}
+            className={`rounded border border-border p-1 ${sectionHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+            aria-pressed={sectionHudOpen}
+            aria-label={sectionHudOpen ? 'Hide section panel' : 'Show section panel'}
+          >
+            <Slice size={14} strokeWidth={1.7} />
+          </button>
+          <button
+            type="button"
             title={layersHudOpen ? 'Hide layers panel' : 'IFC layers and storeys'}
             onClick={handleToggleLayersHud}
             className={`rounded border border-border p-1 ${layersHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
@@ -1948,8 +2278,20 @@ export function BimViewport({
           className="absolute inset-0 h-full w-full"
         />
         {loadState === 'loading' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-preview-bg/80 text-xs text-muted">
-            Loading Fragments model
+          <div
+            className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-preview-bg/85 backdrop-blur-sm px-6 text-center"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <div
+              className="mb-3 h-8 w-8 animate-spin rounded-full border-2 border-border border-t-accent"
+              aria-hidden
+            />
+            <div className="text-sm text-primary">{loadPhase}</div>
+            {loadDetail && (
+              <div className="mt-1 text-[11px] text-muted">{loadDetail}</div>
+            )}
           </div>
         )}
         {loadState === 'error' && (
@@ -1960,19 +2302,33 @@ export function BimViewport({
             </div>
           </div>
         )}
-        {loadState === 'ready' && layersHudOpen && (
-          <div className="pointer-events-none absolute left-3 top-3 z-20 w-[min(calc(100%-1.5rem),18rem)]">
-            <BimLayersHud
-              catalog={layerCatalog}
-              hiddenStoreys={hiddenStoreys}
-              hiddenLayers={hiddenLayers}
-              onToggleStorey={handleToggleHiddenStorey}
-              onToggleLayer={handleToggleHiddenLayer}
-              onShowAllStoreys={handleShowAllStoreys}
-              onHideAllStoreys={handleHideAllStoreys}
-              onShowAllLayers={handleShowAllLayers}
-              onHideAllLayers={handleHideAllLayers}
-            />
+        {loadState === 'ready' && (layersHudOpen || sectionHudOpen) && (
+          <div className="pointer-events-none absolute left-3 top-3 z-20 flex w-[min(calc(100%-1.5rem),18rem)] flex-col gap-2">
+            {layersHudOpen && (
+              <BimLayersHud
+                catalog={layerCatalog}
+                hiddenStoreys={hiddenStoreys}
+                hiddenLayers={hiddenLayers}
+                onToggleStorey={handleToggleHiddenStorey}
+                onToggleLayer={handleToggleHiddenLayer}
+                onShowAllStoreys={handleShowAllStoreys}
+                onHideAllStoreys={handleHideAllStoreys}
+                onShowAllLayers={handleShowAllLayers}
+                onHideAllLayers={handleHideAllLayers}
+              />
+            )}
+            {sectionHudOpen && (
+              <BimSectionHud
+                section={normalizedSection}
+                bounds={viewportBounds}
+                preparedModel={preparedModel}
+                catalogStoreys={layerCatalog.storeys}
+                onPatchSection={handlePatchSection}
+                onSetPlaneHeight={handleSetPlaneHeight}
+                onFlipPlane={handleFlipPlane}
+                onApplyStoreyPreset={handleApplyStoreyPreset}
+              />
+            )}
           </div>
         )}
         {loadState === 'ready' && (agentHudOpen || bqlHudOpen || styleHudOpen) && (

@@ -49,35 +49,60 @@ export function ClaySliderControl({
   valueClassName = 'min-w-[2.25rem]',
   formatKind,
   onChange,
+  disabled = false,
+  stacked = false,
 }) {
-  const formatted = formatClaySliderValue(formatKind, value);
-  const atLimit = claySliderAtLimit(value, min, max);
+  const numericValue = Number(value);
+  const sliderValue = Number.isFinite(numericValue) ? numericValue : min;
+  const formatted = formatClaySliderValue(formatKind, sliderValue);
+  const atLimit = claySliderAtLimit(sliderValue, min, max);
   const limitTitle = atLimit === 'max'
     ? `At slider maximum (${formatted}) — range may need extending`
     : atLimit === 'min'
       ? `At slider minimum (${formatted})`
       : `${formatted} (range ${formatClaySliderValue(formatKind, min)}–${formatClaySliderValue(formatKind, max)})`;
 
+  const valueNode = (
+    <span
+      className={`${valueClassName} shrink-0 text-right font-mono tabular-nums text-[9px] leading-none ${atLimit ? 'text-accent' : 'text-muted'}`}
+      title={limitTitle}
+    >
+      {formatted}
+    </span>
+  );
+
+  const sliderNode = (
+    <input
+      type="range"
+      min={min}
+      max={max}
+      step={step}
+      value={sliderValue}
+      onChange={onChange}
+      disabled={disabled}
+      className={`${stacked ? 'w-full' : sliderClassName} accent-accent disabled:cursor-not-allowed disabled:opacity-50`}
+      aria-label={ariaLabel}
+      aria-valuetext={formatted}
+    />
+  );
+
+  if (stacked) {
+    return (
+      <label className="flex w-full flex-col gap-1 text-[10px] text-secondary" title={title}>
+        <div className="flex items-center justify-between gap-2">
+          <span className="whitespace-nowrap uppercase tracking-wider text-muted">{label}</span>
+          {valueNode}
+        </div>
+        {sliderNode}
+      </label>
+    );
+  }
+
   return (
     <label className="flex w-full items-center gap-1.5 text-[10px] text-secondary" title={title}>
       <span className="w-7 shrink-0 text-muted uppercase tracking-wider">{label}</span>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={onChange}
-        className={`${sliderClassName} accent-accent`}
-        aria-label={ariaLabel}
-        aria-valuetext={formatted}
-      />
-      <span
-        className={`${valueClassName} shrink-0 text-right font-mono tabular-nums text-[9px] leading-none ${atLimit ? 'text-accent' : 'text-muted'}`}
-        title={limitTitle}
-      >
-        {formatted}
-      </span>
+      {sliderNode}
+      {valueNode}
     </label>
   );
 }

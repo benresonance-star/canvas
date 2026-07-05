@@ -10,6 +10,7 @@ import { BimStyleSettingsHud } from '../BimStyleSettingsHud.jsx';
 import { BimAgentHud } from '../BimAgentHud.jsx';
 import { BimBqlHud } from '../BimBqlHud.jsx';
 import { BimLayersHud } from '../BimLayersHud.jsx';
+import { BimSectionHud } from '../BimSectionHud.jsx';
 import { BIM_AGENT_INFO } from '../bimAgentPanelShared.js';
 
 describe('BIM UI components', () => {
@@ -114,7 +115,7 @@ describe('BIM UI components', () => {
         onDisplayModeChange: () => {},
       }),
     );
-    expect(html).toContain('Loading Fragments model');
+    expect(html).toContain('Preparing viewer');
   });
 
   it('shows viewport error when fragments are unavailable', () => {
@@ -369,6 +370,7 @@ describe('BIM UI components', () => {
     expect(html).toContain('Clay render (Arctic)');
     expect(html).toContain('Show style settings panel');
     expect(html).toContain('Show layers panel');
+    expect(html).toContain('Show section panel');
     expect(html).not.toContain('Clay style controls');
   });
 
@@ -392,6 +394,32 @@ describe('BIM UI components', () => {
     expect(html).toContain('Layers &amp; storeys');
     expect(html).toContain('Level 01');
     expect(html).toContain('Structure');
+  });
+
+  it('renders the section HUD with style controls', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimSectionHud, {
+        section: {
+          enabled: true,
+          showFills: true,
+          showEdges: true,
+          fillColor: '#e8e8e8',
+          edgeColor: '#333333',
+          edgeLineWeight: 1.5,
+          planes: [{ id: 'section-plane-1', normal: [0, -1, 0], point: [0, 2, 0], enabled: true }],
+        },
+        bounds: { radius: 10, center: { x: 0, y: 0, z: 0 } },
+        catalogStoreys: [{ id: 'Level 01', label: 'Level 01', count: 3 }],
+        onPatchSection: () => {},
+        onSetPlaneHeight: () => {},
+        onFlipPlane: () => {},
+        onApplyStoreyPreset: () => {},
+      }),
+    );
+    expect(html).toContain('Section cut');
+    expect(html).toContain('Plane height');
+    expect(html).toContain('Section style');
+    expect(html).toContain('Level 01');
   });
 
   it('hides wireframe style controls when wireframe mode is off', () => {

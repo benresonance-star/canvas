@@ -3,6 +3,7 @@ import {
   ensureFragmentsUpdated,
   hasViewportLayoutSize,
   isFragmentsModelRegistered,
+  syncFragmentsForViewportBoot,
 } from '../bimViewportBoot.js';
 
 describe('bim viewport boot helpers', () => {
@@ -46,5 +47,11 @@ describe('bim viewport boot helpers', () => {
 
     expect(synced).toBe(true);
     expect(updateFragments).toHaveBeenCalledTimes(3);
+  });
+
+  it('syncFragmentsForViewportBoot returns immediately when the first update succeeds', async () => {
+    const updateFragments = vi.fn().mockResolvedValue(true);
+    await expect(syncFragmentsForViewportBoot(updateFragments)).resolves.toBe(true);
+    expect(updateFragments).toHaveBeenCalledTimes(1);
   });
 });

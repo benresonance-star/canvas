@@ -268,11 +268,14 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Viewer rendering | Yes — `BimViewport.jsx` (Fragments + Three.js); boot gated on layout + worker registration via `bimViewportBoot.js` |
 | Wireframe overlay | Yes — feature-edge overlay over lit/ghost/highlight/clay; toolbar style controls when enabled (weight, transparency, colour, Hdn/All); persisted in workspace state (`wireframeHiddenLines` default true) |
 | Clay / Arctic render | Yes — `renderStyle: 'clay'` with SSAO + optional wireframe compositing; circle icon toggle in rounded-square toolbar button |
-| Default open state | Yes — highlight display mode, standard render, all storeys/layers visible (`BIM_VIEWER_DEFAULTS`) |
+| Viewport boot | Yes — `bimViewportBoot.js` (layout wait, registration, fast sync, phased loading UI) |
+| Default open state | Yes — highlight display mode, standard render, all storeys/layers visible, **section cut off** (`BIM_VIEWER_DEFAULTS` + `applyBimViewerDefaults`) |
 | Style settings HUD | Yes — background colour + presets always available; clay/wireframe sliders when active (`BimStyleSettingsHud.jsx`) |
 | Storey / layer HUD | Yes — `BimLayersHud.jsx` + `bimLayerVisibility.js` |
 | Style presets (server) | Yes — Postgres `bim_style_presets` + REST under `/bim/projects/:projectId/style-presets` |
 | Floating BQL / agent HUDs | Yes — `BimBqlHud.jsx`, `BimAgentHud.jsx` in viewport top-right stack |
+| Section cut | Yes — horizontal clipping plane + fill/edge overlay (`BimSectionHud.jsx`, `bimSectioning.js`); **off by default** on workspace open |
+| Viewport loading feedback | Yes — phased boot overlay (`BIM_VIEWPORT_LOAD_PHASES`) with spinner + element count |
 | Perspective / orthographic | Yes — toolbar toggle + camera state persistence |
 | Measurements | Yes — vertex/edge snap, segment + polyline, units toggle; shared `MeasurementUi` with 3D artifact viewer |
 | HDRI lighting | Yes — environment preset cycle (off / studio / city / …) |
@@ -308,6 +311,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Clay / Arctic render | `canvas/src/features/bim/bim-core/bimClayRender.js` |
 | Style settings | `canvas/src/features/bim/bim-core/bimStyleSettings.js` |
 | Layer visibility | `canvas/src/features/bim/bim-core/bimLayerVisibility.js`, `bimElementLayers.js` |
+| Section cut | `canvas/src/features/bim/bim-core/bimSectioning.js`, `bimScreenDepth.js`, `components/BimSectionHud.jsx` |
 | Viewport boot | `canvas/src/features/bim/bim-core/bimViewportBoot.js` |
 | Style presets API | `canvas/server/routes/bim.js`, `canvas/server/repositories/bim-style-presets.js` |
 | Query panel | `canvas/src/features/bim/components/BimQueryPanel.jsx`, `BimBqlHud.jsx` |

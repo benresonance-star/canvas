@@ -871,6 +871,7 @@ export function BimWorkspace({
             isolateOnSelect={workspaceState.isolateOnSelect}
             hiddenStoreys={workspaceState.hiddenStoreys}
             hiddenLayers={workspaceState.hiddenLayers}
+            section={workspaceState.section}
             colorByProperty={queryResult?.viewerState?.colorByProperty}
             leftPanelOpen={leftPanelOpen}
             rightPanelOpen={rightPanelOpen}
@@ -882,6 +883,7 @@ export function BimWorkspace({
             onIsolateOnSelectChange={(isolateOnSelect) => patchWorkspaceState({ isolateOnSelect })}
             onHiddenStoreysChange={(hiddenStoreys) => patchWorkspaceState({ hiddenStoreys })}
             onHiddenLayersChange={(hiddenLayers) => patchWorkspaceState({ hiddenLayers })}
+            onSectionChange={(section) => patchWorkspaceState({ section })}
             onSelectElementByGlobalId={selectElementByGlobalId}
             onDeselectElement={deselectElement}
             onCameraChange={(camera) => patchWorkspaceState({ camera })}

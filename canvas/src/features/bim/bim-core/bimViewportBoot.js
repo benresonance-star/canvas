@@ -1,6 +1,18 @@
 export const FRAGMENTS_MODEL_REGISTRATION_RETRY_DELAYS_MS = [16, 50, 100, 200, 400, 800, 1200, 2000, 3000];
 export const FRAGMENTS_UPDATE_BOOT_TIMEOUT_MS = 20000;
+export const FRAGMENTS_BOOT_SYNC_TIMEOUT_MS = 8000;
+export const FRAGMENTS_BOOT_IDLE_TIMEOUT_MS = 2500;
 export const VIEWPORT_LAYOUT_WAIT_TIMEOUT_MS = 20000;
+
+export const BIM_VIEWPORT_LOAD_PHASES = {
+  preparing: 'Preparing viewer…',
+  reading: 'Reading model data…',
+  loadingGeometry: 'Loading 3D geometry…',
+  registering: 'Registering model…',
+  buildingView: 'Building view…',
+  syncing: 'Syncing geometry…',
+  finishing: 'Finishing up…',
+};
 
 export function delay(ms) {
   return new Promise((resolve) => {
@@ -117,6 +129,18 @@ export async function waitForFragmentsModelIdle(model, {
   return model.isBusy === false;
 }
 
+export async function syncFragmentsForViewportBoot(updateFragments, {
+  disposed = () => false,
+  maxWaitMs = FRAGMENTS_BOOT_SYNC_TIMEOUT_MS,
+} = {}) {
+  const synced = await updateFragments(true, {
+    retryModelRegistration: true,
+    requireModelReady: false,
+  });
+  if (synced || disposed()) return synced;
+  return ensureFragmentsUpdated(updateFragments, { disposed, maxWaitMs });
+}
+
 export async function ensureFragmentsUpdated(updateFragments, {
   disposed = () => false,
   maxWaitMs = FRAGMENTS_UPDATE_BOOT_TIMEOUT_MS,
@@ -133,3 +157,4 @@ export async function ensureFragmentsUpdated(updateFragments, {
   }
   return false;
 }
+

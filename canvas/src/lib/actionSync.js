@@ -229,6 +229,7 @@ export function requestActionSync(reason, options = {}) {
   }
   const scopedProjectId = options.projectId ?? null;
   return runSyncGate(`action:${reason}`, async () => {
+    if (!handlers) return;
     if (reason === 'placementTransfer') {
       syncTraceLog(traceId, 'actionSync:gate-enter', {
         projectId: options.projectId ?? handlers.getProjectId(),
@@ -284,13 +285,13 @@ export function requestActionSync(reason, options = {}) {
               traceId,
               beforePayload,
             );
-            await handlers.touchIndex(projectId);
+            await handlers?.touchIndex?.(projectId);
             return;
           }
           syncTraceLog(traceId, 'actionSync:placement-no-commit', { projectId });
         }
         const { payload, localOk } = await persistViaCommit(projectId, reason);
-        if (!payload) return;
+        if (!payload || !handlers) return;
         if (!localOk) handlers.onLocalCacheFailed(projectId);
         const beforePayload = getPriorPayloadForPatch(projectId);
         void pushPayloadForProject(
@@ -301,11 +302,11 @@ export function requestActionSync(reason, options = {}) {
           beforePayload,
           { allowCleanupOverwrite },
         );
-        await handlers.touchIndex(projectId);
+        await handlers?.touchIndex?.(projectId);
         return;
       }
       await flushLocalAndPush(projectId, reason, { allowCleanupOverwrite });
-      await handlers.touchIndex(projectId);
+      await handlers?.touchIndex?.(projectId);
       return;
     }
 
