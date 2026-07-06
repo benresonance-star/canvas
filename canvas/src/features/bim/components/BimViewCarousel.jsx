@@ -252,12 +252,18 @@ export function BimViewCarousel({
 
   if (!open) return null;
 
+  const viewCount = activeSet?.views?.length ?? 0;
+
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20">
-      <div className="pointer-events-auto border-t border-border bg-surface/95 shadow-lg backdrop-blur-sm">
-        <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-3">
+      <div
+        className="pointer-events-auto flex w-max max-w-[75vw] min-w-0 flex-col overflow-hidden rounded-md border border-border bg-surface/95 shadow-lg backdrop-blur-sm"
+        aria-label="View carousel"
+        data-view-count={viewCount}
+      >
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
           <span className="text-[10px] uppercase tracking-wider text-muted">View sets</span>
-          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-visible">
+          <div className="flex min-w-0 items-center gap-1 overflow-x-auto overflow-y-visible">
             {viewSets.map((set) => (
               <button
                 key={set.id}
@@ -377,8 +383,9 @@ export function BimViewCarousel({
             Save view
           </button>
         </div>
-        <div className="flex gap-2 overflow-x-auto overflow-y-visible px-3 py-2">
-          {(activeSet?.views ?? []).length === 0 ? (
+        <div className="overflow-x-auto px-3 py-2">
+          <div className="flex w-max max-w-full gap-2">
+          {viewCount === 0 ? (
             <div className="py-3 text-xs text-muted">
               No views in this set yet. Position the viewport and click Save view.
             </div>
@@ -401,6 +408,7 @@ export function BimViewCarousel({
               />
             ))
           )}
+          </div>
         </div>
         {(status || error) && (
           <div className={`border-t border-border px-3 py-1 text-[11px] ${error ? 'text-warning' : 'text-muted'}`}>

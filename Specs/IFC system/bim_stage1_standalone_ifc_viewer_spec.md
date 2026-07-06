@@ -280,7 +280,9 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Viewport boot | Yes — `bimViewportBoot.js` (layout wait, registration, fast sync, phased loading UI) |
 | Default open state | Yes — highlight display mode, standard render, all storeys/layers visible, **section cut off** (`BIM_VIEWER_DEFAULTS` + `applyBimViewerDefaults`) |
 | Style settings HUD | Yes — toolbar sliders icon toggles floating panel; background + presets always; HDRI lighting (standard only); clay/wireframe sliders + clay debug when active (`BimStyleSettingsHud.jsx`, `BimStyleToolbarControls.jsx`, `BimClayDebugPanel.jsx`) |
-| Viewport toolbar layout | Yes — grouped sections with separators: panels → measure → view → camera → display → tools |
+| Viewport toolbar layout | Yes — **floating top-centre HUD** over canvas (`max-w-[95vw]` scroll); grouped sections with separators: panels → measure → view → camera → display (incl. saved views) → tools |
+| Saved view carousel | Yes — **floating bottom-centre HUD** (`max-w-[75vw]`, width adapts to thumbnails); `Images` toolbar icon |
+| Workspace header | Yes — single row: project title + element/property counts + cache status (no separate status strip) |
 | Storey / layer HUD | Yes — `BimLayersHud.jsx` + `bimLayerVisibility.js` |
 | Style presets (server) | Yes — Postgres `bim_style_presets` + REST under `/bim/projects/:projectId/style-presets` |
 | Floating BQL / agent HUDs | Yes — `BimBqlHud.jsx`, `BimAgentHud.jsx` in viewport top-right stack |

@@ -829,10 +829,11 @@ describe('BIM UI components', () => {
       }),
     );
 
-    expect(html).toContain('View sets');
+    expect(html).toContain('View carousel');
     expect(html).toContain('PLANS');
     expect(html).toContain('Plan A');
     expect(html).toContain('Save view');
+    expect(html).toContain('max-w-[75vw]');
   });
 
   it('hides the view carousel when closed', () => {

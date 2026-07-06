@@ -1098,18 +1098,18 @@ export function BimWorkspace({
 
   return (
     <div className="h-full w-full min-h-0 flex flex-col bg-preview-bg">
-      <div className="shrink-0 border-b border-border bg-surface px-3 py-2 flex items-center justify-between">
-        <div>
+      <div className="shrink-0 border-b border-border bg-surface px-3 py-2 flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <div className="text-[10px] uppercase tracking-wider text-muted">BIM Workspace</div>
-          <div className="serif text-sm text-primary">{card?.name ?? version?.filename}</div>
+          <div className="serif text-sm text-primary truncate">{card?.name ?? version?.filename}</div>
         </div>
-        <div className="text-[10px] text-muted">
-          {prepared.elements.length} elements · {prepared.properties.length} properties
+        <div className="shrink-0 text-right text-[10px] text-muted">
+          <div>{prepared.elements.length} elements · {prepared.properties.length} properties</div>
+          <div className="uppercase tracking-wider">
+            {cacheStatus === 'loaded_cache' ? 'Loaded prepared BIM cache' : 'Prepared BIM cache'} · {PHASE_LABELS[phase] ?? 'Ready'}
+            {prepared.metadata?.fragmentsStatus === 'failed' ? ' · Fragments conversion failed; evidence view remains available' : ''}
+          </div>
         </div>
-      </div>
-      <div className="shrink-0 border-b border-border bg-preview-bg px-3 py-1 text-[10px] uppercase tracking-wider text-muted">
-        {cacheStatus === 'loaded_cache' ? 'Loaded prepared BIM cache' : 'Prepared BIM cache'} - {PHASE_LABELS[phase] ?? 'Ready'}
-        {prepared.metadata?.fragmentsStatus === 'failed' ? ' - Fragments conversion failed; evidence view remains available' : ''}
       </div>
       {extractionFeed.length > 0 && cacheStatus !== 'loaded_cache' && (
         <div className="shrink-0 border-b border-border bg-surface px-3 py-1 text-[10px] text-muted">

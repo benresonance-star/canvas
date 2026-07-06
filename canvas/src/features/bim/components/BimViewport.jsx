@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Axis3D, Box, Bot, Braces, CalendarDays, Camera, Circle, DollarSign, Eye, EyeOff, Ghost, Grid3x3, Layers, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal, SunMedium } from 'lucide-react';
+import { Axis3D, Box, Bot, Braces, CalendarDays, Camera, Circle, DollarSign, EyeOff, Ghost, Grid3x3, Images, Layers, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal, SunMedium } from 'lucide-react';
 import { MOUSE } from 'three';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -2637,240 +2637,6 @@ export function BimViewport({
 
   return (
     <div className="h-full min-h-0 flex flex-col bg-preview-bg">
-      <div className="shrink-0 border-b border-border bg-surface">
-        <div className="flex items-center justify-between px-3 py-2">
-        <div className="text-[10px] uppercase tracking-wider text-muted truncate">
-          {measureStatus ?? (selectedElement
-            ? 'Left-click empty space or Esc to deselect · Right-drag orbit · Middle-drag pan'
-            : `IFC Fragments View - ${total} elements · Left-click select · Right-drag orbit · Middle-drag pan`)}
-        </div>
-        <div className="flex items-center">
-          <div className="flex items-center gap-1">
-          <button
-            type="button"
-            title={leftPanelOpen ? 'Collapse element list' : 'Expand element list'}
-            onClick={onToggleLeftPanel}
-            className="rounded border border-border p-1 text-secondary hover:bg-surface-muted"
-          >
-            {leftPanelOpen ? <PanelLeftClose size={14} strokeWidth={1.7} /> : <PanelLeft size={14} strokeWidth={1.7} />}
-          </button>
-          <button
-            type="button"
-            title={rightPanelOpen ? 'Collapse inspector' : 'Expand inspector'}
-            onClick={onToggleRightPanel}
-            className="rounded border border-border p-1 text-secondary hover:bg-surface-muted"
-          >
-            {rightPanelOpen ? <PanelRightClose size={14} strokeWidth={1.7} /> : <PanelRight size={14} strokeWidth={1.7} />}
-          </button>
-          </div>
-          <BimViewportToolbarSeparator />
-          <div className="flex items-center gap-1">
-          <MeasurementToolbarControls
-            measureModeActive={measureModeActive}
-            measureSnapMode={measureSnapMode}
-            measureKind={measureKind}
-            measureUnits={measureUnits}
-            onToggleMeasureMode={handleToggleMeasureMode}
-            onMeasureSnapModeChange={onMeasureSnapModeChange}
-            onMeasureKindChange={onMeasureKindChange}
-            onMeasureUnitsChange={onMeasureUnitsChange}
-            compact
-            buttonClassName={(active) => `rounded border border-border p-1 ${
-              active ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
-            }`}
-            activeButtonClassName="rounded border border-border p-1 bg-accent text-on-accent"
-          />
-          </div>
-          <BimViewportToolbarSeparator />
-          <div className="flex items-center gap-1">
-          <button type="button" title="Reset visibility" onClick={resetVisibility} className="rounded border border-border p-1 text-secondary hover:bg-surface-muted">
-            <RotateCcw size={14} strokeWidth={1.7} />
-          </button>
-          <button type="button" title="Fit to model" onClick={fitModel} className="rounded border border-border p-1 text-secondary hover:bg-surface-muted">
-            <LocateFixed size={14} strokeWidth={1.7} />
-          </button>
-          </div>
-          <BimViewportToolbarSeparator />
-          <div className="flex items-center gap-1">
-          {projectionMode === 'perspective' && (
-            <input
-              type="number"
-              min={10}
-              max={120}
-              step={1}
-              value={fovInput}
-              title="Field of view (degrees)"
-              aria-label="Field of view (degrees)"
-              onChange={handleFovInputChange}
-              onBlur={handleFovInputBlur}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') event.currentTarget.blur();
-              }}
-              className="w-12 rounded border border-border bg-surface px-1 py-1 text-[10px] text-secondary"
-            />
-          )}
-          <button
-            type="button"
-            title={projectionMode === 'perspective' ? 'Switch to isometric (orthographic)' : 'Switch to perspective'}
-            onClick={handleToggleProjection}
-            className={`rounded border border-border p-1 ${projectionMode === 'orthographic' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-          >
-            {projectionMode === 'perspective'
-              ? <Axis3D size={14} strokeWidth={1.7} />
-              : <Camera size={14} strokeWidth={1.7} />}
-          </button>
-          </div>
-          <BimViewportToolbarSeparator />
-          <div className="flex items-center gap-1">
-          <button
-            type="button"
-            title="Wireframe overlay (visible edges)"
-            onClick={handleToggleWireframe}
-            className={`rounded border border-border p-1 ${wireframeMode ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-          >
-            <Grid3x3 size={14} strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            title="Clay render (Arctic)"
-            onClick={handleToggleClay}
-            className={`rounded border border-border p-1 ${
-              renderStyle === 'clay' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
-            }`}
-            aria-pressed={renderStyle === 'clay'}
-            aria-label="Clay render (Arctic)"
-          >
-            <Circle size={14} strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            title="Highlight"
-            onClick={() => onDisplayModeChange('highlight')}
-            className={`rounded border border-border p-1 ${displayMode === 'highlight' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-          >
-            <Box size={14} strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            title={displayMode === 'ghostOthers' ? 'Show all (exit ghost)' : 'Ghost others'}
-            onClick={handleToggleGhost}
-            className={`rounded border border-border p-1 ${displayMode === 'ghostOthers' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-            aria-pressed={displayMode === 'ghostOthers'}
-            aria-label={displayMode === 'ghostOthers' ? 'Exit ghost mode' : 'Ghost others'}
-          >
-            <Ghost size={14} strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            title={isolateOnSelect ? 'Disable isolate on select' : 'Isolate selected element'}
-            onClick={handleToggleIsolateOnSelect}
-            className={`rounded border border-border p-1 ${isolateOnSelect ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-            aria-pressed={isolateOnSelect}
-            aria-label={isolateOnSelect ? 'Disable isolate on select' : 'Isolate selected element'}
-          >
-            <EyeOff size={14} strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            title={styleHudOpen ? 'Hide style settings' : 'Show style settings'}
-            onClick={() => setStyleHudOpen((open) => !open)}
-            className={`rounded border border-border p-1 ${styleHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-            aria-pressed={styleHudOpen}
-            aria-label={styleHudOpen ? 'Hide style settings panel' : 'Show style settings panel'}
-          >
-            <SlidersHorizontal size={14} strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            title={viewCarouselOpen ? 'Hide view carousel' : 'Show view carousel'}
-            onClick={onToggleViewCarousel}
-            className={`rounded border border-border p-1 ${viewCarouselOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-            aria-pressed={viewCarouselOpen}
-            aria-label={viewCarouselOpen ? 'Hide view carousel' : 'Show view carousel'}
-          >
-            <Eye size={14} strokeWidth={1.7} />
-          </button>
-          </div>
-          <BimViewportToolbarSeparator />
-          <div className="flex items-center gap-1">
-          <button
-            type="button"
-            title={bqlHudOpen ? 'Hide BQL query' : 'Show BQL query'}
-            onClick={() => setBqlHudOpen((open) => !open)}
-            className={`rounded border border-border p-1 ${bqlHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-            aria-pressed={bqlHudOpen}
-            aria-label={bqlHudOpen ? 'Hide BQL query panel' : 'Show BQL query panel'}
-          >
-            <Braces size={14} strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            title={agentHudOpen ? 'Hide BIM agent' : 'Show BIM agent'}
-            onClick={() => setAgentHudOpen((open) => !open)}
-            className={`rounded border border-border p-1 ${agentHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-            aria-pressed={agentHudOpen}
-            aria-label={agentHudOpen ? 'Hide BIM agent panel' : 'Show BIM agent panel'}
-          >
-            <Bot size={14} strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            title={fourDHudOpen ? 'Hide 4D sequencing' : 'Show 4D sequencing'}
-            onClick={() => setFourDHudOpen((open) => !open)}
-            className={`rounded border border-border p-1 ${fourDHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-            aria-pressed={fourDHudOpen}
-            aria-label={fourDHudOpen ? 'Hide 4D sequencing panel' : 'Show 4D sequencing panel'}
-          >
-            <CalendarDays size={14} strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            title={fiveDHudOpen ? 'Hide 5D takeoff' : 'Show 5D takeoff'}
-            onClick={() => setFiveDHudOpen((open) => !open)}
-            className={`rounded border border-border p-1 ${fiveDHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-            aria-pressed={fiveDHudOpen}
-            aria-label={fiveDHudOpen ? 'Hide 5D takeoff panel' : 'Show 5D takeoff panel'}
-          >
-            <DollarSign size={14} strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            title={sectionHudOpen ? 'Hide section panel' : 'Section cut'}
-            onClick={handleToggleSectionHud}
-            className={`rounded border border-border p-1 ${sectionHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-            aria-pressed={sectionHudOpen}
-            aria-label={sectionHudOpen ? 'Hide section panel' : 'Show section panel'}
-          >
-            <Slice size={14} strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            title={layersHudOpen ? 'Hide layers panel' : 'IFC layers and storeys'}
-            onClick={handleToggleLayersHud}
-            className={`rounded border border-border p-1 ${layersHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-            aria-pressed={layersHudOpen}
-            aria-label={layersHudOpen ? 'Hide layers panel' : 'Show layers panel'}
-          >
-            <Layers size={14} strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            title={sunStudyHudOpen ? 'Hide sun study' : 'Sun study'}
-            onClick={handleToggleSunStudyHud}
-            className={`rounded border border-border p-1 ${
-              sunStudyHudOpen || environmentalAnalysis?.sunStudy?.enabled
-                ? 'bg-accent text-on-accent'
-                : 'text-secondary hover:bg-surface-muted'
-            }`}
-            aria-pressed={sunStudyHudOpen}
-            aria-label={sunStudyHudOpen ? 'Hide sun study panel' : 'Show sun study panel'}
-          >
-            <SunMedium size={14} strokeWidth={1.7} />
-          </button>
-          </div>
-        </div>
-        </div>
-      </div>
       <div
         ref={containerRef}
         tabIndex={0}
@@ -2880,6 +2646,246 @@ export function BimViewport({
           ref={canvasRef}
           className="absolute inset-0 h-full w-full"
         />
+        <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-3">
+          <div
+            className="pointer-events-auto flex max-w-[95vw] items-center overflow-x-auto rounded-md border border-border bg-surface/95 px-2 py-1.5 shadow-lg backdrop-blur-sm"
+            aria-label="Viewport controls"
+          >
+            {measureStatus ? (
+              <>
+                <div className="max-w-[12rem] shrink-0 truncate text-[10px] uppercase tracking-wider text-muted">
+                  {measureStatus}
+                </div>
+                <BimViewportToolbarSeparator />
+              </>
+            ) : null}
+            <div className="flex items-center">
+              <div className="flex items-center gap-1">
+              <button
+                type="button"
+                title={leftPanelOpen ? 'Collapse element list' : 'Expand element list'}
+                onClick={onToggleLeftPanel}
+                className="rounded border border-border p-1 text-secondary hover:bg-surface-muted"
+              >
+                {leftPanelOpen ? <PanelLeftClose size={14} strokeWidth={1.7} /> : <PanelLeft size={14} strokeWidth={1.7} />}
+              </button>
+              <button
+                type="button"
+                title={rightPanelOpen ? 'Collapse inspector' : 'Expand inspector'}
+                onClick={onToggleRightPanel}
+                className="rounded border border-border p-1 text-secondary hover:bg-surface-muted"
+              >
+                {rightPanelOpen ? <PanelRightClose size={14} strokeWidth={1.7} /> : <PanelRight size={14} strokeWidth={1.7} />}
+              </button>
+              </div>
+              <BimViewportToolbarSeparator />
+              <div className="flex items-center gap-1">
+              <MeasurementToolbarControls
+                measureModeActive={measureModeActive}
+                measureSnapMode={measureSnapMode}
+                measureKind={measureKind}
+                measureUnits={measureUnits}
+                onToggleMeasureMode={handleToggleMeasureMode}
+                onMeasureSnapModeChange={onMeasureSnapModeChange}
+                onMeasureKindChange={onMeasureKindChange}
+                onMeasureUnitsChange={onMeasureUnitsChange}
+                compact
+                buttonClassName={(active) => `rounded border border-border p-1 ${
+                  active ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
+                }`}
+                activeButtonClassName="rounded border border-border p-1 bg-accent text-on-accent"
+              />
+              </div>
+              <BimViewportToolbarSeparator />
+              <div className="flex items-center gap-1">
+              <button type="button" title="Reset visibility" onClick={resetVisibility} className="rounded border border-border p-1 text-secondary hover:bg-surface-muted">
+                <RotateCcw size={14} strokeWidth={1.7} />
+              </button>
+              <button type="button" title="Fit to model" onClick={fitModel} className="rounded border border-border p-1 text-secondary hover:bg-surface-muted">
+                <LocateFixed size={14} strokeWidth={1.7} />
+              </button>
+              </div>
+              <BimViewportToolbarSeparator />
+              <div className="flex items-center gap-1">
+              {projectionMode === 'perspective' && (
+                <input
+                  type="number"
+                  min={10}
+                  max={120}
+                  step={1}
+                  value={fovInput}
+                  title="Field of view (degrees)"
+                  aria-label="Field of view (degrees)"
+                  onChange={handleFovInputChange}
+                  onBlur={handleFovInputBlur}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') event.currentTarget.blur();
+                  }}
+                  className="w-12 rounded border border-border bg-surface px-1 py-1 text-[10px] text-secondary"
+                />
+              )}
+              <button
+                type="button"
+                title={projectionMode === 'perspective' ? 'Switch to isometric (orthographic)' : 'Switch to perspective'}
+                onClick={handleToggleProjection}
+                className={`rounded border border-border p-1 ${projectionMode === 'orthographic' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+              >
+                {projectionMode === 'perspective'
+                  ? <Axis3D size={14} strokeWidth={1.7} />
+                  : <Camera size={14} strokeWidth={1.7} />}
+              </button>
+              </div>
+              <BimViewportToolbarSeparator />
+              <div className="flex items-center gap-1">
+              <button
+                type="button"
+                title="Wireframe overlay (visible edges)"
+                onClick={handleToggleWireframe}
+                className={`rounded border border-border p-1 ${wireframeMode ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+              >
+                <Grid3x3 size={14} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                title="Clay render (Arctic)"
+                onClick={handleToggleClay}
+                className={`rounded border border-border p-1 ${
+                  renderStyle === 'clay' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
+                }`}
+                aria-pressed={renderStyle === 'clay'}
+                aria-label="Clay render (Arctic)"
+              >
+                <Circle size={14} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                title="Highlight"
+                onClick={() => onDisplayModeChange('highlight')}
+                className={`rounded border border-border p-1 ${displayMode === 'highlight' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+              >
+                <Box size={14} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                title={displayMode === 'ghostOthers' ? 'Show all (exit ghost)' : 'Ghost others'}
+                onClick={handleToggleGhost}
+                className={`rounded border border-border p-1 ${displayMode === 'ghostOthers' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                aria-pressed={displayMode === 'ghostOthers'}
+                aria-label={displayMode === 'ghostOthers' ? 'Exit ghost mode' : 'Ghost others'}
+              >
+                <Ghost size={14} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                title={isolateOnSelect ? 'Disable isolate on select' : 'Isolate selected element'}
+                onClick={handleToggleIsolateOnSelect}
+                className={`rounded border border-border p-1 ${isolateOnSelect ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                aria-pressed={isolateOnSelect}
+                aria-label={isolateOnSelect ? 'Disable isolate on select' : 'Isolate selected element'}
+              >
+                <EyeOff size={14} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                title={styleHudOpen ? 'Hide style settings' : 'Show style settings'}
+                onClick={() => setStyleHudOpen((open) => !open)}
+                className={`rounded border border-border p-1 ${styleHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                aria-pressed={styleHudOpen}
+                aria-label={styleHudOpen ? 'Hide style settings panel' : 'Show style settings panel'}
+              >
+                <SlidersHorizontal size={14} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                title={viewCarouselOpen ? 'Hide view carousel' : 'Show view carousel'}
+                onClick={onToggleViewCarousel}
+                className={`rounded border border-border p-1 ${viewCarouselOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                aria-pressed={viewCarouselOpen}
+                aria-label={viewCarouselOpen ? 'Hide view carousel' : 'Show view carousel'}
+              >
+                <Images size={14} strokeWidth={1.7} />
+              </button>
+              </div>
+              <BimViewportToolbarSeparator />
+              <div className="flex items-center gap-1">
+              <button
+                type="button"
+                title={bqlHudOpen ? 'Hide BQL query' : 'Show BQL query'}
+                onClick={() => setBqlHudOpen((open) => !open)}
+                className={`rounded border border-border p-1 ${bqlHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                aria-pressed={bqlHudOpen}
+                aria-label={bqlHudOpen ? 'Hide BQL query panel' : 'Show BQL query panel'}
+              >
+                <Braces size={14} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                title={agentHudOpen ? 'Hide BIM agent' : 'Show BIM agent'}
+                onClick={() => setAgentHudOpen((open) => !open)}
+                className={`rounded border border-border p-1 ${agentHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                aria-pressed={agentHudOpen}
+                aria-label={agentHudOpen ? 'Hide BIM agent panel' : 'Show BIM agent panel'}
+              >
+                <Bot size={14} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                title={fourDHudOpen ? 'Hide 4D sequencing' : 'Show 4D sequencing'}
+                onClick={() => setFourDHudOpen((open) => !open)}
+                className={`rounded border border-border p-1 ${fourDHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                aria-pressed={fourDHudOpen}
+                aria-label={fourDHudOpen ? 'Hide 4D sequencing panel' : 'Show 4D sequencing panel'}
+              >
+                <CalendarDays size={14} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                title={fiveDHudOpen ? 'Hide 5D takeoff' : 'Show 5D takeoff'}
+                onClick={() => setFiveDHudOpen((open) => !open)}
+                className={`rounded border border-border p-1 ${fiveDHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                aria-pressed={fiveDHudOpen}
+                aria-label={fiveDHudOpen ? 'Hide 5D takeoff panel' : 'Show 5D takeoff panel'}
+              >
+                <DollarSign size={14} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                title={sectionHudOpen ? 'Hide section panel' : 'Section cut'}
+                onClick={handleToggleSectionHud}
+                className={`rounded border border-border p-1 ${sectionHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                aria-pressed={sectionHudOpen}
+                aria-label={sectionHudOpen ? 'Hide section panel' : 'Show section panel'}
+              >
+                <Slice size={14} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                title={layersHudOpen ? 'Hide layers panel' : 'IFC layers and storeys'}
+                onClick={handleToggleLayersHud}
+                className={`rounded border border-border p-1 ${layersHudOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                aria-pressed={layersHudOpen}
+                aria-label={layersHudOpen ? 'Hide layers panel' : 'Show layers panel'}
+              >
+                <Layers size={14} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                title={sunStudyHudOpen ? 'Hide sun study' : 'Sun study'}
+                onClick={handleToggleSunStudyHud}
+                className={`rounded border border-border p-1 ${
+                  sunStudyHudOpen || environmentalAnalysis?.sunStudy?.enabled
+                    ? 'bg-accent text-on-accent'
+                    : 'text-secondary hover:bg-surface-muted'
+                }`}
+                aria-pressed={sunStudyHudOpen}
+                aria-label={sunStudyHudOpen ? 'Hide sun study panel' : 'Show sun study panel'}
+              >
+                <SunMedium size={14} strokeWidth={1.7} />
+              </button>
+              </div>
+            </div>
+          </div>
+        </div>
         {loadState === 'loading' && (
           <div
             className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-preview-bg/85 backdrop-blur-sm px-6 text-center"
@@ -3050,7 +3056,7 @@ export function BimViewport({
             measurementsVisible={measurementsVisible}
             onMeasurementsVisibleChange={onMeasurementsVisibleChange}
             onRemoveMeasurement={handleRemoveMeasurement}
-            className={`sans absolute right-3 z-20 max-w-sm rounded border border-border bg-surface/95 px-3 py-2 shadow-lg backdrop-blur-sm ${viewCarouselOpen ? 'bottom-36' : 'bottom-3'}`}
+            className="sans absolute right-3 bottom-3 z-20 max-w-sm rounded border border-border bg-surface/95 px-3 py-2 shadow-lg backdrop-blur-sm"
           />
         )}
         {loadState === 'ready' && selectedElement && (
@@ -3058,11 +3064,10 @@ export function BimViewport({
             element={selectedElement}
             properties={selectedProperties}
             inspectorOpen={rightPanelOpen}
-            className={viewCarouselOpen ? 'bottom-36' : undefined}
           />
         )}
         {loadState === 'ready' && pickStatus && (
-          <div className={`pointer-events-none absolute right-3 max-w-sm rounded border border-warning/40 bg-surface/95 px-3 py-2 text-xs text-warning shadow-sm ${viewCarouselOpen ? 'bottom-36' : 'bottom-3'}`}>
+          <div className="pointer-events-none absolute right-3 bottom-3 max-w-sm rounded border border-warning/40 bg-surface/95 px-3 py-2 text-xs text-warning shadow-sm">
             {pickStatus}
           </div>
         )}
