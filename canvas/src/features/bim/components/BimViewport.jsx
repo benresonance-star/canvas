@@ -34,6 +34,7 @@ import { createBimMeasurementController } from '../bim-core/bimMeasurementContro
 import { createBimMeasurementOverlay } from '../bim-core/bimMeasurementOverlay.js';
 import { cycleBimLightingState } from '../bim-core/bimLighting.js';
 import { BimStyleSettingsHud } from './BimStyleSettingsHud.jsx';
+import { BimStylePresetsMenu } from './BimStylePresetsMenu.jsx';
 import { BimAgentHud } from './BimAgentHud.jsx';
 import { BimBqlHud } from './BimBqlHud.jsx';
 import {
@@ -116,6 +117,7 @@ import {
   createBimSunLightingAdapter,
   disposeBimSunLightingAdapter,
 } from '../bim-core/bimSunLighting.js';
+import { BIM_VIEWPORT_TOOLBAR_OVERLAY_CLASS } from '../bim-core/bimViewportLayout.js';
 import {
   resolveSunDirection,
   resolveSunFromEnvironmentalState,
@@ -281,6 +283,15 @@ function BimViewportToolbarSeparator() {
       aria-orientation="vertical"
     />
   );
+}
+
+function isEditableKeyboardTarget(target) {
+  if (!(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName;
+  return tagName === 'INPUT'
+    || tagName === 'TEXTAREA'
+    || tagName === 'SELECT'
+    || target.isContentEditable;
 }
 
 export function BimViewport({
@@ -533,6 +544,7 @@ export function BimViewport({
   const [fovInput, setFovInput] = useState(String(initialCamera?.fov ?? BIM_DEFAULT_FOV));
   const [measureModeActive, setMeasureModeActive] = useState(false);
   const [measureDraftActive, setMeasureDraftActive] = useState(false);
+  const measureDraftActiveRef = useRef(false);
   const [cancelDraftNonce, setCancelDraftNonce] = useState(0);
   const [styleHudOpen, setStyleHudOpen] = useState(false);
   const [agentHudOpen, setAgentHudOpen] = useState(false);
@@ -618,6 +630,10 @@ export function BimViewport({
   }, [measureModeActive]);
 
   useEffect(() => {
+    measureDraftActiveRef.current = measureDraftActive;
+  }, [measureDraftActive]);
+
+  useEffect(() => {
     measurementsRef.current = measurements;
   }, [measurements]);
 
@@ -679,15 +695,14 @@ export function BimViewport({
 
   useEffect(() => {
     const handleKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        if (measureModeActiveRef.current) {
+      if ((event.key === 'Delete' || event.key === 'Backspace') && measureModeActiveRef.current) {
+        if (isEditableKeyboardTarget(event.target)) return;
+        event.preventDefault();
+        if (measureDraftActiveRef.current) {
           setCancelDraftNonce((value) => value + 1);
           return;
         }
-        if (selectedElementRef.current) {
-          onDeselectElementRef.current();
-          setPickStatus(null);
-        }
+        setMeasureModeActive(false);
         return;
       }
       if (event.key === 'Enter' && measureKindRef.current === 'polyline') {
@@ -2520,6 +2535,16 @@ export function BimViewport({
     setMeasureModeActive((active) => !active);
   }, []);
 
+  const handleCancelMeasurement = useCallback(() => {
+    if (measureDraftActiveRef.current) {
+      setCancelDraftNonce((value) => value + 1);
+      return;
+    }
+    if (measureModeActiveRef.current) {
+      setMeasureModeActive(false);
+    }
+  }, []);
+
   const handleToggleLighting = useCallback(() => {
     onLightingChange(cycleBimLightingState({
       showEnvironment,
@@ -2626,31 +2651,20 @@ export function BimViewport({
   const measureStatus = measureModeActive && measureSnapMode === 'edge'
     ? 'Click edge to measure'
     : measureModeActive && measureKind === 'polyline' && measureDraftActive
-      ? 'Add points · Enter to finish · click first point for perimeter + area · Esc to cancel'
+      ? 'Add points · Enter to finish · click first point for perimeter + area · Delete to cancel'
       : measureModeActive && measureKind === 'polyline'
-        ? 'Click first polyline point (Esc to cancel)'
+        ? 'Click first polyline point (Delete to cancel)'
         : measureModeActive && measureDraftActive
-          ? 'Pick second point (Esc to cancel)'
+          ? 'Pick second point (Delete to cancel)'
           : measureModeActive && measureSnapMode === 'vertex'
-            ? 'Click first point (Esc to cancel)'
+            ? 'Click first point (Delete to cancel)'
             : null;
 
-  return (
-    <div className="h-full min-h-0 flex flex-col bg-preview-bg">
-      <div
-        ref={containerRef}
-        tabIndex={0}
-        className="flex-1 min-h-0 relative overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-      >
-        <canvas
-          ref={canvasRef}
-          className="absolute inset-0 h-full w-full"
-        />
-        <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-3">
-          <div
-            className="pointer-events-auto flex max-w-[95vw] items-center overflow-x-auto rounded-md border border-border bg-surface/95 px-2 py-1.5 shadow-lg backdrop-blur-sm"
-            aria-label="Viewport controls"
-          >
+  const toolbarControls = (
+    <div
+      className="pointer-events-auto flex w-max max-w-[calc(100%-1.5rem)] items-center overflow-x-auto rounded-md border border-border bg-surface/95 px-2 py-1.5 shadow-lg backdrop-blur-sm"
+      aria-label="Viewport controls"
+    >
             {measureStatus ? (
               <>
                 <div className="max-w-[12rem] shrink-0 truncate text-[10px] uppercase tracking-wider text-muted">
@@ -2689,6 +2703,7 @@ export function BimViewport({
                 onMeasureSnapModeChange={onMeasureSnapModeChange}
                 onMeasureKindChange={onMeasureKindChange}
                 onMeasureUnitsChange={onMeasureUnitsChange}
+                onCancelMeasure={handleCancelMeasurement}
                 compact
                 buttonClassName={(active) => `rounded border border-border p-1 ${
                   active ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
@@ -2795,6 +2810,13 @@ export function BimViewport({
               >
                 <SlidersHorizontal size={14} strokeWidth={1.7} />
               </button>
+              <BimStylePresetsMenu
+                projectId={projectId}
+                cardId={cardId}
+                artifactId={artifactId}
+                styleSettings={styleSettings}
+                onApplyStyleSettings={onApplyStyleSettings}
+              />
               <button
                 type="button"
                 title={viewCarouselOpen ? 'Hide view carousel' : 'Show view carousel'}
@@ -2884,8 +2906,27 @@ export function BimViewport({
               </button>
               </div>
             </div>
-          </div>
-        </div>
+    </div>
+  );
+
+  const toolbarOverlay = (
+    <div className={BIM_VIEWPORT_TOOLBAR_OVERLAY_CLASS}>
+      {toolbarControls}
+    </div>
+  );
+
+  return (
+    <div className="h-full min-h-0 flex flex-col bg-preview-bg">
+      <div
+        ref={containerRef}
+        tabIndex={0}
+        className="flex-1 min-h-0 relative overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+      >
+        {toolbarOverlay}
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 h-full w-full"
+        />
         {loadState === 'loading' && (
           <div
             className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-preview-bg/85 backdrop-blur-sm px-6 text-center"
@@ -2912,7 +2953,10 @@ export function BimViewport({
           </div>
         )}
         {loadState === 'ready' && (layersHudOpen || sectionHudOpen || sunStudyHudOpen) && (
-          <div className="pointer-events-none absolute left-3 top-3 z-20 flex w-[min(calc(100%-1.5rem),19rem)] flex-col gap-2">
+          <div
+            data-bim-viewport-hud-stack="left"
+            className="pointer-events-none absolute left-3 top-3 z-20 flex w-[min(calc(100%-1.5rem),19rem)] flex-col gap-2"
+          >
             {sunStudyHudOpen && (
               <BimSunStudyHud
                 environmentalAnalysis={environmentalAnalysis}
@@ -2947,7 +2991,10 @@ export function BimViewport({
           </div>
         )}
         {loadState === 'ready' && (agentHudOpen || bqlHudOpen || styleHudOpen || fourDHudOpen || fiveDHudOpen) && (
-          <div className="pointer-events-none absolute right-3 top-3 z-20 flex max-h-[calc(100%-1.5rem)] w-[min(calc(100%-1.5rem),30rem)] flex-col items-stretch gap-2 overflow-y-auto">
+          <div
+            data-bim-viewport-hud-stack="right"
+            className="pointer-events-none absolute right-3 top-3 z-20 flex max-h-[calc(100%-1.5rem)] w-[min(calc(100%-1.5rem),30rem)] flex-col items-stretch gap-2 overflow-y-auto"
+          >
             {agentHudOpen && (
               <BimAgentHud
                 agentText={agentText}
@@ -3021,11 +3068,6 @@ export function BimViewport({
                 showEnvironment={showEnvironment}
                 environmentPreset={environmentPreset}
                 onToggleLighting={handleToggleLighting}
-                projectId={projectId}
-                cardId={cardId}
-                artifactId={artifactId}
-                styleSettings={styleSettings}
-                onApplyStyleSettings={onApplyStyleSettings}
                 wireframeMode={wireframeMode}
                 clayAoIntensity={clayAoIntensity}
                 clayAoRadius={clayAoRadius}

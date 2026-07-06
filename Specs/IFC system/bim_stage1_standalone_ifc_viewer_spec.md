@@ -280,7 +280,8 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Viewport boot | Yes — `bimViewportBoot.js` (layout wait, registration, fast sync, phased loading UI) |
 | Default open state | Yes — highlight display mode, standard render, all storeys/layers visible, **section cut off** (`BIM_VIEWER_DEFAULTS` + `applyBimViewerDefaults`) |
 | Style settings HUD | Yes — toolbar sliders icon toggles floating panel; background + presets always; HDRI lighting (standard only); clay/wireframe sliders + clay debug when active (`BimStyleSettingsHud.jsx`, `BimStyleToolbarControls.jsx`, `BimClayDebugPanel.jsx`) |
-| Viewport toolbar layout | Yes — **floating top-centre HUD** over canvas (`max-w-[95vw]` scroll); grouped sections with separators: panels → measure → view → camera → display (incl. saved views) → tools |
+| Viewport toolbar layout | Yes — **floating top-centre HUD** inside viewport (`w-max`, scroll when wide); grouped sections with separators: panels → measure → view → camera → display (incl. saved views) → tools; **Delete** cancels measurement |
+| Floating side panels | Yes — element list + inspector as **overlay HUDs** over full canvas (`BimFloatingSidePanel.jsx`); adjustable width 240–720 px; invisible resize handles; below toolbar (`top-14`) |
 | Saved view carousel | Yes — **floating bottom-centre HUD** (`max-w-[75vw]`, width adapts to thumbnails); `Images` toolbar icon |
 | Workspace header | Yes — single row: project title + element/property counts + cache status (no separate status strip) |
 | Storey / layer HUD | Yes — `BimLayersHud.jsx` + `bimLayerVisibility.js` |
@@ -289,11 +290,11 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Section cut | Yes — horizontal clipping plane + fill/edge overlay (`BimSectionHud.jsx`, `bimSectioning.js`); **off by default** on workspace open |
 | Viewport loading feedback | Yes — phased boot overlay (`BIM_VIEWPORT_LOAD_PHASES`) with spinner + element count |
 | Perspective / orthographic | Yes — toolbar toggle + camera state persistence |
-| Measurements | Yes — vertex/edge snap, segment + polyline, units toggle; shared `MeasurementUi` with 3D artifact viewer |
+| Measurements | Yes — vertex/edge snap, segment + polyline, units toggle; **Delete / Backspace** (or toolbar trash) cancels draft or exits measure mode; **Escape** closes fullscreen card; shared `MeasurementUi` with 3D artifact viewer |
 | HDRI lighting | Yes — environment preset cycle (off / studio / city / …); **style settings HUD** (standard render only) |
 | Picking/selection | Yes — raycast + GlobalId mapping |
-| Element table | Yes — configurable columns (add/remove/reorder/resize/sort), search + class filter, resizable left panel, inset grid dividers (`bimTableColumns.js`) |
-| Properties inspector | Yes — grouped Psets, provenance, assembly membership, attribute search, wrapping labels, resizable right panel (`bimInspectorSearch.js`) |
+| Element table | Yes — configurable columns (add/remove/reorder/resize/sort), search + class filter, **floating left overlay panel**, header sort menu anchored to column title, inset grid dividers (`bimTableColumns.js`) |
+| Properties inspector | Yes — grouped Psets, provenance, assembly membership, attribute search, wrapping labels, **floating right overlay panel** (`bimInspectorSearch.js`) |
 | Viewer ↔ table sync | Yes — bidirectional via `ifcGlobalId` |
 | Workspace state persistence | Yes — IndexedDB per fingerprint (camera, panels, filters, display mode, projection, measurements, wireframe mode + style incl. hidden-lines toggle, clay render style, lighting, **table columns/sort/search**, **inspector search**, **panel widths**) |
 | Live extraction feed | Yes — progress events during first-open preparation |

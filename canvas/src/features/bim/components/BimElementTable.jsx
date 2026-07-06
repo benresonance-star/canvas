@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, GripVertical } from 'lucide-react';
 import { buildPropertiesByElement } from '../bim-core/bimSectioning.js';
 import {
@@ -94,8 +94,18 @@ function ColumnListSelect({ value, options, onChange, className, ariaLabel }) {
   );
 }
 
-function ColumnSortMenu({ position, columnId, tableSort, onSelect, onClose }) {
+function ColumnSortMenu({ columnId, tableSort, onSelect, onClose, boundaryRef }) {
   const menuRef = useRef(null);
+  const [alignRight, setAlignRight] = useState(false);
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    const boundary = boundaryRef?.current;
+    if (!menu || !boundary) return;
+    const menuRect = menu.getBoundingClientRect();
+    const boundaryRect = boundary.getBoundingClientRect();
+    setAlignRight(menuRect.right > boundaryRect.right - 4);
+  }, [boundaryRef, columnId]);
 
   useEffect(() => {
     const onPointerDown = (event) => {
@@ -113,8 +123,6 @@ function ColumnSortMenu({ position, columnId, tableSort, onSelect, onClose }) {
     };
   }, [onClose]);
 
-  if (!position) return null;
-
   const isActiveColumn = tableSort?.columnId === columnId;
 
   return (
@@ -122,8 +130,9 @@ function ColumnSortMenu({ position, columnId, tableSort, onSelect, onClose }) {
       ref={menuRef}
       role="menu"
       aria-label="Column sort"
-      className="fixed z-50 min-w-[9rem] rounded border border-border bg-surface py-1 shadow-lg"
-      style={{ left: position.x, top: position.y }}
+      className={`absolute top-full z-50 mt-1 min-w-[9rem] rounded border border-border bg-surface py-1 shadow-lg ${
+        alignRight ? 'right-0' : 'left-0'
+      }`}
     >
       {[
         { direction: 'asc', label: 'Ascending' },
@@ -305,6 +314,7 @@ export function BimElementTable({
   onSelectElement,
 }) {
   const rowRefs = useRef(new Map());
+  const tableRootRef = useRef(null);
   const headerRef = useRef(null);
   const resizeStateRef = useRef(null);
   const [dragColumnId, setDragColumnId] = useState(null);
@@ -437,7 +447,7 @@ export function BimElementTable({
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col bg-surface">
+    <div ref={tableRootRef} className="h-full min-h-0 flex flex-col bg-surface">
       <div className="shrink-0 border-b border-border px-2 py-1 text-[10px] uppercase tracking-wider text-muted">
         {title} · {filtered.length}
       </div>
@@ -501,7 +511,7 @@ export function BimElementTable({
 
       <div
         ref={headerRef}
-        className="relative shrink-0 grid gap-0 border-b border-border px-2"
+        className="relative shrink-0 grid gap-0 overflow-visible border-b border-border px-2"
         style={{ gridTemplateColumns: gridTemplate }}
       >
         {columns.map((column, index) => (
@@ -518,7 +528,7 @@ export function BimElementTable({
             onDrop={() => handleColumnDrop(column.id)}
             onContextMenu={(event) => {
               event.preventDefault();
-              setSortMenu({ columnId: column.id, x: event.clientX, y: event.clientY });
+              setSortMenu({ columnId: column.id });
             }}
           >
             <button
@@ -543,6 +553,15 @@ export function BimElementTable({
                 tableSort?.columnId === column.id ? tableSort.direction : null
               }
             />
+            {sortMenu?.columnId === column.id ? (
+              <ColumnSortMenu
+                columnId={column.id}
+                tableSort={tableSort}
+                onSelect={handleSortSelection}
+                onClose={() => setSortMenu(null)}
+                boundaryRef={tableRootRef}
+              />
+            ) : null}
             {index < columns.length - 1 && (
               <div
                 role="separator"
@@ -601,13 +620,6 @@ export function BimElementTable({
           <div className="p-4 text-xs text-muted text-center">No elements match this filter.</div>
         )}
       </div>
-      <ColumnSortMenu
-        position={sortMenu ? { x: sortMenu.x, y: sortMenu.y } : null}
-        columnId={sortMenu?.columnId ?? null}
-        tableSort={tableSort}
-        onSelect={handleSortSelection}
-        onClose={() => setSortMenu(null)}
-      />
     </div>
   );
 }

@@ -460,6 +460,26 @@ describe('BIM UI components', () => {
     expect(html.indexOf('Collapse element list')).toBeLessThan(html.indexOf('Measure'));
   });
 
+  it('anchors viewport HUD stacks below the floating toolbar', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimViewport, {
+        preparedModel: {
+          metadata: {
+            fragmentsStatus: 'success',
+            fragmentsSourceKind: 'fragments',
+          },
+          fragmentsBlob: new Blob([new Uint8Array([1, 2, 3])]),
+          elements: [element],
+        },
+        selectedElement: null,
+        displayMode: 'highlight',
+        onDisplayModeChange: () => {},
+      }),
+    );
+    expect(html).toContain('absolute inset-x-0 top-3');
+    expect(html).toContain('Viewport controls');
+  });
+
   it('renders style toolbar controls for highlight mode without clay or wireframe', () => {
     const html = renderToStaticMarkup(
       React.createElement(BimViewport, {
@@ -519,7 +539,9 @@ describe('BIM UI components', () => {
       }),
     );
     expect(html).toContain('Style settings');
+    expect(html).toContain('Viewport');
     expect(html).toContain('Viewport background colour');
+    expect(html).not.toContain('>Presets<');
     expect(html).not.toContain('Clay style controls');
     expect(html).not.toContain('Wireframe style controls');
   });
@@ -540,10 +562,12 @@ describe('BIM UI components', () => {
         wireframeMode: true,
         onDisplayModeChange: () => {},
         onWireframeModeChange: () => {},
+        projectId: 'test-project',
       }),
     );
     expect(html).toContain('Wireframe overlay (visible edges)');
     expect(html).toContain('Show style settings panel');
+    expect(html).toContain('Saved style presets');
     expect(html).not.toContain('Wireframe style controls');
   });
 
@@ -561,6 +585,7 @@ describe('BIM UI components', () => {
       }),
     );
     expect(html).toContain('Wireframe style controls');
+    expect(html).toContain('Wireframe');
     expect(html).toContain('Wireframe line weight');
     expect(html).toContain('Wireframe transparency');
     expect(html).toContain('Wireframe colour');
@@ -587,6 +612,7 @@ describe('BIM UI components', () => {
       }),
     );
     expect(html).toContain('Clay style controls');
+    expect(html).toContain('Clay mode');
     expect(html).toContain('Clay AO bias');
     expect(html).toContain('Clay light intensity');
     expect(html).toContain('Clay glass opacity');

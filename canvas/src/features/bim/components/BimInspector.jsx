@@ -39,7 +39,11 @@ export function BimInspector({
   assemblyMembers,
   search = '',
   onSearchChange,
+  floating = false,
 }) {
+  const shellClass = floating
+    ? 'h-full min-h-0 bg-transparent'
+    : 'h-full min-h-0 border-l border-border bg-surface';
   const grouped = useMemo(() => groupProperties(properties), [properties]);
   const memberships = useMemo(() => {
     if (!element) return [];
@@ -79,14 +83,14 @@ export function BimInspector({
 
   if (!element) {
     return (
-      <div className="h-full min-h-0 border-l border-border bg-surface p-4 text-sm text-muted">
+      <div className={`${shellClass} p-4 text-sm text-muted`}>
         Select an element to inspect IFC evidence.
       </div>
     );
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col overflow-hidden border-l border-border bg-surface">
+    <div className={`${shellClass} flex flex-col overflow-hidden`}>
       <div className="shrink-0 border-b border-border p-3">
         <div className="text-[10px] uppercase tracking-wider text-muted">Inspector</div>
         <h3 className="serif text-base text-primary mt-1">{element.name || 'Unnamed element'}</h3>

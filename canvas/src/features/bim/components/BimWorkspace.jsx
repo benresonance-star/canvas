@@ -42,6 +42,7 @@ import { useBimViewSets } from '../hooks/useBimViewSets.js';
 import { LOCAL_BIM_RULES_RESPONDER_ID } from './bimAgentPanelShared.js';
 import { BimElementTable } from './BimElementTable.jsx';
 import { BimInspector } from './BimInspector.jsx';
+import { BimFloatingSidePanel } from './BimFloatingSidePanel.jsx';
 import { BimViewport } from './BimViewport.jsx';
 
 const PHASE_LABELS = {
@@ -1121,49 +1122,8 @@ export function BimWorkspace({
           {prepared.warnings.join(' ')}
         </div>
       )}
-      <div className="flex flex-1 min-h-0">
-        {leftPanelOpen ? (
-          <>
-            <div
-              className="h-full min-h-0 shrink-0 overflow-hidden"
-              style={{ width: workspaceState.leftPanelWidth }}
-            >
-              <BimElementTable
-                elements={tableElements}
-                properties={prepared?.properties ?? []}
-                selectedElementId={workspaceState.selectedObjectId}
-                search={workspaceState.tableSearch}
-                ifcClassFilter={workspaceState.ifcClassFilter}
-                columns={workspaceState.tableColumns}
-                tableSort={workspaceState.tableSort}
-                title={queryResult ? 'BQL result' : 'Elements'}
-                onSearchChange={(tableSearch) => patchWorkspaceState({ tableSearch })}
-                onIfcClassFilterChange={(ifcClassFilter) => patchWorkspaceState({ ifcClassFilter })}
-                onColumnsChange={(tableColumns) => patchWorkspaceState({ tableColumns })}
-                onTableSortChange={(tableSort) => patchWorkspaceState({ tableSort })}
-                onSelectElement={(selectedObjectId) => {
-                  setQueryResult(null);
-                  patchWorkspaceState({ selectedObjectId, selectedObjectKind: 'physicalElement' });
-                }}
-              />
-            </div>
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize element list panel"
-              onPointerDown={(event) => {
-                event.preventDefault();
-                panelResizeRef.current = {
-                  side: 'left',
-                  startX: event.clientX,
-                  startWidth: workspaceState.leftPanelWidth,
-                };
-              }}
-              className="flex w-1.5 shrink-0 cursor-col-resize touch-none items-stretch justify-center bg-border hover:bg-accent/40"
-            />
-          </>
-        ) : null}
-        <div className="min-h-0 min-w-0 flex-1">
+      <div className="relative flex flex-1 min-h-0 min-w-0">
+        <div className="absolute inset-0 min-h-0 min-w-0">
           <BimViewport
             preparedModel={prepared}
             selectedElement={selectedElement}
@@ -1310,37 +1270,65 @@ export function BimWorkspace({
             loadViewThumbnail={bimViews.loadViewThumbnail}
           />
         </div>
-        {rightPanelOpen ? (
-          <>
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize inspector panel"
-              onPointerDown={(event) => {
-                event.preventDefault();
-                panelResizeRef.current = {
-                  side: 'right',
-                  startX: event.clientX,
-                  startWidth: workspaceState.rightPanelWidth,
-                };
+        {leftPanelOpen ? (
+          <BimFloatingSidePanel
+            side="left"
+            width={workspaceState.leftPanelWidth}
+            ariaLabel="Resize element list panel"
+            onResizePointerDown={(event) => {
+              event.preventDefault();
+              panelResizeRef.current = {
+                side: 'left',
+                startX: event.clientX,
+                startWidth: workspaceState.leftPanelWidth,
+              };
+            }}
+          >
+            <BimElementTable
+              elements={tableElements}
+              properties={prepared?.properties ?? []}
+              selectedElementId={workspaceState.selectedObjectId}
+              search={workspaceState.tableSearch}
+              ifcClassFilter={workspaceState.ifcClassFilter}
+              columns={workspaceState.tableColumns}
+              tableSort={workspaceState.tableSort}
+              title={queryResult ? 'BQL result' : 'Elements'}
+              onSearchChange={(tableSearch) => patchWorkspaceState({ tableSearch })}
+              onIfcClassFilterChange={(ifcClassFilter) => patchWorkspaceState({ ifcClassFilter })}
+              onColumnsChange={(tableColumns) => patchWorkspaceState({ tableColumns })}
+              onTableSortChange={(tableSort) => patchWorkspaceState({ tableSort })}
+              onSelectElement={(selectedObjectId) => {
+                setQueryResult(null);
+                patchWorkspaceState({ selectedObjectId, selectedObjectKind: 'physicalElement' });
               }}
-              className="flex w-1.5 shrink-0 cursor-col-resize touch-none items-stretch justify-center bg-border hover:bg-accent/40"
             />
-            <div
-              className="h-full min-h-0 shrink-0 overflow-hidden"
-              style={{ width: workspaceState.rightPanelWidth }}
-            >
-              <BimInspector
-                element={selectedElement}
-                properties={selectedProperties}
-                provenance={selectedProvenance}
-                assemblies={prepared.semanticAssemblies ?? []}
-                assemblyMembers={prepared.assemblyMembers ?? []}
-                search={workspaceState.inspectorSearch}
-                onSearchChange={(inspectorSearch) => patchWorkspaceState({ inspectorSearch })}
-              />
-            </div>
-          </>
+          </BimFloatingSidePanel>
+        ) : null}
+        {rightPanelOpen ? (
+          <BimFloatingSidePanel
+            side="right"
+            width={workspaceState.rightPanelWidth}
+            ariaLabel="Resize inspector panel"
+            onResizePointerDown={(event) => {
+              event.preventDefault();
+              panelResizeRef.current = {
+                side: 'right',
+                startX: event.clientX,
+                startWidth: workspaceState.rightPanelWidth,
+              };
+            }}
+          >
+            <BimInspector
+              element={selectedElement}
+              properties={selectedProperties}
+              provenance={selectedProvenance}
+              assemblies={prepared.semanticAssemblies ?? []}
+              assemblyMembers={prepared.assemblyMembers ?? []}
+              search={workspaceState.inspectorSearch}
+              onSearchChange={(inspectorSearch) => patchWorkspaceState({ inspectorSearch })}
+              floating
+            />
+          </BimFloatingSidePanel>
         ) : null}
       </div>
     </div>

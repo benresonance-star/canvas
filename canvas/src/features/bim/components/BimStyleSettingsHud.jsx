@@ -8,11 +8,6 @@ export function BimStyleSettingsHud({
   showEnvironment = false,
   environmentPreset,
   onToggleLighting,
-  projectId,
-  cardId,
-  artifactId,
-  styleSettings,
-  onApplyStyleSettings,
   ...sliderProps
 }) {
   return (
@@ -28,11 +23,6 @@ export function BimStyleSettingsHud({
         showEnvironment={showEnvironment}
         environmentPreset={environmentPreset}
         onToggleLighting={onToggleLighting}
-        projectId={projectId}
-        cardId={cardId}
-        artifactId={artifactId}
-        styleSettings={styleSettings}
-        onApplyStyleSettings={onApplyStyleSettings}
       />
       <div className="max-h-[min(50vh,20rem)] overflow-y-auto overflow-x-hidden pr-0.5">
         <BimStyleToolbarSliders renderStyle={renderStyle} {...sliderProps} layout="panel" />

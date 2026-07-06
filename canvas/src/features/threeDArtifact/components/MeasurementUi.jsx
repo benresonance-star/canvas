@@ -11,6 +11,7 @@ export function MeasurementToolbarControls({
   onMeasureSnapModeChange,
   onMeasureKindChange,
   onMeasureUnitsChange,
+  onCancelMeasure,
   compact = false,
   buttonClassName,
   activeButtonClassName,
@@ -95,6 +96,15 @@ export function MeasurementToolbarControls({
               Edge
             </button>
           </div>
+          <button
+            type="button"
+            title="Cancel measurement"
+            aria-label="Cancel measurement"
+            className={buttonClass(false)}
+            onClick={() => onCancelMeasure?.()}
+          >
+            <Trash2 size={iconSize} strokeWidth={1.7} />
+          </button>
         </>
       )}
     </>

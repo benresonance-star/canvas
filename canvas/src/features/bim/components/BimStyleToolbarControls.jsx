@@ -29,6 +29,14 @@ import {
   WIREFRAME_LINE_WEIGHT_MAX,
 } from '../bim-core/types.js';
 
+function StyleSettingsSectionTitle({ children }) {
+  return (
+    <div className="text-[10px] uppercase tracking-wider text-muted">
+      {children}
+    </div>
+  );
+}
+
 export function BimStyleHudSharedControls({
   renderStyle = 'standard',
   viewportBackgroundColor,
@@ -36,16 +44,12 @@ export function BimStyleHudSharedControls({
   showEnvironment = false,
   environmentPreset,
   onToggleLighting,
-  projectId,
-  cardId,
-  artifactId,
-  styleSettings,
-  onApplyStyleSettings,
 }) {
   const showHdriLighting = renderStyle !== 'clay';
 
   return (
     <div className="mb-2 flex flex-col gap-2 border-b border-border pb-2">
+      <StyleSettingsSectionTitle>Viewport</StyleSettingsSectionTitle>
       <label className="flex items-center justify-between gap-2 text-[10px] text-secondary" title="Viewport background colour">
         <span className="uppercase tracking-wider text-muted">Background</span>
         <input
@@ -56,16 +60,6 @@ export function BimStyleHudSharedControls({
           className="h-6 w-6 cursor-pointer rounded border border-border bg-surface p-0.5"
         />
       </label>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-wider text-muted">Presets</span>
-        <BimStylePresetsMenu
-          projectId={projectId}
-          cardId={cardId}
-          artifactId={artifactId}
-          styleSettings={styleSettings}
-          onApplyStyleSettings={onApplyStyleSettings}
-        />
-      </div>
       {showHdriLighting ? (
         <button
           type="button"
@@ -151,14 +145,15 @@ export function BimStyleToolbarSliders({
     ? 'flex flex-col gap-1.5 border-t border-border pt-2 mt-2'
     : 'flex min-w-0 flex-1 items-center gap-x-3 gap-y-1 overflow-x-auto';
   const wireframeGroupClassName = isPanel
-    ? `flex flex-col gap-1.5 ${isClay ? '' : 'border-t border-border pt-2 mt-2'}`
+    ? 'flex flex-col gap-1.5 border-t border-border pt-2 mt-2'
     : 'flex shrink-0 items-center gap-x-3 gap-y-1';
   const sliderClassName = isPanel ? 'w-full flex-1 min-w-0' : 'w-[4.5rem] min-w-0';
 
   const sliders = (
     <div className={containerClassName}>
       {isClay ? (
-        <div className={isPanel && !showWireframe ? 'flex flex-col gap-1.5' : clayGroupClassName} aria-label="Clay style controls">
+        <div className={isPanel && !showWireframe ? 'flex flex-col gap-1.5 border-t border-border pt-2 mt-2' : clayGroupClassName} aria-label="Clay style controls">
+            {isPanel ? <StyleSettingsSectionTitle>Clay mode</StyleSettingsSectionTitle> : null}
             <ClaySliderControl
               label="AO"
               value={clayAoIntensity}
@@ -299,6 +294,7 @@ export function BimStyleToolbarSliders({
 
         {showWireframe ? (
           <div className={wireframeGroupClassName} aria-label="Wireframe style controls">
+            {isPanel ? <StyleSettingsSectionTitle>Wireframe</StyleSettingsSectionTitle> : null}
             <ClaySliderControl
               label="Wt"
               value={wireframeLineWeight}
