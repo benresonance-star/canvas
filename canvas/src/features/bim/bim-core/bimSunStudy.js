@@ -8,6 +8,7 @@ const DEFAULT_SITE = {
   longitude: 144.9631,
   timezone: 'Australia/Melbourne',
   trueNorthOffsetDeg: 0,
+  daylightSavingTime: true,
   source: 'manual',
 };
 
@@ -16,6 +17,9 @@ const DEFAULT_SUN_STUDY = {
   controlMode: 'manual',
   showSkyDome: false,
   showSunTracker: false,
+  showSunPath: false,
+  showCompass: true,
+  sunPathRadius: 1,
   shadowsEnabled: true,
   shadowQuality: 'medium',
   groundReceiverEnabled: true,
@@ -57,6 +61,7 @@ export function normalizeBimSiteState(site = {}) {
       180,
       DEFAULT_SITE.trueNorthOffsetDeg,
     ),
+    daylightSavingTime: site?.daylightSavingTime !== false,
     source: ['manual', 'ifcSite', 'imported'].includes(site?.source) ? site.source : DEFAULT_SITE.source,
   };
 }
@@ -72,6 +77,9 @@ export function normalizeBimSunStudyState(sunStudy = {}) {
       : DEFAULT_SUN_STUDY.controlMode,
     showSkyDome: sunStudy?.showSkyDome === true,
     showSunTracker: sunStudy?.showSunTracker === true,
+    showSunPath: sunStudy?.showSunPath === true,
+    showCompass: sunStudy?.showCompass !== false,
+    sunPathRadius: clampNumber(sunStudy?.sunPathRadius, 0.25, 5, DEFAULT_SUN_STUDY.sunPathRadius),
     shadowsEnabled: sunStudy?.shadowsEnabled !== false,
     shadowQuality: BIM_SUN_STUDY_SHADOW_QUALITIES.includes(sunStudy?.shadowQuality)
       ? sunStudy.shadowQuality
@@ -162,9 +170,38 @@ export function normalizeDegrees(degrees) {
   return ((numeric % 360) + 360) % 360;
 }
 
-function dayOfYear(date) {
-  const start = Date.UTC(date.getUTCFullYear(), 0, 0);
-  return Math.floor((date.getTime() - start) / 86400000);
+function dateTimeLocalDatePart(dateTimeLocal) {
+  return normalizeDateTimeLocal(dateTimeLocal).split('T')[0];
+}
+
+function selectedYear(dateTimeLocal) {
+  return Number(dateTimeLocalDatePart(dateTimeLocal).slice(0, 4)) || 2026;
+}
+
+function dateTimeLocalForDateMinute(year, month, day, minuteOfDay) {
+  const clamped = Math.min(1439, Math.max(0, Math.round(Number(minuteOfDay) || 0)));
+  const hour = Math.floor(clamped / 60);
+  const minute = clamped % 60;
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function dateTimeLocalForMinute(dateTimeLocal, minuteOfDay) {
+  const [year, month, day] = dateTimeLocalDatePart(dateTimeLocal).split('-').map(Number);
+  return dateTimeLocalForDateMinute(year, month, day, minuteOfDay);
+}
+
+function dateTimeLocalForYearDayMinute(year, dayIndex, minuteOfDay) {
+  const date = new Date(Date.UTC(year, 0, 1 + dayIndex, 12, 0, 0));
+  return dateTimeLocalForDateMinute(
+    date.getUTCFullYear(),
+    date.getUTCMonth() + 1,
+    date.getUTCDate(),
+    minuteOfDay,
+  );
+}
+
+function daysInYear(year) {
+  return Math.round((Date.UTC(year + 1, 0, 1) - Date.UTC(year, 0, 1)) / 86400000);
 }
 
 function formatPartsInTimeZone(date, timezone) {
@@ -193,6 +230,14 @@ function formatPartsInTimeZone(date, timezone) {
   };
 }
 
+function parseDateTimeLocalParts(dateTimeLocal) {
+  const normalized = normalizeDateTimeLocal(dateTimeLocal);
+  const [datePart, timePart] = normalized.split('T');
+  const [year, month, day] = datePart.split('-').map(Number);
+  const [hour, minute] = timePart.split(':').map(Number);
+  return { year, month, day, hour, minute, second: 0 };
+}
+
 function partsToUtcMs(parts) {
   return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second ?? 0);
 }
@@ -206,16 +251,23 @@ function timeZoneOffsetMinutes(date, timezone) {
   }
 }
 
-export function zonedDateTimeToUtcDate(dateTimeLocal, timezone) {
-  const normalized = normalizeDateTimeLocal(dateTimeLocal);
-  const [datePart, timePart] = normalized.split('T');
-  const [year, month, day] = datePart.split('-').map(Number);
-  const [hour, minute] = timePart.split(':').map(Number);
-  const localParts = { year, month, day, hour, minute, second: 0 };
+function standardTimeZoneOffsetMinutes(year, timezone) {
+  const janOffset = timeZoneOffsetMinutes(new Date(Date.UTC(year, 0, 1, 12, 0, 0)), timezone);
+  const julOffset = timeZoneOffsetMinutes(new Date(Date.UTC(year, 6, 1, 12, 0, 0)), timezone);
+  return Math.min(janOffset, julOffset);
+}
+
+function effectiveTimeZoneOffsetMinutes(date, timezone, { daylightSavingTime = true } = {}) {
+  if (daylightSavingTime) return timeZoneOffsetMinutes(date, timezone);
+  return standardTimeZoneOffsetMinutes(date.getUTCFullYear(), timezone);
+}
+
+export function zonedDateTimeToUtcDate(dateTimeLocal, timezone, { daylightSavingTime = true } = {}) {
+  const localParts = parseDateTimeLocalParts(dateTimeLocal);
   let utcMs = partsToUtcMs(localParts);
 
   for (let index = 0; index < 4; index += 1) {
-    const offset = timeZoneOffsetMinutes(new Date(utcMs), timezone);
+    const offset = effectiveTimeZoneOffsetMinutes(new Date(utcMs), timezone, { daylightSavingTime });
     const nextUtcMs = partsToUtcMs(localParts) - offset * MS_PER_MINUTE;
     if (Math.abs(nextUtcMs - utcMs) < 1) break;
     utcMs = nextUtcMs;
@@ -229,32 +281,48 @@ export function computeSolarPosition({
   longitude,
   timezone,
   dateTimeLocal,
+  daylightSavingTime = true,
 }) {
-  const utcDate = zonedDateTimeToUtcDate(dateTimeLocal, timezone);
-  const offsetMinutes = timeZoneOffsetMinutes(utcDate, timezone);
-  const localParts = formatPartsInTimeZone(utcDate, timezone);
+  const utcDate = zonedDateTimeToUtcDate(dateTimeLocal, timezone, { daylightSavingTime });
+  const offsetMinutes = effectiveTimeZoneOffsetMinutes(utcDate, timezone, { daylightSavingTime });
+  const localParts = parseDateTimeLocalParts(dateTimeLocal);
   const minutes = localParts.hour * 60 + localParts.minute + localParts.second / 60;
-  const gamma = (2 * Math.PI / 365) * (
-    dayOfYear(utcDate) - 1 + (minutes - 720) / 1440
+  const julianDay = utcDate.getTime() / 86400000 + 2440587.5;
+  const julianCentury = (julianDay - 2451545) / 36525;
+  const geomMeanLongSun = normalizeDegrees(
+    280.46646 + julianCentury * (36000.76983 + julianCentury * 0.0003032),
   );
-  const equationOfTime = 229.18 * (
-    0.000075
-    + 0.001868 * Math.cos(gamma)
-    - 0.032077 * Math.sin(gamma)
-    - 0.014615 * Math.cos(2 * gamma)
-    - 0.040849 * Math.sin(2 * gamma)
+  const geomMeanAnomalySun = 357.52911 + julianCentury * (35999.05029 - 0.0001537 * julianCentury);
+  const eccentricityEarthOrbit = 0.016708634
+    - julianCentury * (0.000042037 + 0.0000001267 * julianCentury);
+  const sunEquationOfCenter = Math.sin(geomMeanAnomalySun * DEG_TO_RAD)
+      * (1.914602 - julianCentury * (0.004817 + 0.000014 * julianCentury))
+    + Math.sin(2 * geomMeanAnomalySun * DEG_TO_RAD) * (0.019993 - 0.000101 * julianCentury)
+    + Math.sin(3 * geomMeanAnomalySun * DEG_TO_RAD) * 0.000289;
+  const sunTrueLong = geomMeanLongSun + sunEquationOfCenter;
+  const omega = 125.04 - 1934.136 * julianCentury;
+  const sunAppLong = sunTrueLong - 0.00569 - 0.00478 * Math.sin(omega * DEG_TO_RAD);
+  const meanObliqEcliptic = 23 + (
+    26 + (
+      21.448 - julianCentury * (46.815 + julianCentury * (0.00059 - julianCentury * 0.001813))
+    ) / 60
+  ) / 60;
+  const obliqCorr = meanObliqEcliptic + 0.00256 * Math.cos(omega * DEG_TO_RAD);
+  const declination = Math.asin(
+    Math.sin(obliqCorr * DEG_TO_RAD) * Math.sin(sunAppLong * DEG_TO_RAD),
   );
-  const declination = (
-    0.006918
-    - 0.399912 * Math.cos(gamma)
-    + 0.070257 * Math.sin(gamma)
-    - 0.006758 * Math.cos(2 * gamma)
-    + 0.000907 * Math.sin(2 * gamma)
-    - 0.002697 * Math.cos(3 * gamma)
-    + 0.00148 * Math.sin(3 * gamma)
+  const y = Math.tan((obliqCorr / 2) * DEG_TO_RAD) ** 2;
+  const equationOfTime = 4 * RAD_TO_DEG * (
+    y * Math.sin(2 * geomMeanLongSun * DEG_TO_RAD)
+    - 2 * eccentricityEarthOrbit * Math.sin(geomMeanAnomalySun * DEG_TO_RAD)
+    + 4 * eccentricityEarthOrbit * y
+      * Math.sin(geomMeanAnomalySun * DEG_TO_RAD)
+      * Math.cos(2 * geomMeanLongSun * DEG_TO_RAD)
+    - 0.5 * y * y * Math.sin(4 * geomMeanLongSun * DEG_TO_RAD)
+    - 1.25 * eccentricityEarthOrbit * eccentricityEarthOrbit
+      * Math.sin(2 * geomMeanAnomalySun * DEG_TO_RAD)
   );
-  const timeOffset = equationOfTime + 4 * Number(longitude) - offsetMinutes;
-  const trueSolarTime = ((minutes + timeOffset) % 1440 + 1440) % 1440;
+  const trueSolarTime = ((minutes + equationOfTime + 4 * Number(longitude) - offsetMinutes) % 1440 + 1440) % 1440;
   const hourAngleDeg = trueSolarTime / 4 < 0
     ? trueSolarTime / 4 + 180
     : trueSolarTime / 4 - 180;
@@ -262,13 +330,38 @@ export function computeSolarPosition({
   const hourAngleRad = hourAngleDeg * DEG_TO_RAD;
   const cosZenith = Math.sin(latitudeRad) * Math.sin(declination)
     + Math.cos(latitudeRad) * Math.cos(declination) * Math.cos(hourAngleRad);
-  const zenithRad = Math.acos(Math.min(1, Math.max(-1, cosZenith)));
-  const elevationDeg = 90 - zenithRad * RAD_TO_DEG;
-  const azimuthRad = Math.atan2(
-    Math.sin(hourAngleRad),
-    Math.cos(hourAngleRad) * Math.sin(latitudeRad) - Math.tan(declination) * Math.cos(latitudeRad),
-  );
-  const azimuthDeg = normalizeDegrees(azimuthRad * RAD_TO_DEG + 180);
+  const zenithDeg = Math.acos(Math.min(1, Math.max(-1, cosZenith))) * RAD_TO_DEG;
+  const solarElevation = 90 - zenithDeg;
+  const refractionCorrection = solarElevation > 85
+    ? 0
+    : solarElevation > 5
+      ? (
+        58.1 / Math.tan(solarElevation * DEG_TO_RAD)
+        - 0.07 / Math.tan(solarElevation * DEG_TO_RAD) ** 3
+        + 0.000086 / Math.tan(solarElevation * DEG_TO_RAD) ** 5
+      ) / 3600
+      : solarElevation > -0.575
+        ? (
+          1735 + solarElevation * (
+            -518.2 + solarElevation * (
+              103.4 + solarElevation * (-12.79 + solarElevation * 0.711)
+            )
+          )
+        ) / 3600
+        : (-20.772 / Math.tan(solarElevation * DEG_TO_RAD)) / 3600;
+  const elevationDeg = solarElevation + refractionCorrection;
+  const azimuthDenominator = Math.cos(latitudeRad) * Math.sin((90 - solarElevation) * DEG_TO_RAD);
+  const azimuthAngleDeg = Math.abs(azimuthDenominator) > 0.001
+    ? Math.acos(Math.min(1, Math.max(-1, (
+      (Math.sin(latitudeRad) * Math.cos((90 - solarElevation) * DEG_TO_RAD) - Math.sin(declination))
+      / azimuthDenominator
+    )))) * RAD_TO_DEG
+    : null;
+  const azimuthDeg = azimuthAngleDeg == null
+    ? latitude > 0 ? 180 : 0
+    : hourAngleDeg > 0
+      ? normalizeDegrees(azimuthAngleDeg + 180)
+      : normalizeDegrees(540 - azimuthAngleDeg);
 
   return {
     azimuthDeg,
@@ -276,6 +369,8 @@ export function computeSolarPosition({
     utcDate,
     utcIso: utcDate.toISOString(),
     timezoneOffsetMinutes: offsetMinutes,
+    daylightSavingTime,
+    algorithm: 'meeus-noaa-apparent-v1',
   };
 }
 
@@ -287,6 +382,7 @@ export function resolveSunFromEnvironmentalState(environmentalAnalysis = {}) {
       longitude: state.site.longitude,
       timezone: state.site.timezone,
       dateTimeLocal: state.sunStudy.geo.dateTimeLocal,
+      daylightSavingTime: state.site.daylightSavingTime,
     });
     return {
       ...solar,
@@ -299,6 +395,7 @@ export function resolveSunFromEnvironmentalState(environmentalAnalysis = {}) {
     trueNorthOffsetDeg: state.site.trueNorthOffsetDeg,
     utcIso: null,
     timezoneOffsetMinutes: null,
+    daylightSavingTime: null,
   };
 }
 
@@ -342,7 +439,104 @@ export function buildSunStudyReadout(environmentalAnalysis = {}) {
       elevationDeg: sun.elevationDeg,
       enabled: state.sunStudy.enabled,
     }),
+    algorithm: sun.algorithm ?? (state.sunStudy.controlMode === 'geo' ? 'meeus-noaa-apparent-v1' : 'manual'),
+    daylightSavingTime: sun.daylightSavingTime,
   };
+}
+
+export function buildSunPathSamples(environmentalAnalysis = {}, { intervalMinutes = 30 } = {}) {
+  const state = normalizeBimEnvironmentalAnalysisState(environmentalAnalysis);
+  const step = Math.min(120, Math.max(5, Math.round(Number(intervalMinutes) || 30)));
+  const samples = [];
+  for (let minute = 0; minute <= 1440; minute += step) {
+    const dateTimeLocal = dateTimeLocalForMinute(state.sunStudy.geo.dateTimeLocal, Math.min(minute, 1439));
+    const solar = computeSolarPosition({
+      latitude: state.site.latitude,
+      longitude: state.site.longitude,
+      timezone: state.site.timezone,
+      dateTimeLocal,
+      daylightSavingTime: state.site.daylightSavingTime,
+    });
+    samples.push({
+      minuteOfDay: Math.min(minute, 1439),
+      dateTimeLocal,
+      azimuthDeg: solar.azimuthDeg,
+      elevationDeg: solar.elevationDeg,
+      belowHorizon: solar.elevationDeg <= 0,
+      daylightSavingTime: solar.daylightSavingTime,
+    });
+  }
+  return samples;
+}
+
+export function buildSunPathGridSamples(environmentalAnalysis = {}) {
+  const state = normalizeBimEnvironmentalAnalysisState(environmentalAnalysis);
+  const year = selectedYear(state.sunStudy.geo.dateTimeLocal);
+  const totalDays = daysInYear(year);
+  const monthArcs = Array.from({ length: 12 }, (_, index) => {
+    const month = index + 1;
+    return {
+      id: `month-${month}`,
+      month,
+      samples: buildSunPathSamples({
+        ...state,
+        sunStudy: {
+          ...state.sunStudy,
+          geo: {
+            dateTimeLocal: dateTimeLocalForDateMinute(year, month, 21, 12 * 60),
+          },
+        },
+      }, { intervalMinutes: 30 }),
+    };
+  });
+
+  const hourCurves = [];
+  for (let hour = 6; hour <= 18; hour += 1) {
+    const samples = [];
+    for (let dayIndex = 0; dayIndex < totalDays; dayIndex += 5) {
+      const dateTimeLocal = dateTimeLocalForYearDayMinute(year, dayIndex, hour * 60);
+      const solar = computeSolarPosition({
+        latitude: state.site.latitude,
+        longitude: state.site.longitude,
+        timezone: state.site.timezone,
+        dateTimeLocal,
+        daylightSavingTime: false,
+      });
+      samples.push({
+        dayIndex,
+        hour,
+        dateTimeLocal,
+        azimuthDeg: solar.azimuthDeg,
+        elevationDeg: solar.elevationDeg,
+        belowHorizon: solar.elevationDeg <= 0,
+        daylightSavingTime: solar.daylightSavingTime,
+        timeBasis: 'standard',
+      });
+    }
+    if ((totalDays - 1) % 5 !== 0) {
+      const dateTimeLocal = dateTimeLocalForYearDayMinute(year, totalDays - 1, hour * 60);
+      const solar = computeSolarPosition({
+        latitude: state.site.latitude,
+        longitude: state.site.longitude,
+        timezone: state.site.timezone,
+        dateTimeLocal,
+        daylightSavingTime: false,
+      });
+      samples.push({
+        dayIndex: totalDays - 1,
+        hour,
+        dateTimeLocal,
+        azimuthDeg: solar.azimuthDeg,
+        elevationDeg: solar.elevationDeg,
+        belowHorizon: solar.elevationDeg <= 0,
+        daylightSavingTime: solar.daylightSavingTime,
+        timeBasis: 'standard',
+      });
+    }
+    hourCurves.push({ id: `hour-${hour}`, hour, samples });
+  }
+
+  return { monthArcs, hourCurves };
 }
 
 export function configureDirectionalShadowCamera(light, bounds = {}, quality = 'medium') {

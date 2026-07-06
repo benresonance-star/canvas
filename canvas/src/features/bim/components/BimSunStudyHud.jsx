@@ -198,6 +198,12 @@ export function BimSunStudyHud({
                 className="h-7 rounded border border-border bg-surface px-2 py-1 font-mono text-[11px] text-secondary outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
               />
             </label>
+            <ToggleRow
+              checked={site.daylightSavingTime}
+              onChange={(daylightSavingTime) => patchSite({ daylightSavingTime })}
+              label="Daylight saving"
+              disabled={disabled}
+            />
           </section>
         )}
 
@@ -230,6 +236,22 @@ export function BimSunStudyHud({
               label="Tracker"
               disabled={disabled}
             />
+            {sunStudy.controlMode === 'geo' && (
+              <>
+                <ToggleRow
+                  checked={sunStudy.showSunPath}
+                  onChange={(showSunPath) => patchSunStudy({ showSunPath })}
+                  label="Path"
+                  disabled={disabled}
+                />
+                <ToggleRow
+                  checked={sunStudy.showCompass}
+                  onChange={(showCompass) => patchSunStudy({ showCompass })}
+                  label="Compass"
+                  disabled={disabled || !sunStudy.showSunPath}
+                />
+              </>
+            )}
             <ToggleRow
               checked={sunStudy.groundReceiverEnabled}
               onChange={(groundReceiverEnabled) => patchSunStudy({ groundReceiverEnabled })}
@@ -256,6 +278,18 @@ export function BimSunStudyHud({
               ))}
             </select>
           </label>
+          {sunStudy.controlMode === 'geo' && (
+            <NumericField
+              label="Radius"
+              value={sunStudy.sunPathRadius}
+              min={0.25}
+              max={5}
+              step={0.25}
+              onChange={(sunPathRadius) => patchSunStudy({ sunPathRadius })}
+              disabled={disabled || !sunStudy.showSunPath}
+              suffix="x"
+            />
+          )}
           <NumericField
             label="Speed"
             value={sunStudy.animation.playbackSpeedHoursPerSecond}
@@ -283,6 +317,12 @@ export function BimSunStudyHud({
             <FieldLabel>Sun</FieldLabel>
             <div className={readout.belowHorizon ? 'text-warning' : 'text-secondary'}>
               {readout.belowHorizon ? 'Below' : 'Up'}
+            </div>
+          </div>
+          <div className="col-span-3">
+            <FieldLabel>Calc</FieldLabel>
+            <div className="truncate font-mono text-[9px] text-muted" title={readout.algorithm}>
+              {readout.algorithm}
             </div>
           </div>
         </section>

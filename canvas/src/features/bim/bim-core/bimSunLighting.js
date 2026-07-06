@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import {
+  buildSunPathGridSamples,
+  buildSunPathSamples,
   buildSunStudyReadout,
   configureDirectionalShadowCamera,
   normalizeBimEnvironmentalAnalysisState,
@@ -66,6 +68,7 @@ export function createBimSunLightingAdapter(scene, renderer) {
     ground: null,
     sky: null,
     tracker: null,
+    sunPath: null,
     lastEnabled: false,
   };
 }
@@ -168,7 +171,7 @@ function ensureSunTracker(adapter) {
   return adapter.tracker;
 }
 
-function updateSunTracker(adapter, bounds, direction, enabled) {
+function updateSunTracker(adapter, bounds, direction, enabled, sunPathRadius = 1) {
   if (!enabled) {
     if (adapter.tracker) adapter.tracker.group.visible = false;
     return;
@@ -176,14 +179,165 @@ function updateSunTracker(adapter, bounds, direction, enabled) {
   const tracker = ensureSunTracker(adapter);
   const center = centerFromBounds(bounds);
   const radius = Math.max(1, Number(bounds?.radius) || 10);
-  const markerDistance = Math.max(6, radius * 1.65);
-  const markerRadius = Math.max(0.15, radius * 0.045);
+  const domeRadius = radius * Math.min(5, Math.max(0.25, Number(sunPathRadius) || 1));
+  const markerDistance = Math.max(6, domeRadius);
+  const markerRadius = Math.max(0.35, radius * 0.095);
   const markerPosition = center.clone().addScaledVector(direction, markerDistance);
   tracker.marker.position.copy(markerPosition);
   tracker.marker.scale.setScalar(markerRadius);
   tracker.line.geometry.setFromPoints([center, markerPosition]);
   tracker.line.geometry.computeBoundingSphere();
   tracker.group.visible = true;
+}
+
+function ensureSunPath(adapter) {
+  if (adapter.sunPath) return adapter.sunPath;
+  const group = new THREE.Group();
+  group.name = 'bim-sun-study-path';
+
+  const dayArc = new THREE.Line(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({
+      color: 0xffd166,
+      transparent: true,
+      opacity: 0.85,
+      toneMapped: false,
+    }),
+  );
+  dayArc.name = 'bim-sun-study-day-arc';
+
+  const belowArc = new THREE.Line(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({
+      color: 0x9ca3af,
+      transparent: true,
+      opacity: 0.28,
+      toneMapped: false,
+    }),
+  );
+  belowArc.name = 'bim-sun-study-below-horizon-arc';
+
+  const compass = new THREE.Group();
+  compass.name = 'bim-sun-study-compass';
+  const compassMaterial = new THREE.LineBasicMaterial({
+    color: 0x93c5fd,
+    transparent: true,
+    opacity: 0.58,
+    toneMapped: false,
+  });
+  compass.add(new THREE.LineLoop(new THREE.BufferGeometry(), compassMaterial));
+  ['N', 'E', 'S', 'W'].forEach((name) => {
+    const axis = new THREE.Line(new THREE.BufferGeometry(), compassMaterial.clone());
+    axis.name = `bim-sun-study-compass-${name}`;
+    compass.add(axis);
+  });
+
+  const monthGrid = new THREE.Group();
+  monthGrid.name = 'bim-sun-study-month-grid';
+  const hourGrid = new THREE.Group();
+  hourGrid.name = 'bim-sun-study-hour-grid';
+
+  group.add(monthGrid, hourGrid, belowArc, dayArc, compass);
+  adapter.scene.add(group);
+  adapter.sunPath = { group, dayArc, belowArc, compass, monthGrid, hourGrid };
+  return adapter.sunPath;
+}
+
+function syncLinePool(group, count, materialFactory) {
+  while (group.children.length < count) {
+    group.add(new THREE.Line(new THREE.BufferGeometry(), materialFactory()));
+  }
+  while (group.children.length > count) {
+    const child = group.children.pop();
+    child.geometry?.dispose?.();
+    child.material?.dispose?.();
+  }
+}
+
+function sunPathPoint(sample, center, radius, trueNorthOffsetDeg) {
+  const direction = vectorFromPlain(resolveSunDirection({
+    azimuthDeg: sample.azimuthDeg,
+    elevationDeg: Math.max(0, sample.elevationDeg),
+    trueNorthOffsetDeg,
+  }));
+  return center.clone().addScaledVector(direction, radius);
+}
+
+function updateCompass(compass, center, radius, visible) {
+  compass.visible = visible;
+  if (!visible) return;
+  const ringPoints = [];
+  for (let index = 0; index < 96; index += 1) {
+    const angle = (index / 96) * Math.PI * 2;
+    ringPoints.push(new THREE.Vector3(
+      center.x + Math.sin(angle) * radius,
+      center.y,
+      center.z + Math.cos(angle) * radius,
+    ));
+  }
+  compass.children[0].geometry.setFromPoints(ringPoints);
+  const axes = [
+    [new THREE.Vector3(center.x, center.y, center.z), new THREE.Vector3(center.x, center.y, center.z + radius)],
+    [new THREE.Vector3(center.x, center.y, center.z), new THREE.Vector3(center.x + radius, center.y, center.z)],
+    [new THREE.Vector3(center.x, center.y, center.z), new THREE.Vector3(center.x, center.y, center.z - radius)],
+    [new THREE.Vector3(center.x, center.y, center.z), new THREE.Vector3(center.x - radius, center.y, center.z)],
+  ];
+  axes.forEach((points, index) => {
+    compass.children[index + 1].geometry.setFromPoints(points);
+  });
+}
+
+function samplePoints(samples, center, radius, trueNorthOffsetDeg, { includeBelowHorizon = false } = {}) {
+  return samples
+    .filter((sample) => includeBelowHorizon || !sample.belowHorizon)
+    .map((sample) => sunPathPoint(sample, center, radius, trueNorthOffsetDeg));
+}
+
+function updateSunPath(adapter, bounds, environmentalAnalysis, enabled) {
+  if (!enabled) {
+    if (adapter.sunPath) adapter.sunPath.group.visible = false;
+    return;
+  }
+  const path = ensureSunPath(adapter);
+  const state = normalizeBimEnvironmentalAnalysisState(environmentalAnalysis);
+  const center = centerFromBounds(bounds);
+  const modelRadius = Math.max(1, Number(bounds?.radius) || 10);
+  const radius = modelRadius * state.sunStudy.sunPathRadius;
+  const grid = buildSunPathGridSamples(state);
+  syncLinePool(path.monthGrid, grid.monthArcs.length, () => new THREE.LineBasicMaterial({
+    color: 0x3b82f6,
+    transparent: true,
+    opacity: 0.62,
+    toneMapped: false,
+  }));
+  syncLinePool(path.hourGrid, grid.hourCurves.length, () => new THREE.LineBasicMaterial({
+    color: 0x60a5fa,
+    transparent: true,
+    opacity: 0.38,
+    toneMapped: false,
+  }));
+  grid.monthArcs.forEach((arc, index) => {
+    path.monthGrid.children[index].geometry.setFromPoints(
+      samplePoints(arc.samples, center, radius, state.site.trueNorthOffsetDeg),
+    );
+  });
+  grid.hourCurves.forEach((curve, index) => {
+    path.hourGrid.children[index].geometry.setFromPoints(
+      samplePoints(curve.samples, center, radius, state.site.trueNorthOffsetDeg),
+    );
+  });
+  const samples = buildSunPathSamples(state, { intervalMinutes: 20 });
+  const abovePoints = [];
+  const belowPoints = [];
+  samples.forEach((sample) => {
+    const point = sunPathPoint(sample, center, radius, state.site.trueNorthOffsetDeg);
+    if (sample.belowHorizon) belowPoints.push(point);
+    else abovePoints.push(point);
+  });
+  path.dayArc.geometry.setFromPoints(abovePoints);
+  path.belowArc.geometry.setFromPoints(belowPoints);
+  updateCompass(path.compass, center, radius, state.sunStudy.showCompass);
+  path.group.visible = true;
 }
 
 export function applyBimSunLighting(adapter, {
@@ -202,7 +356,8 @@ export function applyBimSunLighting(adapter, {
   if (!enabled) {
     updateGround(adapter, bounds, false);
     updateSky(adapter, bounds, false);
-    updateSunTracker(adapter, bounds, new THREE.Vector3(0, 1, 0), false);
+    updateSunTracker(adapter, bounds, new THREE.Vector3(0, 1, 0), false, state.sunStudy.sunPathRadius);
+    updateSunPath(adapter, bounds, state, false);
     adapter.sun.castShadow = false;
     adapter.lastEnabled = false;
     return buildSunStudyReadout(state);
@@ -230,8 +385,20 @@ export function applyBimSunLighting(adapter, {
   adapter.sun.shadow.needsUpdate = true;
   adapter.renderer.shadowMap.needsUpdate = true;
   updateGround(adapter, bounds, state.sunStudy.groundReceiverEnabled && adapter.sun.castShadow);
+  updateSunPath(
+    adapter,
+    bounds,
+    state,
+    state.sunStudy.controlMode === 'geo' && state.sunStudy.showSunPath,
+  );
   updateSky(adapter, bounds, direction, state.sunStudy.showSkyDome);
-  updateSunTracker(adapter, bounds, direction, state.sunStudy.showSunTracker);
+  updateSunTracker(
+    adapter,
+    bounds,
+    direction,
+    state.sunStudy.showSunTracker,
+    state.sunStudy.sunPathRadius,
+  );
 
   adapter.lastEnabled = true;
   return buildSunStudyReadout(state);
@@ -256,6 +423,13 @@ export function disposeBimSunLightingAdapter(adapter) {
   if (adapter.tracker) {
     adapter.scene?.remove(adapter.tracker.group);
     adapter.tracker.group.traverse((child) => {
+      child.geometry?.dispose?.();
+      child.material?.dispose?.();
+    });
+  }
+  if (adapter.sunPath) {
+    adapter.scene?.remove(adapter.sunPath.group);
+    adapter.sunPath.group.traverse((child) => {
       child.geometry?.dispose?.();
       child.material?.dispose?.();
     });

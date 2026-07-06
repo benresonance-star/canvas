@@ -11,6 +11,7 @@ import { BimAgentHud } from '../BimAgentHud.jsx';
 import { BimBqlHud } from '../BimBqlHud.jsx';
 import { BimLayersHud } from '../BimLayersHud.jsx';
 import { BimSectionHud } from '../BimSectionHud.jsx';
+import { BimSunStudyHud } from '../BimSunStudyHud.jsx';
 import { Bim4dHud } from '../Bim4dHud.jsx';
 import { Bim5dHud } from '../Bim5dHud.jsx';
 import { BimViewCarousel } from '../BimViewCarousel.jsx';
@@ -44,6 +45,42 @@ describe('BIM UI components', () => {
     expect(html).toContain('IfcWall');
     expect(html).toContain('wall-1');
     expect(html).toContain('Level 01');
+  });
+
+  it('hides geo sun path controls in manual mode', () => {
+    const manualHtml = renderToStaticMarkup(
+      React.createElement(BimSunStudyHud, {
+        environmentalAnalysis: {
+          sunStudy: {
+            enabled: true,
+            controlMode: 'manual',
+            showSunPath: true,
+          },
+        },
+        onEnvironmentalAnalysisChange: () => {},
+      }),
+    );
+    expect(manualHtml).not.toContain('Path');
+    expect(manualHtml).not.toContain('Compass');
+    expect(manualHtml).not.toContain('Radius');
+    expect(manualHtml).not.toContain('Daylight saving');
+
+    const geoHtml = renderToStaticMarkup(
+      React.createElement(BimSunStudyHud, {
+        environmentalAnalysis: {
+          sunStudy: {
+            enabled: true,
+            controlMode: 'geo',
+            showSunPath: true,
+          },
+        },
+        onEnvironmentalAnalysisChange: () => {},
+      }),
+    );
+    expect(geoHtml).toContain('Path');
+    expect(geoHtml).toContain('Compass');
+    expect(geoHtml).toContain('Radius');
+    expect(geoHtml).toContain('Daylight saving');
   });
 
   it('renders inspector identity and grouped properties', () => {
