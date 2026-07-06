@@ -1182,6 +1182,7 @@ export function BimWorkspace({
               else patchWorkspaceState({ renderStyle: 'standard' });
             }}
             onClayStyleChange={(clayStylePatch) => patchWorkspaceState(clayStylePatch)}
+            onResetClayDefaults={() => patchWorkspaceState(getClayPresetWorkspacePatch())}
             onViewportBackgroundChange={(viewportBackgroundColor) => patchWorkspaceState({ viewportBackgroundColor })}
             onLightingChange={(lightingPatch) => patchWorkspaceState(lightingPatch)}
             onEnvironmentalAnalysisChange={(environmentalAnalysis) => patchWorkspaceState({ environmentalAnalysis })}

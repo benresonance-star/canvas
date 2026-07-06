@@ -81,6 +81,80 @@ describe('BIM UI components', () => {
     expect(geoHtml).toContain('Compass');
     expect(geoHtml).toContain('Radius');
     expect(geoHtml).toContain('Daylight saving');
+    expect(geoHtml).toContain('Brightness');
+    expect(geoHtml).toContain('Shadow colour');
+  });
+
+  it('locks sun study lat/lon fields for the Melbourne timezone preset', () => {
+    const melbourneHtml = renderToStaticMarkup(
+      React.createElement(BimSunStudyHud, {
+        environmentalAnalysis: {
+          site: {
+            timezone: 'Australia/Melbourne',
+            latitude: 12,
+            longitude: 34,
+          },
+          sunStudy: {
+            enabled: true,
+            controlMode: 'geo',
+          },
+        },
+        onEnvironmentalAnalysisChange: () => {},
+      }),
+    );
+    const customHtml = renderToStaticMarkup(
+      React.createElement(BimSunStudyHud, {
+        environmentalAnalysis: {
+          site: {
+            timezone: 'Custom',
+            presetId: 'custom',
+            latitude: 12,
+            longitude: 34,
+            customPresets: [
+              {
+                id: 'custom-office-roof',
+                label: 'Office roof',
+                latitude: -33.7,
+                longitude: 151.1,
+                timezone: 'Australia/Sydney',
+                daylightSavingTime: true,
+              },
+            ],
+          },
+          sunStudy: {
+            enabled: true,
+            controlMode: 'geo',
+          },
+        },
+        onEnvironmentalAnalysisChange: () => {},
+      }),
+    );
+
+    expect(melbourneHtml).toMatch(/<input[^>]*disabled=""[^>]*aria-label="Lat"/);
+    expect(melbourneHtml).toMatch(/<input[^>]*disabled=""[^>]*aria-label="Lon"/);
+    expect(melbourneHtml).toContain('value="-37.8136"');
+    expect(melbourneHtml).toContain('value="144.9631"');
+    expect(melbourneHtml).toContain('Sydney');
+    expect(melbourneHtml).toContain('Brisbane');
+    expect(melbourneHtml).toContain('Hobart');
+    expect(melbourneHtml).toContain('Adelaide');
+    expect(melbourneHtml).toContain('Perth');
+    expect(melbourneHtml).toContain('Canberra');
+    expect(melbourneHtml).toContain('Darwin');
+    expect(melbourneHtml).toContain('London');
+    expect(melbourneHtml).toContain('New York');
+    expect(melbourneHtml).toContain('Paris');
+    expect(melbourneHtml).toContain('Shanghai');
+    expect(melbourneHtml).toContain('Mumbai');
+    expect(melbourneHtml).toContain('Singapore');
+    expect(melbourneHtml).toContain('Custom');
+    expect(customHtml).toMatch(/<input(?![^>]*disabled="")[^>]*aria-label="Lat"/);
+    expect(customHtml).toMatch(/<input(?![^>]*disabled="")[^>]*aria-label="Lon"/);
+    expect(customHtml).toContain('value="12"');
+    expect(customHtml).toContain('value="34"');
+    expect(customHtml).toContain('Office roof');
+    expect(customHtml).toContain('Preset name');
+    expect(customHtml).toContain('Save');
   });
 
   it('renders inspector identity and grouped properties', () => {

@@ -1,9 +1,14 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { SunMedium } from 'lucide-react';
 import {
+  BIM_CUSTOM_SITE_PRESET_ID,
+  BIM_MELBOURNE_SITE_PRESET,
+  BIM_SITE_PRESETS,
   BIM_SUN_STUDY_CONTROL_MODES,
   BIM_SUN_STUDY_SHADOW_QUALITIES,
   buildSunStudyReadout,
+  createBimCustomSitePreset,
+  findBimSitePreset,
   normalizeBimEnvironmentalAnalysisState,
   patchBimEnvironmentalAnalysisState,
 } from '../bim-core/bimSunStudy.js';
@@ -36,6 +41,7 @@ function NumericField({
         max={max}
         step={step}
         disabled={disabled}
+        aria-label={label}
         onChange={(event) => onChange(Number(event.target.value))}
         className="h-7 min-w-0 flex-1 rounded border border-border bg-surface px-2 py-1 font-mono text-[11px] text-secondary outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
       />
@@ -59,6 +65,60 @@ function ToggleRow({ checked, onChange, label, disabled = false }) {
   );
 }
 
+function ColorField({
+  label,
+  value,
+  onChange,
+  disabled = false,
+}) {
+  const [draftValue, setDraftValue] = useState(value);
+  useEffect(() => {
+    setDraftValue(value);
+  }, [value]);
+
+  const commitDraft = () => {
+    if (/^#[0-9a-f]{6}$/i.test(draftValue) || /^[0-9a-f]{6}$/i.test(draftValue)) {
+      onChange(draftValue);
+      return;
+    }
+    setDraftValue(value);
+  };
+
+  return (
+    <label className="flex items-center gap-2 text-[11px] text-secondary">
+      <FieldLabel>{label}</FieldLabel>
+      <input
+        type="color"
+        value={value}
+        disabled={disabled}
+        aria-label={label}
+        onChange={(event) => {
+          setDraftValue(event.target.value);
+          onChange(event.target.value);
+        }}
+        className="h-7 w-10 shrink-0 cursor-pointer rounded border border-border bg-surface p-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+      />
+      <input
+        type="text"
+        value={draftValue}
+        disabled={disabled}
+        onChange={(event) => setDraftValue(event.target.value)}
+        onBlur={commitDraft}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.currentTarget.blur();
+          }
+          if (event.key === 'Escape') {
+            setDraftValue(value);
+            event.currentTarget.blur();
+          }
+        }}
+        className="h-7 min-w-0 flex-1 rounded border border-border bg-surface px-2 py-1 font-mono text-[11px] text-secondary outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+      />
+    </label>
+  );
+}
+
 export function BimSunStudyHud({
   environmentalAnalysis,
   onEnvironmentalAnalysisChange,
@@ -69,7 +129,14 @@ export function BimSunStudyHud({
   );
   const { site, sunStudy } = state;
   const readout = useMemo(() => buildSunStudyReadout(state), [state]);
+  const [customPresetName, setCustomPresetName] = useState('');
   const disabled = sunStudy.enabled !== true;
+  const activeSitePreset = findBimSitePreset(site.presetId, site.customPresets);
+  const isLockedSitePreset = activeSitePreset != null;
+  const sitePresets = useMemo(
+    () => [...BIM_SITE_PRESETS, ...site.customPresets],
+    [site.customPresets],
+  );
 
   const patchState = (patch) => {
     onEnvironmentalAnalysisChange(patchBimEnvironmentalAnalysisState(state, patch));
@@ -91,8 +158,54 @@ export function BimSunStudyHud({
     patchSunStudy({ geo: patch });
   };
 
+  const patchSitePreset = (presetId) => {
+    const preset = findBimSitePreset(presetId, site.customPresets);
+    if (preset) {
+      patchSite({
+        presetId: preset.id,
+        latitude: preset.latitude,
+        longitude: preset.longitude,
+        timezone: preset.timezone,
+        daylightSavingTime: preset.daylightSavingTime,
+      });
+      return;
+    }
+    patchSite({ presetId: BIM_CUSTOM_SITE_PRESET_ID });
+  };
+
+  const patchTimezone = (timezone) => {
+    const nextTimezone = String(timezone ?? '').trim();
+    if (nextTimezone === BIM_MELBOURNE_SITE_PRESET.timezone) {
+      patchSite({
+        presetId: BIM_MELBOURNE_SITE_PRESET.id,
+        ...BIM_MELBOURNE_SITE_PRESET,
+      });
+      return;
+    }
+    patchSite({ presetId: BIM_CUSTOM_SITE_PRESET_ID, timezone });
+  };
+
   const patchAnimation = (patch) => {
     patchSunStudy({ animation: patch });
+  };
+
+  const saveCustomPreset = () => {
+    const preset = createBimCustomSitePreset({
+      label: customPresetName,
+      latitude: site.latitude,
+      longitude: site.longitude,
+      timezone: site.timezone,
+      daylightSavingTime: site.daylightSavingTime,
+    }, site.customPresets);
+    patchSite({
+      customPresets: [...site.customPresets, preset],
+      presetId: preset.id,
+      latitude: preset.latitude,
+      longitude: preset.longitude,
+      timezone: preset.timezone,
+      daylightSavingTime: preset.daylightSavingTime,
+    });
+    setCustomPresetName('');
   };
 
   return (
@@ -160,6 +273,42 @@ export function BimSunStudyHud({
           </section>
         ) : (
           <section className={`space-y-2 ${disabled ? 'opacity-60' : ''}`}>
+            <label className="flex flex-col gap-1 text-[11px] text-secondary">
+              <FieldLabel>Site</FieldLabel>
+              <select
+                value={site.presetId}
+                disabled={disabled}
+                onChange={(event) => patchSitePreset(event.target.value)}
+                className="h-7 rounded border border-border bg-surface px-2 py-1 text-[11px] text-secondary outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {sitePresets.map((preset) => (
+                  <option key={preset.id} value={preset.id}>{preset.label}</option>
+                ))}
+                <option value={BIM_CUSTOM_SITE_PRESET_ID}>Custom</option>
+              </select>
+            </label>
+            {site.presetId === BIM_CUSTOM_SITE_PRESET_ID && (
+              <div className="grid grid-cols-[1fr_auto] gap-1">
+                <label className="flex min-w-0 flex-col gap-1 text-[11px] text-secondary">
+                  <FieldLabel>Preset name</FieldLabel>
+                  <input
+                    type="text"
+                    value={customPresetName}
+                    disabled={disabled}
+                    onChange={(event) => setCustomPresetName(event.target.value)}
+                    className="h-7 rounded border border-border bg-surface px-2 py-1 text-[11px] text-secondary outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={saveCustomPreset}
+                  disabled={disabled || customPresetName.trim().length === 0}
+                  className="self-end rounded border border-border px-2 py-1 text-[10px] uppercase tracking-wider text-secondary hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Save
+                </button>
+              </div>
+            )}
             <NumericField
               label="Lat"
               value={site.latitude}
@@ -167,7 +316,7 @@ export function BimSunStudyHud({
               max={90}
               step={0.0001}
               onChange={(latitude) => patchSite({ latitude })}
-              disabled={disabled}
+              disabled={disabled || isLockedSitePreset}
             />
             <NumericField
               label="Lon"
@@ -176,15 +325,15 @@ export function BimSunStudyHud({
               max={180}
               step={0.0001}
               onChange={(longitude) => patchSite({ longitude })}
-              disabled={disabled}
+              disabled={disabled || isLockedSitePreset}
             />
             <label className="flex flex-col gap-1 text-[11px] text-secondary">
               <FieldLabel>Timezone</FieldLabel>
               <input
                 type="text"
                 value={site.timezone}
-                disabled={disabled}
-                onChange={(event) => patchSite({ timezone: event.target.value })}
+                disabled={disabled || isLockedSitePreset}
+                onChange={(event) => patchTimezone(event.target.value)}
                 className="h-7 rounded border border-border bg-surface px-2 py-1 font-mono text-[11px] text-secondary outline-none focus:border-accent disabled:cursor-not-allowed disabled:opacity-50"
               />
             </label>
@@ -278,6 +427,21 @@ export function BimSunStudyHud({
               ))}
             </select>
           </label>
+          <NumericField
+            label="Brightness"
+            value={sunStudy.shadowOpacity}
+            min={0}
+            max={1}
+            step={0.05}
+            onChange={(shadowOpacity) => patchSunStudy({ shadowOpacity })}
+            disabled={disabled || !sunStudy.shadowsEnabled || !sunStudy.groundReceiverEnabled}
+          />
+          <ColorField
+            label="Shadow colour"
+            value={sunStudy.shadowColor}
+            onChange={(shadowColor) => patchSunStudy({ shadowColor })}
+            disabled={disabled || !sunStudy.shadowsEnabled || !sunStudy.groundReceiverEnabled}
+          />
           {sunStudy.controlMode === 'geo' && (
             <NumericField
               label="Radius"

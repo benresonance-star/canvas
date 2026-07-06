@@ -9,6 +9,7 @@ import {
   resolveSunDirection,
   resolveSunFromEnvironmentalState,
   resolveSunIntensity,
+  splitSunPathSamplesByHorizon,
 } from './bimSunStudy.js';
 
 function vectorFromPlain(direction) {
@@ -69,6 +70,9 @@ export function createBimSunLightingAdapter(scene, renderer) {
     sky: null,
     tracker: null,
     sunPath: null,
+    sunPathCacheKey: null,
+    shadowUpdateKey: null,
+    shadowModelRoot: null,
     lastEnabled: false,
   };
 }
@@ -86,17 +90,35 @@ function ensureGround(adapter, bounds) {
   ground.name = 'bim-sun-study-ground-receiver';
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
+  ground.userData.shadowMaterialState = {
+    color: '#000000',
+    opacity: 0.22,
+  };
   adapter.scene.add(ground);
   adapter.ground = ground;
   return ground;
 }
 
-function updateGround(adapter, bounds, enabled) {
+function updateGround(adapter, bounds, enabled, sunStudy = {}) {
   if (!enabled) {
     if (adapter.ground) adapter.ground.visible = false;
     return;
   }
   const ground = ensureGround(adapter, bounds);
+  const shadowColor = sunStudy.shadowColor ?? '#000000';
+  const shadowOpacity = Number.isFinite(Number(sunStudy.shadowOpacity))
+    ? Number(sunStudy.shadowOpacity)
+    : 0.22;
+  const materialState = ground.userData.shadowMaterialState ?? {};
+  if (materialState.color !== shadowColor) {
+    ground.material.color.set(shadowColor);
+    materialState.color = shadowColor;
+  }
+  if (materialState.opacity !== shadowOpacity) {
+    ground.material.opacity = shadowOpacity;
+    materialState.opacity = shadowOpacity;
+  }
+  ground.userData.shadowMaterialState = materialState;
   const radius = Math.max(1, Number(bounds?.radius) || 10);
   const groundY = Number.isFinite(Number(bounds?.min?.y))
     ? Number(bounds.min.y) - Math.max(0.02, radius * 0.01)
@@ -195,26 +217,10 @@ function ensureSunPath(adapter) {
   const group = new THREE.Group();
   group.name = 'bim-sun-study-path';
 
-  const dayArc = new THREE.Line(
-    new THREE.BufferGeometry(),
-    new THREE.LineBasicMaterial({
-      color: 0xffd166,
-      transparent: true,
-      opacity: 0.85,
-      toneMapped: false,
-    }),
-  );
+  const dayArc = new THREE.Group();
   dayArc.name = 'bim-sun-study-day-arc';
 
-  const belowArc = new THREE.Line(
-    new THREE.BufferGeometry(),
-    new THREE.LineBasicMaterial({
-      color: 0x9ca3af,
-      transparent: true,
-      opacity: 0.28,
-      toneMapped: false,
-    }),
-  );
+  const belowArc = new THREE.Group();
   belowArc.name = 'bim-sun-study-below-horizon-arc';
 
   const compass = new THREE.Group();
@@ -287,10 +293,62 @@ function updateCompass(compass, center, radius, visible) {
   });
 }
 
-function samplePoints(samples, center, radius, trueNorthOffsetDeg, { includeBelowHorizon = false } = {}) {
-  return samples
-    .filter((sample) => includeBelowHorizon || !sample.belowHorizon)
-    .map((sample) => sunPathPoint(sample, center, radius, trueNorthOffsetDeg));
+function samplePointSegments(samples, center, radius, trueNorthOffsetDeg, { belowHorizon = false } = {}) {
+  return splitSunPathSamplesByHorizon(samples, { belowHorizon })
+    .map((segment) => segment.map((sample) => sunPathPoint(
+      sample,
+      center,
+      radius,
+      trueNorthOffsetDeg,
+    )));
+}
+
+function setLineSegments(group, segments, materialFactory) {
+  syncLinePool(group, segments.length, materialFactory);
+  segments.forEach((points, index) => {
+    group.children[index].geometry.setFromPoints(points);
+  });
+}
+
+function roundedNumber(value, precision = 4) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Number(number.toFixed(precision));
+}
+
+function boundsCacheKey(bounds = {}) {
+  return [
+    roundedNumber(bounds.center?.x),
+    roundedNumber(bounds.center?.y),
+    roundedNumber(bounds.center?.z),
+    roundedNumber(bounds.min?.y),
+    roundedNumber(bounds.radius),
+  ].join(',');
+}
+
+function sunPathCacheKey(state, bounds = {}) {
+  return JSON.stringify({
+    bounds: boundsCacheKey(bounds),
+    latitude: state.site.latitude,
+    longitude: state.site.longitude,
+    timezone: state.site.timezone,
+    daylightSavingTime: state.site.daylightSavingTime,
+    trueNorthOffsetDeg: state.site.trueNorthOffsetDeg,
+    dateTimeLocal: state.sunStudy.geo.dateTimeLocal,
+    sunPathRadius: state.sunStudy.sunPathRadius,
+    showCompass: state.sunStudy.showCompass,
+  });
+}
+
+function shadowUpdateKey({ state, bounds, sun, castShadow }) {
+  return JSON.stringify({
+    bounds: boundsCacheKey(bounds),
+    castShadow,
+    shadowQuality: state.sunStudy.shadowQuality,
+    azimuthDeg: roundedNumber(sun.azimuthDeg),
+    elevationDeg: roundedNumber(sun.elevationDeg),
+    trueNorthOffsetDeg: roundedNumber(sun.trueNorthOffsetDeg),
+  });
 }
 
 function updateSunPath(adapter, bounds, environmentalAnalysis, enabled) {
@@ -300,43 +358,56 @@ function updateSunPath(adapter, bounds, environmentalAnalysis, enabled) {
   }
   const path = ensureSunPath(adapter);
   const state = normalizeBimEnvironmentalAnalysisState(environmentalAnalysis);
+  const nextCacheKey = sunPathCacheKey(state, bounds);
+  if (adapter.sunPathCacheKey === nextCacheKey) {
+    path.group.visible = true;
+    return;
+  }
   const center = centerFromBounds(bounds);
   const modelRadius = Math.max(1, Number(bounds?.radius) || 10);
   const radius = modelRadius * state.sunStudy.sunPathRadius;
   const grid = buildSunPathGridSamples(state);
-  syncLinePool(path.monthGrid, grid.monthArcs.length, () => new THREE.LineBasicMaterial({
+  const monthMaterialFactory = () => new THREE.LineBasicMaterial({
     color: 0x3b82f6,
     transparent: true,
     opacity: 0.62,
     toneMapped: false,
-  }));
-  syncLinePool(path.hourGrid, grid.hourCurves.length, () => new THREE.LineBasicMaterial({
+  });
+  const hourMaterialFactory = () => new THREE.LineBasicMaterial({
     color: 0x60a5fa,
     transparent: true,
     opacity: 0.38,
     toneMapped: false,
-  }));
-  grid.monthArcs.forEach((arc, index) => {
-    path.monthGrid.children[index].geometry.setFromPoints(
-      samplePoints(arc.samples, center, radius, state.site.trueNorthOffsetDeg),
-    );
   });
-  grid.hourCurves.forEach((curve, index) => {
-    path.hourGrid.children[index].geometry.setFromPoints(
-      samplePoints(curve.samples, center, radius, state.site.trueNorthOffsetDeg),
-    );
+  const dayMaterialFactory = () => new THREE.LineBasicMaterial({
+    color: 0xffd166,
+    transparent: true,
+    opacity: 0.85,
+    toneMapped: false,
   });
+  const belowMaterialFactory = () => new THREE.LineBasicMaterial({
+    color: 0x9ca3af,
+    transparent: true,
+    opacity: 0.28,
+    toneMapped: false,
+  });
+  const monthSegments = grid.monthArcs.flatMap((arc) => (
+    samplePointSegments(arc.samples, center, radius, state.site.trueNorthOffsetDeg)
+  ));
+  const hourSegments = grid.hourCurves.flatMap((curve) => (
+    samplePointSegments(curve.samples, center, radius, state.site.trueNorthOffsetDeg)
+  ));
+  setLineSegments(path.monthGrid, monthSegments, monthMaterialFactory);
+  setLineSegments(path.hourGrid, hourSegments, hourMaterialFactory);
   const samples = buildSunPathSamples(state, { intervalMinutes: 20 });
-  const abovePoints = [];
-  const belowPoints = [];
-  samples.forEach((sample) => {
-    const point = sunPathPoint(sample, center, radius, state.site.trueNorthOffsetDeg);
-    if (sample.belowHorizon) belowPoints.push(point);
-    else abovePoints.push(point);
+  const daySegments = samplePointSegments(samples, center, radius, state.site.trueNorthOffsetDeg);
+  const belowSegments = samplePointSegments(samples, center, radius, state.site.trueNorthOffsetDeg, {
+    belowHorizon: true,
   });
-  path.dayArc.geometry.setFromPoints(abovePoints);
-  path.belowArc.geometry.setFromPoints(belowPoints);
+  setLineSegments(path.dayArc, daySegments, dayMaterialFactory);
+  setLineSegments(path.belowArc, belowSegments, belowMaterialFactory);
   updateCompass(path.compass, center, radius, state.sunStudy.showCompass);
+  adapter.sunPathCacheKey = nextCacheKey;
   path.group.visible = true;
 }
 
@@ -354,16 +425,20 @@ export function applyBimSunLighting(adapter, {
   adapter.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   if (!enabled) {
-    updateGround(adapter, bounds, false);
+    updateGround(adapter, bounds, false, state.sunStudy);
     updateSky(adapter, bounds, false);
     updateSunTracker(adapter, bounds, new THREE.Vector3(0, 1, 0), false, state.sunStudy.sunPathRadius);
     updateSunPath(adapter, bounds, state, false);
     adapter.sun.castShadow = false;
+    adapter.shadowUpdateKey = null;
     adapter.lastEnabled = false;
     return buildSunStudyReadout(state);
   }
 
-  enableModelSunShadows(modelRoot);
+  if (adapter.shadowModelRoot !== modelRoot) {
+    enableModelSunShadows(modelRoot);
+    adapter.shadowModelRoot = modelRoot;
+  }
   const sun = resolveSunFromEnvironmentalState(state);
   const direction = vectorFromPlain(resolveSunDirection(sun));
   const center = centerFromBounds(bounds);
@@ -381,10 +456,24 @@ export function applyBimSunLighting(adapter, {
   adapter.sun.intensity = intensity;
   adapter.sun.castShadow = state.sunStudy.shadowsEnabled && intensity > 0;
   adapter.ambient.intensity = intensity > 0 ? 0.42 : 0.65;
-  configureDirectionalShadowCamera(adapter.sun, bounds, state.sunStudy.shadowQuality);
-  adapter.sun.shadow.needsUpdate = true;
-  adapter.renderer.shadowMap.needsUpdate = true;
-  updateGround(adapter, bounds, state.sunStudy.groundReceiverEnabled && adapter.sun.castShadow);
+  const nextShadowUpdateKey = shadowUpdateKey({
+    state,
+    bounds,
+    sun,
+    castShadow: adapter.sun.castShadow,
+  });
+  if (adapter.shadowUpdateKey !== nextShadowUpdateKey) {
+    configureDirectionalShadowCamera(adapter.sun, bounds, state.sunStudy.shadowQuality);
+    adapter.sun.shadow.needsUpdate = true;
+    adapter.renderer.shadowMap.needsUpdate = true;
+    adapter.shadowUpdateKey = nextShadowUpdateKey;
+  }
+  updateGround(
+    adapter,
+    bounds,
+    state.sunStudy.groundReceiverEnabled && adapter.sun.castShadow,
+    state.sunStudy,
+  );
   updateSunPath(
     adapter,
     bounds,

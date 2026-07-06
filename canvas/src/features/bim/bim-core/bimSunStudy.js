@@ -2,13 +2,199 @@ export const BIM_ENVIRONMENTAL_ANALYSIS_SCHEMA_VERSION = 1;
 
 export const BIM_SUN_STUDY_CONTROL_MODES = ['manual', 'geo'];
 export const BIM_SUN_STUDY_SHADOW_QUALITIES = ['low', 'medium', 'high'];
+export const BIM_CUSTOM_SITE_PRESET_ID = 'custom';
+
+export const BIM_SITE_PRESETS = [
+  {
+    id: 'melbourne',
+    label: 'Melbourne',
+    latitude: -37.8136,
+    longitude: 144.9631,
+    timezone: 'Australia/Melbourne',
+    daylightSavingTime: true,
+  },
+  {
+    id: 'sydney',
+    label: 'Sydney',
+    latitude: -33.8688,
+    longitude: 151.2093,
+    timezone: 'Australia/Sydney',
+    daylightSavingTime: true,
+  },
+  {
+    id: 'brisbane',
+    label: 'Brisbane',
+    latitude: -27.4698,
+    longitude: 153.0251,
+    timezone: 'Australia/Brisbane',
+    daylightSavingTime: false,
+  },
+  {
+    id: 'hobart',
+    label: 'Hobart',
+    latitude: -42.8821,
+    longitude: 147.3272,
+    timezone: 'Australia/Hobart',
+    daylightSavingTime: true,
+  },
+  {
+    id: 'adelaide',
+    label: 'Adelaide',
+    latitude: -34.9285,
+    longitude: 138.6007,
+    timezone: 'Australia/Adelaide',
+    daylightSavingTime: true,
+  },
+  {
+    id: 'perth',
+    label: 'Perth',
+    latitude: -31.9523,
+    longitude: 115.8613,
+    timezone: 'Australia/Perth',
+    daylightSavingTime: false,
+  },
+  {
+    id: 'canberra',
+    label: 'Canberra',
+    latitude: -35.2809,
+    longitude: 149.13,
+    timezone: 'Australia/Sydney',
+    daylightSavingTime: true,
+  },
+  {
+    id: 'darwin',
+    label: 'Darwin',
+    latitude: -12.4634,
+    longitude: 130.8456,
+    timezone: 'Australia/Darwin',
+    daylightSavingTime: false,
+  },
+  {
+    id: 'london',
+    label: 'London',
+    latitude: 51.5074,
+    longitude: -0.1278,
+    timezone: 'Europe/London',
+    daylightSavingTime: true,
+  },
+  {
+    id: 'new-york',
+    label: 'New York',
+    latitude: 40.7128,
+    longitude: -74.006,
+    timezone: 'America/New_York',
+    daylightSavingTime: true,
+  },
+  {
+    id: 'paris',
+    label: 'Paris',
+    latitude: 48.8566,
+    longitude: 2.3522,
+    timezone: 'Europe/Paris',
+    daylightSavingTime: true,
+  },
+  {
+    id: 'shanghai',
+    label: 'Shanghai',
+    latitude: 31.2304,
+    longitude: 121.4737,
+    timezone: 'Asia/Shanghai',
+    daylightSavingTime: false,
+  },
+  {
+    id: 'mumbai',
+    label: 'Mumbai',
+    latitude: 19.076,
+    longitude: 72.8777,
+    timezone: 'Asia/Kolkata',
+    daylightSavingTime: false,
+  },
+  {
+    id: 'singapore',
+    label: 'Singapore',
+    latitude: 1.3521,
+    longitude: 103.8198,
+    timezone: 'Asia/Singapore',
+    daylightSavingTime: false,
+  },
+];
+
+export const BIM_MELBOURNE_SITE_PRESET = BIM_SITE_PRESETS[0];
+
+function createCustomSitePresetId(label, index = 0) {
+  const slug = String(label ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 36);
+  return `custom-${slug || 'site'}${index > 0 ? `-${index}` : ''}`;
+}
+
+export function normalizeBimCustomSitePresets(customPresets = []) {
+  if (!Array.isArray(customPresets)) return [];
+  const usedIds = new Set(BIM_SITE_PRESETS.map((preset) => preset.id));
+  return customPresets
+    .map((preset, index) => {
+      const label = String(preset?.label ?? '').trim();
+      if (!label) return null;
+      let id = String(preset?.id ?? '').trim() || createCustomSitePresetId(label, index);
+      if (usedIds.has(id)) id = createCustomSitePresetId(label, index + 1);
+      while (usedIds.has(id)) id = createCustomSitePresetId(label, usedIds.size);
+      usedIds.add(id);
+      const timezone = String(preset?.timezone ?? DEFAULT_SITE.timezone).trim() || DEFAULT_SITE.timezone;
+      return {
+        id,
+        label,
+        latitude: clampNumber(preset?.latitude, -90, 90, DEFAULT_SITE.latitude),
+        longitude: clampNumber(preset?.longitude, -180, 180, DEFAULT_SITE.longitude),
+        timezone,
+        daylightSavingTime: preset?.daylightSavingTime === true,
+      };
+    })
+    .filter(Boolean);
+}
+
+export function createBimCustomSitePreset({
+  label,
+  latitude,
+  longitude,
+  timezone,
+  daylightSavingTime,
+} = {}, existingPresets = []) {
+  const normalizedExisting = normalizeBimCustomSitePresets(existingPresets);
+  const usedIds = new Set([
+    ...BIM_SITE_PRESETS.map((preset) => preset.id),
+    ...normalizedExisting.map((preset) => preset.id),
+  ]);
+  let id = createCustomSitePresetId(label);
+  let index = 1;
+  while (usedIds.has(id)) {
+    id = createCustomSitePresetId(label, index);
+    index += 1;
+  }
+  return {
+    id,
+    label: String(label ?? '').trim() || 'Custom site',
+    latitude: clampNumber(latitude, -90, 90, DEFAULT_SITE.latitude),
+    longitude: clampNumber(longitude, -180, 180, DEFAULT_SITE.longitude),
+    timezone: String(timezone ?? DEFAULT_SITE.timezone).trim() || DEFAULT_SITE.timezone,
+    daylightSavingTime: daylightSavingTime === true,
+  };
+}
+
+export function findBimSitePreset(presetId, customPresets = []) {
+  return BIM_SITE_PRESETS.find((preset) => preset.id === presetId)
+    ?? normalizeBimCustomSitePresets(customPresets).find((preset) => preset.id === presetId)
+    ?? null;
+}
 
 const DEFAULT_SITE = {
-  latitude: -37.8136,
-  longitude: 144.9631,
-  timezone: 'Australia/Melbourne',
+  ...BIM_MELBOURNE_SITE_PRESET,
+  presetId: BIM_MELBOURNE_SITE_PRESET.id,
   trueNorthOffsetDeg: 0,
-  daylightSavingTime: true,
+  daylightSavingTime: BIM_MELBOURNE_SITE_PRESET.daylightSavingTime,
+  customPresets: [],
   source: 'manual',
 };
 
@@ -22,6 +208,8 @@ const DEFAULT_SUN_STUDY = {
   sunPathRadius: 1,
   shadowsEnabled: true,
   shadowQuality: 'medium',
+  shadowOpacity: 0.22,
+  shadowColor: '#000000',
   groundReceiverEnabled: true,
   manual: {
     azimuthDeg: 215,
@@ -49,19 +237,42 @@ function normalizeDateTimeLocal(value, fallback = DEFAULT_SUN_STUDY.geo.dateTime
   return fallback;
 }
 
+function normalizeHexColor(value, fallback) {
+  const text = String(value ?? '').trim();
+  if (/^#[0-9a-f]{6}$/i.test(text)) return text.toLowerCase();
+  if (/^[0-9a-f]{6}$/i.test(text)) return `#${text.toLowerCase()}`;
+  return fallback;
+}
+
 export function normalizeBimSiteState(site = {}) {
+  const customPresets = normalizeBimCustomSitePresets(site?.customPresets);
   const timezone = String(site?.timezone ?? DEFAULT_SITE.timezone).trim();
+  const hasExplicitPresetId = site?.presetId != null;
+  const preset = findBimSitePreset(site?.presetId, customPresets)
+    ?? (!hasExplicitPresetId && timezone === BIM_MELBOURNE_SITE_PRESET.timezone
+      ? BIM_MELBOURNE_SITE_PRESET
+      : null);
+  const resolvedTimezone = preset?.timezone ?? (timezone || DEFAULT_SITE.timezone);
+  const lockedPreset = preset != null;
   return {
-    latitude: clampNumber(site?.latitude, -90, 90, DEFAULT_SITE.latitude),
-    longitude: clampNumber(site?.longitude, -180, 180, DEFAULT_SITE.longitude),
-    timezone: timezone || DEFAULT_SITE.timezone,
+    presetId: preset?.id ?? BIM_CUSTOM_SITE_PRESET_ID,
+    customPresets,
+    latitude: lockedPreset
+      ? preset.latitude
+      : clampNumber(site?.latitude, -90, 90, DEFAULT_SITE.latitude),
+    longitude: lockedPreset
+      ? preset.longitude
+      : clampNumber(site?.longitude, -180, 180, DEFAULT_SITE.longitude),
+    timezone: resolvedTimezone,
     trueNorthOffsetDeg: clampNumber(
       site?.trueNorthOffsetDeg,
       -180,
       180,
       DEFAULT_SITE.trueNorthOffsetDeg,
     ),
-    daylightSavingTime: site?.daylightSavingTime !== false,
+    daylightSavingTime: lockedPreset
+      ? preset.daylightSavingTime === true
+      : site?.daylightSavingTime !== false,
     source: ['manual', 'ifcSite', 'imported'].includes(site?.source) ? site.source : DEFAULT_SITE.source,
   };
 }
@@ -84,6 +295,8 @@ export function normalizeBimSunStudyState(sunStudy = {}) {
     shadowQuality: BIM_SUN_STUDY_SHADOW_QUALITIES.includes(sunStudy?.shadowQuality)
       ? sunStudy.shadowQuality
       : DEFAULT_SUN_STUDY.shadowQuality,
+    shadowOpacity: clampNumber(sunStudy?.shadowOpacity, 0, 1, DEFAULT_SUN_STUDY.shadowOpacity),
+    shadowColor: normalizeHexColor(sunStudy?.shadowColor, DEFAULT_SUN_STUDY.shadowColor),
     groundReceiverEnabled: sunStudy?.groundReceiverEnabled !== false,
     manual: {
       azimuthDeg: clampNumber(manual.azimuthDeg, 0, 360, DEFAULT_SUN_STUDY.manual.azimuthDeg),
@@ -467,6 +680,65 @@ export function buildSunPathSamples(environmentalAnalysis = {}, { intervalMinute
     });
   }
   return samples;
+}
+
+function isSampleBelowHorizon(sample, horizonElevationDeg) {
+  const elevation = Number(sample?.elevationDeg);
+  if (Number.isFinite(elevation)) return elevation <= horizonElevationDeg;
+  return sample?.belowHorizon === true;
+}
+
+function interpolateAzimuthDeg(fromAzimuthDeg, toAzimuthDeg, t) {
+  const from = normalizeDegrees(fromAzimuthDeg);
+  const delta = ((normalizeDegrees(toAzimuthDeg) - from + 540) % 360) - 180;
+  return normalizeDegrees(from + delta * t);
+}
+
+function interpolateHorizonSample(fromSample, toSample, horizonElevationDeg, belowHorizon) {
+  const fromElevation = Number(fromSample?.elevationDeg);
+  const toElevation = Number(toSample?.elevationDeg);
+  const denominator = toElevation - fromElevation;
+  const rawT = Math.abs(denominator) > 0.000001
+    ? (horizonElevationDeg - fromElevation) / denominator
+    : 0.5;
+  const t = Math.min(1, Math.max(0, rawT));
+  return {
+    ...(t < 0.5 ? fromSample : toSample),
+    azimuthDeg: interpolateAzimuthDeg(fromSample?.azimuthDeg, toSample?.azimuthDeg, t),
+    elevationDeg: horizonElevationDeg,
+    belowHorizon,
+    horizonCrossing: true,
+  };
+}
+
+export function splitSunPathSamplesByHorizon(
+  samples = [],
+  { belowHorizon = false, horizonElevationDeg = 0 } = {},
+) {
+  const segments = [];
+  let segment = [];
+  samples.forEach((sample, index) => {
+    const previous = index > 0 ? samples[index - 1] : null;
+    const sampleMatches = isSampleBelowHorizon(sample, horizonElevationDeg) === belowHorizon;
+    const previousMatches = previous
+      ? isSampleBelowHorizon(previous, horizonElevationDeg) === belowHorizon
+      : false;
+
+    if (previous && sampleMatches !== previousMatches) {
+      const crossing = interpolateHorizonSample(previous, sample, horizonElevationDeg, belowHorizon);
+      if (sampleMatches) {
+        segment = [crossing];
+      } else if (segment.length > 0) {
+        segment.push(crossing);
+        if (segment.length > 1) segments.push(segment);
+        segment = [];
+      }
+    }
+
+    if (sampleMatches) segment.push(sample);
+  });
+  if (segment.length > 1) segments.push(segment);
+  return segments;
 }
 
 export function buildSunPathGridSamples(environmentalAnalysis = {}) {

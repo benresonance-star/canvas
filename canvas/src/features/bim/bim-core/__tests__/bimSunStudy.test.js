@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BIM_SITE_PRESETS,
   buildSunStudyReadout,
   buildSunPathSamples,
   buildSunPathGridSamples,
   computeSolarPosition,
+  createBimCustomSitePreset,
   normalizeBimEnvironmentalAnalysisState,
   patchBimEnvironmentalAnalysisState,
   resolveSunDirection,
   shadowMapSizeForQuality,
+  splitSunPathSamplesByHorizon,
   zonedDateTimeToUtcDate,
 } from '../bimSunStudy.js';
 
@@ -18,11 +21,13 @@ describe('bimSunStudy environmental analysis state', () => {
     expect(state).toMatchObject({
       schemaVersion: 1,
       site: {
+        presetId: 'melbourne',
         latitude: -37.8136,
         longitude: 144.9631,
         timezone: 'Australia/Melbourne',
         trueNorthOffsetDeg: 0,
         daylightSavingTime: true,
+        customPresets: [],
         source: 'manual',
       },
       sunStudy: {
@@ -34,6 +39,8 @@ describe('bimSunStudy environmental analysis state', () => {
         sunPathRadius: 1,
         shadowsEnabled: true,
         shadowQuality: 'medium',
+        shadowOpacity: 0.22,
+        shadowColor: '#000000',
         manual: {
           azimuthDeg: 215,
           elevationDeg: 35,
@@ -69,6 +76,8 @@ describe('bimSunStudy environmental analysis state', () => {
         sunPathRadius: 3,
         shadowsEnabled: false,
         shadowQuality: 'high',
+        shadowOpacity: 3,
+        shadowColor: '445566',
         manual: {
           azimuthDeg: 450,
           elevationDeg: -20,
@@ -80,6 +89,7 @@ describe('bimSunStudy environmental analysis state', () => {
     });
 
     expect(state.site).toMatchObject({
+      presetId: 'custom',
       latitude: -90,
       longitude: 180,
       timezone: 'Australia/Sydney',
@@ -96,6 +106,8 @@ describe('bimSunStudy environmental analysis state', () => {
       sunPathRadius: 3,
       shadowsEnabled: false,
       shadowQuality: 'high',
+      shadowOpacity: 1,
+      shadowColor: '#445566',
       manual: {
         azimuthDeg: 360,
         elevationDeg: -5,
@@ -103,6 +115,88 @@ describe('bimSunStudy environmental analysis state', () => {
       geo: {
         dateTimeLocal: '2026-12-01T09:15',
       },
+    });
+  });
+
+  it('locks latitude, longitude, and timezone for selected city presets', () => {
+    BIM_SITE_PRESETS.forEach((preset) => {
+      const state = normalizeBimEnvironmentalAnalysisState({
+        site: {
+          presetId: preset.id,
+          latitude: 12,
+          longitude: 34,
+          timezone: 'Custom/Timezone',
+        },
+      });
+
+      expect(state.site).toMatchObject({
+        presetId: preset.id,
+        latitude: preset.latitude,
+        longitude: preset.longitude,
+        timezone: preset.timezone,
+        daylightSavingTime: preset.daylightSavingTime,
+      });
+    });
+  });
+
+  it('normalizes and selects project custom site presets', () => {
+    const savedPreset = createBimCustomSitePreset({
+      label: 'Office roof',
+      latitude: -33.7,
+      longitude: 151.1,
+      timezone: 'Australia/Sydney',
+      daylightSavingTime: true,
+    });
+    const state = normalizeBimEnvironmentalAnalysisState({
+      site: {
+        presetId: savedPreset.id,
+        latitude: 0,
+        longitude: 0,
+        timezone: 'Custom',
+        daylightSavingTime: false,
+        customPresets: [savedPreset],
+      },
+    });
+
+    expect(savedPreset.id).toBe('custom-office-roof');
+    expect(state.site).toMatchObject({
+      presetId: savedPreset.id,
+      latitude: -33.7,
+      longitude: 151.1,
+      timezone: 'Australia/Sydney',
+      daylightSavingTime: true,
+    });
+    expect(state.site.customPresets).toEqual([savedPreset]);
+  });
+
+  it('keeps the legacy Melbourne timezone snap but allows explicit custom coordinates', () => {
+    const melbourne = normalizeBimEnvironmentalAnalysisState({
+      site: {
+        latitude: 12,
+        longitude: 34,
+        timezone: 'Australia/Melbourne',
+      },
+    });
+    const custom = normalizeBimEnvironmentalAnalysisState({
+      site: {
+        presetId: 'custom',
+        latitude: 12,
+        longitude: 34,
+        timezone: 'Australia/Melbourne',
+      },
+    });
+
+    expect(melbourne.site).toMatchObject({
+      presetId: 'melbourne',
+      latitude: -37.8136,
+      longitude: 144.9631,
+      timezone: 'Australia/Melbourne',
+    });
+    expect(custom.site).toMatchObject({
+      presetId: 'custom',
+      latitude: 12,
+      longitude: 34,
+      timezone: 'Australia/Melbourne',
     });
   });
 
@@ -218,6 +312,70 @@ describe('bimSunStudy environmental analysis state', () => {
     expect(standardTime.timezoneOffsetMinutes).toBe(600);
     expect(Math.abs(standardTime.azimuthDeg - melbourne.azimuthDeg)).toBeGreaterThan(8);
     expect(Math.abs(standardTime.elevationDeg - melbourne.elevationDeg)).toBeGreaterThan(4);
+  });
+
+  it('computes plausible northern hemisphere solar positions', () => {
+    const base = {
+      latitude: 51.5074,
+      longitude: -0.1278,
+      timezone: 'Europe/London',
+    };
+    const summerMorning = computeSolarPosition({
+      ...base,
+      dateTimeLocal: '2026-06-21T09:00',
+    });
+    const summerSolarNoon = computeSolarPosition({
+      ...base,
+      dateTimeLocal: '2026-06-21T13:00',
+    });
+    const summerAfternoon = computeSolarPosition({
+      ...base,
+      dateTimeLocal: '2026-06-21T15:00',
+    });
+    const winterNoon = computeSolarPosition({
+      ...base,
+      dateTimeLocal: '2026-12-21T12:00',
+    });
+
+    expect(summerMorning.azimuthDeg).toBeGreaterThan(80);
+    expect(summerMorning.azimuthDeg).toBeLessThan(130);
+    expect(summerSolarNoon.azimuthDeg).toBeGreaterThan(160);
+    expect(summerSolarNoon.azimuthDeg).toBeLessThan(200);
+    expect(summerSolarNoon.elevationDeg).toBeGreaterThan(55);
+    expect(summerAfternoon.azimuthDeg).toBeGreaterThan(220);
+    expect(summerAfternoon.azimuthDeg).toBeLessThan(260);
+    expect(winterNoon.azimuthDeg).toBeGreaterThan(165);
+    expect(winterNoon.azimuthDeg).toBeLessThan(195);
+    expect(winterNoon.elevationDeg).toBeGreaterThan(10);
+    expect(winterNoon.elevationDeg).toBeLessThan(20);
+  });
+
+  it('splits sun path samples at horizon crossings so renderer does not stitch false segments', () => {
+    const samples = [
+      { belowHorizon: true, elevationDeg: -4, azimuthDeg: 90, id: 'a' },
+      { belowHorizon: false, elevationDeg: 4, azimuthDeg: 100, id: 'b' },
+      { belowHorizon: false, elevationDeg: 6, azimuthDeg: 110, id: 'c' },
+      { belowHorizon: true, elevationDeg: -6, azimuthDeg: 130, id: 'd' },
+      { belowHorizon: false, elevationDeg: 6, azimuthDeg: 150, id: 'e' },
+      { belowHorizon: false, elevationDeg: 10, azimuthDeg: 160, id: 'f' },
+    ];
+    const aboveSegments = splitSunPathSamplesByHorizon(samples);
+    const belowSegments = splitSunPathSamplesByHorizon(samples, { belowHorizon: true });
+
+    expect(aboveSegments.map((segment) => segment.filter((sample) => !sample.horizonCrossing).map((sample) => sample.id)))
+      .toEqual([['b', 'c'], ['e', 'f']]);
+    expect(aboveSegments[0][0]).toMatchObject({
+      horizonCrossing: true,
+      elevationDeg: 0,
+      azimuthDeg: expect.closeTo(95, 6),
+    });
+    expect(aboveSegments[0].at(-1)).toMatchObject({
+      horizonCrossing: true,
+      elevationDeg: 0,
+      azimuthDeg: expect.closeTo(120, 6),
+    });
+    expect(belowSegments.map((segment) => segment.some((sample) => sample.horizonCrossing)))
+      .toEqual([true, true]);
   });
 
   it('resolves north-clockwise azimuth into BIM y-up direction vectors', () => {

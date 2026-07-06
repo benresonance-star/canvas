@@ -1433,6 +1433,7 @@ export function renderClayFrame({
     modelRadius,
     boundsCenter,
   });
+  const previousShadowMapEnabled = renderer.shadowMap?.enabled === true;
   try {
     updateClayComposerSettings(clayComposerState, {
       aoIntensity,
@@ -1445,6 +1446,10 @@ export function renderClayFrame({
       cameraDistance,
       modelRadius,
     });
+    // Clay SSAO uses RenderPass on the shared scene; sun cast shadows must not run here.
+    if (renderer.shadowMap) {
+      renderer.shadowMap.enabled = false;
+    }
     clayComposerState.composer.render();
 
     const wireframeOpacity = wireframeOptions.opacity;
@@ -1466,6 +1471,9 @@ export function renderClayFrame({
       renderer.resetState?.();
     }
   } finally {
+    if (renderer.shadowMap) {
+      renderer.shadowMap.enabled = previousShadowMapEnabled;
+    }
     restoreCameraDepth();
   }
 
@@ -1476,7 +1484,7 @@ export function renderClayFrame({
 export const RHINO_ARCTIC_CLAY_STYLE = {
   renderStyle: 'clay',
   viewportBackgroundColor: '#ffffff',
-  clayAoIntensity: 0,
+  clayAoIntensity: 25,
   clayAoRadius: 0.0005,
   clayAoBias: 0.05,
   clayAoDistance: 0.17,

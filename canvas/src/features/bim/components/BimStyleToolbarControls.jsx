@@ -125,6 +125,7 @@ export function BimStyleToolbarSliders({
   clayGlassOpacity,
   clayOriginalColorBlend,
   onClayStyleChange,
+  onResetClayDefaults,
   wireframeLineWeight,
   wireframeOpacity,
   wireframeColor,
@@ -283,6 +284,16 @@ export function BimStyleToolbarSliders({
                 claySurfaceColor={claySurfaceColor}
               />
             ) : null}
+            {isPanel && typeof onResetClayDefaults === 'function' ? (
+              <button
+                type="button"
+                onClick={onResetClayDefaults}
+                className="mt-1 rounded border border-border px-2 py-1 text-[10px] text-secondary hover:bg-surface-muted"
+                title="Restore Rhino Arctic clay defaults (AO, Res, Lit, …)"
+              >
+                Reset clay defaults
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -380,6 +391,7 @@ export function BimStyleToolbarControls(props) {
         clayGlassOpacity={props.clayGlassOpacity}
         clayOriginalColorBlend={props.clayOriginalColorBlend}
         onClayStyleChange={props.onClayStyleChange}
+        onResetClayDefaults={props.onResetClayDefaults}
         wireframeLineWeight={props.wireframeLineWeight}
         wireframeOpacity={props.wireframeOpacity}
         wireframeColor={props.wireframeColor}

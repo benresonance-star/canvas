@@ -345,6 +345,7 @@ export function BimViewport({
   onWireframeStyleChange = () => {},
   onRenderStyleChange = () => {},
   onClayStyleChange = () => {},
+  onResetClayDefaults = () => {},
   onViewportBackgroundChange = () => {},
   onLightingChange = () => {},
   onEnvironmentalAnalysisChange = () => {},
@@ -1887,6 +1888,20 @@ export function BimViewport({
     const renderer = rendererRef.current;
     if (!adapter || !scene || !renderer || loadState !== 'ready') return;
 
+    if (renderStyle === 'clay') {
+      applyBimSunLighting(adapter, {
+        environmentalAnalysis: { sunStudy: { enabled: false } },
+        bounds: modelBoundsRef.current,
+        modelRoot: null,
+      });
+      if (environmentalAnalysis?.sunStudy?.enabled === true) {
+        const sun = resolveSunFromEnvironmentalState(environmentalAnalysis);
+        updateClaySunDirection(clayLightingStateRef.current, resolveSunDirection(sun));
+      }
+      applyViewportBackground(scene, renderer, viewportBackgroundRef.current);
+      return;
+    }
+
     const enabled = environmentalAnalysis?.sunStudy?.enabled === true;
     if (enabled) {
       disposeEnvironmentRef.current();
@@ -1904,11 +1919,6 @@ export function BimViewport({
       bounds: modelBoundsRef.current,
       modelRoot: modelRef.current?.object ?? null,
     });
-
-    if (enabled && renderStyle === 'clay') {
-      const sun = resolveSunFromEnvironmentalState(environmentalAnalysis);
-      updateClaySunDirection(clayLightingStateRef.current, resolveSunDirection(sun));
-    }
     applyViewportBackground(scene, renderer, viewportBackgroundRef.current);
   }, [environmentalAnalysis, loadState, renderStyle, viewportBounds]);
 
@@ -3022,6 +3032,7 @@ export function BimViewport({
                 clayGlassOpacity={clayGlassOpacity}
                 clayOriginalColorBlend={clayOriginalColorBlend}
                 onClayStyleChange={onClayStyleChange}
+                onResetClayDefaults={onResetClayDefaults}
                 wireframeLineWeight={wireframeLineWeight}
                 wireframeOpacity={wireframeOpacity}
                 wireframeColor={wireframeColor}

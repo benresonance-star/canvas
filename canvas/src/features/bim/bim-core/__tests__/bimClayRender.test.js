@@ -697,11 +697,12 @@ describe('bimClayRender', () => {
   it('returns Rhino Arctic clay preset when entering clay mode', () => {
     expect(getClayPresetWorkspacePatch()).toMatchObject({
       renderStyle: 'clay',
-      clayAoIntensity: 0,
+      clayAoIntensity: 25,
       clayAoRadius: 0.0005,
       clayAoBias: 0.05,
       clayAoDistance: 0.17,
       clayAoSamples: 256,
+      clayAoResolution: 1,
       clayLightIntensity: 2.7,
       clayGlassOpacity: 0.31,
       viewportBackgroundColor: '#ffffff',
@@ -712,6 +713,76 @@ describe('bimClayRender', () => {
       lightingMode: 'soft',
       environmentPreset: 'sunset',
     });
+  });
+
+  it('scales SSAO pass size from clay Res slider', () => {
+    expect(resolveClaySsaoPassSize(1920, 1080, 1)).toEqual({
+      width: 1920,
+      height: 1080,
+      scale: 1,
+    });
+    expect(resolveClaySsaoPassSize(1920, 1080, 0.25)).toEqual({
+      width: 480,
+      height: 270,
+      scale: 0.25,
+    });
+  });
+
+  it('disables shadow maps during clay SSAO composer render', () => {
+    const renderer = {
+      shadowMap: { enabled: true },
+      setClearColor: () => {},
+    };
+    const composer = {
+      render: () => {
+        expect(renderer.shadowMap.enabled).toBe(false);
+      },
+    };
+    const scene = { background: null };
+    const camera = {
+      near: 1,
+      far: 100,
+      projectionMatrix: { copy: () => {} },
+      projectionMatrixInverse: { copy: () => {} },
+      updateProjectionMatrix: () => {},
+    };
+
+    renderClayFrame({
+      renderer,
+      clayComposerState: {
+        composer,
+        baseWidth: 800,
+        baseHeight: 600,
+        ssaoPass: {
+          width: 800,
+          height: 600,
+          kernelRadius: 1,
+          minDistance: 0.01,
+          maxDistance: 0.1,
+          ssaoMaterial: {
+            uniforms: {
+              cameraNear: { value: 0 },
+              cameraFar: { value: 0 },
+              cameraProjectionMatrix: { value: { copy: () => {} } },
+              cameraInverseProjectionMatrix: { value: { copy: () => {} } },
+              kernelRadius: { value: 0 },
+              minDistance: { value: 0 },
+              maxDistance: { value: 0 },
+            },
+          },
+          depthRenderMaterial: {
+            uniforms: {
+              cameraNear: { value: 0 },
+              cameraFar: { value: 0 },
+            },
+          },
+        },
+      },
+      scene,
+      camera,
+    });
+
+    expect(renderer.shadowMap.enabled).toBe(true);
   });
 
   it('fits the model bounding sphere inside the clay depth range when viewed from outside', () => {
