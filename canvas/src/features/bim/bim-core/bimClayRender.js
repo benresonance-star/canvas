@@ -803,6 +803,22 @@ export function updateClayLightingIntensity(clayLightingState, lightIntensity = 
   });
 }
 
+export function updateClaySunDirection(clayLightingState, direction) {
+  const lights = clayLightingState?.lights;
+  if (!lights || !direction) return;
+  const vector = new THREE.Vector3(
+    Number(direction.x) || 0,
+    Number(direction.y) || 0,
+    Number(direction.z) || 0,
+  );
+  if (vector.lengthSq() === 0) return;
+  vector.normalize();
+  lights.children.forEach((child) => {
+    if (!child.isDirectionalLight) return;
+    child.position.copy(vector);
+  });
+}
+
 export function teardownClayLighting(scene, clayLightingState) {
   if (!scene || !clayLightingState) return;
   if (clayLightingState.lights) {

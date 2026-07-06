@@ -38,6 +38,7 @@ import { requestActionSync } from '../../../lib/actionSync.js';
 import { useBimModelSource } from '../hooks/useBimModelSource.js';
 import { useBimAgentPanel } from '../hooks/useBimAgentPanel.js';
 import { useBimBqlPanel } from '../hooks/useBimBqlPanel.js';
+import { useBimViewSets } from '../hooks/useBimViewSets.js';
 import { LOCAL_BIM_RULES_RESPONDER_ID } from './bimAgentPanelShared.js';
 import { BimElementTable } from './BimElementTable.jsx';
 import { BimInspector } from './BimInspector.jsx';
@@ -415,7 +416,11 @@ export function BimWorkspace({
   }, [prepared, queryElementIds, queryResult]);
 
   const patchWorkspaceState = (patch) => {
-    setWorkspaceState((state) => normalizeBimWorkspaceState({ ...state, ...patch }));
+    setWorkspaceState((state) => normalizeBimWorkspaceState(
+      typeof patch === 'function'
+        ? { ...state, ...patch(state) }
+        : { ...state, ...patch },
+    ));
   };
 
   const selectElementByGlobalId = (ifcGlobalId) => {
@@ -1020,15 +1025,24 @@ export function BimWorkspace({
     onAgentFeedback: bimAgent.setAgentFeedback,
   });
 
+  const viewportCaptureRef = useRef(null);
+  const bimViews = useBimViewSets({
+    workspaceState,
+    patchWorkspaceState,
+    repository: repositoryRef.current,
+    captureViewportThumbnail: async () => viewportCaptureRef.current?.captureThumbnail?.() ?? null,
+    captureViewportState: () => viewportCaptureRef.current?.captureWorkspaceSnapshot?.() ?? null,
+  });
+
   const leftPanelOpen = workspaceState.panels?.left !== false;
   const rightPanelOpen = workspaceState.panels?.right !== false;
   const togglePanel = (panel) => {
-    patchWorkspaceState({
+    patchWorkspaceState((state) => ({
       panels: {
-        ...(workspaceState.panels ?? { left: true, right: true }),
-        [panel]: !workspaceState.panels?.[panel],
+        ...(state.panels ?? { left: true, right: true }),
+        [panel]: state.panels?.[panel] === false,
       },
-    });
+    }));
   };
 
   if (source.loading || (!prepared && !error)) {
@@ -1155,6 +1169,7 @@ export function BimWorkspace({
             showEnvironment={workspaceState.showEnvironment}
             lightingMode={workspaceState.lightingMode}
             environmentPreset={workspaceState.environmentPreset}
+            environmentalAnalysis={workspaceState.environmentalAnalysis}
             onMeasurementsChange={(measurements) => patchWorkspaceState({ measurements })}
             onMeasureUnitsChange={(measureUnits) => patchWorkspaceState({ measureUnits })}
             onMeasureSnapModeChange={(measureSnapMode) => patchWorkspaceState({ measureSnapMode })}
@@ -1169,6 +1184,7 @@ export function BimWorkspace({
             onClayStyleChange={(clayStylePatch) => patchWorkspaceState(clayStylePatch)}
             onViewportBackgroundChange={(viewportBackgroundColor) => patchWorkspaceState({ viewportBackgroundColor })}
             onLightingChange={(lightingPatch) => patchWorkspaceState(lightingPatch)}
+            onEnvironmentalAnalysisChange={(environmentalAnalysis) => patchWorkspaceState({ environmentalAnalysis })}
             projectId={resolvedProjectId}
             cardId={card?.id}
             artifactId={version?.artifactId ?? card?.artifactId ?? null}
@@ -1224,6 +1240,26 @@ export function BimWorkspace({
             onPatch5dCostPlan={patchActive5dCostPlan}
             onAdd5dRateRow={add5dRateRow}
             onSelect5dTakeoffRow={select5dTakeoffRow}
+            viewCarouselOpen={bimViews.viewCarouselOpen}
+            onToggleViewCarousel={bimViews.toggleViewCarousel}
+            viewApplyRequest={bimViews.viewApplyRequest}
+            viewportCaptureRef={viewportCaptureRef}
+            viewSets={bimViews.viewSets}
+            activeViewSetId={bimViews.activeViewSetId}
+            activeViewId={bimViews.activeViewId}
+            viewSetsBusy={bimViews.busy}
+            viewSetsStatus={bimViews.status}
+            viewSetsError={bimViews.error}
+            onSelectViewSet={bimViews.setActiveViewSetId}
+            onCreateViewSet={bimViews.createViewSet}
+            onRenameViewSet={bimViews.renameViewSet}
+            onDeleteViewSet={bimViews.deleteViewSet}
+            onSaveCurrentView={bimViews.saveCurrentView}
+            onApplyView={bimViews.applyView}
+            onRenameView={bimViews.renameView}
+            onUpdateView={bimViews.updateViewFromCurrent}
+            onDeleteView={bimViews.deleteView}
+            loadViewThumbnail={bimViews.loadViewThumbnail}
           />
         </div>
         <div className="h-full min-h-0 overflow-hidden" style={{ gridColumn: 3 }}>

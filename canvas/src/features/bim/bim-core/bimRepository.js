@@ -1,9 +1,10 @@
 import { normalizeBimWorkspaceState } from './types.js';
 
 const DB_NAME = 'canvas-bim-cache';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const PREPARED_STORE = 'preparedModels';
 const WORKSPACE_STORE = 'workspaceStates';
+const VIEW_THUMBNAIL_STORE = 'viewThumbnails';
 
 let dbPromise = null;
 
@@ -19,10 +20,11 @@ function openDb() {
       };
       resolve(db);
     };
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (event) => {
       const db = req.result;
       if (!db.objectStoreNames.contains(PREPARED_STORE)) db.createObjectStore(PREPARED_STORE);
       if (!db.objectStoreNames.contains(WORKSPACE_STORE)) db.createObjectStore(WORKSPACE_STORE);
+      if (!db.objectStoreNames.contains(VIEW_THUMBNAIL_STORE)) db.createObjectStore(VIEW_THUMBNAIL_STORE);
     };
   });
 }
@@ -52,6 +54,15 @@ function txGet(storeName, key) {
     const req = tx.objectStore(storeName).get(key);
     req.onsuccess = () => resolve(req.result ?? null);
     req.onerror = () => reject(req.error);
+  }));
+}
+
+function txDelete(storeName, key) {
+  return getDb().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.objectStore(storeName).delete(key);
   }));
 }
 
@@ -92,12 +103,22 @@ export function createIndexedDbBimRepository() {
         updatedAt: new Date().toISOString(),
       }));
     },
+    async getViewThumbnail(key) {
+      return txGet(VIEW_THUMBNAIL_STORE, key);
+    },
+    async putViewThumbnail(key, blob) {
+      await txPut(VIEW_THUMBNAIL_STORE, key, blob);
+    },
+    async deleteViewThumbnail(key) {
+      await txDelete(VIEW_THUMBNAIL_STORE, key);
+    },
   };
 }
 
 export function createMemoryBimRepository(seed = {}) {
   const prepared = new Map(Object.entries(seed.prepared ?? {}));
   const workspace = new Map(Object.entries(seed.workspace ?? {}));
+  const viewThumbnails = new Map(Object.entries(seed.viewThumbnails ?? {}));
   return {
     async getPreparedModel(fingerprint) {
       return prepared.get(fingerprint) ?? null;
@@ -115,7 +136,17 @@ export function createMemoryBimRepository(seed = {}) {
     async putWorkspaceState(fingerprint, state) {
       workspace.set(fingerprint, normalizeBimWorkspaceState(state));
     },
+    async getViewThumbnail(key) {
+      return viewThumbnails.get(key) ?? null;
+    },
+    async putViewThumbnail(key, blob) {
+      viewThumbnails.set(key, blob);
+    },
+    async deleteViewThumbnail(key) {
+      viewThumbnails.delete(key);
+    },
     _prepared: prepared,
     _workspace: workspace,
+    _viewThumbnails: viewThumbnails,
   };
 }

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Axis3D, Box, Bot, Braces, CalendarDays, Camera, Circle, DollarSign, EyeOff, Ghost, Grid3x3, Layers, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal } from 'lucide-react';
+import { Axis3D, Box, Bot, Braces, CalendarDays, Camera, Circle, DollarSign, Eye, EyeOff, Ghost, Grid3x3, Layers, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal, SunMedium } from 'lucide-react';
 import { MOUSE } from 'three';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -66,6 +66,7 @@ import {
   setupClayLighting,
   teardownClayLighting,
   updateClayLightingIntensity,
+  updateClaySunDirection,
   updateClaySsaoQuality,
 } from '../bim-core/bimClayRender.js';
 import { createPickTimer, isBimPickDebugEnabled, logBimPickMappingFailure } from '../bim-core/bimPickDebug.js';
@@ -104,9 +105,21 @@ import {
 } from '../bim-core/bimSectioning.js';
 import { BimLayersHud } from './BimLayersHud.jsx';
 import { BimSectionHud } from './BimSectionHud.jsx';
+import { BimSunStudyHud } from './BimSunStudyHud.jsx';
+import { BimViewCarousel } from './BimViewCarousel.jsx';
+import { captureBimViewportThumbnail } from '../bim-core/bimViewportCapture.js';
 import { BimSelectedElementHud } from './BimSelectedElementHud.jsx';
 import { Bim4dHud } from './Bim4dHud.jsx';
 import { Bim5dHud } from './Bim5dHud.jsx';
+import {
+  applyBimSunLighting,
+  createBimSunLightingAdapter,
+  disposeBimSunLightingAdapter,
+} from '../bim-core/bimSunLighting.js';
+import {
+  resolveSunDirection,
+  resolveSunFromEnvironmentalState,
+} from '../bim-core/bimSunStudy.js';
 import {
   CLAY_AO_BIAS_DEFAULT,
   CLAY_AO_DISTANCE_DEFAULT,
@@ -322,6 +335,7 @@ export function BimViewport({
   showEnvironment = false,
   lightingMode = 'studio',
   environmentPreset = 'studio',
+  environmentalAnalysis = null,
   onMeasurementsChange = () => {},
   onMeasureUnitsChange = () => {},
   onMeasureSnapModeChange = () => {},
@@ -333,6 +347,7 @@ export function BimViewport({
   onClayStyleChange = () => {},
   onViewportBackgroundChange = () => {},
   onLightingChange = () => {},
+  onEnvironmentalAnalysisChange = () => {},
   projectId = null,
   cardId = null,
   artifactId = null,
@@ -384,6 +399,26 @@ export function BimViewport({
   onPatch5dCostPlan = () => {},
   onAdd5dRateRow = () => {},
   onSelect5dTakeoffRow = () => {},
+  viewCarouselOpen = false,
+  onToggleViewCarousel = () => {},
+  viewApplyRequest = null,
+  viewportCaptureRef = null,
+  viewSets = [],
+  activeViewSetId = null,
+  activeViewId = null,
+  viewSetsBusy = false,
+  viewSetsStatus = '',
+  viewSetsError = '',
+  onSelectViewSet = () => {},
+  onCreateViewSet = () => {},
+  onRenameViewSet = () => {},
+  onDeleteViewSet = () => {},
+  onSaveCurrentView = () => {},
+  onApplyView = () => {},
+  onRenameView = () => {},
+  onUpdateView = () => {},
+  onDeleteView = () => {},
+  loadViewThumbnail = async () => null,
 }) {
   const total = preparedModel?.elements?.length ?? 0;
   const loadDetail = total > 0 ? `${total.toLocaleString()} elements` : null;
@@ -423,6 +458,7 @@ export function BimViewport({
   const sectionRebuildQueuedRef = useRef(false);
   const onCameraChangeRef = useRef(onCameraChange);
   const onProjectionModeChangeRef = useRef(onProjectionModeChange);
+  const viewApplyTokenRef = useRef(null);
   const projectionModeRef = useRef(projectionMode);
   const initialCameraRef = useRef(initialCamera);
   const pointerDownRef = useRef(null);
@@ -456,6 +492,7 @@ export function BimViewport({
   const environmentPresetRef = useRef(environmentPreset);
   const legacyLightsRef = useRef(null);
   const directLightsRef = useRef(null);
+  const sunLightingRef = useRef(null);
   const disposeEnvironmentRef = useRef(() => {});
   const lightingApplySeqRef = useRef(0);
   const wireframeModeRef = useRef(wireframeMode);
@@ -466,6 +503,7 @@ export function BimViewport({
     hiddenLines: wireframeHiddenLines,
   });
   const renderStyleRef = useRef(renderStyle);
+  const environmentalAnalysisRef = useRef(environmentalAnalysis);
   const viewportBackgroundRef = useRef(viewportBackgroundColor);
   const clayStyleRef = useRef({
     aoIntensity: clayAoIntensity,
@@ -502,6 +540,7 @@ export function BimViewport({
   const [fiveDHudOpen, setFiveDHudOpen] = useState(false);
   const [layersHudOpen, setLayersHudOpen] = useState(false);
   const [sectionHudOpen, setSectionHudOpen] = useState(false);
+  const [sunStudyHudOpen, setSunStudyHudOpen] = useState(false);
   const [selectionRefreshNonce, setSelectionRefreshNonce] = useState(0);
   const [clayLocalIdsReadyNonce, setClayLocalIdsReadyNonce] = useState(0);
   const [viewportBounds, setViewportBounds] = useState(() => ({
@@ -996,6 +1035,10 @@ export function BimViewport({
   }, [renderStyle]);
 
   useEffect(() => {
+    environmentalAnalysisRef.current = environmentalAnalysis;
+  }, [environmentalAnalysis]);
+
+  useEffect(() => {
     viewportBackgroundRef.current = viewportBackgroundColor;
   }, [viewportBackgroundColor]);
 
@@ -1095,6 +1138,7 @@ export function BimViewport({
       antialias: true,
       canvas,
       logarithmicDepthBuffer: true,
+      preserveDrawingBuffer: true,
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -1178,6 +1222,7 @@ export function BimViewport({
     keyboardNavRef.current = keyboardNav;
 
     legacyLightsRef.current = createBimLegacyLights(scene);
+    sunLightingRef.current = createBimSunLightingAdapter(scene, renderer);
 
     const resize = () => {
       const rect = container.getBoundingClientRect();
@@ -1696,6 +1741,8 @@ export function BimViewport({
         removeLightGroup(scene, directLightsRef.current);
         removeLightGroup(scene, legacyLightsRef.current);
       }
+      disposeBimSunLightingAdapter(sunLightingRef.current);
+      sunLightingRef.current = null;
       directLightsRef.current = null;
       legacyLightsRef.current = null;
       wireframeBuildSeqRef.current += 1;
@@ -1784,6 +1831,17 @@ export function BimViewport({
         directLightsRef.current = null;
       }
 
+      const sunStudyActive = environmentalAnalysisRef.current?.sunStudy?.enabled === true;
+      if (sunStudyActive) {
+        setLightGroupVisible(legacyLightsRef.current, false);
+        scene.environment = null;
+        if ('environmentIntensity' in scene) {
+          scene.environmentIntensity = 1;
+        }
+        setHdriToneMapping(renderer, false);
+        return;
+      }
+
       const showEnv = showEnvironmentRef.current;
       if (!showEnv) {
         setLightGroupVisible(legacyLightsRef.current, true);
@@ -1821,7 +1879,38 @@ export function BimViewport({
     return () => {
       lightingApplySeqRef.current += 1;
     };
-  }, [loadState, showEnvironment, lightingMode, environmentPreset, renderStyle, viewportBackgroundColor]);
+  }, [loadState, showEnvironment, lightingMode, environmentPreset, renderStyle, viewportBackgroundColor, environmentalAnalysis]);
+
+  useEffect(() => {
+    const adapter = sunLightingRef.current;
+    const scene = sceneRef.current;
+    const renderer = rendererRef.current;
+    if (!adapter || !scene || !renderer || loadState !== 'ready') return;
+
+    const enabled = environmentalAnalysis?.sunStudy?.enabled === true;
+    if (enabled) {
+      disposeEnvironmentRef.current();
+      disposeEnvironmentRef.current = () => {};
+      if (directLightsRef.current) {
+        removeLightGroup(scene, directLightsRef.current);
+        directLightsRef.current = null;
+      }
+      setLightGroupVisible(legacyLightsRef.current, false);
+      setHdriToneMapping(renderer, false);
+    }
+
+    applyBimSunLighting(adapter, {
+      environmentalAnalysis,
+      bounds: modelBoundsRef.current,
+      modelRoot: modelRef.current?.object ?? null,
+    });
+
+    if (enabled && renderStyle === 'clay') {
+      const sun = resolveSunFromEnvironmentalState(environmentalAnalysis);
+      updateClaySunDirection(clayLightingStateRef.current, resolveSunDirection(sun));
+    }
+    applyViewportBackground(scene, renderer, viewportBackgroundRef.current);
+  }, [environmentalAnalysis, loadState, renderStyle, viewportBounds]);
 
   useEffect(() => {
     const scene = sceneRef.current;
@@ -1859,6 +1948,10 @@ export function BimViewport({
       backgroundColor: viewportBackgroundColor,
       lightIntensity: clayLightIntensity,
     });
+    if (environmentalAnalysisRef.current?.sunStudy?.enabled === true) {
+      const sun = resolveSunFromEnvironmentalState(environmentalAnalysisRef.current);
+      updateClaySunDirection(clayLightingStateRef.current, resolveSunDirection(sun));
+    }
     const { width, height } = getRendererLogicalSize(renderer);
     disposeClayComposer(clayComposerRef.current);
     clayComposerRef.current = createClayComposer(renderer, scene, camera, width, height);
@@ -2296,6 +2389,95 @@ export function BimViewport({
     void updateFragmentsRef.current?.(true, { retryModelRegistration: true });
   }, [emitCameraChange, loadState, projectionMode]);
 
+  const applyProjectionMode = useCallback((nextMode) => {
+    if (loadState !== 'ready') return;
+    const currentMode = projectionModeRef.current;
+    if (nextMode === currentMode) return;
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    const model = modelRef.current;
+    const container = containerRef.current;
+    if (!camera || !controls || !container) return;
+    const rect = container.getBoundingClientRect();
+    const newCamera = swapBimCamera(camera, controls, model, nextMode, {
+      width: rect.width,
+      height: rect.height,
+    });
+    cameraRef.current = newCamera;
+    projectionModeRef.current = nextMode;
+    onProjectionModeChangeRef.current(nextMode);
+    void updateFragmentsRef.current?.(true, { retryModelRegistration: true });
+  }, [loadState]);
+
+  useEffect(() => {
+    if (!viewApplyRequest?.token || viewApplyTokenRef.current === viewApplyRequest.token) return;
+    if (loadState !== 'ready') return;
+    viewApplyTokenRef.current = viewApplyRequest.token;
+    const controls = controlsRef.current;
+    const container = containerRef.current;
+    if (!controls || !container || !viewApplyRequest.camera) return;
+
+    const targetProjection = viewApplyRequest.projectionMode ?? projectionModeRef.current;
+    if (targetProjection !== projectionModeRef.current) {
+      applyProjectionMode(targetProjection);
+    }
+
+    const rect = container.getBoundingClientRect();
+    restoreBimCameraState(cameraRef.current, controls, viewApplyRequest.camera, {
+      width: rect.width,
+      height: rect.height,
+    });
+
+    if (cameraRef.current?.isPerspectiveCamera) {
+      setFovInput(String(Math.round(cameraRef.current.fov)));
+    }
+
+    emitCameraChange();
+    void refreshSectionCutRef.current?.({ updateFragments: true });
+    void updateFragmentsRef.current?.(true, { retryModelRegistration: true });
+    if (viewApplyRequest.wireframeMode === true) {
+      window.requestAnimationFrame(() => {
+        if (wireframeModeRef.current) {
+          void rebuildWireframeEdges();
+        }
+      });
+    }
+  }, [applyProjectionMode, emitCameraChange, loadState, rebuildWireframeEdges, viewApplyRequest]);
+
+  useEffect(() => {
+    if (!viewportCaptureRef) return undefined;
+    viewportCaptureRef.current = {
+      captureWorkspaceSnapshot: () => {
+        if (loadState !== 'ready') return null;
+        const camera = cameraRef.current;
+        const controls = controlsRef.current;
+        if (!camera || !controls) return null;
+        const serialized = serializeBimCameraState(camera, controls, projectionModeRef.current);
+        if (!serialized) return null;
+        return {
+          camera: serialized,
+          projectionMode: projectionModeRef.current,
+        };
+      },
+      captureThumbnail: async () => {
+        if (loadState !== 'ready') return null;
+        const renderer = rendererRef.current;
+        if (!renderer) return null;
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
+        void updateFragmentsRef.current?.(true, { retryModelRegistration: false });
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
+        try {
+          return await captureBimViewportThumbnail(renderer);
+        } catch {
+          return null;
+        }
+      },
+    };
+    return () => {
+      if (viewportCaptureRef.current) viewportCaptureRef.current = null;
+    };
+  }, [loadState, viewportCaptureRef]);
+
   const applyFovToCamera = useCallback((rawValue) => {
     const camera = cameraRef.current;
     if (!camera?.isPerspectiveCamera) return null;
@@ -2378,6 +2560,10 @@ export function BimViewport({
 
   const handleToggleSectionHud = useCallback(() => {
     setSectionHudOpen((open) => !open);
+  }, []);
+
+  const handleToggleSunStudyHud = useCallback(() => {
+    setSunStudyHudOpen((open) => !open);
   }, []);
 
   const handlePatchSection = useCallback((patch) => {
@@ -2584,6 +2770,16 @@ export function BimViewport({
           >
             <SlidersHorizontal size={14} strokeWidth={1.7} />
           </button>
+          <button
+            type="button"
+            title={viewCarouselOpen ? 'Hide view carousel' : 'Show view carousel'}
+            onClick={onToggleViewCarousel}
+            className={`rounded border border-border p-1 ${viewCarouselOpen ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+            aria-pressed={viewCarouselOpen}
+            aria-label={viewCarouselOpen ? 'Hide view carousel' : 'Show view carousel'}
+          >
+            <Eye size={14} strokeWidth={1.7} />
+          </button>
           </div>
           <BimViewportToolbarSeparator />
           <div className="flex items-center gap-1">
@@ -2647,6 +2843,20 @@ export function BimViewport({
           >
             <Layers size={14} strokeWidth={1.7} />
           </button>
+          <button
+            type="button"
+            title={sunStudyHudOpen ? 'Hide sun study' : 'Sun study'}
+            onClick={handleToggleSunStudyHud}
+            className={`rounded border border-border p-1 ${
+              sunStudyHudOpen || environmentalAnalysis?.sunStudy?.enabled
+                ? 'bg-accent text-on-accent'
+                : 'text-secondary hover:bg-surface-muted'
+            }`}
+            aria-pressed={sunStudyHudOpen}
+            aria-label={sunStudyHudOpen ? 'Hide sun study panel' : 'Show sun study panel'}
+          >
+            <SunMedium size={14} strokeWidth={1.7} />
+          </button>
           </div>
         </div>
         </div>
@@ -2685,8 +2895,14 @@ export function BimViewport({
             </div>
           </div>
         )}
-        {loadState === 'ready' && (layersHudOpen || sectionHudOpen) && (
-          <div className="pointer-events-none absolute left-3 top-3 z-20 flex w-[min(calc(100%-1.5rem),18rem)] flex-col gap-2">
+        {loadState === 'ready' && (layersHudOpen || sectionHudOpen || sunStudyHudOpen) && (
+          <div className="pointer-events-none absolute left-3 top-3 z-20 flex w-[min(calc(100%-1.5rem),19rem)] flex-col gap-2">
+            {sunStudyHudOpen && (
+              <BimSunStudyHud
+                environmentalAnalysis={environmentalAnalysis}
+                onEnvironmentalAnalysisChange={onEnvironmentalAnalysisChange}
+              />
+            )}
             {layersHudOpen && (
               <BimLayersHud
                 catalog={layerCatalog}
@@ -2823,7 +3039,7 @@ export function BimViewport({
             measurementsVisible={measurementsVisible}
             onMeasurementsVisibleChange={onMeasurementsVisibleChange}
             onRemoveMeasurement={handleRemoveMeasurement}
-            className="sans absolute right-3 bottom-3 z-20 max-w-sm rounded border border-border bg-surface/95 px-3 py-2 shadow-lg backdrop-blur-sm"
+            className={`sans absolute right-3 z-20 max-w-sm rounded border border-border bg-surface/95 px-3 py-2 shadow-lg backdrop-blur-sm ${viewCarouselOpen ? 'bottom-36' : 'bottom-3'}`}
           />
         )}
         {loadState === 'ready' && selectedElement && (
@@ -2831,12 +3047,34 @@ export function BimViewport({
             element={selectedElement}
             properties={selectedProperties}
             inspectorOpen={rightPanelOpen}
+            className={viewCarouselOpen ? 'bottom-36' : undefined}
           />
         )}
         {loadState === 'ready' && pickStatus && (
-          <div className="pointer-events-none absolute right-3 bottom-3 max-w-sm rounded border border-warning/40 bg-surface/95 px-3 py-2 text-xs text-warning shadow-sm">
+          <div className={`pointer-events-none absolute right-3 max-w-sm rounded border border-warning/40 bg-surface/95 px-3 py-2 text-xs text-warning shadow-sm ${viewCarouselOpen ? 'bottom-36' : 'bottom-3'}`}>
             {pickStatus}
           </div>
+        )}
+        {loadState === 'ready' && (
+          <BimViewCarousel
+            open={viewCarouselOpen}
+            viewSets={viewSets}
+            activeViewSetId={activeViewSetId}
+            activeViewId={activeViewId}
+            busy={viewSetsBusy}
+            status={viewSetsStatus}
+            error={viewSetsError}
+            loadViewThumbnail={loadViewThumbnail}
+            onSelectViewSet={onSelectViewSet}
+            onCreateViewSet={onCreateViewSet}
+            onRenameViewSet={onRenameViewSet}
+            onDeleteViewSet={onDeleteViewSet}
+            onSaveCurrentView={onSaveCurrentView}
+            onApplyView={onApplyView}
+            onRenameView={onRenameView}
+            onUpdateView={onUpdateView}
+            onDeleteView={onDeleteView}
+          />
         )}
       </div>
     </div>

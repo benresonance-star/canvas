@@ -5,6 +5,8 @@ import { normalizeBimSectionState } from './bimSectioning.js';
 import { normalizeBimResultSets } from './bimResultSets.js';
 import { normalizeBim4dSequences } from './bim4d.js';
 import { normalizeBim5dCostPlans } from './bim5d.js';
+import { normalizeBimViewSets, resolveActiveViewSetId } from './bimViewSets.js';
+import { normalizeBimEnvironmentalAnalysisState } from './bimSunStudy.js';
 
 export const BIM_PREPARATION_PHASES = [
   'preparing',
@@ -285,6 +287,8 @@ export function normalizeBimWorkspaceState(state = {}) {
   const rawDisplayMode = BIM_DISPLAY_MODES.includes(state?.displayMode) ? state.displayMode : 'highlight';
   const displayMode = rawDisplayMode === 'isolate' ? 'highlight' : rawDisplayMode;
   const isolateOnSelect = state?.isolateOnSelect === true;
+  const viewSets = normalizeBimViewSets(state?.viewSets);
+  const activeViewSetId = resolveActiveViewSetId(viewSets, state?.activeViewSetId);
   return {
     selectedObjectId: state?.selectedObjectId ?? null,
     selectedObjectKind: state?.selectedObjectKind ?? 'physicalElement',
@@ -319,7 +323,12 @@ export function normalizeBimWorkspaceState(state = {}) {
     active4dTaskId: state?.active4dTaskId == null ? null : String(state.active4dTaskId),
     bim5dCostPlans: normalizeBim5dCostPlans(state?.bim5dCostPlans),
     active5dCostPlanId: state?.active5dCostPlanId == null ? null : String(state.active5dCostPlanId),
+    environmentalAnalysis: normalizeBimEnvironmentalAnalysisState(state?.environmentalAnalysis),
     savedQueries,
+    viewSets,
+    activeViewSetId,
+    activeViewId: state?.activeViewId == null ? null : String(state.activeViewId),
+    viewCarouselOpen: state?.viewCarouselOpen === true,
     lastOpenedAt: state?.lastOpenedAt ?? null,
     updatedAt: state?.updatedAt ?? null,
   };

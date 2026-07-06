@@ -4,20 +4,26 @@ import {
   resolveElementLayer,
 } from './bimElementDisplay.js';
 
-export function BimSelectedElementHud({ element, properties = [], inspectorOpen = true }) {
+export function BimSelectedElementHud({
+  element,
+  properties = [],
+  inspectorOpen = true,
+  className = 'bottom-3',
+}) {
   const layer = resolveElementLayer(properties);
   const title = element.name || element.ifcClass || 'Unnamed element';
+  const positionClass = `pointer-events-none absolute left-3 ${className}`;
 
   if (inspectorOpen) {
     return (
-      <div className="pointer-events-none absolute left-3 bottom-3 max-w-lg rounded border border-accent bg-surface/95 px-3 py-2 text-xs text-secondary">
+      <div className={`${positionClass} max-w-lg rounded border border-accent bg-surface/95 px-3 py-2 text-xs text-secondary`}>
         Selected: {title} - {element.ifcGlobalId}
       </div>
     );
   }
 
   return (
-    <div className="pointer-events-none absolute left-3 bottom-3 max-w-md rounded border border-accent bg-surface/95 px-3 py-2 text-xs text-secondary shadow-sm">
+    <div className={`${positionClass} max-w-md rounded border border-accent bg-surface/95 px-3 py-2 text-xs text-secondary shadow-sm`}>
       <div className="text-[10px] uppercase tracking-wider text-muted">Selected</div>
       <div className="serif text-sm text-primary mt-0.5">{title}</div>
       <dl className="mt-2 grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-2 gap-y-1">

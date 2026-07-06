@@ -13,7 +13,9 @@ import { BimLayersHud } from '../BimLayersHud.jsx';
 import { BimSectionHud } from '../BimSectionHud.jsx';
 import { Bim4dHud } from '../Bim4dHud.jsx';
 import { Bim5dHud } from '../Bim5dHud.jsx';
+import { BimViewCarousel } from '../BimViewCarousel.jsx';
 import { BIM_AGENT_INFO } from '../bimAgentPanelShared.js';
+import { createBimViewFromWorkspaceState, createBimViewSet } from '../../bim-core/bimViewSets.js';
 
 describe('BIM UI components', () => {
   const element = {
@@ -675,8 +677,69 @@ describe('BIM UI components', () => {
 
     expect(html).toContain('Show BIM agent panel');
     expect(html).toContain('Show BQL query panel');
+    expect(html).toContain('Show view carousel');
     expect(html).not.toContain('BIM Evidence Agent');
     expect(html).not.toContain('BQL query JSON');
+  });
+
+  it('renders the view carousel when open', () => {
+    const camera = {
+      position: [10, 8, 10],
+      target: [0, 0, 0],
+      up: [0, 1, 0],
+      fov: 45,
+      zoom: 1,
+    };
+    const view = createBimViewFromWorkspaceState({
+      label: 'Plan A',
+      workspaceState: { camera, projectionMode: 'perspective' },
+    });
+    const set = createBimViewSet({ name: 'PLANS' });
+    set.views = [view];
+
+    const html = renderToStaticMarkup(
+      React.createElement(BimViewCarousel, {
+        open: true,
+        viewSets: [set],
+        activeViewSetId: set.id,
+        activeViewId: view.id,
+        loadViewThumbnail: async () => null,
+        onApplyView: () => {},
+      }),
+    );
+
+    expect(html).toContain('View sets');
+    expect(html).toContain('PLANS');
+    expect(html).toContain('Plan A');
+    expect(html).toContain('Save view');
+  });
+
+  it('hides the view carousel when closed', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimViewCarousel, {
+        open: false,
+        viewSets: [],
+      }),
+    );
+    expect(html).toBe('');
+  });
+
+  it('shows the view carousel toggle as active when open', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimViewport, {
+        preparedModel: {
+          metadata: { fragmentsStatus: 'success', fragmentsSourceKind: 'fragments' },
+          fragmentsBlob: new Blob([new Uint8Array([1, 2, 3])]),
+          elements: [element],
+        },
+        selectedElement: null,
+        displayMode: 'highlight',
+        onDisplayModeChange: () => {},
+        viewCarouselOpen: true,
+      }),
+    );
+
+    expect(html).toContain('Hide view carousel');
   });
 
   it('renders the agent response panel with generated BQL', () => {
