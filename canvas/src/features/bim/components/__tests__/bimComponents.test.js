@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { BimSelectedElementHud } from '../BimSelectedElementHud.jsx';
 import { BimElementTable } from '../BimElementTable.jsx';
+import { DEFAULT_TABLE_COLUMNS } from '../../bim-core/bimTableColumns.js';
 import { BimInspector } from '../BimInspector.jsx';
 import { BimAgentResponsePanel, BimQueryPanel } from '../BimQueryPanel.jsx';
 import { BimViewport } from '../BimViewport.jsx';
@@ -33,11 +34,16 @@ describe('BIM UI components', () => {
     const html = renderToStaticMarkup(
       React.createElement(BimElementTable, {
         elements: [element],
+        properties: [],
         selectedElementId: element.id,
         search: '',
         ifcClassFilter: '',
+        columns: DEFAULT_TABLE_COLUMNS,
+        tableSort: { columnId: null, direction: null },
         onSearchChange: () => {},
         onIfcClassFilterChange: () => {},
+        onColumnsChange: () => {},
+        onTableSortChange: () => {},
         onSelectElement: () => {},
       }),
     );
@@ -45,6 +51,7 @@ describe('BIM UI components', () => {
     expect(html).toContain('IfcWall');
     expect(html).toContain('wall-1');
     expect(html).toContain('Level 01');
+    expect(html).toContain('Columns');
   });
 
   it('hides geo sun path controls in manual mode', () => {
@@ -180,8 +187,11 @@ describe('BIM UI components', () => {
         ],
         assemblies: [],
         assemblyMembers: [],
+        search: '',
+        onSearchChange: () => {},
       }),
     );
+    expect(html).toContain('Search attributes');
     expect(html).toContain('North Wall');
     expect(html).toContain('IFC Attributes');
     expect(html).toContain('web-ifc-line');

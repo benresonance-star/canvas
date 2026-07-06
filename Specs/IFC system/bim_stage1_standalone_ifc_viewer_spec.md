@@ -199,11 +199,15 @@ The viewer shall support:
 The element table shall support:
 
 - one row per physical IFC element
-- columns: name, IFC class, GlobalId, storey, type
-- search/filter by text
+- columns: name, IFC class, GlobalId, storey, type (default set; user-configurable in Canvas host)
+- add/remove/reorder/resize columns from projected IFC attribute catalog (up to 12 columns)
+- column header sort (ascending / descending)
+- search/filter by text (element fields + visible column values)
 - filter by IFC class
 - selecting a row selects/highlights the viewer object
 - viewer selection scrolls/focuses matching table row
+- resizable left panel width (persisted in workspace state)
+- inset vertical grid dividers (do not meet horizontal row borders)
 
 ---
 
@@ -219,6 +223,9 @@ The inspector shall show:
 - property sets grouped by Pset
 - quantities where available
 - provenance summary
+- attribute search filter (Canvas host)
+- wrapping multi-line property labels (Canvas host)
+- resizable right panel width (Canvas host)
 
 ---
 
@@ -228,7 +235,9 @@ Persist locally:
 
 - camera position/target
 - selected element ids
-- active table filters
+- active table filters (`tableSearch`, `ifcClassFilter`, `inspectorSearch`)
+- table column layout (`tableColumns`, `tableSort`)
+- left/right panel widths
 - active display mode
 - opened panels
 - last opened timestamp
@@ -281,10 +290,10 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Measurements | Yes — vertex/edge snap, segment + polyline, units toggle; shared `MeasurementUi` with 3D artifact viewer |
 | HDRI lighting | Yes — environment preset cycle (off / studio / city / …); **style settings HUD** (standard render only) |
 | Picking/selection | Yes — raycast + GlobalId mapping |
-| Element table | Yes — name, class, GlobalId, type, storey; search + class filter |
-| Properties inspector | Yes — grouped Psets, provenance, assembly membership |
+| Element table | Yes — configurable columns (add/remove/reorder/resize/sort), search + class filter, resizable left panel, inset grid dividers (`bimTableColumns.js`) |
+| Properties inspector | Yes — grouped Psets, provenance, assembly membership, attribute search, wrapping labels, resizable right panel (`bimInspectorSearch.js`) |
 | Viewer ↔ table sync | Yes — bidirectional via `ifcGlobalId` |
-| Workspace state persistence | Yes — IndexedDB per fingerprint (camera, panels, filters, display mode, projection, measurements, wireframe mode + style incl. hidden-lines toggle, clay render style, lighting) |
+| Workspace state persistence | Yes — IndexedDB per fingerprint (camera, panels, filters, display mode, projection, measurements, wireframe mode + style incl. hidden-lines toggle, clay render style, lighting, **table columns/sort/search**, **inspector search**, **panel widths**) |
 | Live extraction feed | Yes — progress events during first-open preparation |
 | Folder sync → dock | Yes — `.ifc` scanned as `bim-model`; stages to sync holding tray after Sync → Apply (or auto-apply on folder connect). See master spec §29.3 *Folder sync, dock, and artifact ingest* |
 | Workspace tree visibility | Yes — after 2026-07-04 ingest fix (`project_id` + cluster membership on `/artifacts/ingest`) |

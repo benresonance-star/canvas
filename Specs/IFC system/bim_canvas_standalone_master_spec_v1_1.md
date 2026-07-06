@@ -905,7 +905,9 @@ Workspace state should be serializable, including at minimum:
 - selected elements / assemblies
 - active display mode
 - visible result set
-- active filters
+- active filters (`tableSearch`, `ifcClassFilter`, `inspectorSearch`)
+- element table layout (`tableColumns`, `tableSort`, `leftPanelWidth`)
+- inspector panel width (`rightPanelWidth`)
 - active saved query reference if any
 
 ---
@@ -934,7 +936,17 @@ If a physical member of a semantic assembly is selected, the inspector should be
 - member role within assembly if known
 - provenance / connector rule evidence
 
----
+### 19.2.1 Shipped inspector UX (Canvas host, 2026-07-06)
+- **Attribute search:** text filter (`inspectorSearch`) across identity rows, grouped Psets/quantities, semantic assembly membership, and provenance; empty sections hidden while filtering; “No attributes match this filter.” when nothing matches.
+- **Property grid:** two-column label/value layout with horizontal row dividers and **inset vertical dividers** (vertical lines stop short of horizontal borders, matching the element table).
+- **Label wrapping:** long property names wrap to multiple lines; row height grows with label text (no single-line truncation on labels/values).
+
+## 19.3 Element table UX (Canvas host, 2026-07-06)
+- **Configurable columns:** add/remove columns (up to 12), pick IFC attributes from a grouped catalog (element fields + projected properties), drag header grip to reorder, drag header divider to resize (`fr` widths persisted in `tableColumns`).
+- **Header sort:** right-click column header → Ascending / Descending / Default (`tableSort`).
+- **Search + class filter:** `tableSearch` matches name, class, GlobalId, type, storey, and visible column values; `ifcClassFilter` narrows by IFC class.
+- **Panel resize:** draggable splitter between element list and viewport (`leftPanelWidth`, 240–720 px, default 320).
+- **Grid styling:** inset vertical column dividers; horizontal row borders; search input retains focus while typing (regression-tested).
 
 # 20. Canvas BIM host requirements
 
@@ -1200,7 +1212,7 @@ The first vertical slice ships **inside Canvas** as `canvas/src/features/bim/`, 
 | Stage | Status | Notes |
 |---|---|---|
 | Stage 0 — foundations | **Done** | Stack locked: web-ifc + That Open Fragments + Three.js; pipeline version constants in `versions.js` |
-| Stage 1 — IFC evidence viewer MVP | **Mostly done (Canvas host)** | Prep pipeline, cache, viewer, table (incl. storey column), inspector, selection sync, cache rebuild shipped; standalone shell and filesystem cache layout deferred |
+| Stage 1 — IFC evidence viewer MVP | **Mostly done (Canvas host)** | Prep pipeline, cache, viewer, **configurable element table + resizable side panels**, **inspector attribute search + wrapping property grid**, selection sync, cache rebuild shipped; standalone shell and filesystem cache layout deferred |
 | Stage 2 — BQL + agent | **Mostly done** | BQL validator + executor + manual query panel + query-driven viewer/table shipped; **`BimAgentHud`** with local NL rules + Canvas agent connectors (OpenAI/Ollama), validator → executor → viewer/table loop; saved BQL queries (max 20, persisted in workspace). **`colorBy` viewport application** still deferred |
 | Stage 2b — 4D/5D analysis HUDs | **Partial (MVP)** | Canvas-first construction-sequence and cost-takeoff HUDs; not full CPM/Gantt or estimating platform — see §29.3 |
 | Stage 2c — environmental analysis (sun study) | **Partial (MVP)** | Visual sun study + saved view carousel shipped; Meeus/NOAA apparent solar position, DST toggle, cast shadows, sun path grid/compass overlay, optional sky/tracker, clay sun direction; numeric daylight/heat analysis and time animation playback deferred — see §29.3 |
@@ -1245,6 +1257,8 @@ canvas/src/features/bim/
     bim4d.js                 # construction-sequence model + task element resolution
     bim5d.js                 # cost-plan takeoff + IFC quantity rollup
     bimResultSets.js         # persisted named element/assembly sets (4D/5D linkage)
+    bimTableColumns.js       # element table column catalog, add/remove/reorder/resize, sort helpers
+    bimInspectorSearch.js    # inspector attribute search filter helpers
   components/
     BimWorkspace.jsx
     BimViewport.jsx
@@ -1319,8 +1333,8 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 - **Section cut** (2026-07-05): toolbar slice button opens `BimSectionHud.jsx` — horizontal clipping plane on Fragments geometry plus optional fill/edge overlay from `model.getSection()`. State in `workspaceState.section` (`enabled`, `planes`, `showFills`, `showEdges`, colours, edge weight). **Off by default** on each workspace open (`applyBimViewerDefaults` forces `section.enabled: false` while preserving saved plane/style). Storey preset buttons place the plane at **IfcBuildingStorey Elevation + 1 m** (`SECTION_STOREY_PLANE_OFFSET`); `Elevation` / `LongName` extracted in `ifcProjection.js`. Overlay fills use `MeshBasicMaterial` with `DoubleSide` and `depthTest: false`; edges use `LineSegments2` with depth test against a screen-depth prepass (`bimScreenDepth.js`, shared with clay hidden-line wireframe). HUD sliders use stacked layout (`ClaySliderControl stacked`) so labels stay on one line above the range input.
 - **Viewport boot + loading feedback** (2026-07-05, updated): `bimViewportBoot.js` gates first paint on (1) non-zero container layout via `ResizeObserver` (up to 20s), (2) Fragments worker model registration, (3) optional short `model.isBusy` wait (2.5s cap), (4) `syncFragmentsForViewportBoot()` — immediate `fragments.update()` then retry up to 8s. Overlay shows phased status (`BIM_VIEWPORT_LOAD_PHASES`) with spinner and element count until `loadState === 'ready'`. `updateFragments()` skips worker calls when the model is not yet registered. React Strict Mode double-mount ignored via effect sequence ids; animation loop starts only after boot succeeds.
 - Bidirectional selection sync between table, viewport, and inspector via `ifcGlobalId`.
-- Element table includes storey column; search and IFC class filter.
-- Inspector shows grouped Psets/quantities, provenance, and semantic assembly membership for member elements.
+- **Element table (2026-07-06):** configurable columns (add/remove/reorder/resize from IFC attribute catalog), header sort menu, text search + IFC class filter, resizable left panel splitter, inset vertical grid dividers. State: `tableColumns`, `tableSort`, `tableSearch`, `ifcClassFilter`, `leftPanelWidth` (240–720 px).
+- **Inspector (2026-07-06):** attribute search (`inspectorSearch`) across identity, grouped properties, assembly membership, and provenance; two-column property grid with inset vertical dividers and wrapping multi-line labels; resizable right panel splitter (`rightPanelWidth`, 240–720 px).
 - **BQL executor** (`executeBqlQuery`) runs against prepared model index with `physicalElements`, `semanticAssemblies`, and `allBimObjects` scopes.
 - **BimQueryPanel** provides JSON BQL editor with presets (all beams, ground floor, windows incl. `WindowAssembly`).
 - Query results drive viewer display mode and filter the element table; evidence bundle returned per result.
@@ -1331,7 +1345,7 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 - **5D takeoff (MVP)** (2026-07-05): toolbar dollar button opens `Bim5dHud`. **Shipped:** cost plans with rate rows, IFC quantity rollup (Area / Volume / Length from `ifc-quantity` properties), group-by class / type / storey / layer / semantic type / classification / result set, row click → viewport element highlight. **Deferred:** rate-row match-criteria editor in HUD (backend supports `match.ifcClass/storey/...`), external cost DB, export.
 - **Sun study (MVP)** (2026-07-06, updated 2026-07-06): toolbar sun button opens `BimSunStudyHud` in the top-right HUD stack (alongside section/layers). **Shipped:** `environmentalAnalysis` workspace namespace (`site`, `sunStudy`, reserved `lightingAnalysis` / `heatAnalysis`); manual azimuth/elevation and geo mode from latitude, longitude, IANA timezone, and local wall-clock datetime; **built-in site presets** (`BIM_SITE_PRESETS` — Melbourne default plus AU capitals and London, New York, Paris, Shanghai, Mumbai, Singapore) with lat/lon/timezone/DST locked per preset; **Custom** mode for editable coordinates and **Save** to persist named presets in `site.customPresets`; **daylight-saving toggle** on `site.daylightSavingTime` (default on; when off, uses standard-time offset from Jan/Jul minima); true-north offset; north-clockwise azimuth readouts; **apparent solar position** via pure helpers in `bimSunStudy.js` (`computeSolarPosition`, algorithm id `meeus-noaa-apparent-v1` — Julian century, equation of time, refraction correction; no `luxon`/`suncalc` dependency); explicit Three.js sun-light adapter in `bimSunLighting.js` (`createBimSunLightingAdapter`, `applyBimSunLighting`) with one shadow-casting directional light, optional ground receiver (`ShadowMaterial`) with **`shadowOpacity`** (0–1, default 0.22) and **`shadowColor`** (hex, default `#000000`) HUD controls, procedural `Sky` dome, optional sun tracker marker/ray, and **geo sun-path overlay** (`showSunPath`, `showCompass`, `sunPathRadius` 0.25–5× model radius): daily above/below-horizon arcs from `buildSunPathSamples()`, month arcs (21st of each month) and hour curves (06:00–18:00, every 5 days) from `buildSunPathGridSamples()`; shadow quality presets (`low`/`medium`/`high` → map sizes); model `castShadow`/`receiveShadow` on load; clay mode uses **direction-only** sun sync (`updateClaySunDirection`) — cast shadows and adapter lights stay off in clay; below-horizon dimming; HUD readout shows active calc algorithm. **Not in style presets or saved views** — site/sun state is project workspace context, not `extractBimStyleSettings()`. **Deferred:** geo time-of-day animation playback loop (HUD toggles/speed persisted only), numeric daylight/illuminance analysis, solar radiation / heat-gain analysis, IFC site auto-import.
 - **Saved view sets / carousel (MVP)** (2026-07-06): toolbar view-carousel toggle opens `BimViewCarousel` docked above the viewport bottom edge. **Shipped:** up to **12** view sets × **40** views each; each view stores camera, projection, section style/plane, hidden storeys/layers, display mode, and style bundle (not sun study or selection); capture current viewport via `captureBimViewportThumbnail()` (320×180 JPEG); thumbnails in IndexedDB `viewThumbnails` store (`bimRepository.js` DB v2); create/rename/delete sets; save/update/rename/delete/apply views; `useBimViewSets.js` orchestrates thumbnail put/delete and apply requests back into `BimWorkspace`. **Deferred:** server-synced view sets, drag reorder, multi-user sharing.
-- Workspace state (camera, selection, filters, display mode, projection mode, measurements, wireframe mode + style (`wireframeHiddenLines` included), **render style + clay tuning**, **section cut state**, **environmentalAnalysis (sun study)**, **view sets + active view/set + carousel open**, **saved queries**, **saved result sets**, **4D sequences**, **5D cost plans**, lighting, panel toggles) persisted in IndexedDB per fingerprint.
+- Workspace state (camera, selection, filters, display mode, projection mode, measurements, wireframe mode + style (`wireframeHiddenLines` included), **render style + clay tuning**, **section cut state**, **environmentalAnalysis (sun study)**, **view sets + active view/set + carousel open**, **saved queries**, **saved result sets**, **4D sequences**, **5D cost plans**, lighting, panel toggles, **element table columns/sort/search/filters**, **inspector attribute search**, **left/right panel widths**) persisted in IndexedDB per fingerprint.
 - Graceful degradation: if Fragments conversion fails, evidence table and inspector still work; viewport shows an error banner.
 
 ### Folder sync, dock, and artifact ingest (2026-07-04)

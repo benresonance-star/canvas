@@ -5,6 +5,7 @@ import { normalizeBimSectionState } from './bimSectioning.js';
 import { normalizeBimResultSets } from './bimResultSets.js';
 import { normalizeBim4dSequences } from './bim4d.js';
 import { normalizeBim5dCostPlans } from './bim5d.js';
+import { normalizeTableColumns, normalizeTableSort } from './bimTableColumns.js';
 import { normalizeBimViewSets, resolveActiveViewSetId } from './bimViewSets.js';
 import { normalizeBimEnvironmentalAnalysisState } from './bimSunStudy.js';
 
@@ -77,6 +78,24 @@ export const BIM_VIEWER_DEFAULTS = {
   hiddenLayers: [],
   isolateOnSelect: false,
 };
+export const DEFAULT_LEFT_PANEL_WIDTH = 320;
+export const DEFAULT_RIGHT_PANEL_WIDTH = 320;
+export const MIN_PANEL_WIDTH = 240;
+export const MAX_PANEL_WIDTH = 720;
+
+export function normalizeLeftPanelWidth(value) {
+  return normalizePanelWidth(value, DEFAULT_LEFT_PANEL_WIDTH);
+}
+
+export function normalizeRightPanelWidth(value) {
+  return normalizePanelWidth(value, DEFAULT_RIGHT_PANEL_WIDTH);
+}
+
+function normalizePanelWidth(value, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, Math.round(numeric)));
+}
 export const VIEWPORT_BACKGROUND_DEFAULT = '#171412';
 export const CLAY_BACKGROUND_DEFAULT = '#ffffff';
 export const CLAY_SURFACE_COLOR_DEFAULT = '#f8f8f8';
@@ -289,6 +308,7 @@ export function normalizeBimWorkspaceState(state = {}) {
   const isolateOnSelect = state?.isolateOnSelect === true;
   const viewSets = normalizeBimViewSets(state?.viewSets);
   const activeViewSetId = resolveActiveViewSetId(viewSets, state?.activeViewSetId);
+  const tableColumns = normalizeTableColumns(state?.tableColumns);
   return {
     selectedObjectId: state?.selectedObjectId ?? null,
     selectedObjectKind: state?.selectedObjectKind ?? 'physicalElement',
@@ -298,11 +318,16 @@ export function normalizeBimWorkspaceState(state = {}) {
     hiddenLayers: normalizeHiddenLayerState(state?.hiddenLayers),
     section: normalizeBimSectionState(state?.section ?? {}),
     tableSearch: String(state?.tableSearch ?? ''),
+    inspectorSearch: String(state?.inspectorSearch ?? ''),
     ifcClassFilter: String(state?.ifcClassFilter ?? ''),
+    tableColumns,
+    tableSort: normalizeTableSort(state?.tableSort, tableColumns),
     panels: {
       left: panels.left !== false,
       right: panels.right !== false,
     },
+    leftPanelWidth: normalizeLeftPanelWidth(state?.leftPanelWidth),
+    rightPanelWidth: normalizeRightPanelWidth(state?.rightPanelWidth),
     camera: normalizeBimCameraState(state?.camera),
     projectionMode: BIM_PROJECTION_MODES.includes(state?.projectionMode)
       ? state.projectionMode
