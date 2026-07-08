@@ -512,9 +512,12 @@ function ThreeDToolbar({
   measureModeActive = false,
   measureSnapMode = 'vertex',
   measureUnits = 'cm',
+  modelUnits = 'cm',
+  measurements = [],
   onToggleMeasureMode,
   onMeasureSnapModeChange,
   onMeasureUnitsChange,
+  onRemoveMeasurement,
 }) {
   const buttonClass = (active = false) =>
     `inline-flex items-center justify-center rounded border px-2 py-1 transition ${
@@ -550,9 +553,12 @@ function ThreeDToolbar({
             measureModeActive={measureModeActive}
             measureSnapMode={measureSnapMode}
             measureUnits={measureUnits}
+            modelUnits={modelUnits}
+            measurements={measurements}
             onToggleMeasureMode={onToggleMeasureMode}
             onMeasureSnapModeChange={onMeasureSnapModeChange}
             onMeasureUnitsChange={onMeasureUnitsChange}
+            onRemoveMeasurement={onRemoveMeasurement}
             compact={compact}
           />
         )}
@@ -1008,7 +1014,10 @@ export function ThreeDArtifactViewer({
           onToggleMeasureMode={handleToggleMeasureMode}
           onMeasureSnapModeChange={setMeasureSnapMode}
           measureUnits={measureUnits}
+          modelUnits={modelMeasureUnits}
+          measurements={measurements}
           onMeasureUnitsChange={handleMeasureUnitsChange}
+          onRemoveMeasurement={handleRemoveMeasurement}
         />
       )}
       <div ref={viewportRef} className="flex-1 min-h-0 relative">

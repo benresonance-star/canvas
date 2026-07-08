@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, Ruler, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Pencil, Ruler, Trash2 } from 'lucide-react';
 import {
   formatMeasurementDistance,
   formatMeasurementLabel,
@@ -103,16 +103,20 @@ function MeasurementToolsHud({
   measureKind,
   rlDatum,
   enableRlOptions = false,
+  editMode = false,
+  showEditButton = false,
+  hasDeletableItems = false,
   onMeasureSnapModeChange,
   onMeasureKindChange,
   onRlDatumValueChange,
   onActivateMeasure,
-  onCancelMeasure,
+  onEditModeChange,
 }) {
   const datumLive = isRlDatumLive(rlDatum);
   const isRlMode = measureKind === 'rl' || measureKind === 'datum';
 
   const activateWithKind = (kind, snapMode = measureSnapMode) => {
+    if (editMode) return;
     if (snapMode !== measureSnapMode) onMeasureSnapModeChange?.(snapMode);
     onMeasureKindChange?.(kind);
     onActivateMeasure?.();
@@ -133,6 +137,7 @@ function MeasurementToolsHud({
         <MenuOptionButton
           active={measureKind === 'segment'}
           title="Measure distance between two points"
+          disabled={editMode}
           onClick={() => activateWithKind('segment', 'vertex')}
         >
           Distance
@@ -140,7 +145,7 @@ function MeasurementToolsHud({
         <MenuOptionButton
           active={measureKind === 'polyline'}
           title="Measure polyline path or perimeter"
-          disabled={measureSnapMode === 'edge'}
+          disabled={editMode || measureSnapMode === 'edge'}
           onClick={() => activateWithKind('polyline', 'vertex')}
         >
           Polyline
@@ -148,6 +153,7 @@ function MeasurementToolsHud({
         <MenuOptionButton
           active={!isRlMode && measureSnapMode === 'vertex'}
           title="Snap to vertices"
+          disabled={editMode}
           onClick={() => activateWithKind(measureKind === 'polyline' ? 'polyline' : 'segment', 'vertex')}
         >
           Vertex
@@ -155,7 +161,9 @@ function MeasurementToolsHud({
         <MenuOptionButton
           active={!isRlMode && measureSnapMode === 'edge'}
           title="Snap to edges"
+          disabled={editMode}
           onClick={() => {
+            if (editMode) return;
             onMeasureSnapModeChange?.('edge');
             onMeasureKindChange?.('segment');
             onActivateMeasure?.();
@@ -172,6 +180,7 @@ function MeasurementToolsHud({
             <MenuOptionButton
               active={measureKind === 'rl'}
               title="Place RL height marker"
+              disabled={editMode}
               onClick={() => activateWithKind('rl', 'vertex')}
             >
               Height
@@ -179,17 +188,19 @@ function MeasurementToolsHud({
             <MenuOptionButton
               active={measureKind === 'datum'}
               title="Set or replace datum marker"
+              disabled={editMode}
               onClick={() => activateWithKind('datum', 'vertex')}
             >
               Datum
             </MenuOptionButton>
             {datumLive ? (
-              <label className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-secondary">
+              <label className={`inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-secondary ${editMode ? 'opacity-50' : ''}`}>
                 <span className="text-muted">RL</span>
                 <input
                   type="number"
                   step="0.001"
                   value={Number(rlDatum.rlValue ?? 0).toFixed(3)}
+                  disabled={editMode}
                   onChange={(event) => onRlDatumValueChange?.(Number(event.target.value))}
                   className="w-14 rounded border border-border bg-surface px-1 py-0.5 text-[10px] text-primary outline-none"
                   aria-label="Datum RL value"
@@ -202,16 +213,25 @@ function MeasurementToolsHud({
         </>
       )}
 
-      <HudSeparator />
-      <button
-        type="button"
-        title="Cancel measurement"
-        aria-label="Cancel measurement"
-        className="inline-flex shrink-0 items-center justify-center rounded border border-border px-1.5 py-1 text-muted hover:text-warning hover:border-warning"
-        onClick={() => onCancelMeasure?.()}
-      >
-        <Trash2 size={11} strokeWidth={1.7} />
-      </button>
+      {showEditButton && hasDeletableItems && (
+        <>
+          <HudSeparator />
+          <button
+            type="button"
+            title={editMode ? 'Done editing measurements' : 'Edit measurements'}
+            aria-label={editMode ? 'Done editing measurements' : 'Edit measurements'}
+            aria-pressed={editMode}
+            className={`inline-flex shrink-0 items-center justify-center rounded border px-1.5 py-1 transition ${
+              editMode
+                ? 'border-accent bg-accent text-on-accent'
+                : 'border-border text-muted hover:text-primary hover:bg-surface-muted'
+            }`}
+            onClick={() => onEditModeChange?.(!editMode)}
+          >
+            <Pencil size={11} strokeWidth={1.7} />
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -223,6 +243,8 @@ export function MeasurementToolbarControls({
   measureSnapMode = 'vertex',
   measureKind = 'segment',
   measureUnits = 'cm',
+  modelUnits = 'm',
+  measurements = [],
   rlDatum = null,
   enableRlOptions = false,
   menuOpen: menuOpenProp,
@@ -231,15 +253,22 @@ export function MeasurementToolbarControls({
   onMeasureSnapModeChange,
   onMeasureKindChange,
   onMeasureUnitsChange,
-  onCancelMeasure,
+  onRemoveMeasurement,
+  onDeleteRlDatum,
   onRlDatumValueChange,
+  editMode: editModeProp,
+  onEditModeChange,
   compact = false,
   buttonClassName,
   activeButtonClassName,
 }) {
   const [menuOpenInternal, setMenuOpenInternal] = useState(false);
+  const [editModeInternal, setEditModeInternal] = useState(false);
   const menuOpen = menuOpenProp ?? menuOpenInternal;
   const setMenuOpen = onMenuOpenChange ?? setMenuOpenInternal;
+  const supportsViewportEdit = typeof onEditModeChange === 'function';
+  const editMode = supportsViewportEdit ? (editModeProp ?? false) : editModeInternal;
+  const setEditMode = supportsViewportEdit ? onEditModeChange : setEditModeInternal;
   const buttonRef = useRef(null);
   const panelRef = useRef(null);
   const [panelStyle, setPanelStyle] = useState(null);
@@ -257,6 +286,8 @@ export function MeasurementToolbarControls({
     }`;
   };
   const iconSize = compact ? 12 : 14;
+  const datumLive = isRlDatumLive(rlDatum);
+  const hasDeletableItems = measurements.length > 0 || datumLive;
 
   const activateMeasure = () => {
     if (!measureModeActive) onToggleMeasureMode?.();
@@ -295,8 +326,23 @@ export function MeasurementToolbarControls({
     measureSnapMode,
     enableRlOptions,
     rlDatum,
+    measurements,
     measureModeActive,
+    editMode,
+    hasDeletableItems,
   ]);
+
+  useEffect(() => {
+    if (!menuOpen) {
+      setEditMode(false);
+    }
+  }, [menuOpen, setEditMode]);
+
+  useEffect(() => {
+    if (!hasDeletableItems) {
+      setEditMode(false);
+    }
+  }, [hasDeletableItems, setEditMode]);
 
   useEffect(() => {
     if (!menuOpen) return undefined;
@@ -357,13 +403,14 @@ export function MeasurementToolbarControls({
           measureKind={measureKind}
           rlDatum={rlDatum}
           enableRlOptions={enableRlOptions}
+          editMode={editMode}
+          showEditButton={supportsViewportEdit}
+          hasDeletableItems={hasDeletableItems}
           onMeasureSnapModeChange={onMeasureSnapModeChange}
           onMeasureKindChange={onMeasureKindChange}
           onRlDatumValueChange={onRlDatumValueChange}
           onActivateMeasure={activateMeasure}
-          onCancelMeasure={() => {
-            onCancelMeasure?.();
-          }}
+          onEditModeChange={setEditMode}
         />,
         document.body,
       )}

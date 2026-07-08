@@ -147,10 +147,13 @@ function addRlMarkerVisual(group, {
   markerRadius,
   pickMeta = null,
   selected = false,
+  showDelete = false,
+  onDelete = null,
+  deleteTitle = 'Delete',
 }) {
   const markerColor = selected ? SELECTED_RL_COLOR : color;
   group.add(createCrossSphereMarker(position, markerColor, markerRadius, pickMeta));
-  const labelObject = createLabel(label);
+  const labelObject = createLabel(label, { showDelete, onDelete, deleteTitle });
   labelObject.position.set(...labelOffsetPosition(position, markerRadius));
   group.add(labelObject);
 }
@@ -160,10 +163,34 @@ function isSelectedRlPick(selectedRlPick, pickMeta) {
   return selectedRlPick.kind === pickMeta.kind && selectedRlPick.id === pickMeta.id;
 }
 
-function createLabel(text) {
+function createLabel(text, { showDelete = false, onDelete, deleteTitle = 'Delete' } = {}) {
   const element = document.createElement('div');
-  element.className = 'sans px-1.5 py-0.5 rounded bg-surface/90 border border-border text-[10px] text-primary whitespace-nowrap';
-  element.textContent = text;
+  element.className = 'sans flex items-center gap-1 px-1.5 py-0.5 rounded bg-surface/90 border border-border text-[10px] text-primary whitespace-nowrap';
+
+  const textSpan = document.createElement('span');
+  textSpan.textContent = text;
+  element.appendChild(textSpan);
+
+  if (showDelete && onDelete) {
+    element.style.pointerEvents = 'auto';
+    element.style.cursor = 'default';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.title = deleteTitle;
+    button.setAttribute('aria-label', deleteTitle);
+    button.className = 'inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded border border-border text-[11px] leading-none text-muted hover:border-warning hover:text-warning pointer-events-auto';
+    button.textContent = '×';
+    const handleDelete = (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      onDelete();
+    };
+    button.addEventListener('pointerdown', handleDelete);
+    button.addEventListener('click', handleDelete);
+    element.appendChild(button);
+  }
+
   return new CSS2DObject(element);
 }
 
@@ -202,13 +229,16 @@ function addMeasurementVisual(group, {
   color,
   markerRadius,
   showEndMarker = true,
+  showDelete = false,
+  onDelete = null,
+  deleteTitle = 'Delete measurement',
 }) {
   group.add(createLine(start, end, color));
   group.add(createMarker(start, color, markerRadius));
   if (showEndMarker) {
     group.add(createMarker(end, color, markerRadius));
   }
-  const labelObject = createLabel(label);
+  const labelObject = createLabel(label, { showDelete, onDelete, deleteTitle });
   labelObject.position.set(...midpoint(start, end));
   group.add(labelObject);
 }
@@ -220,6 +250,9 @@ function addPolylineVisual(group, {
   markerRadius,
   closed = false,
   emphasizeFirst = false,
+  showDelete = false,
+  onDelete = null,
+  deleteTitle = 'Delete measurement',
 }) {
   const positions = points.map((point) => point.position ?? point);
   const polyline = createPolyline(positions, color, closed);
@@ -228,7 +261,7 @@ function addPolylineVisual(group, {
     const radius = emphasizeFirst && index === 0 ? markerRadius * 1.2 : markerRadius;
     group.add(createMarker(position, color, radius));
   });
-  const labelObject = createLabel(label);
+  const labelObject = createLabel(label, { showDelete, onDelete, deleteTitle });
   labelObject.position.set(...centroid(positions));
   group.add(labelObject);
 }
@@ -241,6 +274,9 @@ export function createBimMeasurementOverlay({ scene, container }) {
 
   const css2dRenderer = new CSS2DRenderer();
   css2dRenderer.domElement.style.position = 'absolute';
+  css2dRenderer.domElement.style.inset = '0';
+  css2dRenderer.domElement.style.width = '100%';
+  css2dRenderer.domElement.style.height = '100%';
   css2dRenderer.domElement.style.top = '0';
   css2dRenderer.domElement.style.left = '0';
   css2dRenderer.domElement.style.pointerEvents = 'none';
@@ -273,10 +309,15 @@ export function createBimMeasurementOverlay({ scene, container }) {
       modelUnits = 'm',
       modelRoot = null,
       active = false,
+      editMode = false,
+      onDeleteDatum = null,
+      onDeleteMeasurement = null,
     }) {
       clearGroup();
       const markerRadius = computeMeasurementMarkerRadius(modelRoot) * MARKER_RADIUS_SCALE;
       const datumLive = isRlDatumLive(rlDatum);
+      const showDelete = editMode === true;
+      css2dRenderer.domElement.style.zIndex = showDelete ? '25' : '2';
 
       if (datumLive && showOnModel) {
         const datumRl = computeRlFromPosition(rlDatum.position, {
@@ -291,6 +332,9 @@ export function createBimMeasurementOverlay({ scene, container }) {
           markerRadius: markerRadius * 1.1,
           pickMeta: datumPick,
           selected: isSelectedRlPick(selectedRlPick, datumPick),
+          showDelete,
+          onDelete: showDelete && onDeleteDatum ? () => onDeleteDatum() : null,
+          deleteTitle: 'Delete datum',
         });
       }
 
@@ -309,6 +353,11 @@ export function createBimMeasurementOverlay({ scene, container }) {
             markerRadius,
             pickMeta: { kind: 'rl', id: measurement.id },
             selected: isSelectedRlPick(selectedRlPick, { kind: 'rl', id: measurement.id }),
+            showDelete,
+            onDelete: showDelete && onDeleteMeasurement
+              ? () => onDeleteMeasurement(measurement.id)
+              : null,
+            deleteTitle: 'Delete RL marker',
           });
           return;
         }
@@ -324,6 +373,10 @@ export function createBimMeasurementOverlay({ scene, container }) {
             color: SAVED_COLOR,
             markerRadius,
             closed: measurement.closed,
+            showDelete,
+            onDelete: showDelete && onDeleteMeasurement
+              ? () => onDeleteMeasurement(measurement.id)
+              : null,
           });
           return;
         }
@@ -335,6 +388,10 @@ export function createBimMeasurementOverlay({ scene, container }) {
           label: formatMeasurementDistance(measurement.distance, units, modelUnits),
           color: SAVED_COLOR,
           markerRadius,
+          showDelete,
+          onDelete: showDelete && onDeleteMeasurement
+            ? () => onDeleteMeasurement(measurement.id)
+            : null,
         });
       });
 
@@ -379,7 +436,7 @@ export function createBimMeasurementOverlay({ scene, container }) {
         });
       }
 
-      if (active && hoverSnap) {
+      if (active && !showDelete && hoverSnap) {
         const previewRadius = markerRadius * 0.2;
         if (measureKind === 'rl' || measureKind === 'datum') {
           const previewMeasuredFromDatum = measureKind === 'rl' && datumLive;

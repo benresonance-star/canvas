@@ -504,6 +504,7 @@ export function BimViewport({
   const measurementsVisibleRef = useRef(measurementsVisible);
   const rlDatumRef = useRef(rlDatum);
   const measureHudOpenRef = useRef(false);
+  const measureEditModeRef = useRef(false);
   const selectedRlPickRef = useRef(null);
   const rlMarkerRaycasterRef = useRef(new THREE.Raycaster());
   const dismissMeasureSessionRef = useRef(() => {});
@@ -566,6 +567,7 @@ export function BimViewport({
   const [fovInput, setFovInput] = useState(String(initialCamera?.fov ?? BIM_DEFAULT_FOV));
   const [measureModeActive, setMeasureModeActive] = useState(false);
   const [measureHudOpen, setMeasureHudOpen] = useState(false);
+  const [measureEditMode, setMeasureEditMode] = useState(false);
   const [selectedRlPick, setSelectedRlPick] = useState(null);
   const [measureDraftActive, setMeasureDraftActive] = useState(false);
   const measureDraftActiveRef = useRef(false);
@@ -659,6 +661,7 @@ export function BimViewport({
     if (!measureHudOpen) {
       selectedRlPickRef.current = null;
       setSelectedRlPick(null);
+      setMeasureEditMode(false);
     }
   }, [measureHudOpen]);
 
@@ -774,7 +777,27 @@ export function BimViewport({
       units: measureUnitsRef.current,
       modelUnits: 'm',
       modelRoot: model?.object ?? null,
-      active: measureModeActiveRef.current,
+      active: measureModeActiveRef.current && !measureEditModeRef.current,
+      editMode: measureEditModeRef.current,
+      onDeleteDatum: () => {
+        rlDatumRef.current = null;
+        onDeleteRlDatumRef.current();
+        selectedRlPickRef.current = null;
+        setSelectedRlPick(null);
+        syncMeasurementOverlay();
+      },
+      onDeleteMeasurement: (measurementId) => {
+        const nextMeasurements = measurementsRef.current.filter(
+          (entry) => entry.id !== measurementId,
+        );
+        measurementsRef.current = nextMeasurements;
+        onMeasurementsChangeRef.current(nextMeasurements);
+        if (selectedRlPickRef.current?.id === measurementId) {
+          selectedRlPickRef.current = null;
+          setSelectedRlPick(null);
+        }
+        syncMeasurementOverlay();
+      },
     });
   }, []);
 
@@ -802,6 +825,7 @@ export function BimViewport({
 
   const closeMeasureHud = useCallback(() => {
     resetMeasureSession();
+    setMeasureEditMode(false);
     setMeasureHudOpen(false);
   }, [resetMeasureSession]);
 
@@ -817,6 +841,16 @@ export function BimViewport({
     measurementsVisibleRef.current = measurementsVisible;
     syncMeasurementOverlay();
   }, [measurementsVisible, syncMeasurementOverlay]);
+
+  useEffect(() => {
+    measureEditModeRef.current = measureEditMode;
+    if (measureEditMode) {
+      measurementControllerRef.current?.cancelDraft();
+      setMeasureDraftActive(false);
+      measurementControllerRef.current?.setActive(false);
+    }
+    syncMeasurementOverlay();
+  }, [measureEditMode, syncMeasurementOverlay]);
 
   useEffect(() => {
     syncMeasurementOverlay();
@@ -2125,16 +2159,17 @@ export function BimViewport({
     const controls = controlsRef.current;
     const controller = measurementControllerRef.current;
     if (!controls) return;
-    if (measureModeActive) {
+    const placementActive = measureModeActive && !measureEditMode;
+    if (placementActive) {
       controls.mouseButtons = { LEFT: null, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.ROTATE };
       controller?.setActive(true);
     } else {
       controls.mouseButtons = { LEFT: null, MIDDLE: MOUSE.PAN, RIGHT: MOUSE.ROTATE };
       controller?.setActive(false);
-      setMeasureDraftActive(false);
+      if (!placementActive) setMeasureDraftActive(false);
     }
     syncOrbitControlsAfterCameraFit(controls);
-  }, [measureModeActive]);
+  }, [measureModeActive, measureEditMode]);
 
   useEffect(() => {
     syncMeasurementOverlay();
@@ -2507,7 +2542,7 @@ export function BimViewport({
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !measureHudOpen) return undefined;
+    if (!canvas || !measureHudOpen || measureEditModeRef.current) return undefined;
 
     const onPointerDown = (event) => {
       if (event.button !== 0) return;
@@ -2532,7 +2567,7 @@ export function BimViewport({
       canvas.removeEventListener('pointerdown', onPointerDown, true);
       canvas.removeEventListener('contextmenu', onContextMenu);
     };
-  }, [measureHudOpen, pickRlMarkerAtPointer, handleRlMarkerSelect, handleRlMarkerDelete]);
+  }, [measureHudOpen, measureEditMode, pickRlMarkerAtPointer, handleRlMarkerSelect, handleRlMarkerDelete]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -2704,10 +2739,6 @@ export function BimViewport({
     setMeasureModeActive(true);
     setMeasureHudOpen(true);
   }, [closeMeasureHud]);
-
-  const handleCancelMeasurement = useCallback(() => {
-    clearMeasureDraft();
-  }, [clearMeasureDraft]);
 
   const handleToggleLighting = useCallback(() => {
     onLightingChange(cycleBimLightingState({
@@ -2889,10 +2920,15 @@ export function BimViewport({
   }, [isolateOnSelect, onIsolateOnSelectChange]);
 
   const handleRemoveMeasurement = useCallback((measurementId) => {
-    onMeasurementsChangeRef.current(
-      measurementsRef.current.filter((entry) => entry.id !== measurementId),
-    );
-  }, []);
+    const nextMeasurements = measurementsRef.current.filter((entry) => entry.id !== measurementId);
+    measurementsRef.current = nextMeasurements;
+    onMeasurementsChangeRef.current(nextMeasurements);
+    if (selectedRlPickRef.current?.id === measurementId) {
+      selectedRlPickRef.current = null;
+      setSelectedRlPick(null);
+    }
+    syncMeasurementOverlay();
+  }, [syncMeasurementOverlay]);
 
   const handleRlDatumValueChange = useCallback((rlValue) => {
     const current = rlDatumRef.current;
@@ -2927,7 +2963,9 @@ export function BimViewport({
     syncMeasurementOverlay();
   }, [syncMeasurementOverlay]);
 
-  const measureStatus = measureModeActive ? 'PRESS DELETE TO CANCEL' : null;
+  const measureStatus = measureEditMode
+    ? 'CLICK × ON LABELS TO DELETE'
+    : (measureModeActive ? 'PRESS DELETE TO CANCEL' : null);
 
   const toolbarControls = (
     <div
@@ -2968,6 +3006,8 @@ export function BimViewport({
                 measureSnapMode={measureSnapMode}
                 measureKind={measureKind}
                 measureUnits={measureUnits}
+                modelUnits="m"
+                measurements={measurements}
                 rlDatum={rlDatum}
                 enableRlOptions
                 menuOpen={measureHudOpen}
@@ -2976,8 +3016,11 @@ export function BimViewport({
                 onMeasureSnapModeChange={onMeasureSnapModeChange}
                 onMeasureKindChange={onMeasureKindChange}
                 onMeasureUnitsChange={onMeasureUnitsChange}
-                onCancelMeasure={handleCancelMeasurement}
+                onRemoveMeasurement={handleRemoveMeasurement}
+                onDeleteRlDatum={handleDeleteRlDatum}
                 onRlDatumValueChange={handleRlDatumValueChange}
+                editMode={measureEditMode}
+                onEditModeChange={setMeasureEditMode}
                 compact
                 buttonClassName={(active) => `rounded border border-border p-1 ${
                   active ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'

@@ -37,6 +37,8 @@ describe('resolveMeasurementHudStyle', () => {
         measureKind: 'segment',
         measureSnapMode: 'vertex',
         enableRlOptions: true,
+        showEditButton: true,
+        hasDeletableItems: true,
         rlDatum: { id: 'datum-1', position: [0, 0, 0], rlValue: 0 },
       }),
     );
@@ -44,6 +46,35 @@ describe('resolveMeasurementHudStyle', () => {
     expect(html).toContain('Height');
     expect(html).toContain('Datum');
     expect(html).toContain('role="separator"');
-    expect(html).toContain('aria-label="Cancel measurement"');
+    expect(html).toContain('aria-label="Edit measurements"');
+  });
+
+  it('does not render a measurement list inside the HUD when edit mode is active', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(MeasurementToolsHud, {
+        measureKind: 'rl',
+        measureSnapMode: 'vertex',
+        enableRlOptions: true,
+        editMode: true,
+        showEditButton: true,
+        hasDeletableItems: true,
+        rlDatum: { id: 'datum-1', position: [0, 0, 0], rlValue: 0 },
+      }),
+    );
+    expect(html).toContain('aria-label="Done editing measurements"');
+    expect(html).not.toContain('aria-label="Delete RL marker"');
+    expect(html).not.toContain('aria-label="Delete datum"');
+  });
+
+  it('hides the edit button when there is nothing to delete', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(MeasurementToolsHud, {
+        measureKind: 'segment',
+        measureSnapMode: 'vertex',
+        showEditButton: true,
+        hasDeletableItems: false,
+      }),
+    );
+    expect(html).not.toContain('aria-label="Edit measurements"');
   });
 });
