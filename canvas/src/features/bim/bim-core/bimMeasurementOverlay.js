@@ -7,13 +7,23 @@ import {
   formatMeasurementDistance,
   formatPolylineMeasurementLabel,
 } from '../../threeDArtifact/utils/measureSnap.js';
+import {
+  computeRlFromPosition,
+  formatDatumLabel,
+  formatRlLabel,
+  getRlMarkerColor,
+  isRlDatumLive,
+  RL_DATUM_MARKER_COLOR,
+} from './bimRlMeasure.js';
 
 const HOVER_COLOR = 0x34d399;
 const MEASUREMENT_COLOR = 0x60a5fa;
 const DRAFT_COLOR = MEASUREMENT_COLOR;
 const SAVED_COLOR = MEASUREMENT_COLOR;
+const SELECTED_RL_COLOR = 0xfbbf24;
 const MARKER_RADIUS_SCALE = 0.5;
 const CLOSE_POLYLINE_SCALE = 2.5;
+const RL_MARKER_SPHERE_OPACITY = 0.4;
 
 function disposeObject(object) {
   object.traverse((child) => {
@@ -61,6 +71,22 @@ function createPolyline(positions, color, closed = false) {
   return line;
 }
 
+function createRlMarkerSphere(position, color, radius) {
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, 10, 10),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: RL_MARKER_SPHERE_OPACITY,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  );
+  mesh.position.set(position[0], position[1], position[2]);
+  mesh.renderOrder = 1001;
+  return mesh;
+}
+
 function createMarker(position, color, radius) {
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(radius, 10, 10),
@@ -73,6 +99,65 @@ function createMarker(position, color, radius) {
   mesh.position.set(position[0], position[1], position[2]);
   mesh.renderOrder = 1001;
   return mesh;
+}
+
+function tagRlPickable(object, pickMeta) {
+  object.traverse((child) => {
+    if (child.isMesh) {
+      child.userData.bimRlPick = pickMeta;
+    }
+  });
+}
+
+function createCrossSphereMarker(position, color, radius, pickMeta = null) {
+  const group = new THREE.Group();
+  const armLength = radius * 3;
+  const axes = [
+    [[-armLength, 0, 0], [armLength, 0, 0]],
+    [[0, -armLength, 0], [0, armLength, 0]],
+    [[0, 0, -armLength], [0, 0, armLength]],
+  ];
+  axes.forEach(([start, end]) => {
+    const offsetStart = [
+      position[0] + start[0],
+      position[1] + start[1],
+      position[2] + start[2],
+    ];
+    const offsetEnd = [
+      position[0] + end[0],
+      position[1] + end[1],
+      position[2] + end[2],
+    ];
+    group.add(createLine(offsetStart, offsetEnd, color));
+  });
+  group.add(createRlMarkerSphere(position, color, radius));
+  group.renderOrder = 1001;
+  if (pickMeta) tagRlPickable(group, pickMeta);
+  return group;
+}
+
+function labelOffsetPosition(position, markerRadius) {
+  return [position[0], position[1] + markerRadius * 4, position[2]];
+}
+
+function addRlMarkerVisual(group, {
+  position,
+  label,
+  color,
+  markerRadius,
+  pickMeta = null,
+  selected = false,
+}) {
+  const markerColor = selected ? SELECTED_RL_COLOR : color;
+  group.add(createCrossSphereMarker(position, markerColor, markerRadius, pickMeta));
+  const labelObject = createLabel(label);
+  labelObject.position.set(...labelOffsetPosition(position, markerRadius));
+  group.add(labelObject);
+}
+
+function isSelectedRlPick(selectedRlPick, pickMeta) {
+  if (!selectedRlPick || !pickMeta) return false;
+  return selectedRlPick.kind === pickMeta.kind && selectedRlPick.id === pickMeta.id;
 }
 
 function createLabel(text) {
@@ -175,6 +260,8 @@ export function createBimMeasurementOverlay({ scene, container }) {
     css2dRenderer,
     sync({
       measurements = [],
+      rlDatum = null,
+      selectedRlPick = null,
       draftStart = null,
       draftPoints = [],
       previewEnd = null,
@@ -189,9 +276,42 @@ export function createBimMeasurementOverlay({ scene, container }) {
     }) {
       clearGroup();
       const markerRadius = computeMeasurementMarkerRadius(modelRoot) * MARKER_RADIUS_SCALE;
+      const datumLive = isRlDatumLive(rlDatum);
+
+      if (datumLive && showOnModel) {
+        const datumRl = computeRlFromPosition(rlDatum.position, {
+          datum: rlDatum,
+          measuredFromDatum: true,
+        });
+        const datumPick = { kind: 'datum', id: rlDatum.id };
+        addRlMarkerVisual(group, {
+          position: rlDatum.position,
+          label: formatDatumLabel(datumRl, units, modelUnits),
+          color: RL_DATUM_MARKER_COLOR,
+          markerRadius: markerRadius * 1.1,
+          pickMeta: datumPick,
+          selected: isSelectedRlPick(selectedRlPick, datumPick),
+        });
+      }
 
       measurements.forEach((measurement) => {
         if (!showOnModel) return;
+        if (measurement.kind === 'rl') {
+          const measuredFromDatum = measurement.measuredFromDatum === true && datumLive;
+          const rlValue = computeRlFromPosition(measurement.position, {
+            datum: rlDatum,
+            measuredFromDatum,
+          });
+          addRlMarkerVisual(group, {
+            position: measurement.position,
+            label: formatRlLabel(rlValue, units, modelUnits),
+            color: getRlMarkerColor(measuredFromDatum, datumLive),
+            markerRadius,
+            pickMeta: { kind: 'rl', id: measurement.id },
+            selected: isSelectedRlPick(selectedRlPick, { kind: 'rl', id: measurement.id }),
+          });
+          return;
+        }
         if (measurement.kind === 'polyline') {
           addPolylineVisual(group, {
             points: measurement.points,
@@ -207,6 +327,7 @@ export function createBimMeasurementOverlay({ scene, container }) {
           });
           return;
         }
+        if (measurement.kind !== 'segment') return;
 
         addMeasurementVisual(group, {
           start: measurement.start.position,
@@ -260,7 +381,25 @@ export function createBimMeasurementOverlay({ scene, container }) {
 
       if (active && hoverSnap) {
         const previewRadius = markerRadius * 0.2;
-        if (hoverSnap.kind === 'edge' && hoverSnap.edgeStart && hoverSnap.edgeEnd) {
+        if (measureKind === 'rl' || measureKind === 'datum') {
+          const previewMeasuredFromDatum = measureKind === 'rl' && datumLive;
+          const previewRl = computeRlFromPosition(hoverSnap.position, {
+            datum: rlDatum,
+            measuredFromDatum: previewMeasuredFromDatum,
+          });
+          const previewColor = measureKind === 'datum'
+            ? RL_DATUM_MARKER_COLOR
+            : getRlMarkerColor(previewMeasuredFromDatum, datumLive);
+          const previewLabel = measureKind === 'datum'
+            ? formatDatumLabel(0, units, modelUnits)
+            : formatRlLabel(previewRl, units, modelUnits);
+          addRlMarkerVisual(group, {
+            position: hoverSnap.position,
+            label: previewLabel,
+            color: previewColor,
+            markerRadius: previewRadius,
+          });
+        } else if (hoverSnap.kind === 'edge' && hoverSnap.edgeStart && hoverSnap.edgeEnd) {
           group.add(createLine(hoverSnap.edgeStart, hoverSnap.edgeEnd, HOVER_COLOR));
           group.add(createMarker(hoverSnap.position, HOVER_COLOR, previewRadius));
         } else {

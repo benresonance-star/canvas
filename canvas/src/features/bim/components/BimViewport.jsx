@@ -32,6 +32,7 @@ import {
 import { createBimCameraKeyboardNav } from '../bim-core/bimCameraKeyboardNav.js';
 import { createBimMeasurementController } from '../bim-core/bimMeasurementController.js';
 import { createBimMeasurementOverlay } from '../bim-core/bimMeasurementOverlay.js';
+import { pickRlMarkerFromOverlay } from '../bim-core/bimRlMarkerPick.js';
 import { cycleBimLightingState } from '../bim-core/bimLighting.js';
 import { BimStyleSettingsHud } from './BimStyleSettingsHud.jsx';
 import { BimStylePresetsMenu } from './BimStylePresetsMenu.jsx';
@@ -117,7 +118,10 @@ import {
   createBimSunLightingAdapter,
   disposeBimSunLightingAdapter,
 } from '../bim-core/bimSunLighting.js';
-import { BIM_VIEWPORT_TOOLBAR_OVERLAY_CLASS } from '../bim-core/bimViewportLayout.js';
+import {
+  BIM_VIEWPORT_TOOLBAR_OVERLAY_CLASS,
+  resolveBimLayersHudMaxHeightPx,
+} from '../bim-core/bimViewportLayout.js';
 import {
   resolveSunDirection,
   resolveSunFromEnvironmentalState,
@@ -133,6 +137,8 @@ import {
   CLAY_ORIGINAL_COLOR_BLEND_DEFAULT,
   CLAY_LIGHT_INTENSITY_DEFAULT,
   CLAY_SURFACE_COLOR_DEFAULT,
+  normalizeLayersHudHeight,
+  normalizeLayersHudStoreysHeight,
   VIEWPORT_BACKGROUND_DEFAULT,
 } from '../bim-core/types.js';
 
@@ -308,6 +314,10 @@ export function BimViewport({
   colorByProperty = null,
   leftPanelOpen = true,
   rightPanelOpen = true,
+  layersHudHeight,
+  onLayersHudHeightChange = () => {},
+  layersHudStoreysHeight,
+  onLayersHudStoreysHeightChange = () => {},
   initialCamera = null,
   projectionMode = 'perspective',
   onToggleLeftPanel = () => {},
@@ -326,6 +336,7 @@ export function BimViewport({
   measureSnapMode = 'vertex',
   measureKind = 'segment',
   measurementsVisible = true,
+  rlDatum = null,
   wireframeMode = false,
   wireframeLineWeight = 2,
   wireframeOpacity = 0.88,
@@ -352,6 +363,8 @@ export function BimViewport({
   onMeasureSnapModeChange = () => {},
   onMeasureKindChange = () => {},
   onMeasurementsVisibleChange = () => {},
+  onRlDatumChange = () => {},
+  onDeleteRlDatum = () => {},
   onWireframeModeChange = () => {},
   onWireframeStyleChange = () => {},
   onRenderStyleChange = () => {},
@@ -436,6 +449,8 @@ export function BimViewport({
   const loadDetail = total > 0 ? `${total.toLocaleString()} elements` : null;
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
+  const viewCarouselPanelRef = useRef(null);
+  const layersHudResizeRef = useRef(null);
   const rendererRef = useRef(null);
   const cameraRef = useRef(null);
   const controlsRef = useRef(null);
@@ -487,6 +502,11 @@ export function BimViewport({
   const measureSnapModeRef = useRef(measureSnapMode);
   const measureKindRef = useRef(measureKind);
   const measurementsVisibleRef = useRef(measurementsVisible);
+  const rlDatumRef = useRef(rlDatum);
+  const measureHudOpenRef = useRef(false);
+  const selectedRlPickRef = useRef(null);
+  const rlMarkerRaycasterRef = useRef(new THREE.Raycaster());
+  const dismissMeasureSessionRef = useRef(() => {});
   const measureVisualStateRef = useRef({
     draftStart: null,
     draftPoints: [],
@@ -499,6 +519,8 @@ export function BimViewport({
   const onMeasureUnitsChangeRef = useRef(onMeasureUnitsChange);
   const onMeasureSnapModeChangeRef = useRef(onMeasureSnapModeChange);
   const onMeasureKindChangeRef = useRef(onMeasureKindChange);
+  const onRlDatumChangeRef = useRef(onRlDatumChange);
+  const onDeleteRlDatumRef = useRef(onDeleteRlDatum);
   const showEnvironmentRef = useRef(showEnvironment);
   const lightingModeRef = useRef(lightingMode);
   const environmentPresetRef = useRef(environmentPreset);
@@ -543,6 +565,8 @@ export function BimViewport({
   const [pickStatus, setPickStatus] = useState(null);
   const [fovInput, setFovInput] = useState(String(initialCamera?.fov ?? BIM_DEFAULT_FOV));
   const [measureModeActive, setMeasureModeActive] = useState(false);
+  const [measureHudOpen, setMeasureHudOpen] = useState(false);
+  const [selectedRlPick, setSelectedRlPick] = useState(null);
   const [measureDraftActive, setMeasureDraftActive] = useState(false);
   const measureDraftActiveRef = useRef(false);
   const [cancelDraftNonce, setCancelDraftNonce] = useState(0);
@@ -552,6 +576,7 @@ export function BimViewport({
   const [fourDHudOpen, setFourDHudOpen] = useState(false);
   const [fiveDHudOpen, setFiveDHudOpen] = useState(false);
   const [layersHudOpen, setLayersHudOpen] = useState(false);
+  const [layersHudMaxHeight, setLayersHudMaxHeight] = useState(null);
   const [sectionHudOpen, setSectionHudOpen] = useState(false);
   const [sunStudyHudOpen, setSunStudyHudOpen] = useState(false);
   const [selectionRefreshNonce, setSelectionRefreshNonce] = useState(0);
@@ -630,6 +655,14 @@ export function BimViewport({
   }, [measureModeActive]);
 
   useEffect(() => {
+    measureHudOpenRef.current = measureHudOpen;
+    if (!measureHudOpen) {
+      selectedRlPickRef.current = null;
+      setSelectedRlPick(null);
+    }
+  }, [measureHudOpen]);
+
+  useEffect(() => {
     measureDraftActiveRef.current = measureDraftActive;
   }, [measureDraftActive]);
 
@@ -668,6 +701,18 @@ export function BimViewport({
   }, [onMeasureKindChange]);
 
   useEffect(() => {
+    onRlDatumChangeRef.current = onRlDatumChange;
+  }, [onRlDatumChange]);
+
+  useEffect(() => {
+    onDeleteRlDatumRef.current = onDeleteRlDatum;
+  }, [onDeleteRlDatum]);
+
+  useEffect(() => {
+    rlDatumRef.current = rlDatum;
+  }, [rlDatum]);
+
+  useEffect(() => {
     showEnvironmentRef.current = showEnvironment;
   }, [showEnvironment]);
 
@@ -698,11 +743,7 @@ export function BimViewport({
       if ((event.key === 'Delete' || event.key === 'Backspace') && measureModeActiveRef.current) {
         if (isEditableKeyboardTarget(event.target)) return;
         event.preventDefault();
-        if (measureDraftActiveRef.current) {
-          setCancelDraftNonce((value) => value + 1);
-          return;
-        }
-        setMeasureModeActive(false);
+        dismissMeasureSessionRef.current();
         return;
       }
       if (event.key === 'Enter' && measureKindRef.current === 'polyline') {
@@ -721,6 +762,8 @@ export function BimViewport({
     const visual = measureVisualStateRef.current;
     overlay.sync({
       measurements: measurementsRef.current,
+      rlDatum: rlDatumRef.current,
+      selectedRlPick: selectedRlPickRef.current,
       draftStart: visual.draftStart,
       draftPoints: visual.draftPoints ?? [],
       previewEnd: visual.previewEnd,
@@ -735,10 +778,84 @@ export function BimViewport({
     });
   }, []);
 
+  const clearMeasureDraft = useCallback(() => {
+    measurementControllerRef.current?.cancelDraft();
+    setMeasureDraftActive(false);
+    selectedRlPickRef.current = null;
+    setSelectedRlPick(null);
+    syncMeasurementOverlay();
+  }, [syncMeasurementOverlay]);
+
+  const resetMeasureSession = useCallback(() => {
+    clearMeasureDraft();
+    setMeasureModeActive(false);
+    syncMeasurementOverlay();
+  }, [clearMeasureDraft, syncMeasurementOverlay]);
+
+  const dismissMeasureSession = useCallback(() => {
+    if (measureHudOpenRef.current) {
+      clearMeasureDraft();
+      return;
+    }
+    resetMeasureSession();
+  }, [clearMeasureDraft, resetMeasureSession]);
+
+  const closeMeasureHud = useCallback(() => {
+    resetMeasureSession();
+    setMeasureHudOpen(false);
+  }, [resetMeasureSession]);
+
+  dismissMeasureSessionRef.current = dismissMeasureSession;
+
+  useEffect(() => {
+    if (measureHudOpen && !measureModeActive) {
+      setMeasureModeActive(true);
+    }
+  }, [measureHudOpen, measureModeActive]);
+
   useEffect(() => {
     measurementsVisibleRef.current = measurementsVisible;
     syncMeasurementOverlay();
   }, [measurementsVisible, syncMeasurementOverlay]);
+
+  useEffect(() => {
+    syncMeasurementOverlay();
+  }, [rlDatum, selectedRlPick, syncMeasurementOverlay]);
+
+  const pickRlMarkerAtPointer = useCallback((clientX, clientY) => {
+    const overlay = measurementOverlayRef.current;
+    const camera = cameraRef.current;
+    const canvas = canvasRef.current;
+    if (!overlay?.group || !camera || !canvas) return null;
+    return pickRlMarkerFromOverlay(overlay.group, {
+      raycaster: rlMarkerRaycasterRef.current,
+      camera,
+      canvas,
+      clientX,
+      clientY,
+    });
+  }, []);
+
+  const handleRlMarkerSelect = useCallback((pick) => {
+    selectedRlPickRef.current = pick;
+    setSelectedRlPick(pick);
+    syncMeasurementOverlay();
+  }, [syncMeasurementOverlay]);
+
+  const handleRlMarkerDelete = useCallback((pick) => {
+    if (!pick) return;
+    if (pick.kind === 'datum') {
+      rlDatumRef.current = null;
+      onDeleteRlDatumRef.current();
+    } else {
+      const nextMeasurements = measurementsRef.current.filter((entry) => entry.id !== pick.id);
+      measurementsRef.current = nextMeasurements;
+      onMeasurementsChangeRef.current(nextMeasurements);
+    }
+    selectedRlPickRef.current = null;
+    setSelectedRlPick(null);
+    syncMeasurementOverlay();
+  }, [syncMeasurementOverlay]);
 
   const emitCameraChange = useCallback(() => {
     const state = serializeBimCameraState(
@@ -1176,12 +1293,18 @@ export function BimViewport({
       getCamera: () => cameraRef.current,
       getModelRoot: () => modelRef.current?.object ?? null,
       getFragmentsModel: () => modelRef.current ?? null,
+      getRlDatum: () => rlDatumRef.current,
       snapMode: measureSnapModeRef.current,
       measureKind: measureKindRef.current,
       onComplete: (record) => {
         const nextMeasurements = normalizeMeasurements([...measurementsRef.current, record]);
         measurementsRef.current = nextMeasurements;
         onMeasurementsChangeRef.current(nextMeasurements);
+        syncMeasurementOverlay();
+      },
+      onDatumComplete: (datum) => {
+        rlDatumRef.current = datum;
+        onRlDatumChangeRef.current(datum);
         syncMeasurementOverlay();
       },
       onDraftChange: (active) => {
@@ -2384,6 +2507,35 @@ export function BimViewport({
 
   useEffect(() => {
     const canvas = canvasRef.current;
+    if (!canvas || !measureHudOpen) return undefined;
+
+    const onPointerDown = (event) => {
+      if (event.button !== 0) return;
+      const pick = pickRlMarkerAtPointer(event.clientX, event.clientY);
+      if (!pick) return;
+      event.preventDefault();
+      event.stopPropagation();
+      handleRlMarkerSelect(pick);
+    };
+
+    const onContextMenu = (event) => {
+      const pick = pickRlMarkerAtPointer(event.clientX, event.clientY);
+      if (!pick) return;
+      event.preventDefault();
+      event.stopPropagation();
+      handleRlMarkerDelete(pick);
+    };
+
+    canvas.addEventListener('pointerdown', onPointerDown, true);
+    canvas.addEventListener('contextmenu', onContextMenu);
+    return () => {
+      canvas.removeEventListener('pointerdown', onPointerDown, true);
+      canvas.removeEventListener('contextmenu', onContextMenu);
+    };
+  }, [measureHudOpen, pickRlMarkerAtPointer, handleRlMarkerSelect, handleRlMarkerDelete]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
     if (!canvas) return undefined;
 
     canvas.addEventListener('pointerdown', handleCanvasPointerDown);
@@ -2443,7 +2595,8 @@ export function BimViewport({
     if (!controls || !container || !viewApplyRequest.camera) return;
 
     const targetProjection = viewApplyRequest.projectionMode ?? projectionModeRef.current;
-    if (targetProjection !== projectionModeRef.current) {
+    const currentProjection = cameraRef.current?.isOrthographicCamera ? 'orthographic' : 'perspective';
+    if (targetProjection !== currentProjection) {
       applyProjectionMode(targetProjection);
     }
 
@@ -2460,11 +2613,9 @@ export function BimViewport({
     emitCameraChange();
     void refreshSectionCutRef.current?.({ updateFragments: true });
     void updateFragmentsRef.current?.(true, { retryModelRegistration: true });
-    if (viewApplyRequest.wireframeMode === true) {
+    if (viewApplyRequest.wireframeMode) {
       window.requestAnimationFrame(() => {
-        if (wireframeModeRef.current) {
-          void rebuildWireframeEdges();
-        }
+        void rebuildWireframeEdges();
       });
     }
   }, [applyProjectionMode, emitCameraChange, loadState, rebuildWireframeEdges, viewApplyRequest]);
@@ -2535,15 +2686,28 @@ export function BimViewport({
     setMeasureModeActive((active) => !active);
   }, []);
 
-  const handleCancelMeasurement = useCallback(() => {
-    if (measureDraftActiveRef.current) {
-      setCancelDraftNonce((value) => value + 1);
+  const handleMeasureHudOpenChange = useCallback((next) => {
+    const current = measureHudOpenRef.current;
+    const resolved = typeof next === 'function' ? next(current) : next;
+    if (!resolved) {
+      closeMeasureHud();
       return;
     }
-    if (measureModeActiveRef.current) {
-      setMeasureModeActive(false);
+    if (measureKindRef.current === 'segment') {
+      measureKindRef.current = 'rl';
+      measureSnapModeRef.current = 'vertex';
+      measurementControllerRef.current?.setMeasureKind('rl');
+      measurementControllerRef.current?.setSnapMode('vertex');
+      onMeasureKindChangeRef.current('rl');
+      onMeasureSnapModeChangeRef.current('vertex');
     }
-  }, []);
+    setMeasureModeActive(true);
+    setMeasureHudOpen(true);
+  }, [closeMeasureHud]);
+
+  const handleCancelMeasurement = useCallback(() => {
+    clearMeasureDraft();
+  }, [clearMeasureDraft]);
 
   const handleToggleLighting = useCallback(() => {
     onLightingChange(cycleBimLightingState({
@@ -2592,6 +2756,88 @@ export function BimViewport({
   const handleHideAllLayers = useCallback(() => {
     onHiddenLayersChange(layerCatalog.layers.map((entry) => entry.id));
   }, [layerCatalog.layers, onHiddenLayersChange]);
+
+  const resolvedLayersHudMaxHeight = layersHudMaxHeight ?? normalizeLayersHudHeight(layersHudHeight);
+  const resolvedLayersHudHeight = normalizeLayersHudHeight(layersHudHeight, resolvedLayersHudMaxHeight);
+
+  const syncLayersHudMaxHeight = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const containerRect = container.getBoundingClientRect();
+    let carouselTopPx = null;
+    if (viewCarouselOpen && viewCarouselPanelRef.current) {
+      const carouselRect = viewCarouselPanelRef.current.getBoundingClientRect();
+      carouselTopPx = carouselRect.top - containerRect.top;
+    }
+    setLayersHudMaxHeight(resolveBimLayersHudMaxHeightPx({
+      viewportHeight: containerRect.height,
+      carouselTopPx,
+    }));
+  }, [viewCarouselOpen]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+
+    const observer = new ResizeObserver(syncLayersHudMaxHeight);
+    observer.observe(container);
+
+    let carouselFrame = 0;
+    const observeCarousel = () => {
+      const carousel = viewCarouselPanelRef.current;
+      if (carousel) observer.observe(carousel);
+      syncLayersHudMaxHeight();
+    };
+
+    observeCarousel();
+    if (viewCarouselOpen) {
+      carouselFrame = window.requestAnimationFrame(observeCarousel);
+    }
+
+    window.addEventListener('resize', syncLayersHudMaxHeight);
+    return () => {
+      window.cancelAnimationFrame(carouselFrame);
+      observer.disconnect();
+      window.removeEventListener('resize', syncLayersHudMaxHeight);
+    };
+  }, [syncLayersHudMaxHeight, viewCarouselOpen]);
+
+  useEffect(() => {
+    if (layersHudMaxHeight == null) return;
+    const clamped = normalizeLayersHudHeight(layersHudHeight, layersHudMaxHeight);
+    if (clamped !== layersHudHeight) {
+      onLayersHudHeightChange(clamped);
+    }
+  }, [layersHudHeight, layersHudMaxHeight, onLayersHudHeightChange]);
+
+  useEffect(() => {
+    const onPointerMove = (event) => {
+      const state = layersHudResizeRef.current;
+      if (!state || layersHudMaxHeight == null) return;
+      const delta = event.clientY - state.startY;
+      onLayersHudHeightChange(normalizeLayersHudHeight(
+        state.startHeight + delta,
+        layersHudMaxHeight,
+      ));
+    };
+    const onPointerUp = () => {
+      layersHudResizeRef.current = null;
+    };
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+  }, [layersHudMaxHeight, onLayersHudHeightChange]);
+
+  const handleLayersHudResizePointerDown = useCallback((event) => {
+    event.preventDefault();
+    layersHudResizeRef.current = {
+      startY: event.clientY,
+      startHeight: resolvedLayersHudHeight,
+    };
+  }, [resolvedLayersHudHeight]);
 
   const handleToggleSectionHud = useCallback(() => {
     setSectionHudOpen((open) => !open);
@@ -2648,17 +2894,40 @@ export function BimViewport({
     );
   }, []);
 
-  const measureStatus = measureModeActive && measureSnapMode === 'edge'
-    ? 'Click edge to measure'
-    : measureModeActive && measureKind === 'polyline' && measureDraftActive
-      ? 'Add points · Enter to finish · click first point for perimeter + area · Delete to cancel'
-      : measureModeActive && measureKind === 'polyline'
-        ? 'Click first polyline point (Delete to cancel)'
-        : measureModeActive && measureDraftActive
-          ? 'Pick second point (Delete to cancel)'
-          : measureModeActive && measureSnapMode === 'vertex'
-            ? 'Click first point (Delete to cancel)'
-            : null;
+  const handleRlDatumValueChange = useCallback((rlValue) => {
+    const current = rlDatumRef.current;
+    if (!current) return;
+    const nextDatum = {
+      ...current,
+      rlValue: Number.isFinite(rlValue) ? rlValue : 0,
+    };
+    rlDatumRef.current = nextDatum;
+    onRlDatumChangeRef.current(nextDatum);
+    syncMeasurementOverlay();
+  }, [syncMeasurementOverlay]);
+
+  const handleDeleteRlDatum = useCallback(() => {
+    rlDatumRef.current = null;
+    onDeleteRlDatumRef.current();
+    syncMeasurementOverlay();
+  }, [syncMeasurementOverlay]);
+
+  const handleReplaceRlDatum = useCallback(() => {
+    onMeasureKindChangeRef.current('datum');
+  }, []);
+
+  const handleRlMeasurementDatumToggle = useCallback((measurementId, measuredFromDatum) => {
+    const nextMeasurements = measurementsRef.current.map((entry) => (
+      entry.id === measurementId && entry.kind === 'rl'
+        ? { ...entry, measuredFromDatum: Boolean(measuredFromDatum) }
+        : entry
+    ));
+    measurementsRef.current = nextMeasurements;
+    onMeasurementsChangeRef.current(nextMeasurements);
+    syncMeasurementOverlay();
+  }, [syncMeasurementOverlay]);
+
+  const measureStatus = measureModeActive ? 'PRESS DELETE TO CANCEL' : null;
 
   const toolbarControls = (
     <div
@@ -2699,11 +2968,16 @@ export function BimViewport({
                 measureSnapMode={measureSnapMode}
                 measureKind={measureKind}
                 measureUnits={measureUnits}
+                rlDatum={rlDatum}
+                enableRlOptions
+                menuOpen={measureHudOpen}
+                onMenuOpenChange={handleMeasureHudOpenChange}
                 onToggleMeasureMode={handleToggleMeasureMode}
                 onMeasureSnapModeChange={onMeasureSnapModeChange}
                 onMeasureKindChange={onMeasureKindChange}
                 onMeasureUnitsChange={onMeasureUnitsChange}
                 onCancelMeasure={handleCancelMeasurement}
+                onRlDatumValueChange={handleRlDatumValueChange}
                 compact
                 buttonClassName={(active) => `rounded border border-border p-1 ${
                   active ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
@@ -2968,6 +3242,11 @@ export function BimViewport({
                 catalog={layerCatalog}
                 hiddenStoreys={hiddenStoreys}
                 hiddenLayers={hiddenLayers}
+                height={resolvedLayersHudHeight}
+                maxHeight={resolvedLayersHudMaxHeight}
+                storeysHeight={layersHudStoreysHeight}
+                onStoreysHeightChange={onLayersHudStoreysHeightChange}
+                onResizePointerDown={handleLayersHudResizePointerDown}
                 onToggleStorey={handleToggleHiddenStorey}
                 onToggleLayer={handleToggleHiddenLayer}
                 onShowAllStoreys={handleShowAllStoreys}
@@ -3090,14 +3369,19 @@ export function BimViewport({
             )}
           </div>
         )}
-        {loadState === 'ready' && measurements.length > 0 && (
+        {loadState === 'ready' && (measurements.length > 0 || rlDatum) && (
           <MeasurementsListPanel
             measurements={measurements}
             units={measureUnits}
             modelUnits="m"
             measurementsVisible={measurementsVisible}
+            rlDatum={rlDatum}
             onMeasurementsVisibleChange={onMeasurementsVisibleChange}
             onRemoveMeasurement={handleRemoveMeasurement}
+            onRlDatumValueChange={handleRlDatumValueChange}
+            onDeleteRlDatum={handleDeleteRlDatum}
+            onReplaceRlDatum={handleReplaceRlDatum}
+            onRlMeasurementDatumToggle={handleRlMeasurementDatumToggle}
             className="sans absolute right-3 bottom-3 z-20 max-w-sm rounded border border-border bg-surface/95 px-3 py-2 shadow-lg backdrop-blur-sm"
           />
         )}
@@ -3116,6 +3400,7 @@ export function BimViewport({
         {loadState === 'ready' && (
           <BimViewCarousel
             open={viewCarouselOpen}
+            panelRef={viewCarouselPanelRef}
             viewSets={viewSets}
             activeViewSetId={activeViewSetId}
             activeViewId={activeViewId}

@@ -20,6 +20,27 @@ export function resolveBimViewportHudTopPx(toolbarBottomPx) {
   return toolbarBottomPx + BIM_VIEWPORT_CHROME_GAP_PX;
 }
 
+/** Top offset for left/right HUD stacks (`top-3`). */
+export const BIM_VIEWPORT_HUD_TOP_PX = 12;
+
+/** Bottom inset shared by carousel and floating chrome (`bottom-3`). */
+export const BIM_VIEWPORT_BOTTOM_INSET_PX = 12;
+
+export function resolveBimLayersHudMaxHeightPx({
+  viewportHeight,
+  carouselTopPx = null,
+  gapPx = BIM_VIEWPORT_CHROME_GAP_PX,
+} = {}) {
+  const safeViewportHeight = Math.max(0, Number(viewportHeight) || 0);
+  if (carouselTopPx != null && Number.isFinite(carouselTopPx)) {
+    return Math.max(0, carouselTopPx - BIM_VIEWPORT_HUD_TOP_PX - gapPx);
+  }
+  return Math.max(
+    0,
+    safeViewportHeight - BIM_VIEWPORT_HUD_TOP_PX - BIM_VIEWPORT_BOTTOM_INSET_PX - gapPx,
+  );
+}
+
 export function applyBimViewportToolbarLayout(container, toolbarBottomPx) {
   if (!container) return;
   const hudTopPx = resolveBimViewportHudTopPx(toolbarBottomPx);

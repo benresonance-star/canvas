@@ -40,7 +40,10 @@ describe('bimViewSets', () => {
     expect(view).toMatchObject({
       label: 'Plan A',
       state: expect.objectContaining({
+        schemaVersion: 1,
         projectionMode: 'perspective',
+        isPerspective: true,
+        fieldOfView: 45,
         viewportBackgroundColor: '#ffffff',
         displayMode: 'ghostOthers',
         renderStyle: 'clay',
@@ -49,7 +52,9 @@ describe('bimViewSets', () => {
     expect(view.state.camera).toEqual(expect.objectContaining({
       position: sampleCamera.position,
       target: sampleCamera.target,
+      fov: 45,
     }));
+    expect(view.state.camera).not.toHaveProperty('zoom');
   });
 
   it('normalizes view sets and enforces limits', () => {
@@ -151,12 +156,15 @@ describe('bimViewSets', () => {
       wireframeColor: '#ff0000',
       wireframeHiddenLines: false,
       projectionMode: 'orthographic',
+      isPerspective: false,
+      fieldOfView: null,
     });
     expect(view.state.camera).toEqual(expect.objectContaining({
       position: orthoCamera.position,
       zoom: 1.2,
       viewHeight: 18,
     }));
+    expect(view.state.camera).not.toHaveProperty('fov');
     const patch = applyBimViewStatePatch(view.state);
     expect(patch.wireframeMode).toBe(true);
     expect(patch.projectionMode).toBe('orthographic');
@@ -186,6 +194,31 @@ describe('bimViewSets', () => {
       position: liveCamera.position,
       fov: 30,
     }));
+    expect(view.state.fieldOfView).toBe(30);
+    expect(view.state.isPerspective).toBe(true);
+  });
+
+  it('migrates legacy view state without explicit projection metadata', () => {
+    const sets = normalizeBimViewSets([
+      {
+        id: 'set-1',
+        name: 'Legacy',
+        views: [{
+          id: 'legacy-view',
+          label: 'Legacy angle',
+          thumbnailKey: 'legacy-thumb',
+          state: {
+            camera: sampleCamera,
+          },
+        }],
+      },
+    ]);
+    expect(sets[0].views[0].state).toMatchObject({
+      schemaVersion: 1,
+      projectionMode: 'perspective',
+      isPerspective: true,
+      fieldOfView: 45,
+    });
   });
 
   it('persists view fields through workspace normalization', () => {

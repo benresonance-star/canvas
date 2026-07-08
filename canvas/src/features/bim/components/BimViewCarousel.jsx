@@ -138,6 +138,7 @@ function ViewThumbnailCard({
 
 export function BimViewCarousel({
   open = false,
+  panelRef = null,
   viewSets = [],
   activeViewSetId = null,
   activeViewId = null,
@@ -159,7 +160,12 @@ export function BimViewCarousel({
     () => viewSets.find((set) => set.id === activeViewSetId) ?? viewSets[0] ?? null,
     [activeViewSetId, viewSets],
   );
+  const thumbnailLoadKey = useMemo(() => {
+    if (!activeSet) return '';
+    return `${activeSet.id}|${activeSet.views.map((view) => `${view.id}:${view.thumbnailKey}`).join('|')}`;
+  }, [activeSet]);
   const [thumbnailUrls, setThumbnailUrls] = useState({});
+  const thumbnailUrlsRef = useRef({});
   const [creatingSet, setCreatingSet] = useState(false);
   const [newSetName, setNewSetName] = useState('');
   const [renamingSet, setRenamingSet] = useState(false);
@@ -181,9 +187,16 @@ export function BimViewCarousel({
   }, [activeSet?.id]);
 
   useEffect(() => {
-    if (!open || !activeSet) return undefined;
+    thumbnailUrlsRef.current = thumbnailUrls;
+  }, [thumbnailUrls]);
+
+  useEffect(() => () => {
+    Object.values(thumbnailUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+  }, []);
+
+  useEffect(() => {
+    if (!open || !activeSet || !thumbnailLoadKey) return undefined;
     let cancelled = false;
-    const urls = {};
 
     async function loadThumbnails() {
       const entries = await Promise.all(
@@ -199,25 +212,17 @@ export function BimViewCarousel({
         });
         return;
       }
-      entries.forEach(([id, url]) => {
-        if (url) urls[id] = url;
-      });
       setThumbnailUrls((prev) => {
         Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
-        return urls;
+        return Object.fromEntries(entries.filter(([, url]) => url));
       });
     }
 
     void loadThumbnails();
     return () => {
       cancelled = true;
-      Object.values(urls).forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [activeSet, loadViewThumbnail, open]);
-
-  useEffect(() => () => {
-    Object.values(thumbnailUrls).forEach((url) => URL.revokeObjectURL(url));
-  }, [thumbnailUrls]);
+  }, [activeSet, loadViewThumbnail, open, thumbnailLoadKey]);
 
   const handleSaveView = useCallback(() => {
     void onSaveCurrentView({ label: saveLabel, setId: activeSet?.id ?? activeViewSetId });
@@ -257,6 +262,7 @@ export function BimViewCarousel({
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-3">
       <div
+        ref={panelRef}
         className="pointer-events-auto flex w-max max-w-[75vw] min-w-0 flex-col overflow-hidden rounded-md border border-border bg-surface/95 shadow-lg backdrop-blur-sm"
         aria-label="View carousel"
         data-view-count={viewCount}

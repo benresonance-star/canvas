@@ -1,12 +1,13 @@
+import { normalizeBimViewCameraState } from './bimCamera.js';
 import { extractBimStyleSettings } from './bimStyleSettings.js';
 import { normalizeHiddenLayerState } from './bimLayerVisibility.js';
 import { normalizeBimSectionState } from './bimSectioning.js';
 import {
   BIM_DISPLAY_MODES,
   BIM_PROJECTION_MODES,
-  normalizeBimCameraState,
 } from './types.js';
 
+export const BIM_VIEW_STATE_SCHEMA_VERSION = 1;
 export const BIM_VIEW_SET_LIMIT = 12;
 export const BIM_VIEW_LIMIT = 40;
 export const BIM_VIEW_PER_SET_LIMIT = 40;
@@ -24,15 +25,32 @@ function createId(prefix) {
   return `${prefix}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function resolveViewProjectionMode(state = {}) {
+  if (BIM_PROJECTION_MODES.includes(state?.projectionMode)) {
+    return state.projectionMode;
+  }
+  if (state?.isPerspective === false) return 'orthographic';
+  if (state?.isPerspective === true) return 'perspective';
+  return 'perspective';
+}
+
 function normalizeViewState(state = {}) {
   const style = extractBimStyleSettings(state);
-  const { schemaVersion, ...stylePatch } = style;
+  const { schemaVersion: styleSchemaVersion, ...stylePatch } = style;
   const rawDisplayMode = BIM_DISPLAY_MODES.includes(state?.displayMode) ? state.displayMode : 'highlight';
+  const projectionMode = resolveViewProjectionMode(state);
+  const isPerspective = projectionMode === 'perspective';
+  const cameraInput = isPerspective && Number.isFinite(Number(state?.fieldOfView))
+    ? { ...state?.camera, fov: state.fieldOfView }
+    : state?.camera;
+  const camera = normalizeBimViewCameraState(cameraInput, projectionMode);
+  const fieldOfView = isPerspective ? (camera?.fov ?? null) : null;
   return {
-    camera: normalizeBimCameraState(state?.camera),
-    projectionMode: BIM_PROJECTION_MODES.includes(state?.projectionMode)
-      ? state.projectionMode
-      : 'perspective',
+    schemaVersion: BIM_VIEW_STATE_SCHEMA_VERSION,
+    camera,
+    projectionMode,
+    isPerspective,
+    fieldOfView,
     section: normalizeBimSectionState(state?.section ?? {}),
     hiddenStoreys: normalizeHiddenLayerState(state?.hiddenStoreys),
     hiddenLayers: normalizeHiddenLayerState(state?.hiddenLayers),
@@ -239,7 +257,19 @@ export function resolveActiveViewSetId(viewSets = [], activeViewSetId = null) {
 
 export function applyBimViewStatePatch(viewState = {}) {
   const normalized = normalizeViewState(viewState);
-  const { camera, projectionMode, section, hiddenStoreys, hiddenLayers, displayMode, isolateOnSelect, ...stylePatch } = normalized;
+  const {
+    camera,
+    projectionMode,
+    section,
+    hiddenStoreys,
+    hiddenLayers,
+    displayMode,
+    isolateOnSelect,
+    schemaVersion,
+    isPerspective,
+    fieldOfView,
+    ...stylePatch
+  } = normalized;
   return {
     camera,
     projectionMode,

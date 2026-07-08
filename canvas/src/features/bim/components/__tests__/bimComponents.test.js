@@ -16,6 +16,11 @@ import { BimSunStudyHud } from '../BimSunStudyHud.jsx';
 import { Bim4dHud } from '../Bim4dHud.jsx';
 import { Bim5dHud } from '../Bim5dHud.jsx';
 import { BimViewCarousel } from '../BimViewCarousel.jsx';
+import {
+  MeasurementsListPanel,
+  MeasurementToolbarControls,
+  MeasurementToolsHud,
+} from '../../../threeDArtifact/components/MeasurementUi.jsx';
 import { BIM_AGENT_INFO } from '../bimAgentPanelShared.js';
 import { createBimViewFromWorkspaceState, createBimViewSet } from '../../bim-core/bimViewSets.js';
 
@@ -395,8 +400,80 @@ describe('BIM UI components', () => {
       }),
     );
     expect(html).toContain('Measure');
+    expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain('Measurement unit');
     expect(html).toContain('value="m"');
+  });
+
+  it('renders RL measurement HUD trigger when the measure menu is open', () => {
+    const toolbarHtml = renderToStaticMarkup(
+      React.createElement(MeasurementToolbarControls, {
+        measureModeActive: true,
+        measureKind: 'rl',
+        measureUnits: 'm',
+        rlDatum: { id: 'datum-1', position: [0, 0, 0], rlValue: 0 },
+        enableRlOptions: true,
+        menuOpen: true,
+        onToggleMeasureMode: () => {},
+        onMeasureKindChange: () => {},
+      }),
+    );
+    expect(toolbarHtml).toContain('aria-haspopup="menu"');
+    expect(toolbarHtml).toContain('aria-expanded="true"');
+  });
+
+  it('renders RL measurement HUD sections in the floating panel', () => {
+    const hudHtml = renderToStaticMarkup(
+      React.createElement(MeasurementToolsHud, {
+        measureKind: 'rl',
+        measureSnapMode: 'vertex',
+        rlDatum: { id: 'datum-1', position: [0, 0, 0], rlValue: 0 },
+        enableRlOptions: true,
+        onMeasureKindChange: () => {},
+      }),
+    );
+    expect(hudHtml).toContain('Distance');
+    expect(hudHtml).toContain('Polyline');
+    expect(hudHtml).toContain('Height');
+    expect(hudHtml).toContain('Datum');
+    expect(hudHtml).toContain('Datum RL value');
+    expect(hudHtml).toContain('role="separator"');
+
+    const listHtml = renderToStaticMarkup(
+      React.createElement(MeasurementsListPanel, {
+        measurements: [{
+          id: 'rl-1',
+          kind: 'rl',
+          position: [0, 2.36, 0],
+          measuredFromDatum: true,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        }],
+        units: 'm',
+        modelUnits: 'm',
+        rlDatum: { id: 'datum-1', position: [0, 0, 0], rlValue: 0 },
+        onRemoveMeasurement: () => {},
+        onRlMeasurementDatumToggle: () => {},
+      }),
+    );
+    expect(listHtml).toContain('Measured from user datum');
+    expect(listHtml).toContain('RL 2.360');
+
+    const listWithoutDatumHtml = renderToStaticMarkup(
+      React.createElement(MeasurementsListPanel, {
+        measurements: [{
+          id: 'rl-1',
+          kind: 'rl',
+          position: [0, 2.36, 0],
+          measuredFromDatum: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        }],
+        units: 'm',
+        modelUnits: 'm',
+        rlDatum: null,
+        onRemoveMeasurement: () => {},
+      }),
+    );
+    expect(listWithoutDatumHtml).not.toContain('Measured from user datum');
   });
 
   it('renders the HDRI lighting toggle in the style settings HUD for standard render', () => {
@@ -653,6 +730,11 @@ describe('BIM UI components', () => {
         },
         hiddenStoreys: [],
         hiddenLayers: ['Structure'],
+        height: 280,
+        maxHeight: 420,
+        storeysHeight: 112,
+        onStoreysHeightChange: () => {},
+        onResizePointerDown: () => {},
         onToggleStorey: () => {},
         onToggleLayer: () => {},
         onShowAllStoreys: () => {},
@@ -664,6 +746,8 @@ describe('BIM UI components', () => {
     expect(html).toContain('Layers &amp; storeys');
     expect(html).toContain('Level 01');
     expect(html).toContain('Structure');
+    expect(html).toContain('Resize storeys and layers sections');
+    expect(html).toContain('Resize layers panel');
   });
 
   it('renders the section HUD with style controls', () => {

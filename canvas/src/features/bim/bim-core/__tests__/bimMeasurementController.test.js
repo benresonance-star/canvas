@@ -207,4 +207,66 @@ describe('createBimMeasurementController', () => {
     expect(controller.getVisualState().draftStart).toBeNull();
     expect(onDraftChange).toHaveBeenCalledWith(false);
   });
+
+  it('creates an RL marker with one click and defaults measuredFromDatum from datum state', async () => {
+    vi.mocked(pickBimMeasurementSnap)
+      .mockResolvedValueOnce({ kind: 'vertex', position: [0, 2.36, 0], meshUuid: 'mesh-1' });
+
+    const canvas = createMockCanvas();
+    const completed = [];
+    const controller = createBimMeasurementController({
+      canvas,
+      getCamera: () => null,
+      getModelRoot: () => null,
+      getRlDatum: () => ({ position: [0, 0, 0], rlValue: 0 }),
+      measureKind: 'rl',
+      onComplete: (record) => completed.push(record),
+    });
+
+    controller.setActive(true);
+    canvas.dispatchEvent({
+      type: 'pointerdown',
+      clientX: 100,
+      clientY: 100,
+      button: 0,
+      preventDefault: () => {},
+      stopPropagation: () => {},
+    });
+    await Promise.resolve();
+
+    expect(completed).toHaveLength(1);
+    expect(completed[0].kind).toBe('rl');
+    expect(completed[0].measuredFromDatum).toBe(true);
+    expect(completed[0].position).toEqual([0, 2.36, 0]);
+  });
+
+  it('creates a datum marker with one click', async () => {
+    vi.mocked(pickBimMeasurementSnap)
+      .mockResolvedValueOnce({ kind: 'vertex', position: [1, 0, 1], meshUuid: 'mesh-1' });
+
+    const canvas = createMockCanvas();
+    const completed = [];
+    const controller = createBimMeasurementController({
+      canvas,
+      getCamera: () => null,
+      getModelRoot: () => null,
+      measureKind: 'datum',
+      onDatumComplete: (record) => completed.push(record),
+    });
+
+    controller.setActive(true);
+    canvas.dispatchEvent({
+      type: 'pointerdown',
+      clientX: 100,
+      clientY: 100,
+      button: 0,
+      preventDefault: () => {},
+      stopPropagation: () => {},
+    });
+    await Promise.resolve();
+
+    expect(completed).toHaveLength(1);
+    expect(completed[0].position).toEqual([1, 0, 1]);
+    expect(completed[0].rlValue).toBe(0);
+  });
 });

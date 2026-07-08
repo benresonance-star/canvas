@@ -6,10 +6,35 @@ import {
   syncOrbitControlsAfterCameraFit,
   updateOrthographicFrustum,
 } from '../../threeDArtifact/utils/cameraFit.js';
+import { normalizeBimCameraState } from './types.js';
 
 export const BIM_DEFAULT_FOV = 45;
 export const BIM_DEFAULT_NEAR = 0.1;
 export const BIM_DEFAULT_FAR = 100000;
+
+/** Normalizes saved-view camera payload for the active projection mode. */
+export function normalizeBimViewCameraState(camera = null, projectionMode = 'perspective') {
+  const normalized = normalizeBimCameraState(camera);
+  if (!normalized) return null;
+  const base = {
+    position: normalized.position,
+    target: normalized.target,
+    up: normalized.up,
+    near: normalized.near,
+    far: normalized.far,
+  };
+  if (projectionMode === 'orthographic') {
+    return {
+      ...base,
+      zoom: normalized.zoom,
+      viewHeight: normalized.viewHeight,
+    };
+  }
+  return {
+    ...base,
+    fov: normalized.fov,
+  };
+}
 
 export function serializeBimCameraState(camera, controls, projectionMode) {
   if (!camera || !controls?.target) return null;

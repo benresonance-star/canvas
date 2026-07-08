@@ -1,4 +1,5 @@
 import { normalizeMeasurements, normalizeMeasureUnits } from '../../threeDArtifact/utils/measureSnap.js';
+import { normalizeRlDatum } from './bimRlMeasure.js';
 import { normalizeBimLightingState } from './bimLighting.js';
 import { normalizeHiddenLayerState } from './bimLayerVisibility.js';
 import { normalizeBimSectionState } from './bimSectioning.js';
@@ -82,6 +83,15 @@ export const DEFAULT_LEFT_PANEL_WIDTH = 320;
 export const DEFAULT_RIGHT_PANEL_WIDTH = 320;
 export const MIN_PANEL_WIDTH = 240;
 export const MAX_PANEL_WIDTH = 720;
+export const DEFAULT_LAYERS_HUD_HEIGHT = 280;
+export const MIN_LAYERS_HUD_HEIGHT = 140;
+export const MAX_LAYERS_HUD_HEIGHT = 720;
+export const MIN_LAYERS_HUD_SECTION_HEIGHT_PX = 56;
+/** Vertical space taken by the storeys/layers split handle inside the HUD body. */
+export const LAYERS_HUD_SPLIT_HANDLE_PX = 14;
+export const DEFAULT_LAYERS_HUD_STOREYS_HEIGHT = 112;
+/** @deprecated Legacy ratio persisted before storeys height was stored in pixels. */
+export const DEFAULT_LAYERS_HUD_STOREYS_SHARE = 0.5;
 
 export function normalizeLeftPanelWidth(value) {
   return normalizePanelWidth(value, DEFAULT_LEFT_PANEL_WIDTH);
@@ -95,6 +105,64 @@ function normalizePanelWidth(value, fallback) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, Math.round(numeric)));
+}
+
+export function normalizeLayersHudHeight(value, maxHeight = MAX_LAYERS_HUD_HEIGHT) {
+  const numeric = Number(value);
+  const fallback = DEFAULT_LAYERS_HUD_HEIGHT;
+  const effectiveMax = Math.max(MIN_LAYERS_HUD_HEIGHT, Number(maxHeight) || MAX_LAYERS_HUD_HEIGHT);
+  if (!Number.isFinite(numeric)) {
+    return Math.min(fallback, effectiveMax);
+  }
+  return Math.min(effectiveMax, Math.max(MIN_LAYERS_HUD_HEIGHT, Math.round(numeric)));
+}
+
+function maxLayersHudStoreysHeight(bodyHeightPx) {
+  if (!Number.isFinite(bodyHeightPx) || bodyHeightPx <= 0) return MAX_LAYERS_HUD_HEIGHT;
+  return Math.max(
+    MIN_LAYERS_HUD_SECTION_HEIGHT_PX,
+    bodyHeightPx - MIN_LAYERS_HUD_SECTION_HEIGHT_PX - LAYERS_HUD_SPLIT_HANDLE_PX,
+  );
+}
+
+export function normalizeLayersHudStoreysHeight(value, bodyHeightPx = null) {
+  const numeric = Number(value);
+  const fallback = DEFAULT_LAYERS_HUD_STOREYS_HEIGHT;
+  if (!Number.isFinite(numeric)) {
+    return Math.min(fallback, maxLayersHudStoreysHeight(bodyHeightPx));
+  }
+  const maxHeight = maxLayersHudStoreysHeight(bodyHeightPx);
+  return Math.min(maxHeight, Math.max(MIN_LAYERS_HUD_SECTION_HEIGHT_PX, Math.round(numeric)));
+}
+
+export function resolveLayersHudStoreysHeight(storedHeight, legacyShare, bodyHeightPx = null) {
+  if (storedHeight != null && Number.isFinite(Number(storedHeight))) {
+    return normalizeLayersHudStoreysHeight(storedHeight, bodyHeightPx);
+  }
+  if (legacyShare != null && Number.isFinite(Number(legacyShare))) {
+    const estimatedBody = Math.max(
+      MIN_LAYERS_HUD_HEIGHT,
+      DEFAULT_LAYERS_HUD_HEIGHT - 56,
+    );
+    return normalizeLayersHudStoreysHeight(Number(legacyShare) * estimatedBody, bodyHeightPx);
+  }
+  return normalizeLayersHudStoreysHeight(DEFAULT_LAYERS_HUD_STOREYS_HEIGHT, bodyHeightPx);
+}
+
+/** @deprecated Use normalizeLayersHudStoreysHeight instead. */
+export function normalizeLayersHudStoreysShare(value, bodyHeightPx = null) {
+  const numeric = Number(value);
+  const fallback = DEFAULT_LAYERS_HUD_STOREYS_SHARE;
+  if (!Number.isFinite(numeric)) return fallback;
+  let share = Math.min(0.85, Math.max(0.15, numeric));
+  if (Number.isFinite(bodyHeightPx) && bodyHeightPx > 0) {
+    const minShare = MIN_LAYERS_HUD_SECTION_HEIGHT_PX / bodyHeightPx;
+    const maxShare = 1 - minShare;
+    if (maxShare > minShare) {
+      share = Math.min(maxShare, Math.max(minShare, share));
+    }
+  }
+  return share;
 }
 export const VIEWPORT_BACKGROUND_DEFAULT = '#171412';
 export const CLAY_BACKGROUND_DEFAULT = '#ffffff';
@@ -328,6 +396,11 @@ export function normalizeBimWorkspaceState(state = {}) {
     },
     leftPanelWidth: normalizeLeftPanelWidth(state?.leftPanelWidth),
     rightPanelWidth: normalizeRightPanelWidth(state?.rightPanelWidth),
+    layersHudHeight: normalizeLayersHudHeight(state?.layersHudHeight),
+    layersHudStoreysHeight: resolveLayersHudStoreysHeight(
+      state?.layersHudStoreysHeight,
+      state?.layersHudStoreysShare,
+    ),
     camera: normalizeBimCameraState(state?.camera),
     projectionMode: BIM_PROJECTION_MODES.includes(state?.projectionMode)
       ? state.projectionMode
@@ -335,8 +408,11 @@ export function normalizeBimWorkspaceState(state = {}) {
     measurements: normalizeMeasurements(state?.measurements),
     measureUnits: normalizeMeasureUnits(state?.measureUnits ?? 'm'),
     measureSnapMode: state?.measureSnapMode === 'edge' ? 'edge' : 'vertex',
-    measureKind: state?.measureKind === 'polyline' ? 'polyline' : 'segment',
+    measureKind: ['polyline', 'rl', 'datum'].includes(state?.measureKind)
+      ? state.measureKind
+      : 'segment',
     measurementsVisible: state?.measurementsVisible !== false,
+    rlDatum: normalizeRlDatum(state?.rlDatum),
     wireframeMode: state?.wireframeMode === true,
     ...normalizeViewportStyle(state),
     ...normalizeWireframeStyle(state),

@@ -24,7 +24,7 @@ import {
 import { prepareBimModel } from '../bim-core/prepareBimModel.js';
 import { logBimPickWarning } from '../bim-core/bimPickDebug.js';
 import { findPreparedElementByGlobalId } from '../bim-core/fragmentsSelection.js';
-import { applyBimViewerDefaults, normalizeBimWorkspaceState, normalizeLeftPanelWidth, normalizeRightPanelWidth } from '../bim-core/types.js';
+import { applyBimViewerDefaults, normalizeBimWorkspaceState, normalizeLayersHudHeight, normalizeLayersHudStoreysHeight, normalizeLeftPanelWidth, normalizeRightPanelWidth } from '../bim-core/types.js';
 import { applyBimStyleSettings, extractBimStyleSettings } from '../bim-core/bimStyleSettings.js';
 import { getClayPresetWorkspacePatch } from '../bim-core/bimClayRender.js';
 import { createBimResultSetFromElements } from '../bim-core/bimResultSets.js';
@@ -1138,6 +1138,14 @@ export function BimWorkspace({
             colorByProperty={queryResult?.viewerState?.colorByProperty}
             leftPanelOpen={leftPanelOpen}
             rightPanelOpen={rightPanelOpen}
+            layersHudHeight={workspaceState.layersHudHeight}
+            onLayersHudHeightChange={(nextHeight) => patchWorkspaceState({
+              layersHudHeight: normalizeLayersHudHeight(nextHeight),
+            })}
+            layersHudStoreysHeight={workspaceState.layersHudStoreysHeight}
+            onLayersHudStoreysHeightChange={(nextHeight) => patchWorkspaceState({
+              layersHudStoreysHeight: normalizeLayersHudStoreysHeight(nextHeight),
+            })}
             initialCamera={workspaceState.camera}
             projectionMode={workspaceState.projectionMode}
             onToggleLeftPanel={() => togglePanel('left')}
@@ -1156,6 +1164,7 @@ export function BimWorkspace({
             measureSnapMode={workspaceState.measureSnapMode}
             measureKind={workspaceState.measureKind}
             measurementsVisible={workspaceState.measurementsVisible}
+            rlDatum={workspaceState.rlDatum}
             wireframeMode={workspaceState.wireframeMode}
             wireframeLineWeight={workspaceState.wireframeLineWeight}
             wireframeOpacity={workspaceState.wireframeOpacity}
@@ -1182,6 +1191,8 @@ export function BimWorkspace({
             onMeasureSnapModeChange={(measureSnapMode) => patchWorkspaceState({ measureSnapMode })}
             onMeasureKindChange={(measureKind) => patchWorkspaceState({ measureKind })}
             onMeasurementsVisibleChange={(measurementsVisible) => patchWorkspaceState({ measurementsVisible })}
+            onRlDatumChange={(rlDatum) => patchWorkspaceState({ rlDatum })}
+            onDeleteRlDatum={() => patchWorkspaceState({ rlDatum: null })}
             onWireframeModeChange={(wireframeMode) => patchWorkspaceState({ wireframeMode })}
             onWireframeStyleChange={(wireframeStylePatch) => patchWorkspaceState(wireframeStylePatch)}
             onRenderStyleChange={(nextRenderStyle) => {

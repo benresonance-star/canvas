@@ -5,6 +5,7 @@ import {
   createMeasurementRecord,
   createPolylineMeasurementRecord,
 } from '../../threeDArtifact/utils/measureSnap.js';
+import { createRlDatumRecord, createRlMeasurementRecord } from './bimRlMeasure.js';
 import { pickBimMeasurementSnap } from './bimMeasurementPick.js';
 
 const CLOSE_POLYLINE_SCALE = 2.5;
@@ -15,9 +16,11 @@ export function createBimMeasurementController({
   getCamera,
   getModelRoot,
   getFragmentsModel,
+  getRlDatum = () => null,
   snapMode: initialSnapMode = 'vertex',
   measureKind: initialMeasureKind = 'segment',
   onComplete,
+  onDatumComplete,
   onDraftChange,
   onVisualStateChange,
 }) {
@@ -179,6 +182,25 @@ export function createBimMeasurementController({
     void resolveClickSnap(event.clientX, event.clientY).then((snapped) => {
       if (!snapped) return;
 
+      if (measureKind === 'datum') {
+        const record = createRlDatumRecord(snapped, 0);
+        if (!record) return;
+        onDatumComplete?.(record);
+        hoverSnap = snapped;
+        notifyVisualChange();
+        return;
+      }
+
+      if (measureKind === 'rl') {
+        const datumLive = Boolean(getRlDatum?.());
+        const record = createRlMeasurementRecord(snapped, { datumLive });
+        if (!record) return;
+        onComplete?.(record);
+        hoverSnap = snapped;
+        notifyVisualChange();
+        return;
+      }
+
       if (snapMode === 'edge') {
         const record = createEdgeMeasurementRecord(snapped);
         if (!record) return;
@@ -273,9 +295,15 @@ export function createBimMeasurementController({
       notifyVisualChange();
     },
     setMeasureKind(nextMeasureKind) {
-      const normalized = nextMeasureKind === 'polyline' ? 'polyline' : 'segment';
+      const normalized = ['polyline', 'rl', 'datum'].includes(nextMeasureKind)
+        ? nextMeasureKind
+        : 'segment';
       if (measureKind === normalized) return;
-      measureKind = snapMode === 'edge' ? 'segment' : normalized;
+      if (snapMode === 'edge' && normalized !== 'segment') {
+        measureKind = 'segment';
+      } else {
+        measureKind = normalized;
+      }
       clearDraft();
       hoverSnap = null;
       notifyVisualChange();

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { normalizeRlMeasurement } from '../../bim/bim-core/bimRlMeasure.js';
 
 const edgeCacheByGeometry = new WeakMap();
 
@@ -528,6 +529,10 @@ export function normalizeMeasurements(measurements) {
   return measurements.flatMap((entry) => {
     if (entry?.kind === 'polyline') {
       const normalized = normalizePolylineMeasurement(entry);
+      return normalized ? [normalized] : [];
+    }
+    if (entry?.kind === 'rl') {
+      const normalized = normalizeRlMeasurement(entry);
       return normalized ? [normalized] : [];
     }
     const normalized = normalizeSegmentMeasurement(entry);
