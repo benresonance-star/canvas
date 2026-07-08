@@ -59,6 +59,36 @@ describe('BIM UI components', () => {
     expect(html).toContain('Columns');
   });
 
+  it('renders IFC color swatches in the element table when color-by mode is active', () => {
+    const slab = {
+      id: 'ifc:slab-1',
+      ifcGlobalId: 'slab-1',
+      ifcClass: 'IfcSlab',
+      name: 'Roof Slab',
+    };
+    const html = renderToStaticMarkup(
+      React.createElement(BimElementTable, {
+        elements: [element, slab],
+        properties: [],
+        selectedElementId: null,
+        search: '',
+        ifcClassFilter: '',
+        columns: DEFAULT_TABLE_COLUMNS,
+        tableSort: { columnId: null, direction: null },
+        colorByActive: true,
+        colorByProperty: 'ifcClass',
+        onSearchChange: () => {},
+        onIfcClassFilterChange: () => {},
+        onColumnsChange: () => {},
+        onTableSortChange: () => {},
+        onSelectElement: () => {},
+      }),
+    );
+    expect(html).toContain('Color group: IfcWall');
+    expect(html).toContain('Color group: IfcSlab');
+    expect(html).toContain('background-color:#');
+  });
+
   it('hides geo sun path controls in manual mode', () => {
     const manualHtml = renderToStaticMarkup(
       React.createElement(BimSunStudyHud, {
@@ -554,6 +584,7 @@ describe('BIM UI components', () => {
       }),
     );
     expect(html).toContain('absolute inset-x-0 top-3');
+    expect(html).toContain('overflow-x-hidden');
     expect(html).toContain('Viewport controls');
   });
 
@@ -667,11 +698,37 @@ describe('BIM UI components', () => {
         projectId: 'test-project',
       }),
     );
+    const colorByIndex = html.indexOf('Color by IFC type');
     const boundingBoxIndex = html.indexOf('Bounding box overlay');
     const wireframeIndex = html.indexOf('Wireframe overlay (visible edges)');
+    expect(colorByIndex).toBeGreaterThan(-1);
     expect(boundingBoxIndex).toBeGreaterThan(-1);
     expect(wireframeIndex).toBeGreaterThan(-1);
+    expect(colorByIndex).toBeLessThan(boundingBoxIndex);
     expect(boundingBoxIndex).toBeLessThan(wireframeIndex);
+  });
+
+  it('marks the color-by IFC type toggle active in colorBy display mode', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimViewport, {
+        preparedModel: {
+          metadata: {
+            fragmentsStatus: 'success',
+            fragmentsSourceKind: 'fragments',
+          },
+          fragmentsBlob: new Blob([new Uint8Array([1, 2, 3])]),
+          elements: [element],
+        },
+        selectedElement: null,
+        displayMode: 'colorBy',
+        colorByProperty: 'ifcClass',
+        onDisplayModeChange: () => {},
+        onColorByPropertyChange: () => {},
+        projectId: 'test-project',
+      }),
+    );
+    expect(html).toContain('aria-label="Color by IFC type"');
+    expect(html).toContain('aria-pressed="true"');
   });
 
   it('renders wireframe style controls in the floating style HUD', () => {

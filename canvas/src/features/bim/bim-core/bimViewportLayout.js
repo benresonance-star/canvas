@@ -16,6 +16,12 @@ export const BIM_VIEWPORT_TOOLBAR_FALLBACK_BOTTOM_PX = 48;
 export const BIM_VIEWPORT_TOOLBAR_OVERLAY_CLASS =
   'pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3';
 
+/** End padding on the toolbar row when the view navigator gimbal is visible. */
+export const BIM_VIEWPORT_GIMBAL_RESERVE_CLASS = 'pe-[5rem]';
+
+export const BIM_VIEWPORT_TOOLBAR_SURFACE_CLASS =
+  'pointer-events-auto flex w-max max-w-full flex-wrap items-center justify-center gap-y-1 overflow-x-hidden rounded-md border border-border bg-surface/95 px-2 py-1.5 shadow-lg backdrop-blur-sm';
+
 export function resolveBimViewportHudTopPx(toolbarBottomPx) {
   return toolbarBottomPx + BIM_VIEWPORT_CHROME_GAP_PX;
 }

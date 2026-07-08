@@ -257,7 +257,7 @@ Persist locally:
 
 ---
 
-# 14. Implementation status (2026-07-05, updated)
+# 14. Implementation status (2026-07-09, updated)
 
 Stage 1 capabilities are **shipped inside Canvas** as the first host, before the standalone `desktop-bim-app` shell exists.
 
@@ -280,7 +280,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Viewport boot | Yes — `bimViewportBoot.js` (layout wait, registration, fast sync, phased loading UI) |
 | Default open state | Yes — highlight display mode, standard render, all storeys/layers visible, **section cut off** (`BIM_VIEWER_DEFAULTS` + `applyBimViewerDefaults`) |
 | Style settings HUD | Yes — toolbar sliders icon toggles floating panel; background + presets always; HDRI lighting (standard only); clay/wireframe sliders + clay debug when active (`BimStyleSettingsHud.jsx`, `BimStyleToolbarControls.jsx`, `BimClayDebugPanel.jsx`) |
-| Viewport toolbar layout | Yes — **floating top-centre HUD** inside viewport (`w-max`, scroll when wide); grouped sections with separators: panels → measure → view → camera → display (incl. saved views) → tools; **Delete** cancels measurement |
+| Viewport toolbar layout | Yes — **viewport-centred floating HUD** with gimbal **absolutely positioned** top-right; `flex-wrap` + reserved gimbal width; grouped sections: panels → measure → view → camera → display (incl. saved views) → tools; **Delete** cancels measurement; **isolate** toggle in reset-visibility group |
 | Floating side panels | Yes — element list + inspector as **overlay HUDs** over full canvas (`BimFloatingSidePanel.jsx`); adjustable width 240–720 px; invisible resize handles; below toolbar (`top-14`) |
 | Saved view carousel | Yes — **floating bottom-centre HUD** (`max-w-[75vw]`, width adapts to thumbnails); `Images` toolbar icon |
 | Workspace header | Yes — single row: project title + element/property counts + cache status (no separate status strip) |
@@ -290,15 +290,16 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Section cut | Yes — horizontal clipping plane + fill/edge overlay (`BimSectionHud.jsx`, `bimSectioning.js`); **off by default** on workspace open |
 | Viewport loading feedback | Yes — phased boot overlay (`BIM_VIEWPORT_LOAD_PHASES`) with spinner + element count |
 | Perspective / orthographic | Yes — toolbar toggle + camera state persistence |
-| View navigator gimbal | Yes — top-right wireframe cube; right-click Home / Top / Bottom; footprint PCA azimuth + world-up orbit (`BimViewNavigatorGimbal.jsx`, `bimViewNavigator.js`, `cameraFit.js`) |
-| Bounding box overlay | Yes — toolbar toggle (left of wireframe); world AABB wireframe on overlay scene (`bimBoundingBoxOverlay.js`) |
+| View navigator gimbal | Yes — top-right wireframe cube (absolute); right-click Home / Top / Bottom; footprint **MBR** long-edge azimuth + fixed-width label (`BimViewNavigatorGimbal.jsx`, `bimViewNavigator.js`, `cameraFit.js`) |
+| Bounding box overlay | Yes — toolbar toggle (right of **Color by IFC type**, left of wireframe); footprint **OBB** wireframe on overlay scene (`bimBoundingBoxOverlay.js`, `buildFootprintOrientedBounds` in `cameraFit.js`) |
+| Color-by IFC type | Yes — toolbar `Palette` toggle; `displayMode: colorBy` + `colorByProperty: ifcClass`; element-table swatches; BQL `colorBy` supported (`bimColorBy.js`) |
 | Measurements | Yes — vertex/edge snap, segment + polyline, units toggle; **Delete / Backspace** (or toolbar trash) cancels draft or exits measure mode; **Escape** closes fullscreen card; shared `MeasurementUi` with 3D artifact viewer |
 | HDRI lighting | Yes — environment preset cycle (off / studio / city / …); **style settings HUD** (standard render only) |
 | Picking/selection | Yes — raycast + GlobalId mapping |
-| Element table | Yes — configurable columns (add/remove/reorder/resize/sort), search + class filter, **floating left overlay panel**, header sort menu anchored to column title, inset grid dividers (`bimTableColumns.js`) |
+| Element table | Yes — configurable columns (add/remove/reorder/resize/sort), search + class filter, **floating left overlay panel**, header sort menu anchored to column title, inset grid dividers; **IFC-class colour swatches** when colour-by active (`bimTableColumns.js`, `bimColorBy.js`) |
 | Properties inspector | Yes — grouped Psets, provenance, assembly membership, attribute search, wrapping labels, **floating right overlay panel** (`bimInspectorSearch.js`) |
 | Viewer ↔ table sync | Yes — bidirectional via `ifcGlobalId` |
-| Workspace state persistence | Yes — IndexedDB per fingerprint (camera, panels, filters, display mode, projection, measurements, wireframe mode + style incl. hidden-lines toggle, clay render style, lighting, **table columns/sort/search**, **inspector search**, **panel widths**) |
+| Workspace state persistence | Yes — IndexedDB per fingerprint (camera, panels, filters, display mode, **colorByProperty**, projection, measurements, wireframe mode + style incl. hidden-lines toggle, clay render style, lighting, **table columns/sort/search**, **inspector search**, **panel widths**) |
 | Live extraction feed | Yes — progress events during first-open preparation |
 | Folder sync → dock | Yes — `.ifc` scanned as `bim-model`; stages to sync holding tray after Sync → Apply (or auto-apply on folder connect). See master spec §29.3 *Folder sync, dock, and artifact ingest* |
 | Workspace tree visibility | Yes — after 2026-07-04 ingest fix (`project_id` + cluster membership on `/artifacts/ingest`) |
@@ -310,9 +311,8 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Standalone desktop shell | Not built |
 | Filesystem cache layout (`model-cache/<fingerprint>/`) | Not built — IndexedDB instead |
 | Embedded SQL database | Not built |
-| `colorBy` display mode | Validated in BQL but not applied in viewport |
-| Footprint long-edge alignment (L-shape / site clutter) | Partial — PCA heuristic; area-weighted MBR + OBB bbox planned |
 | Package split (`bim-core`, `bim-viewer-ui`) | Deferred — monolithic `features/bim/` |
+| Color-by legend overlay / clay type colouring | Not built |
 
 ## 14.3 Key paths
 
@@ -331,6 +331,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Viewport boot | `canvas/src/features/bim/bim-core/bimViewportBoot.js` |
 | View navigator / camera presets | `canvas/src/features/bim/bim-core/bimViewNavigator.js`, `components/BimViewNavigatorGimbal.jsx`, `canvas/src/features/threeDArtifact/utils/cameraFit.js` |
 | Bounding box overlay | `canvas/src/features/bim/bim-core/bimBoundingBoxOverlay.js` |
+| Color-by IFC type | `canvas/src/features/bim/bim-core/bimColorBy.js` |
 | Style presets API | `canvas/server/routes/bim.js`, `canvas/server/repositories/bim-style-presets.js` |
 | Query panel | `canvas/src/features/bim/components/BimQueryPanel.jsx`, `BimBqlHud.jsx` |
 | Canvas routing | `canvas/src/components/ModalContent.jsx`, `CardPreview.jsx` |

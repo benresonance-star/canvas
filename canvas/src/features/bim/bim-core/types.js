@@ -357,6 +357,12 @@ export function emptyPreparedBimModel(metadata = {}) {
   };
 }
 
+export function normalizeColorByProperty(value) {
+  if (value == null) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+}
+
 export function normalizeBimWorkspaceState(state = {}) {
   const panels = state?.panels && typeof state.panels === 'object' ? state.panels : {};
   const savedQueries = Array.isArray(state?.savedQueries)
@@ -374,6 +380,7 @@ export function normalizeBimWorkspaceState(state = {}) {
   const rawDisplayMode = BIM_DISPLAY_MODES.includes(state?.displayMode) ? state.displayMode : 'highlight';
   const displayMode = rawDisplayMode === 'isolate' ? 'highlight' : rawDisplayMode;
   const isolateOnSelect = state?.isolateOnSelect === true;
+  const colorByProperty = normalizeColorByProperty(state?.colorByProperty);
   const viewSets = normalizeBimViewSets(state?.viewSets);
   const activeViewSetId = resolveActiveViewSetId(viewSets, state?.activeViewSetId);
   const tableColumns = normalizeTableColumns(state?.tableColumns);
@@ -382,6 +389,7 @@ export function normalizeBimWorkspaceState(state = {}) {
     selectedObjectKind: state?.selectedObjectKind ?? 'physicalElement',
     displayMode,
     isolateOnSelect,
+    colorByProperty,
     hiddenStoreys: normalizeHiddenLayerState(state?.hiddenStoreys),
     hiddenLayers: normalizeHiddenLayerState(state?.hiddenLayers),
     section: normalizeBimSectionState(state?.section ?? {}),

@@ -32,7 +32,7 @@ vi.mock('three', async (importOriginal) => {
   };
 });
 
-import { BimViewNavigatorGimbal, VIEW_NAVIGATOR_PRESETS } from '../BimViewNavigatorGimbal.jsx';
+import { BimViewNavigatorGimbal, VIEW_NAVIGATOR_LABEL_WIDTH_CLASS, VIEW_NAVIGATOR_PRESETS } from '../BimViewNavigatorGimbal.jsx';
 
 function renderGimbal(props = {}) {
   const container = document.createElement('div');
@@ -60,6 +60,7 @@ describe('BimViewNavigatorGimbal', () => {
     );
     expect(html).toContain('aria-label="View navigator gimbal"');
     expect(html).toContain('Right-click for view presets');
+    expect(html).toContain(VIEW_NAVIGATOR_LABEL_WIDTH_CLASS);
     expect(html).toContain('<canvas');
     expect(html).not.toContain('border-border/60');
   });

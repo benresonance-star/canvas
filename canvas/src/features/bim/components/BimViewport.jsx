@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Axis3D, Box, Bot, BoxSelect, Braces, CalendarDays, Camera, Circle, DollarSign, EyeOff, Ghost, Grid3x3, Images, Layers, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal, SunMedium } from 'lucide-react';
+import { Axis3D, Box, Bot, BoxSelect, Braces, CalendarDays, Camera, Circle, DollarSign, EyeOff, Ghost, Grid3x3, Images, Layers, Palette, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal, SunMedium } from 'lucide-react';
 import { MOUSE } from 'three';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { FragmentsModels, RenderedFaces } from '@thatopen/fragments';
 import fragmentsWorkerUrl from '@thatopen/fragments/dist/Worker/worker.mjs?url';
 import {
+  buildFootprintOrientedBounds,
   fitCameraToViewPreset,
   syncOrbitControlsAfterCameraFit,
 } from '../../threeDArtifact/utils/cameraFit.js';
@@ -94,6 +95,10 @@ import {
 } from '../bim-core/fragmentsSelection.js';
 import { applyBimLayerStoreyVisibility, buildBimLayerCatalog } from '../bim-core/bimLayerVisibility.js';
 import {
+  applyColorByHighlight,
+  BIM_COLOR_BY_DEFAULT_PROPERTY,
+} from '../bim-core/bimColorBy.js';
+import {
   applyRendererClippingPlanes,
   buildSectionGeometriesFromModelSection,
   buildViewportBoundsFromBox3,
@@ -125,6 +130,8 @@ import {
   disposeBimSunLightingAdapter,
 } from '../bim-core/bimSunLighting.js';
 import {
+  BIM_VIEWPORT_GIMBAL_RESERVE_CLASS,
+  BIM_VIEWPORT_TOOLBAR_SURFACE_CLASS,
   resolveBimLayersHudMaxHeightPx,
 } from '../bim-core/bimViewportLayout.js';
 import {
@@ -146,6 +153,24 @@ import {
   normalizeLayersHudStoreysHeight,
   VIEWPORT_BACKGROUND_DEFAULT,
 } from '../bim-core/types.js';
+import {
+  BIM_VIEWPORT_LOAD_PHASES,
+  FRAGMENTS_BOOT_IDLE_TIMEOUT_MS,
+  FRAGMENTS_MODEL_REGISTRATION_RETRY_DELAYS_MS,
+  configureFragmentsManagerForBimViewport,
+  hasViewportLayoutSize,
+  isFragmentsModelNotFoundError,
+  isFragmentsModelRegistered,
+  loadFragmentsModelWithRetries,
+  primeViewportRendererForBoot,
+  resetFragmentsBootUpdateQueue,
+  resolveBimViewportRuntimeModelId,
+  syncFragmentsForViewportBoot,
+  waitForAnimationFrame,
+  waitForFragmentsModelIdle,
+  waitForFragmentsModelRegistered,
+  waitForViewportLayout,
+} from '../bim-core/bimViewportBoot.js';
 
 function syncModelBounds(modelRoot, boundsRef, onBoundsChange) {
   if (!modelRoot) return;
@@ -200,17 +225,6 @@ const GHOST_MATERIAL = {
   customId: 'canvas-bim-ghost',
 };
 
-const COLOR_BY_PALETTE = [
-  '#eab308',
-  '#38bdf8',
-  '#fb7185',
-  '#34d399',
-  '#a78bfa',
-  '#f97316',
-  '#f472b6',
-  '#22c55e',
-];
-
 function getViewportError(preparedModel) {
   if (!preparedModel) return 'BIM model is not prepared yet.';
   if (preparedModel.metadata?.fragmentsStatus === 'failed') {
@@ -241,49 +255,6 @@ function delay(ms) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
   });
-}
-
-import {
-  BIM_VIEWPORT_LOAD_PHASES,
-  FRAGMENTS_BOOT_IDLE_TIMEOUT_MS,
-  FRAGMENTS_MODEL_REGISTRATION_RETRY_DELAYS_MS,
-  configureFragmentsManagerForBimViewport,
-  hasViewportLayoutSize,
-  isFragmentsModelNotFoundError,
-  isFragmentsModelRegistered,
-  loadFragmentsModelWithRetries,
-  primeViewportRendererForBoot,
-  resetFragmentsBootUpdateQueue,
-  resolveBimViewportRuntimeModelId,
-  syncFragmentsForViewportBoot,
-  waitForAnimationFrame,
-  waitForFragmentsModelIdle,
-  waitForFragmentsModelRegistered,
-  waitForViewportLayout,
-} from '../bim-core/bimViewportBoot.js';
-
-function propertyValueForElement(preparedModel, element, colorByProperty) {
-  const property = String(colorByProperty ?? '').trim();
-  if (!property || property === 'ifcClass' || property === 'class') return element.ifcClass ?? 'Unclassified';
-  if (property === 'storey') return element.storeyId ?? 'No storey';
-  if (property === 'type' || property === 'typeName') return element.typeName ?? 'No type';
-  if (property === 'name') return element.name ?? 'Unnamed';
-  const properties = preparedModel?.properties ?? [];
-  const match = properties.find((entry) => (
-    entry.elementId === element.id
-    && (`${entry.psetName}.${entry.propertyName}` === property || entry.propertyName === property)
-  ));
-  return match?.value ?? `No ${property}`;
-}
-
-function materialForColor(color, customId) {
-  return {
-    color: new THREE.Color(color),
-    renderedFaces: RenderedFaces.TWO,
-    opacity: 0.92,
-    transparent: true,
-    customId,
-  };
 }
 
 function BimViewportToolbarSeparator() {
@@ -328,6 +299,7 @@ export function BimViewport({
   onToggleLeftPanel = () => {},
   onToggleRightPanel = () => {},
   onDisplayModeChange,
+  onColorByPropertyChange = () => {},
   onIsolateOnSelectChange = () => {},
   onHiddenStoreysChange = () => {},
   onHiddenLayersChange = () => {},
@@ -515,6 +487,7 @@ export function BimViewport({
   const measureHudOpenRef = useRef(false);
   const measureEditModeRef = useRef(false);
   const selectedRlPickRef = useRef(null);
+  const highlightedHudItemRef = useRef(null);
   const rlMarkerRaycasterRef = useRef(new THREE.Raycaster());
   const dismissMeasureSessionRef = useRef(() => {});
   const measureVisualStateRef = useRef({
@@ -563,6 +536,7 @@ export function BimViewport({
   const wireframeEdgesRef = useRef(null);
   const boundingBoxModeRef = useRef(false);
   const boundingBoxEdgesRef = useRef(null);
+  const syncBoundingBoxOverlayRef = useRef(() => {});
   const wireframeBuildSeqRef = useRef(0);
   const wireframeBuildInFlightRef = useRef(false);
   const wireframeRebuildQueuedRef = useRef(false);
@@ -620,14 +594,20 @@ export function BimViewport({
   preparedModelRef.current = preparedModel;
   const syncBoundingBoxOverlay = useCallback(() => {
     if (!boundingBoxModeRef.current) return;
-    const bounds = modelBoundsRef.current;
-    if (!bounds?.min || !bounds?.max) return;
+    const modelRoot = modelRef.current?.object;
+    if (!modelRoot) return;
+    const overlayScene = wireframeOverlaySceneRef.current;
+    if (!overlayScene) return;
+    const orientedBounds = buildFootprintOrientedBounds(modelRoot)
+      ?? modelBoundsRef.current;
+    if (!orientedBounds) return;
     boundingBoxEdgesRef.current = syncModelBoundingBoxEdges(
       boundingBoxEdgesRef.current,
-      bounds,
-      wireframeOverlaySceneRef.current,
+      orientedBounds,
+      overlayScene,
     );
   }, []);
+  syncBoundingBoxOverlayRef.current = syncBoundingBoxOverlay;
 
   const syncViewportBounds = useCallback((bounds) => {
     if (bounds) setViewportBounds(bounds);
@@ -791,6 +771,7 @@ export function BimViewport({
       measurements: measurementsRef.current,
       rlDatum: rlDatumRef.current,
       selectedRlPick: selectedRlPickRef.current,
+      highlightedHudItem: highlightedHudItemRef.current,
       draftStart: visual.draftStart,
       draftPoints: visual.draftPoints ?? [],
       previewEnd: visual.previewEnd,
@@ -1816,6 +1797,14 @@ export function BimViewport({
         ensureWireframeEdgesAttached(overlayScene, modelRef.current?.object ?? null, wireframeEdges);
       }
 
+      if (
+        boundingBoxModeRef.current
+        && !boundingBoxEdgesRef.current?.parent
+        && modelReadyRef.current
+      ) {
+        syncBoundingBoxOverlayRef.current();
+      }
+
       if (renderStyleRef.current === 'clay' && clayComposerRef.current) {
         const clayStyle = clayStyleRef.current;
         const wfStyle = wireframeStyleRef.current;
@@ -2292,6 +2281,12 @@ export function BimViewport({
       const resultElements = (preparedModel?.elements ?? []).filter((element) => highlightElementIds.includes(element.id));
       const selectedOnly = selectedElement ? [selectedElement] : [];
       const targetElements = resultElements.length > 0 ? resultElements : selectedOnly;
+      const effectiveColorByProperty = effectiveDisplayMode === 'colorBy'
+        ? (colorByProperty ?? BIM_COLOR_BY_DEFAULT_PROPERTY)
+        : null;
+      const colorByElements = resultElements.length > 0
+        ? resultElements
+        : (preparedModel?.elements ?? []);
 
       if (targetElements.length === 0) {
         if (effectiveDisplayMode === 'ghostOthers') {
@@ -2299,6 +2294,23 @@ export function BimViewport({
           for (const chunk of chunkLocalIds(allLocalIds)) {
             if (!shouldApplySelectionRun(runSeq, applySelectionSeqRef.current)) return;
             await model.highlight(chunk, ghostMaterial);
+          }
+        } else if (effectiveDisplayMode === 'colorBy') {
+          await applyColorByHighlight(model, preparedModel, cache, {
+            elements: colorByElements,
+            property: effectiveColorByProperty,
+            shouldCancel: () => !shouldApplySelectionRun(runSeq, applySelectionSeqRef.current),
+          });
+          if (selectedElement) {
+            const selectedIdMap = await resolveFragmentsLocalIdsByGlobalIds(
+              model,
+              [selectedElement.ifcGlobalId],
+              cache,
+            );
+            const primaryLocalId = selectedIdMap.get(selectedElement.ifcGlobalId);
+            if (isValidFragmentsLocalId(primaryLocalId)) {
+              await model.highlight([primaryLocalId], selectedMaterial);
+            }
           }
         }
         if (!shouldApplySelectionRun(runSeq, applySelectionSeqRef.current)) return;
@@ -2317,33 +2329,18 @@ export function BimViewport({
       const localIds = targetElements
         .map((element) => idMap.get(element.ifcGlobalId))
         .filter(isValidFragmentsLocalId);
-      if (localIds.length === 0) return;
+      if (localIds.length === 0 && effectiveDisplayMode !== 'colorBy') return;
 
       const primaryLocalId = selectedElement
         ? idMap.get(selectedElement.ifcGlobalId)
         : localIds[0];
 
       if (effectiveDisplayMode === 'colorBy') {
-        const groups = new Map();
-        targetElements.forEach((element) => {
-          const value = String(propertyValueForElement(preparedModel, element, colorByProperty));
-          if (!groups.has(value)) groups.set(value, []);
-          groups.get(value).push(element);
+        await applyColorByHighlight(model, preparedModel, cache, {
+          elements: colorByElements,
+          property: effectiveColorByProperty,
+          shouldCancel: () => !shouldApplySelectionRun(runSeq, applySelectionSeqRef.current),
         });
-        let groupIndex = 0;
-        for (const [value, elements] of groups) {
-          if (!shouldApplySelectionRun(runSeq, applySelectionSeqRef.current)) return;
-          const groupLocalIds = elements
-            .map((element) => idMap.get(element.ifcGlobalId))
-            .filter(isValidFragmentsLocalId);
-          if (groupLocalIds.length > 0) {
-            await model.highlight(
-              groupLocalIds,
-              materialForColor(COLOR_BY_PALETTE[groupIndex % COLOR_BY_PALETTE.length], `canvas-bim-color-${groupIndex}-${value}`),
-            );
-          }
-          groupIndex += 1;
-        }
       } else if (shouldIsolate) {
         await model.setVisible(undefined, false);
         await model.setVisible(localIds, true);
@@ -3005,6 +3002,16 @@ export function BimViewport({
     onDisplayModeChange(displayMode === 'ghostOthers' ? 'highlight' : 'ghostOthers');
   }, [displayMode, onDisplayModeChange]);
 
+  const handleToggleColorByIfcClass = useCallback(() => {
+    if (displayMode === 'colorBy') {
+      onDisplayModeChange('highlight');
+      onColorByPropertyChange(null);
+      return;
+    }
+    onDisplayModeChange('colorBy');
+    onColorByPropertyChange(BIM_COLOR_BY_DEFAULT_PROPERTY);
+  }, [displayMode, onColorByPropertyChange, onDisplayModeChange]);
+
   const handleToggleIsolateOnSelect = useCallback(() => {
     onIsolateOnSelectChange(!isolateOnSelect);
   }, [isolateOnSelect, onIsolateOnSelectChange]);
@@ -3017,6 +3024,25 @@ export function BimViewport({
       selectedRlPickRef.current = null;
       setSelectedRlPick(null);
     }
+    if (highlightedHudItemRef.current?.id === measurementId) {
+      highlightedHudItemRef.current = null;
+    }
+    syncMeasurementOverlay();
+  }, [syncMeasurementOverlay]);
+
+  const handleHighlightedHudItemChange = useCallback((highlightItem) => {
+    highlightedHudItemRef.current = highlightItem;
+    syncMeasurementOverlay();
+  }, [syncMeasurementOverlay]);
+
+  const handleDeleteAllMeasurements = useCallback(() => {
+    measurementsRef.current = [];
+    onMeasurementsChangeRef.current([]);
+    rlDatumRef.current = null;
+    onDeleteRlDatumRef.current();
+    selectedRlPickRef.current = null;
+    setSelectedRlPick(null);
+    highlightedHudItemRef.current = null;
     syncMeasurementOverlay();
   }, [syncMeasurementOverlay]);
 
@@ -3035,6 +3061,9 @@ export function BimViewport({
   const handleDeleteRlDatum = useCallback(() => {
     rlDatumRef.current = null;
     onDeleteRlDatumRef.current();
+    if (highlightedHudItemRef.current?.kind === 'datum') {
+      highlightedHudItemRef.current = null;
+    }
     syncMeasurementOverlay();
   }, [syncMeasurementOverlay]);
 
@@ -3060,7 +3089,7 @@ export function BimViewport({
   const toolbarControls = (
     <div
       ref={toolbarControlsRef}
-      className="pointer-events-auto flex w-max max-w-[calc(100%-1.5rem)] items-center overflow-x-auto rounded-md border border-border bg-surface/95 px-2 py-1.5 shadow-lg backdrop-blur-sm"
+      className={BIM_VIEWPORT_TOOLBAR_SURFACE_CLASS}
       aria-label="Viewport controls"
     >
             {measureStatus ? (
@@ -3071,7 +3100,7 @@ export function BimViewport({
                 <BimViewportToolbarSeparator />
               </>
             ) : null}
-            <div className="flex items-center">
+            <div className="flex flex-wrap items-center justify-center gap-y-1">
               <div className="flex items-center gap-1">
               <button
                 type="button"
@@ -3124,6 +3153,16 @@ export function BimViewport({
               <button type="button" title="Reset visibility" onClick={resetVisibility} className="rounded border border-border p-1 text-secondary hover:bg-surface-muted">
                 <RotateCcw size={14} strokeWidth={1.7} />
               </button>
+              <button
+                type="button"
+                title={isolateOnSelect ? 'Disable isolate on select' : 'Isolate selected element'}
+                onClick={handleToggleIsolateOnSelect}
+                className={`rounded border border-border p-1 ${isolateOnSelect ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                aria-pressed={isolateOnSelect}
+                aria-label={isolateOnSelect ? 'Disable isolate on select' : 'Isolate selected element'}
+              >
+                <EyeOff size={14} strokeWidth={1.7} />
+              </button>
               </div>
               <BimViewportToolbarSeparator />
               <div className="flex items-center gap-1">
@@ -3157,6 +3196,16 @@ export function BimViewport({
               </div>
               <BimViewportToolbarSeparator />
               <div className="flex items-center gap-1">
+              <button
+                type="button"
+                title="Color by IFC type"
+                onClick={handleToggleColorByIfcClass}
+                className={`rounded border border-border p-1 ${displayMode === 'colorBy' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                aria-pressed={displayMode === 'colorBy'}
+                aria-label="Color by IFC type"
+              >
+                <Palette size={14} strokeWidth={1.7} />
+              </button>
               <button
                 type="button"
                 title="Bounding box overlay"
@@ -3204,16 +3253,6 @@ export function BimViewport({
                 aria-label={displayMode === 'ghostOthers' ? 'Exit ghost mode' : 'Ghost others'}
               >
                 <Ghost size={14} strokeWidth={1.7} />
-              </button>
-              <button
-                type="button"
-                title={isolateOnSelect ? 'Disable isolate on select' : 'Isolate selected element'}
-                onClick={handleToggleIsolateOnSelect}
-                className={`rounded border border-border p-1 ${isolateOnSelect ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
-                aria-pressed={isolateOnSelect}
-                aria-label={isolateOnSelect ? 'Disable isolate on select' : 'Isolate selected element'}
-              >
-                <EyeOff size={14} strokeWidth={1.7} />
               </button>
               <button
                 type="button"
@@ -3342,19 +3381,21 @@ export function BimViewport({
   }, [loadState, measureHudOpen, measureEditMode, projectionMode, wireframeMode, boundingBoxMode, displayMode]);
 
   const toolbarOverlay = (
-    <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex items-start justify-between gap-2 px-3">
-      <div className="flex min-w-0 flex-1 justify-center">
-        {toolbarControls}
+    <div className="pointer-events-none absolute inset-x-0 top-3 z-30 px-3">
+      <div className="relative">
+        <div className={`flex justify-center ${loadState === 'ready' ? BIM_VIEWPORT_GIMBAL_RESERVE_CLASS : ''}`}>
+          {toolbarControls}
+        </div>
+        {loadState === 'ready' ? (
+          <BimViewNavigatorGimbal
+            className="pointer-events-auto absolute right-0 top-0 shrink-0"
+            cubeSizePx={toolbarHeightPx}
+            getCameraQuaternion={() => cameraQuaternionRef.current}
+            getViewDirection={() => cameraViewDirectionRef.current}
+            onApplyPreset={applyViewPreset}
+          />
+        ) : null}
       </div>
-      {loadState === 'ready' ? (
-        <BimViewNavigatorGimbal
-          className="pointer-events-auto shrink-0"
-          cubeSizePx={toolbarHeightPx}
-          getCameraQuaternion={() => cameraQuaternionRef.current}
-          getViewDirection={() => cameraViewDirectionRef.current}
-          onApplyPreset={applyViewPreset}
-        />
-      ) : null}
     </div>
   );
 
@@ -3547,6 +3588,8 @@ export function BimViewport({
             rlDatum={rlDatum}
             onMeasurementsVisibleChange={onMeasurementsVisibleChange}
             onRemoveMeasurement={handleRemoveMeasurement}
+            onDeleteAllMeasurements={handleDeleteAllMeasurements}
+            onHighlightedHudItemChange={handleHighlightedHudItemChange}
             onRlDatumValueChange={handleRlDatumValueChange}
             onDeleteRlDatum={handleDeleteRlDatum}
             onReplaceRlDatum={handleReplaceRlDatum}

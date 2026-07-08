@@ -234,9 +234,9 @@ The executor, not the agent, decides final query result membership.
 
 ---
 
-# 14. Implementation status (2026-07-05, updated)
+# 14. Implementation status (2026-07-09, updated)
 
-BQL **validator**, **executor**, **manual query UI**, **NL agent translation**, and **saved queries** are shipped. **`colorBy` viewport application** remains deferred.
+BQL **validator**, **executor**, **manual query UI**, **NL agent translation**, **saved queries**, and **`colorBy` viewport application** are shipped.
 
 ## 14.1 Shipped
 
@@ -252,7 +252,7 @@ BQL **validator**, **executor**, **manual query UI**, **NL agent translation**, 
 | Result payload (`objectRefs`, `tableRows`, `viewerState`, `evidence`, `summary`) | Yes | same |
 | `from` scopes: `physicalElements`, `semanticAssemblies`, `allBimObjects` | Yes | same |
 | Where filters: class, semantic type, storey, name, properties, quantities, and/or/not | Yes | same |
-| Query-driven viewer apply (highlight / isolate / ghostOthers) | Yes | `BimWorkspace.jsx` → `BimViewport.jsx` |
+| Query-driven viewer apply (highlight / isolate / ghostOthers / **colorBy**) | Yes | `BimWorkspace.jsx` → `BimViewport.jsx` |
 | Query-driven table filter | Yes | `BimWorkspace.jsx` → `BimElementTable.jsx` |
 | Manual query panel with presets | Yes | `BimQueryPanel.jsx` |
 | Windows preset (`IfcWindow` + `WindowAssembly`) | Yes | `BimQueryPanel.jsx` |
@@ -261,15 +261,16 @@ BQL **validator**, **executor**, **manual query UI**, **NL agent translation**, 
 | Agent → BQL translation (LLM connectors) | Yes | `bimLlmAgent.js`, `useBimAgentPanel.js` |
 | NL BIM agent HUD | Yes | `BimAgentHud.jsx` |
 | Saved queries (persist, load, delete; max 20) | Yes | `BimWorkspace.jsx`, `useBimBqlPanel.js`, `BimBqlHud.jsx` |
+| `colorBy` view instruction application | Yes | `bimColorBy.js` → `applyColorByHighlight` in `BimViewport.jsx`; `colorByProperty` in workspace state |
 
 ## 14.2 Not yet shipped
 
 | Requirement | Status |
 |---|---|
-| `colorBy` view instruction application | Validated but not applied in viewport |
 | Assembly-only viewport highlight (multi-member) | Partial — physical member ids only |
 | BQL query history | Not built (saved named queries only) |
+| Color-by legend overlay | Not built |
 
 ## 14.3 Next move
 
-Apply `colorBy` rendering in the viewport. Add assembly-level highlight for multi-member assemblies. Add query history beyond saved named queries.
+Add assembly-level highlight for multi-member assemblies. Add query history beyond saved named queries. Add colour-by legend overlay.

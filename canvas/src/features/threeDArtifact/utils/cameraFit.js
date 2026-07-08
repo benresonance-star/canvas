@@ -24,9 +24,14 @@ const _actualUp = new THREE.Vector3();
 const _size = new THREE.Vector3();
 const _meshBox = new THREE.Box3();
 const _footprintSamples = [];
+const _footprintPoints = [];
 const _worldUp = new THREE.Vector3(0, 1, 0);
 const _cameraRight = new THREE.Vector3();
 const _desiredRight = new THREE.Vector3();
+const _worldCorner = new THREE.Vector3();
+
+/** Skip meshes below this fraction of the largest footprint area (trees, pools, props). */
+export const FOOTPRINT_MIN_AREA_FRACTION = 0.05;
 
 function resolveHorizontalAxisFromBoundsSize(size) {
   if (size.x >= size.z) {
@@ -118,30 +123,277 @@ function appendMeshFootprintCorners(child, samples) {
     [(min.x + max.x) * 0.5, midY, min.z],
     [(min.x + max.x) * 0.5, midY, max.z],
   ];
-  const worldCorner = new THREE.Vector3();
   for (const [x, y, z] of localCorners) {
-    worldCorner.set(x, y, z).applyMatrix4(child.matrixWorld);
-    samples.push(worldCorner.x, worldCorner.z);
+    _worldCorner.set(x, y, z).applyMatrix4(child.matrixWorld);
+    samples.push(_worldCorner.x, _worldCorner.z);
   }
 }
 
-/** Major horizontal axis for top/bottom camera roll (Fragments-safe mesh bbox sampling). */
-export function resolveFootprintHorizontalAxis(object) {
+function computeMeshFootprintArea(child) {
+  if (!child?.isMesh || !child.geometry) return 0;
+
+  const geometry = child.geometry;
+  if (!geometry.boundingBox) {
+    geometry.computeBoundingBox?.();
+  }
+
+  child.updateWorldMatrix(true, true);
+  if (!geometry.boundingBox || geometry.boundingBox.isEmpty()) {
+    _meshBox.setFromObject(child);
+    if (_meshBox.isEmpty()) return 0;
+    const { min, max } = _meshBox;
+    return Math.max(0, max.x - min.x) * Math.max(0, max.z - min.z);
+  }
+
+  const { min, max } = geometry.boundingBox;
+  const midY = (min.y + max.y) * 0.5;
+  const localCorners = [
+    [min.x, midY, min.z],
+    [min.x, midY, max.z],
+    [max.x, midY, min.z],
+    [max.x, midY, max.z],
+  ];
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const [x, y, z] of localCorners) {
+    _worldCorner.set(x, y, z).applyMatrix4(child.matrixWorld);
+    minX = Math.min(minX, _worldCorner.x);
+    maxX = Math.max(maxX, _worldCorner.x);
+    minZ = Math.min(minZ, _worldCorner.z);
+    maxZ = Math.max(maxZ, _worldCorner.z);
+  }
+  return Math.max(0, maxX - minX) * Math.max(0, maxZ - minZ);
+}
+
+function collectWeightedFootprintPoints(object) {
+  const meshEntries = [];
+  object.traverse((child) => {
+    if (!child?.isMesh) return;
+    const area = computeMeshFootprintArea(child);
+    if (area > 0) {
+      meshEntries.push({ child, area });
+    }
+  });
+
+  if (meshEntries.length === 0) {
+    return [];
+  }
+
+  const maxArea = Math.max(...meshEntries.map((entry) => entry.area));
+  const minArea = maxArea * FOOTPRINT_MIN_AREA_FRACTION;
+  const points = [];
+
+  const appendWeightedCorners = (child, weight) => {
+    _footprintSamples.length = 0;
+    appendMeshFootprintCorners(child, _footprintSamples);
+    for (let index = 0; index < _footprintSamples.length; index += 2) {
+      const point = [_footprintSamples[index], _footprintSamples[index + 1]];
+      for (let repeat = 0; repeat < weight; repeat += 1) {
+        points.push(point);
+      }
+    }
+  };
+
+  for (const { child, area } of meshEntries) {
+    if (area < minArea) continue;
+    const weight = Math.max(1, Math.round((area / maxArea) * 8));
+    appendWeightedCorners(child, weight);
+  }
+
+  if (points.length < 4) {
+    for (const { child } of meshEntries) {
+      appendWeightedCorners(child, 1);
+    }
+  }
+
+  return points;
+}
+
+function resolveMinimumAreaBoundingRectangle(points) {
+  const count = points.length;
+  if (count < 2) {
+    return null;
+  }
+
+  const candidateAngles = new Set([0, Math.PI * 0.5]);
+  for (let index = 0; index < count; index += 1) {
+    for (let other = index + 1; other < count; other += 1) {
+      const deltaX = points[other][0] - points[index][0];
+      const deltaZ = points[other][1] - points[index][1];
+      if (Math.hypot(deltaX, deltaZ) < 1e-6) continue;
+      const angle = Math.atan2(deltaZ, deltaX);
+      candidateAngles.add(angle);
+      candidateAngles.add(angle + Math.PI * 0.5);
+    }
+  }
+
+  let bestArea = Infinity;
+  let bestAngle = 0;
+  let bestHalfU = 0;
+  let bestHalfV = 0;
+  let bestCenterU = 0;
+  let bestCenterV = 0;
+
+  for (const angle of candidateAngles) {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    let minU = Infinity;
+    let maxU = -Infinity;
+    let minV = Infinity;
+    let maxV = -Infinity;
+
+    for (const [x, z] of points) {
+      const u = x * cos + z * sin;
+      const v = -x * sin + z * cos;
+      minU = Math.min(minU, u);
+      maxU = Math.max(maxU, u);
+      minV = Math.min(minV, v);
+      maxV = Math.max(maxV, v);
+    }
+
+    const extentU = maxU - minU;
+    const extentV = maxV - minV;
+    const area = extentU * extentV;
+    if (area < bestArea) {
+      bestArea = area;
+      bestAngle = angle;
+      bestHalfU = extentU * 0.5;
+      bestHalfV = extentV * 0.5;
+      bestCenterU = (minU + maxU) * 0.5;
+      bestCenterV = (minV + maxV) * 0.5;
+    }
+  }
+
+  const alongU = bestHalfU >= bestHalfV;
+  const longAngle = alongU ? bestAngle : bestAngle + Math.PI * 0.5;
+  const longEdge = new THREE.Vector3(Math.cos(longAngle), 0, Math.sin(longAngle));
+  const shortEdge = new THREE.Vector3(-longEdge.z, 0, longEdge.x);
+
+  const cos = Math.cos(bestAngle);
+  const sin = Math.sin(bestAngle);
+  const centerX = bestCenterU * cos - bestCenterV * sin;
+  const centerZ = bestCenterU * sin + bestCenterV * cos;
+
+  return {
+    longEdge,
+    shortEdge,
+    centerX,
+    centerZ,
+    halfLong: alongU ? bestHalfU : bestHalfV,
+    halfShort: alongU ? bestHalfV : bestHalfU,
+    yaw: Math.atan2(longEdge.z, longEdge.x),
+  };
+}
+
+function resolveFootprintBasisFromObject(object) {
   if (!object) {
-    return new THREE.Vector3(1, 0, 0);
+    return {
+      longEdge: new THREE.Vector3(1, 0, 0),
+      shortEdge: new THREE.Vector3(0, 0, 1),
+      centerX: 0,
+      centerZ: 0,
+      halfLong: 0.5,
+      halfShort: 0.5,
+      yaw: 0,
+    };
   }
 
   object.updateWorldMatrix(true, true);
+  _footprintPoints.length = 0;
+  _footprintPoints.push(...collectWeightedFootprintPoints(object));
+
+  if (_footprintPoints.length >= 4) {
+    const mbr = resolveMinimumAreaBoundingRectangle(_footprintPoints);
+    if (mbr) {
+      return mbr;
+    }
+  }
+
   _footprintSamples.length = 0;
   object.traverse((child) => {
     appendMeshFootprintCorners(child, _footprintSamples);
   });
 
   if (_footprintSamples.length >= 8) {
-    return resolveHorizontalAxisFromFootprint(_footprintSamples);
+    const longEdge = resolveHorizontalAxisFromFootprint(_footprintSamples);
+    const shortEdge = new THREE.Vector3(-longEdge.z, 0, longEdge.x);
+    const box = new THREE.Box3().setFromObject(object);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(_size);
+    const halfLong = Math.max(
+      Math.abs(size.x * longEdge.x + size.z * longEdge.z) * 0.5,
+      0.5,
+    );
+    const halfShort = Math.max(
+      Math.abs(size.x * shortEdge.x + size.z * shortEdge.z) * 0.5,
+      0.5,
+    );
+    return {
+      longEdge,
+      shortEdge,
+      centerX: center.x,
+      centerZ: center.z,
+      halfLong,
+      halfShort,
+      yaw: Math.atan2(longEdge.z, longEdge.x),
+    };
   }
 
-  return resolveHorizontalAxisFromBoundsSize(new THREE.Box3().setFromObject(object).getSize(_size));
+  const box = new THREE.Box3().setFromObject(object);
+  const size = box.getSize(_size);
+  const center = box.getCenter(new THREE.Vector3());
+  const longEdge = resolveHorizontalAxisFromBoundsSize(size);
+  const shortEdge = new THREE.Vector3(-longEdge.z, 0, longEdge.x);
+  return {
+    longEdge,
+    shortEdge,
+    centerX: center.x,
+    centerZ: center.z,
+    halfLong: Math.max(size.x * 0.5, 0.5),
+    halfShort: Math.max(size.z * 0.5, 0.5),
+    yaw: Math.atan2(longEdge.z, longEdge.x),
+  };
+}
+
+/** Footprint long-edge basis for top/bottom alignment and OBB overlay. */
+export function resolveFootprintLongEdge(object) {
+  const basis = resolveFootprintBasisFromObject(object);
+  return {
+    longEdge: basis.longEdge.clone(),
+    shortEdge: basis.shortEdge.clone(),
+  };
+}
+
+/** Oriented footprint bounds (XZ from MBR, Y from world AABB). */
+export function buildFootprintOrientedBounds(object) {
+  if (!object) return null;
+
+  object.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(object);
+  if (box.isEmpty()) return null;
+
+  const basis = resolveFootprintBasisFromObject(object);
+  const centerY = (box.min.y + box.max.y) * 0.5;
+  const halfY = Math.max((box.max.y - box.min.y) * 0.5, 0.5);
+
+  return {
+    center: new THREE.Vector3(basis.centerX, centerY, basis.centerZ),
+    halfExtents: new THREE.Vector3(
+      Math.max(basis.halfLong, 0.5),
+      halfY,
+      Math.max(basis.halfShort, 0.5),
+    ),
+    yaw: basis.yaw,
+    longEdge: basis.longEdge.clone(),
+    shortEdge: basis.shortEdge.clone(),
+  };
+}
+
+/** Major horizontal axis for top/bottom camera roll (Fragments-safe mesh bbox sampling). */
+export function resolveFootprintHorizontalAxis(object) {
+  return resolveFootprintLongEdge(object).longEdge;
 }
 
 function buildViewBasis(direction, footprintRight = null) {

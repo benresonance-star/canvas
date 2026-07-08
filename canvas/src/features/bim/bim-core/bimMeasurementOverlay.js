@@ -17,6 +17,8 @@ import {
 } from './bimRlMeasure.js';
 
 const HOVER_COLOR = 0x34d399;
+const LABEL_HIGHLIGHT_BG = 'rgba(52, 211, 153, 0.35)';
+const LABEL_HIGHLIGHT_BORDER = 'rgba(52, 211, 153, 0.75)';
 const MEASUREMENT_COLOR = 0x60a5fa;
 const DRAFT_COLOR = MEASUREMENT_COLOR;
 const SAVED_COLOR = MEASUREMENT_COLOR;
@@ -147,13 +149,14 @@ function addRlMarkerVisual(group, {
   markerRadius,
   pickMeta = null,
   selected = false,
+  highlighted = false,
   showDelete = false,
   onDelete = null,
   deleteTitle = 'Delete',
 }) {
   const markerColor = selected ? SELECTED_RL_COLOR : color;
   group.add(createCrossSphereMarker(position, markerColor, markerRadius, pickMeta));
-  const labelObject = createLabel(label, { showDelete, onDelete, deleteTitle });
+  const labelObject = createLabel(label, { showDelete, onDelete, deleteTitle, highlighted });
   labelObject.position.set(...labelOffsetPosition(position, markerRadius));
   group.add(labelObject);
 }
@@ -163,9 +166,18 @@ function isSelectedRlPick(selectedRlPick, pickMeta) {
   return selectedRlPick.kind === pickMeta.kind && selectedRlPick.id === pickMeta.id;
 }
 
-function createLabel(text, { showDelete = false, onDelete, deleteTitle = 'Delete' } = {}) {
+function isHighlightedHudItem(highlightedHudItem, pickMeta) {
+  if (!highlightedHudItem || !pickMeta) return false;
+  return highlightedHudItem.kind === pickMeta.kind && highlightedHudItem.id === pickMeta.id;
+}
+
+function createLabel(text, { showDelete = false, onDelete, deleteTitle = 'Delete', highlighted = false } = {}) {
   const element = document.createElement('div');
   element.className = 'sans flex items-center gap-1 px-1.5 py-0.5 rounded bg-surface/90 border border-border text-[10px] text-primary whitespace-nowrap';
+  if (highlighted) {
+    element.style.backgroundColor = LABEL_HIGHLIGHT_BG;
+    element.style.borderColor = LABEL_HIGHLIGHT_BORDER;
+  }
 
   const textSpan = document.createElement('span');
   textSpan.textContent = text;
@@ -229,6 +241,7 @@ function addMeasurementVisual(group, {
   color,
   markerRadius,
   showEndMarker = true,
+  highlighted = false,
   showDelete = false,
   onDelete = null,
   deleteTitle = 'Delete measurement',
@@ -238,7 +251,7 @@ function addMeasurementVisual(group, {
   if (showEndMarker) {
     group.add(createMarker(end, color, markerRadius));
   }
-  const labelObject = createLabel(label, { showDelete, onDelete, deleteTitle });
+  const labelObject = createLabel(label, { showDelete, onDelete, deleteTitle, highlighted });
   labelObject.position.set(...midpoint(start, end));
   group.add(labelObject);
 }
@@ -250,6 +263,7 @@ function addPolylineVisual(group, {
   markerRadius,
   closed = false,
   emphasizeFirst = false,
+  highlighted = false,
   showDelete = false,
   onDelete = null,
   deleteTitle = 'Delete measurement',
@@ -261,7 +275,7 @@ function addPolylineVisual(group, {
     const radius = emphasizeFirst && index === 0 ? markerRadius * 1.2 : markerRadius;
     group.add(createMarker(position, color, radius));
   });
-  const labelObject = createLabel(label, { showDelete, onDelete, deleteTitle });
+  const labelObject = createLabel(label, { showDelete, onDelete, deleteTitle, highlighted });
   labelObject.position.set(...centroid(positions));
   group.add(labelObject);
 }
@@ -298,6 +312,7 @@ export function createBimMeasurementOverlay({ scene, container }) {
       measurements = [],
       rlDatum = null,
       selectedRlPick = null,
+      highlightedHudItem = null,
       draftStart = null,
       draftPoints = [],
       previewEnd = null,
@@ -332,6 +347,7 @@ export function createBimMeasurementOverlay({ scene, container }) {
           markerRadius: markerRadius * 1.1,
           pickMeta: datumPick,
           selected: isSelectedRlPick(selectedRlPick, datumPick),
+          highlighted: isHighlightedHudItem(highlightedHudItem, datumPick),
           showDelete,
           onDelete: showDelete && onDeleteDatum ? () => onDeleteDatum() : null,
           deleteTitle: 'Delete datum',
@@ -353,6 +369,7 @@ export function createBimMeasurementOverlay({ scene, container }) {
             markerRadius,
             pickMeta: { kind: 'rl', id: measurement.id },
             selected: isSelectedRlPick(selectedRlPick, { kind: 'rl', id: measurement.id }),
+            highlighted: isHighlightedHudItem(highlightedHudItem, { kind: 'rl', id: measurement.id }),
             showDelete,
             onDelete: showDelete && onDeleteMeasurement
               ? () => onDeleteMeasurement(measurement.id)
@@ -362,6 +379,7 @@ export function createBimMeasurementOverlay({ scene, container }) {
           return;
         }
         if (measurement.kind === 'polyline') {
+          const pickMeta = { kind: 'polyline', id: measurement.id };
           addPolylineVisual(group, {
             points: measurement.points,
             label: formatPolylineMeasurementLabel({
@@ -373,6 +391,7 @@ export function createBimMeasurementOverlay({ scene, container }) {
             color: SAVED_COLOR,
             markerRadius,
             closed: measurement.closed,
+            highlighted: isHighlightedHudItem(highlightedHudItem, pickMeta),
             showDelete,
             onDelete: showDelete && onDeleteMeasurement
               ? () => onDeleteMeasurement(measurement.id)
@@ -382,12 +401,14 @@ export function createBimMeasurementOverlay({ scene, container }) {
         }
         if (measurement.kind !== 'segment') return;
 
+        const pickMeta = { kind: 'segment', id: measurement.id };
         addMeasurementVisual(group, {
           start: measurement.start.position,
           end: measurement.end.position,
           label: formatMeasurementDistance(measurement.distance, units, modelUnits),
           color: SAVED_COLOR,
           markerRadius,
+          highlighted: isHighlightedHudItem(highlightedHudItem, pickMeta),
           showDelete,
           onDelete: showDelete && onDeleteMeasurement
             ? () => onDeleteMeasurement(measurement.id)

@@ -927,26 +927,33 @@ Canvas BIM ships a **view navigator gimbal** in the viewport top-right (`BimView
 
 ### Camera framing implementation
 - Shared fit API: `fitCameraToViewPreset()` in `canvas/src/features/threeDArtifact/utils/cameraFit.js`.
-- Top/Bottom use `resolveFootprintHorizontalAxis()` (PCA on mesh bbox corners in world XZ, Fragments-safe) + `alignAxisPresetAzimuth()` (rotate camera around world Y so footprint axis is screen-horizontal).
+- Top/Bottom use `resolveFootprintLongEdge()` — area-weighted XZ footprint samples + minimum-area bounding rectangle (MBR), Fragments-safe — exposed via `resolveFootprintHorizontalAxis()` + `alignAxisPresetAzimuth()` (rotate camera around world Y so the long edge is screen-horizontal).
 - Small **pole nudge** (`AXIS_VIEW_POLE_NUDGE_FRACTION`) offsets the camera slightly off the exact orbit pole so OrbitControls can rotate at plan/ceiling views.
 - Top/Bottom keyboard walk uses screen-aligned axes (`resolveAxisViewWalkAxes` in `bimCameraKeyboardNav.js`).
+- Viewport toolbar is **viewport-centred** with the gimbal **absolutely positioned** top-right; gimbal label uses a **fixed width** so toolbar controls do not shift when the view label changes.
 
-### Known limitations (2026-07-08)
+### Known limitations (2026-07-09)
 1. **Long-edge alignment is heuristic, not IFC-specific.** Axis comes from geometry in the scene, not `IfcSite.RefDirection`.
-2. **Unweighted PCA** on all mesh bbox corners can mis-rank the dominant building long edge on **L-shaped footprints** and **multi-mesh sites** (trees, pools, furniture weighted equally with slabs).
-3. **Bounding box overlay** (§18.6) draws a **world-axis AABB**, not the footprint-oriented box used for framing — so the orange box can appear skewed relative to aligned model edges in Top view.
+2. **MBR is geometry-only.** Very sparse or highly fragmented models may still pick a suboptimal long edge; no per-discipline overrides.
 
-### Planned improvement (next engineering)
-Replace PCA with a **model-agnostic footprint long-edge resolver** (area-weighted XZ samples + minimum-area bounding rectangle) and use the **same oriented basis** for both Top/Bottom azimuth alignment and the bounding box overlay OBB.
+## 18.6 Bounding box overlay (shipped MVP, updated 2026-07-09)
 
-## 18.6 Bounding box overlay (shipped MVP, 2026-07-08)
-
-- Toolbar toggle (`BoxSelect` icon) immediately **left of wireframe** in the display group (`BimViewport.jsx`).
+- Toolbar toggle (`BoxSelect` icon) immediately **right of** the **Color by IFC type** toggle (`Palette` icon) and **left of wireframe** in the display group (`BimViewport.jsx`).
 - Viewport-local toggle (not persisted in workspace state in v1).
-- Renders world-space **axis-aligned** edges from `Box3.setFromObject(modelRoot)` via `bimBoundingBoxOverlay.js` on the wireframe overlay scene.
-- Uses the same `modelBoundsRef` min/max as sectioning (`syncModelBounds` → `buildViewportBoundsFromBox3`).
+- Renders a **footprint-oriented OBB** from `buildFootprintOrientedBounds()` in `cameraFit.js` via `bimBoundingBoxOverlay.js` on the wireframe overlay scene — same area-weighted MBR basis as Top/Bottom alignment.
+- World AABB in `modelBoundsRef` remains for sectioning / fit distance (`syncModelBounds` → `buildViewportBoundsFromBox3`).
 
-**Known limitation:** overlay is a world AABB; it will not hug rotated building edges until footprint OBB lands (see §18.5).
+## 18.7 Color-by IFC type (shipped MVP, 2026-07-09)
+
+- Toolbar toggle (`Palette` icon) immediately **left of bounding box** in the display group (`BimViewport.jsx`).
+- Sets workspace `displayMode: 'colorBy'` and `colorByProperty: 'ifcClass'` (persisted in IndexedDB workspace state).
+- **Standard render:** tints all model elements by IFC class using stable palette colours from `bimColorBy.js` (`applyColorByHighlight` via Fragments `highlight`).
+- **Clay render:** falls back to highlight (no type colouring in v1).
+- **BQL / agent:** `view.mode: 'colorBy'` with `colorByProperty` still supported; active query `viewerState` takes precedence over toolbar defaults. Query result subset colours when `highlightElementIds` is non-empty; otherwise full model.
+- **Selection accent:** selected element keeps orange highlight material on top of class colour.
+- **Element table:** when colour-by is active, each row shows a leading swatch matching the viewport class colour (`BimElementTable.jsx`).
+
+**Deferred:** colour legend overlay, clay-render type colouring, per-subtype palettes beyond shared `ifcClass` key.
 
 ---
 
@@ -985,6 +992,7 @@ If a physical member of a semantic assembly is selected, the inspector should be
 - **Search + class filter:** `tableSearch` matches name, class, GlobalId, type, storey, and visible column values; `ifcClassFilter` narrows by IFC class.
 - **Floating side panels (2026-07-06):** element list (left) and inspector (right) are **overlay HUDs** over the full viewport (`BimFloatingSidePanel.jsx`), not docked columns — opening/closing or resizing them does **not** shrink the canvas or move the toolbar. Width adjustable 240–720 px (default 320 / 320) via invisible inner-edge drag handles (`leftPanelWidth`, `rightPanelWidth` persisted). Panels span `top-14` → `bottom-3` below the floating toolbar band.
 - **Grid styling:** inset vertical column dividers; horizontal row borders; search input retains focus while typing (regression-tested).
+- **Color-by swatches (2026-07-09):** when `displayMode === 'colorBy'`, a leading colour square per row matches the viewport IFC-class palette (`bimColorBy.js`); tooltip shows class name.
 
 # 20. Canvas BIM host requirements
 
@@ -1251,7 +1259,7 @@ The first vertical slice ships **inside Canvas** as `canvas/src/features/bim/`, 
 |---|---|---|
 | Stage 0 — foundations | **Done** | Stack locked: web-ifc + That Open Fragments + Three.js; pipeline version constants in `versions.js` |
 | Stage 1 — IFC evidence viewer MVP | **Mostly done (Canvas host)** | Prep pipeline, cache, viewer, **configurable element table + floating resizable side panels**, **inspector attribute search + wrapping property grid**, selection sync, cache rebuild shipped; standalone shell and filesystem cache layout deferred |
-| Stage 2 — BQL + agent | **Mostly done** | BQL validator + executor + manual query panel + query-driven viewer/table shipped; **`BimAgentHud`** with local NL rules + Canvas agent connectors (OpenAI/Ollama), validator → executor → viewer/table loop; saved BQL queries (max 20, persisted in workspace). **`colorBy` viewport application** still deferred |
+| Stage 2 — BQL + agent | **Mostly done** | BQL validator + executor + manual query panel + query-driven viewer/table shipped; **`BimAgentHud`** with local NL rules + Canvas agent connectors (OpenAI/Ollama), validator → executor → viewer/table loop; saved BQL queries (max 20, persisted in workspace). **`colorBy` viewport application** shipped (toolbar IFC-class mode + BQL `view.mode: 'colorBy'`) |
 | Stage 2b — 4D/5D analysis HUDs | **Partial (MVP)** | Canvas-first construction-sequence and cost-takeoff HUDs; not full CPM/Gantt or estimating platform — see §29.3 |
 | Stage 2c — environmental analysis (sun study) | **Partial (MVP)** | Visual sun study + saved view carousel shipped; Meeus/NOAA apparent solar position, DST toggle, cast shadows, sun path grid/compass overlay, optional sky/tracker, clay sun direction; numeric daylight/heat analysis and time animation playback deferred — see §29.3 |
 | Stage 3 — semantic assemblies | **Partial** | Archicad `Canvas.*` projection, member inspector, and BQL window query (`IfcWindow` + `WindowAssembly`) shipped; assembly table, assembly selection, and assembly inspector deferred |
@@ -1384,7 +1392,7 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 - **BimQueryPanel** provides JSON BQL editor with presets (all beams, ground floor, windows incl. `WindowAssembly`).
 - Query results drive viewer display mode and filter the element table; evidence bundle returned per result.
 - **Saved BQL queries** (2026-07-05): `saveBqlQuery` persists up to 20 named queries in workspace state (`savedQueries`); save/load/delete in `BimBqlHud` and `BimQueryPanel` via `useBimBqlPanel.js`.
-- **BIM agent HUD** (2026-07-05): floating `BimAgentHud` with chat transcript and connector picker. Local regex/NL → BQL drafting via `draftBqlFromNaturalLanguage` in `bimAgent.js`; LLM path via existing Canvas agent connectors (`bimLlmAgent.js`, `useBimAgentPanel.js`) with JSON parse → validate → auto-repair loop. Storey clarification flow; formatted responses via `buildBimAgentResponse` in `bimAgentResponse.js`. **`colorBy` not applied in viewport** (validated in BQL only).
+- **BIM agent HUD** (2026-07-05): floating `BimAgentHud` with chat transcript and connector picker. Local regex/NL → BQL drafting via `draftBqlFromNaturalLanguage` in `bimAgent.js`; LLM path via existing Canvas agent connectors (`bimLlmAgent.js`, `useBimAgentPanel.js`) with JSON parse → validate → auto-repair loop. Storey clarification flow; formatted responses via `buildBimAgentResponse` in `bimAgentResponse.js`. **`colorBy` applied in viewport** (2026-07-09) — see §18.7.
 - **Saved result sets** (2026-07-05): `savedResultSets` in workspace state; create from current selection or BQL results; consumed by 4D task linking and 5D `groupBy: 'resultSet'`.
 - **4D sequencing (MVP)** (2026-07-05): toolbar calendar button opens `Bim4dHud`. **Shipped:** sequence/task CRUD (limits: 12 sequences / 200 tasks), prev/next active-task stepping, link tasks to element IDs, assembly IDs, and saved result sets, active-task viewport highlight (`ghostOthers`). **Deferred:** `ghostFuture` / `hideFuture` visibility modes, playback animation (`playing`, `speed`), Gantt / timeline UI, full date/status editing UI.
 - **5D takeoff (MVP)** (2026-07-05): toolbar dollar button opens `Bim5dHud`. **Shipped:** cost plans with rate rows, IFC quantity rollup (Area / Volume / Length from `ifc-quantity` properties), group-by class / type / storey / layer / semantic type / classification / result set, row click → viewport element highlight. **Deferred:** rate-row match-criteria editor in HUD (backend supports `match.ifcClass/storey/...`), external cost DB, export.
@@ -1423,16 +1431,17 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 | `/packages/bim-core` + `/packages/bim-viewer-ui` split | Monolithic `features/bim/` module |
 | Filesystem cache (`model-cache/<fingerprint>/`) | IndexedDB via `createIndexedDbBimRepository()` |
 | Embedded SQL (`bim-index.db`) | In-memory JS objects stored in IndexedDB |
-| NL BIM agent side panel | **Shipped (MVP)** — `BimAgentHud` with local rules + LLM connectors; validator → executor → viewer/table loop; `colorBy` viewport apply still deferred |
+| NL BIM agent side panel | **Shipped (MVP)** — `BimAgentHud` with local rules + LLM connectors; validator → executor → viewer/table loop; `colorBy` viewport apply shipped (§18.7) |
 | 4D construction sequencing | **Partial (MVP)** — sequence/task HUD + active-task highlight; not full CPM/Gantt, playback, or future-task visibility modes |
 | 5D cost takeoff | **Partial (MVP)** — cost-plan HUD + IFC quantity rollup; not full rate matching UI, external cost DB, or export |
 | Environmental / sun study | **Partial (MVP)** — visual sun study HUD + Meeus/NOAA apparent solar position + DST toggle + cast shadows + sun path grid/compass overlay; animation playback loop, numeric daylight, and heat/solar-gain analysis deferred |
 | Saved view sets | **Shipped (MVP)** — IndexedDB-backed carousel with thumbnails; server sync and drag reorder deferred |
 | Wireframe overlay | Shipped — toggle + style controls (weight, transparency, colour, Hdn/All); clay + wireframe compositing with depth-only screen pass for hidden lines; selected-element edge highlight deferred |
 | RL height markers + datum | **Shipped (MVP)** — cross-sphere markers, singleton datum, per-marker datum-relative toggle, floating measurement tools HUD, viewport edit mode with × delete on labels; BIM viewport only (`enableRlOptions`) |
-| View navigator gimbal | **Shipped (MVP)** — wireframe cube gimbal top-right; right-click Home/Top/Bottom; `fitCameraToViewPreset` + footprint PCA azimuth alignment; world-up OrbitControls at plan/ceiling views (`BimViewNavigatorGimbal.jsx`, `bimViewNavigator.js`, `cameraFit.js`) |
-| Bounding box overlay | **Shipped (MVP)** — toolbar toggle left of wireframe; world AABB edges on overlay scene (`bimBoundingBoxOverlay.js`); footprint OBB deferred |
-| `colorBy` display mode | Validated in BQL but not applied in viewport |
+| View navigator gimbal | **Shipped (MVP)** — wireframe cube gimbal top-right; right-click Home/Top/Bottom; `fitCameraToViewPreset` + footprint MBR long-edge alignment; fixed-width label; viewport-centred toolbar (`BimViewNavigatorGimbal.jsx`, `bimViewNavigator.js`, `cameraFit.js`) |
+| Bounding box overlay | **Shipped (MVP)** — toolbar toggle left of wireframe; footprint **OBB** edges on overlay scene (`bimBoundingBoxOverlay.js`, `buildFootprintOrientedBounds` in `cameraFit.js`) |
+| Color-by IFC type | **Shipped (MVP)** — toolbar `Palette` toggle; `displayMode: colorBy` + `colorByProperty: ifcClass`; element-table swatches; BQL `colorBy` supported (`bimColorBy.js`) |
+| `colorBy` display mode (BQL only) | **Superseded** — now applied in viewport (§18.7) |
 | Saved BQL queries | Shipped — up to 20 persisted in workspace; save/load/delete in BQL HUD |
 | Workspace state on card `version.bim` | Style settings (`version.bim.styleSettings`) read on init and debounced write-back on change; other workspace fields remain IndexedDB-only |
 | IFC schema in fingerprint | Hardcoded `'unknown'` until schema detection lands |
@@ -1441,9 +1450,8 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 
 ## 29.5 Next engineering moves
 
-1. Footprint **long-edge resolver** (area-weighted MBR) shared by Top/Bottom alignment and bounding box OBB overlay.
-2. `colorBy` view instruction application in viewport.
-3. Assembly-aware table mode and assembly-level selection/inspector.
+1. Color-by **legend** overlay and clay-render type colouring.
+2. Assembly-aware table mode and assembly-level selection/inspector.
 4. Sun study geo time animation playback loop + debounced persistence while scrubbing.
 5. Daylight / heat analysis modules on top of `environmentalAnalysis` (result artifacts, not viewport-only state).
 6. 4D playback + future-task visibility modes (`ghostFuture` / `hideFuture`) + timeline / Gantt UI.

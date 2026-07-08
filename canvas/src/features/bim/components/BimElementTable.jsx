@@ -1,5 +1,10 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, GripVertical } from 'lucide-react';
+import {
+  BIM_COLOR_BY_DEFAULT_PROPERTY,
+  resolveColorByGroupKey,
+  resolveElementColorByPaletteColor,
+} from '../bim-core/bimColorBy.js';
 import { buildPropertiesByElement } from '../bim-core/bimSectioning.js';
 import {
   addTableColumn,
@@ -14,6 +19,25 @@ import {
   tableColumnLabel,
   updateTableColumnField,
 } from '../bim-core/bimTableColumns.js';
+
+const COLOR_BY_SWATCH_GRID_COLUMN = '1.25rem';
+
+function ElementColorSwatch({ color, label, selected = false }) {
+  return (
+    <span
+      className="flex items-center justify-center px-1 py-1.5"
+      title={label}
+      aria-label={label ? `Color group: ${label}` : undefined}
+    >
+      <span
+        className={`h-2.5 w-2.5 shrink-0 rounded-sm border ${
+          selected ? 'border-on-accent/50' : 'border-border/70'
+        }`}
+        style={{ backgroundColor: color }}
+      />
+    </span>
+  );
+}
 
 function groupCatalog(catalog) {
   const byGroup = new Map();
@@ -307,6 +331,8 @@ export function BimElementTable({
   columns,
   tableSort = { columnId: null, direction: null },
   title = 'Elements',
+  colorByActive = false,
+  colorByProperty = null,
   onSearchChange,
   onIfcClassFilterChange,
   onColumnsChange,
@@ -331,10 +357,12 @@ export function BimElementTable({
     () => [...new Set(elements.map((element) => element.ifcClass).filter(Boolean))].sort(),
     [elements],
   );
-  const gridTemplate = useMemo(
-    () => tableColumnGridTemplate(columns),
-    [columns],
-  );
+  const gridTemplate = useMemo(() => {
+    const base = tableColumnGridTemplate(columns);
+    return colorByActive ? `${COLOR_BY_SWATCH_GRID_COLUMN} ${base}` : base;
+  }, [colorByActive, columns]);
+  const effectiveColorByProperty = colorByProperty ?? BIM_COLOR_BY_DEFAULT_PROPERTY;
+  const preparedModel = useMemo(() => ({ properties }), [properties]);
 
   useEffect(() => {
     if (catalog.some((entry) => entry.field === addColumnField)) return;
@@ -514,6 +542,9 @@ export function BimElementTable({
         className="relative shrink-0 grid gap-0 overflow-visible border-b border-border px-2"
         style={{ gridTemplateColumns: gridTemplate }}
       >
+        {colorByActive ? (
+          <div className="py-1.5" aria-hidden="true" />
+        ) : null}
         {columns.map((column, index) => (
           <div
             key={column.id}
@@ -580,6 +611,13 @@ export function BimElementTable({
       <div className="flex-1 min-h-0 overflow-auto">
         {sortedRows.map((element) => {
           const elementProperties = propertiesByElement.get(element.id) ?? [];
+          const isSelected = selectedElementId === element.id;
+          const colorGroupLabel = colorByActive
+            ? String(resolveColorByGroupKey(element, effectiveColorByProperty, preparedModel))
+            : null;
+          const colorSwatch = colorByActive
+            ? resolveElementColorByPaletteColor(element, effectiveColorByProperty, preparedModel)
+            : null;
           return (
             <button
               key={element.id}
@@ -588,15 +626,22 @@ export function BimElementTable({
                 else rowRefs.current.delete(element.id);
               }}
               type="button"
-              aria-current={selectedElementId === element.id ? 'true' : undefined}
+              aria-current={isSelected ? 'true' : undefined}
               onClick={() => onSelectElement(element.id)}
               className={`w-full grid gap-0 px-2 text-left text-xs border-b border-border/70 ${
-                selectedElementId === element.id
+                isSelected
                   ? 'bg-accent text-on-accent'
                   : 'text-secondary hover:bg-surface-muted'
               }`}
               style={{ gridTemplateColumns: gridTemplate }}
             >
+              {colorByActive ? (
+                <ElementColorSwatch
+                  color={colorSwatch}
+                  label={colorGroupLabel}
+                  selected={isSelected}
+                />
+              ) : null}
               {columns.map((column, columnIndex) => {
                 const value = resolveTableColumnValue(element, elementProperties, column);
                 const isMono = column.field === 'element:ifcGlobalId' || column.field === 'element:expressId';

@@ -36,4 +36,17 @@ describe('bimBoundingBoxOverlay', () => {
     expect(overlayScene.children).toHaveLength(1);
     disposeModelBoundingBoxEdges(next);
   });
+
+  it('creates oriented edges with yaw rotation', () => {
+    const yaw = Math.PI / 4;
+    const lines = createModelBoundingBoxEdges({
+      center: new THREE.Vector3(0, 2, 0),
+      halfExtents: new THREE.Vector3(10, 2, 4),
+      yaw,
+    });
+    expect(lines).toBeTruthy();
+    expect(lines.rotation.y).toBeCloseTo(yaw, 5);
+    expect(lines.position.y).toBe(2);
+    disposeModelBoundingBoxEdges(lines);
+  });
 });

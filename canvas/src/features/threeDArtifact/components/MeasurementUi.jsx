@@ -28,6 +28,16 @@ function clamp(value, min, max) {
 /** Extra gap between the viewport toolbar and the measurement HUD. */
 export const MEASUREMENT_HUD_TOOLBAR_GAP = 5;
 
+export function countMeasurementHudEntries(measurements = [], rlDatum = null) {
+  const datumLive = isRlDatumLive(rlDatum);
+  return measurements.length + (datumLive ? 1 : 0);
+}
+
+function buildHudHighlightItem(kind, id) {
+  if (!kind || !id) return null;
+  return { kind, id };
+}
+
 /** Viewport-safe fixed position for the measurement HUD below the ruler button. */
 export function resolveMeasurementHudStyle({
   anchorRect,
@@ -426,6 +436,8 @@ export function MeasurementsListPanel({
   rlDatum = null,
   onMeasurementsVisibleChange,
   onRemoveMeasurement,
+  onDeleteAllMeasurements,
+  onHighlightedHudItemChange,
   onRlDatumValueChange,
   onDeleteRlDatum,
   onReplaceRlDatum,
@@ -438,9 +450,20 @@ export function MeasurementsListPanel({
 
   const distanceMeasurements = measurements.filter((entry) => entry.kind !== 'rl');
   const rlMeasurements = measurements.filter((entry) => entry.kind === 'rl');
+  const showDeleteAll = countMeasurementHudEntries(measurements, rlDatum) >= 3;
+
+  const handleRowEnter = (highlightItem) => {
+    onHighlightedHudItemChange?.(highlightItem);
+  };
+
+  const handlePanelLeave = () => {
+    onHighlightedHudItemChange?.(null);
+  };
+
+  const rowHoverClass = 'rounded px-1 -mx-1 transition hover:bg-accent/10';
 
   return (
-    <div className={className}>
+    <div className={className} onMouseLeave={handlePanelLeave}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="text-[10px] uppercase tracking-wider text-muted">Measurements</div>
         <button
@@ -460,7 +483,10 @@ export function MeasurementsListPanel({
       </div>
       <div className="flex flex-col gap-1 max-h-40 overflow-y-auto">
         {datumLive && (
-          <div className="flex items-center justify-between gap-2 rounded border border-accent/30 bg-accent/5 px-2 py-1 text-xs text-secondary">
+          <div
+            className={`flex items-center justify-between gap-2 rounded border border-accent/30 bg-accent/5 px-2 py-1 text-xs text-secondary ${rowHoverClass}`}
+            onMouseEnter={() => handleRowEnter(buildHudHighlightItem('datum', rlDatum.id))}
+          >
             <div className="flex items-center gap-2">
               <RlColorSwatch color={RL_DATUM_MARKER_COLOR} />
               <span>Datum · RL {Number(rlDatum.rlValue ?? 0).toFixed(3)}</span>
@@ -489,7 +515,11 @@ export function MeasurementsListPanel({
           const measuredFromDatum = measurement.measuredFromDatum === true && datumLive;
           const markerColor = getRlMarkerColor(measuredFromDatum, datumLive);
           return (
-            <div key={measurement.id} className="flex items-center justify-between gap-2 text-xs text-secondary">
+            <div
+              key={measurement.id}
+              className={`flex items-center justify-between gap-2 text-xs text-secondary ${rowHoverClass}`}
+              onMouseEnter={() => handleRowEnter(buildHudHighlightItem('rl', measurement.id))}
+            >
               <div className="flex min-w-0 flex-col gap-0.5">
                 <div className="flex items-center gap-2">
                   <RlColorSwatch color={markerColor} />
@@ -520,7 +550,11 @@ export function MeasurementsListPanel({
           );
         })}
         {distanceMeasurements.map((measurement, index) => (
-          <div key={measurement.id} className="flex items-center justify-between gap-2 text-xs text-secondary">
+          <div
+            key={measurement.id}
+            className={`flex items-center justify-between gap-2 text-xs text-secondary ${rowHoverClass}`}
+            onMouseEnter={() => handleRowEnter(buildHudHighlightItem(measurement.kind, measurement.id))}
+          >
             <span>
               {index + 1}. {formatMeasurementLabel(measurement, units, modelUnits)}
             </span>
@@ -535,6 +569,16 @@ export function MeasurementsListPanel({
           </div>
         ))}
       </div>
+      {showDeleteAll && (
+        <button
+          type="button"
+          title="Delete all measurements"
+          className="mt-2 w-full rounded border border-warning/40 px-2 py-1 text-[10px] uppercase tracking-wider text-warning transition hover:bg-warning/10"
+          onClick={() => onDeleteAllMeasurements?.()}
+        >
+          Delete all
+        </button>
+      )}
     </div>
   );
 }

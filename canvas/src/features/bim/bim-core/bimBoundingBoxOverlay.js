@@ -4,7 +4,7 @@ export const BOUNDING_BOX_COLOR = 0xea580c;
 export const BOUNDING_BOX_OPACITY = 0.95;
 export const BOUNDING_BOX_OVERLAY_DEPTH_TEST = false;
 
-function resolveBoxSize(bounds = {}) {
+function resolveAxisAlignedBoxSize(bounds = {}) {
   const min = bounds?.min;
   const max = bounds?.max;
   if (!min || !max) return null;
@@ -20,7 +20,31 @@ function resolveBoxSize(bounds = {}) {
       (min.y + max.y) / 2,
       (min.z + max.z) / 2,
     ),
+    yaw: 0,
   };
+}
+
+function resolveOrientedBoxSize(bounds = {}) {
+  const center = bounds?.center;
+  const halfExtents = bounds?.halfExtents;
+  if (!center || !halfExtents) return null;
+  const dx = halfExtents.x * 2;
+  const dy = halfExtents.y * 2;
+  const dz = halfExtents.z * 2;
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || !Number.isFinite(dz)) return null;
+  if (dx <= 0 || dy <= 0 || dz <= 0) return null;
+  const resolvedCenter = center instanceof THREE.Vector3
+    ? center.clone()
+    : new THREE.Vector3(center.x, center.y, center.z);
+  return {
+    size: new THREE.Vector3(dx, dy, dz),
+    center: resolvedCenter,
+    yaw: Number.isFinite(bounds.yaw) ? bounds.yaw : 0,
+  };
+}
+
+function resolveBoxSize(bounds = {}) {
+  return resolveOrientedBoxSize(bounds) ?? resolveAxisAlignedBoxSize(bounds);
 }
 
 export function createModelBoundingBoxEdges(bounds, options = {}) {
@@ -44,6 +68,7 @@ export function createModelBoundingBoxEdges(bounds, options = {}) {
   });
   const lines = new THREE.LineSegments(edgesGeometry, material);
   lines.position.copy(resolved.center);
+  lines.rotation.y = resolved.yaw;
   lines.frustumCulled = false;
   return lines;
 }

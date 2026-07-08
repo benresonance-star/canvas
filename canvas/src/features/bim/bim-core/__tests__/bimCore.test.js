@@ -146,6 +146,15 @@ describe('BIM core fingerprinting and cache', () => {
     });
   });
 
+  it('normalizes colorByProperty workspace field', () => {
+    expect(normalizeBimWorkspaceState({ colorByProperty: 'ifcClass' })).toMatchObject({
+      colorByProperty: 'ifcClass',
+    });
+    expect(normalizeBimWorkspaceState({ colorByProperty: '  ' })).toMatchObject({
+      colorByProperty: null,
+    });
+  });
+
   it('normalizes lighting workspace fields with HDRI off by default', () => {
     expect(normalizeBimWorkspaceState({})).toMatchObject({
       displayMode: 'highlight',

@@ -3,12 +3,14 @@ import { describe, expect, it } from 'vitest';
 import {
   allBoxCornersInsideCameraView,
   applySavedCameraState,
+  buildFootprintOrientedBounds,
   computeFitDistanceForBox,
   fitCameraToViewPreset,
   fitOrthographicCameraToDefaultView,
   fitPerspectiveCameraToCurrentView,
   fitPerspectiveCameraToDefaultView,
   resolveFootprintHorizontalAxis,
+  resolveFootprintLongEdge,
   resolveViewPresetDirection,
   syncOrbitControlsAfterCameraFit,
 } from '../cameraFit.js';
@@ -30,6 +32,32 @@ function createMockOrbitControls(camera, target = new THREE.Vector3()) {
     enableDamping: false,
     update() {},
   };
+}
+
+function createLShapedFootprint() {
+  const group = new THREE.Group();
+  const material = new THREE.MeshBasicMaterial();
+  const mainWing = new THREE.Mesh(new THREE.BoxGeometry(30, 1, 5), material);
+  group.add(mainWing);
+  const sideWing = new THREE.Mesh(new THREE.BoxGeometry(5, 1, 15), material);
+  sideWing.position.set(12.5, 0, 10);
+  group.add(sideWing);
+  group.updateWorldMatrix(true, true);
+  return group;
+}
+
+function createSlabWithClutter() {
+  const group = new THREE.Group();
+  const material = new THREE.MeshBasicMaterial();
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(40, 1, 6), material);
+  group.add(slab);
+  for (let index = 0; index < 20; index += 1) {
+    const clutter = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
+    clutter.position.set((index - 10) * 2.3, 0, ((index * 7) % 11) - 5);
+    group.add(clutter);
+  }
+  group.updateWorldMatrix(true, true);
+  return group;
 }
 
 describe('fitPerspectiveCameraToDefaultView', () => {
@@ -319,5 +347,60 @@ describe('fitCameraToViewPreset', () => {
       camera.matrixWorld.elements[2],
     ).normalize();
     expect(Math.abs(cameraRight.dot(footprintRight))).toBeCloseTo(1, 5);
+  });
+});
+
+describe('resolveFootprintLongEdge', () => {
+  it('picks the long wing edge for an L-shaped footprint instead of a PCA diagonal', () => {
+    const group = createLShapedFootprint();
+    const { longEdge } = resolveFootprintLongEdge(group);
+
+    expect(Math.abs(longEdge.x)).toBeCloseTo(1, 5);
+    expect(Math.abs(longEdge.z)).toBeCloseTo(0, 5);
+    expect(Math.abs(longEdge.dot(new THREE.Vector3(1, 0, 1).normalize()))).toBeLessThan(0.85);
+  });
+
+  it('ignores small clutter meshes when a dominant slab is present', () => {
+    const group = createSlabWithClutter();
+    const { longEdge } = resolveFootprintLongEdge(group);
+
+    expect(Math.abs(longEdge.x)).toBeCloseTo(1, 5);
+    expect(Math.abs(longEdge.z)).toBeCloseTo(0, 5);
+  });
+
+  it('aligns top view to the resolved long edge for L-shaped footprints', () => {
+    const group = createLShapedFootprint();
+    const { longEdge } = resolveFootprintLongEdge(group);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    const controls = createMockOrbitControls(camera);
+
+    fitCameraToViewPreset(camera, controls, group, 'top', { viewportAspect: 1 });
+
+    camera.updateMatrixWorld(true);
+    const cameraRight = new THREE.Vector3(
+      camera.matrixWorld.elements[0],
+      0,
+      camera.matrixWorld.elements[2],
+    ).normalize();
+    expect(Math.abs(cameraRight.dot(longEdge))).toBeCloseTo(1, 5);
+  });
+});
+
+describe('buildFootprintOrientedBounds', () => {
+  it('returns an oriented box aligned to the footprint long edge', () => {
+    const geometry = new THREE.BoxGeometry(20, 4, 5);
+    const material = new THREE.MeshBasicMaterial();
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.y = Math.PI / 4;
+    mesh.updateWorldMatrix(true, true);
+
+    const obb = buildFootprintOrientedBounds(mesh);
+    const { longEdge } = resolveFootprintLongEdge(mesh);
+
+    expect(obb).toBeTruthy();
+    expect(obb.halfExtents.x).toBeGreaterThan(obb.halfExtents.z);
+    expect(Math.abs(obb.longEdge.dot(longEdge))).toBeCloseTo(1, 5);
+    expect(obb.yaw).toBeCloseTo(Math.atan2(longEdge.z, longEdge.x), 5);
+    expect(obb.halfExtents.y).toBeCloseTo(2, 5);
   });
 });

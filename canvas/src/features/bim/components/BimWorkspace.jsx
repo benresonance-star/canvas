@@ -1135,7 +1135,10 @@ export function BimWorkspace({
             hiddenStoreys={workspaceState.hiddenStoreys}
             hiddenLayers={workspaceState.hiddenLayers}
             section={workspaceState.section}
-            colorByProperty={queryResult?.viewerState?.colorByProperty}
+            colorByProperty={
+              queryResult?.viewerState?.colorByProperty
+              ?? (workspaceState.displayMode === 'colorBy' ? (workspaceState.colorByProperty ?? 'ifcClass') : null)
+            }
             leftPanelOpen={leftPanelOpen}
             rightPanelOpen={rightPanelOpen}
             layersHudHeight={workspaceState.layersHudHeight}
@@ -1151,6 +1154,7 @@ export function BimWorkspace({
             onToggleLeftPanel={() => togglePanel('left')}
             onToggleRightPanel={() => togglePanel('right')}
             onDisplayModeChange={(displayMode) => patchWorkspaceState({ displayMode })}
+            onColorByPropertyChange={(colorByProperty) => patchWorkspaceState({ colorByProperty })}
             onIsolateOnSelectChange={(isolateOnSelect) => patchWorkspaceState({ isolateOnSelect })}
             onHiddenStoreysChange={(hiddenStoreys) => patchWorkspaceState({ hiddenStoreys })}
             onHiddenLayersChange={(hiddenLayers) => patchWorkspaceState({ hiddenLayers })}
@@ -1304,6 +1308,11 @@ export function BimWorkspace({
               columns={workspaceState.tableColumns}
               tableSort={workspaceState.tableSort}
               title={queryResult ? 'BQL result' : 'Elements'}
+              colorByActive={workspaceState.displayMode === 'colorBy'}
+              colorByProperty={
+                queryResult?.viewerState?.colorByProperty
+                ?? (workspaceState.displayMode === 'colorBy' ? (workspaceState.colorByProperty ?? 'ifcClass') : null)
+              }
               onSearchChange={(tableSearch) => patchWorkspaceState({ tableSearch })}
               onIfcClassFilterChange={(ifcClassFilter) => patchWorkspaceState({ ifcClassFilter })}
               onColumnsChange={(tableColumns) => patchWorkspaceState({ tableColumns })}

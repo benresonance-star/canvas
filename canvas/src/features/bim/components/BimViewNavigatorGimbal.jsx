@@ -11,6 +11,8 @@ export const VIEW_NAVIGATOR_PRESETS = [
 
 const GIMBAL_CUBE_SIZE_PX = 32;
 const FALLBACK_GIMBAL_EDGE_COLOR = 0x57534e;
+/** Fixed label width so view text changes do not resize the gimbal chrome. */
+export const VIEW_NAVIGATOR_LABEL_WIDTH_CLASS = 'w-[4.75rem]';
 
 function resolveGimbalEdgeColor() {
   if (typeof document === 'undefined') return FALLBACK_GIMBAL_EDGE_COLOR;
@@ -187,7 +189,7 @@ export function BimViewNavigatorGimbal({
         />
         <div
           ref={labelRef}
-          className="mt-0.5 max-w-[4.5rem] truncate text-center text-[8px] font-medium uppercase tracking-[0.14em] text-muted"
+          className={`mt-0.5 ${VIEW_NAVIGATOR_LABEL_WIDTH_CLASS} truncate text-center text-[8px] font-medium uppercase tracking-[0.14em] text-muted`}
           aria-live="polite"
         >
           ISO VIEW
