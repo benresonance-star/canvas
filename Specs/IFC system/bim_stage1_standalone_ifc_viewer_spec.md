@@ -280,17 +280,17 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Viewport boot | Yes — `bimViewportBoot.js` (layout wait, registration, fast sync, phased loading UI) |
 | Default open state | Yes — highlight display mode, standard render, all storeys/layers visible, **section cut off** (`BIM_VIEWER_DEFAULTS` + `applyBimViewerDefaults`) |
 | Style settings HUD | Yes — toolbar sliders icon toggles floating panel; background + presets always; HDRI lighting (standard only); clay/wireframe sliders + clay debug when active (`BimStyleSettingsHud.jsx`, `BimStyleToolbarControls.jsx`, `BimClayDebugPanel.jsx`) |
-| Viewport toolbar layout | Yes — **viewport-centred floating HUD** with gimbal **absolutely positioned** top-right; `flex-wrap` + reserved gimbal width; grouped sections: panels → measure → view → camera → display (incl. saved views) → tools; **Delete** cancels measurement; **isolate** toggle in reset-visibility group |
+| Viewport toolbar layout | Yes — **viewport-centred floating HUD** with gimbal **absolutely positioned** top-right; `flex-wrap` + reserved gimbal width; grouped sections: panels → measure → view → camera → display (incl. saved views) → tools; **Delete** cancels measurement; **isolate** toggle in reset-visibility group; left/right HUD stacks measured below toolbar / gimbal via `bimViewportLayout.js` |
 | Floating side panels | Yes — element list + inspector as **overlay HUDs** over full canvas (`BimFloatingSidePanel.jsx`); adjustable width 240–720 px; invisible resize handles; below toolbar (`top-14`) |
 | Saved view carousel | Yes — **floating bottom-centre HUD** (`max-w-[75vw]`, width adapts to thumbnails); `Images` toolbar icon |
 | Workspace header | Yes — single row: project title + element/property counts + cache status (no separate status strip) |
-| Storey / layer HUD | Yes — `BimLayersHud.jsx` + `bimLayerVisibility.js` |
+| Storey / layer HUD | Yes — `BimLayersHud.jsx` + `bimLayerVisibility.js` (left HUD stack, below toolbar) |
 | Style presets (server) | Yes — Postgres `bim_style_presets` + REST under `/bim/projects/:projectId/style-presets` |
-| Floating BQL / agent HUDs | Yes — `BimBqlHud.jsx`, `BimAgentHud.jsx` in viewport top-right stack |
-| Section cut | Yes — horizontal clipping plane + fill/edge overlay (`BimSectionHud.jsx`, `bimSectioning.js`); **off by default** on workspace open |
+| Floating BQL / agent HUDs | Yes — `BimBqlHud.jsx`, `BimAgentHud.jsx`, `Bim4dHud.jsx`, `Bim5dHud.jsx`, `BimStyleSettingsHud.jsx` in viewport **right HUD stack**, anchored below gimbal label (`--bim-viewport-right-hud-top`) |
+| Section cut | Yes — horizontal clipping plane + fill/edge overlay (`BimSectionHud.jsx`, `bimSectioning.js`); **off by default** on workspace open; left HUD stack |
 | Viewport loading feedback | Yes — phased boot overlay (`BIM_VIEWPORT_LOAD_PHASES`) with spinner + element count |
 | Perspective / orthographic | Yes — toolbar toggle + camera state persistence |
-| View navigator gimbal | Yes — top-right wireframe cube (absolute); right-click Home / Top / Bottom; footprint **MBR** long-edge azimuth + fixed-width label (`BimViewNavigatorGimbal.jsx`, `bimViewNavigator.js`, `cameraFit.js`) |
+| View navigator gimbal | Yes — top-right wireframe cube (absolute); right-click Home / Top / Bottom; footprint **MBR** long-edge azimuth + fixed-width label; right HUD panels sit below gimbal chrome (`BimViewNavigatorGimbal.jsx`, `bimViewNavigator.js`, `bimViewportLayout.js`, `cameraFit.js`) |
 | Bounding box overlay | Yes — toolbar toggle (right of **Color by IFC type**, left of wireframe); footprint **OBB** wireframe on overlay scene (`bimBoundingBoxOverlay.js`, `buildFootprintOrientedBounds` in `cameraFit.js`) |
 | Color-by IFC type | Yes — toolbar `Palette` toggle; `displayMode: colorBy` + `colorByProperty: ifcClass`; element-table swatches; BQL `colorBy` supported (`bimColorBy.js`) |
 | Measurements | Yes — vertex/edge snap, segment + polyline, units toggle; **Delete / Backspace** (or toolbar trash) cancels draft or exits measure mode; **Escape** closes fullscreen card; shared `MeasurementUi` with 3D artifact viewer |

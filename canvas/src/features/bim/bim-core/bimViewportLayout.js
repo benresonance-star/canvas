@@ -26,7 +26,18 @@ export function resolveBimViewportHudTopPx(toolbarBottomPx) {
   return toolbarBottomPx + BIM_VIEWPORT_CHROME_GAP_PX;
 }
 
-/** Top offset for left/right HUD stacks (`top-3`). */
+export function resolveBimViewportRightHudTopPx(gimbalBottomPx) {
+  return gimbalBottomPx + BIM_VIEWPORT_CHROME_GAP_PX;
+}
+
+export function readBimViewportHudTopPx(container) {
+  const raw = container?.style?.getPropertyValue?.('--bim-viewport-hud-top') ?? '';
+  const parsed = Number.parseFloat(raw);
+  if (Number.isFinite(parsed)) return parsed;
+  return resolveBimViewportHudTopPx(BIM_VIEWPORT_TOOLBAR_FALLBACK_BOTTOM_PX);
+}
+
+/** Top offset for left HUD stacks before layout is measured (`top-3`). */
 export const BIM_VIEWPORT_HUD_TOP_PX = 12;
 
 /** Bottom inset shared by carousel and floating chrome (`bottom-3`). */
@@ -36,20 +47,26 @@ export function resolveBimLayersHudMaxHeightPx({
   viewportHeight,
   carouselTopPx = null,
   gapPx = BIM_VIEWPORT_CHROME_GAP_PX,
+  hudTopPx = BIM_VIEWPORT_HUD_TOP_PX,
 } = {}) {
   const safeViewportHeight = Math.max(0, Number(viewportHeight) || 0);
+  const safeHudTopPx = Math.max(0, Number(hudTopPx) || 0);
   if (carouselTopPx != null && Number.isFinite(carouselTopPx)) {
-    return Math.max(0, carouselTopPx - BIM_VIEWPORT_HUD_TOP_PX - gapPx);
+    return Math.max(0, carouselTopPx - safeHudTopPx - gapPx);
   }
   return Math.max(
     0,
-    safeViewportHeight - BIM_VIEWPORT_HUD_TOP_PX - BIM_VIEWPORT_BOTTOM_INSET_PX - gapPx,
+    safeViewportHeight - safeHudTopPx - BIM_VIEWPORT_BOTTOM_INSET_PX - gapPx,
   );
 }
 
-export function applyBimViewportToolbarLayout(container, toolbarBottomPx) {
+export function applyBimViewportToolbarLayout(container, toolbarBottomPx, gimbalBottomPx = null) {
   if (!container) return;
   const hudTopPx = resolveBimViewportHudTopPx(toolbarBottomPx);
+  const rightHudTopPx = gimbalBottomPx != null
+    ? resolveBimViewportRightHudTopPx(gimbalBottomPx)
+    : hudTopPx;
   container.style.setProperty('--bim-viewport-toolbar-bottom', `${toolbarBottomPx}px`);
   container.style.setProperty('--bim-viewport-hud-top', `${hudTopPx}px`);
+  container.style.setProperty('--bim-viewport-right-hud-top', `${rightHudTopPx}px`);
 }

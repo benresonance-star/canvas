@@ -130,8 +130,10 @@ import {
   disposeBimSunLightingAdapter,
 } from '../bim-core/bimSunLighting.js';
 import {
+  applyBimViewportToolbarLayout,
   BIM_VIEWPORT_GIMBAL_RESERVE_CLASS,
   BIM_VIEWPORT_TOOLBAR_SURFACE_CLASS,
+  readBimViewportHudTopPx,
   resolveBimLayersHudMaxHeightPx,
 } from '../bim-core/bimViewportLayout.js';
 import {
@@ -434,6 +436,7 @@ export function BimViewport({
   const cameraViewDirectionRef = useRef(new THREE.Vector3(1, 0.65, 1).normalize());
   const controlsRef = useRef(null);
   const toolbarControlsRef = useRef(null);
+  const gimbalChromeRef = useRef(null);
   const [toolbarHeightPx, setToolbarHeightPx] = useState(32);
   const keyboardNavRef = useRef(null);
   const pointerWalkTargetRef = useRef(null);
@@ -2890,6 +2893,7 @@ export function BimViewport({
     setLayersHudMaxHeight(resolveBimLayersHudMaxHeightPx({
       viewportHeight: containerRect.height,
       carouselTopPx,
+      hudTopPx: readBimViewportHudTopPx(container),
     }));
   }, [viewCarouselOpen]);
 
@@ -3365,20 +3369,39 @@ export function BimViewport({
 
   useEffect(() => {
     const toolbarNode = toolbarControlsRef.current;
-    if (!toolbarNode) return undefined;
+    const container = containerRef.current;
+    if (!toolbarNode || !container) return undefined;
 
-    const syncToolbarHeight = () => {
+    const syncViewportChromeLayout = () => {
+      const containerRect = container.getBoundingClientRect();
+      const toolbarRect = toolbarNode.getBoundingClientRect();
+      const toolbarBottomPx = Math.max(0, Math.round(toolbarRect.bottom - containerRect.top));
+      let gimbalBottomPx = toolbarBottomPx;
+      const gimbalNode = gimbalChromeRef.current;
+      if (gimbalNode) {
+        const gimbalRect = gimbalNode.getBoundingClientRect();
+        gimbalBottomPx = Math.max(toolbarBottomPx, Math.round(gimbalRect.bottom - containerRect.top));
+      }
+      applyBimViewportToolbarLayout(container, toolbarBottomPx, gimbalBottomPx);
+    };
+
+    const syncToolbarLayout = () => {
       const nextHeight = Math.round(toolbarNode.getBoundingClientRect().height);
       if (nextHeight > 0) {
         setToolbarHeightPx(nextHeight);
       }
+      syncViewportChromeLayout();
+      syncLayersHudMaxHeight();
     };
 
-    syncToolbarHeight();
-    const observer = new ResizeObserver(syncToolbarHeight);
+    syncToolbarLayout();
+    const observer = new ResizeObserver(syncToolbarLayout);
     observer.observe(toolbarNode);
+    observer.observe(container);
+    const gimbalNode = gimbalChromeRef.current;
+    if (gimbalNode) observer.observe(gimbalNode);
     return () => observer.disconnect();
-  }, [loadState, measureHudOpen, measureEditMode, projectionMode, wireframeMode, boundingBoxMode, displayMode]);
+  }, [loadState, measureHudOpen, measureEditMode, projectionMode, wireframeMode, boundingBoxMode, displayMode, syncLayersHudMaxHeight]);
 
   const toolbarOverlay = (
     <div className="pointer-events-none absolute inset-x-0 top-3 z-30 px-3">
@@ -3387,13 +3410,17 @@ export function BimViewport({
           {toolbarControls}
         </div>
         {loadState === 'ready' ? (
-          <BimViewNavigatorGimbal
+          <div
+            ref={gimbalChromeRef}
             className="pointer-events-auto absolute right-0 top-0 shrink-0"
-            cubeSizePx={toolbarHeightPx}
-            getCameraQuaternion={() => cameraQuaternionRef.current}
-            getViewDirection={() => cameraViewDirectionRef.current}
-            onApplyPreset={applyViewPreset}
-          />
+          >
+            <BimViewNavigatorGimbal
+              cubeSizePx={toolbarHeightPx}
+              getCameraQuaternion={() => cameraQuaternionRef.current}
+              getViewDirection={() => cameraViewDirectionRef.current}
+              onApplyPreset={applyViewPreset}
+            />
+          </div>
         ) : null}
       </div>
     </div>
@@ -3439,7 +3466,8 @@ export function BimViewport({
         {loadState === 'ready' && (layersHudOpen || sectionHudOpen || sunStudyHudOpen) && (
           <div
             data-bim-viewport-hud-stack="left"
-            className="pointer-events-none absolute left-3 top-3 z-20 flex w-[min(calc(100%-1.5rem),19rem)] flex-col gap-2"
+            className="pointer-events-none absolute left-3 z-20 flex w-[min(calc(100%-1.5rem),19rem)] flex-col gap-2"
+            style={{ top: 'var(--bim-viewport-hud-top, 0.75rem)' }}
           >
             {sunStudyHudOpen && (
               <BimSunStudyHud
@@ -3482,7 +3510,11 @@ export function BimViewport({
         {loadState === 'ready' && (agentHudOpen || bqlHudOpen || styleHudOpen || fourDHudOpen || fiveDHudOpen) && (
           <div
             data-bim-viewport-hud-stack="right"
-            className="pointer-events-none absolute right-3 top-3 z-20 flex max-h-[calc(100%-1.5rem)] w-[min(calc(100%-1.5rem),30rem)] flex-col items-stretch gap-2 overflow-y-auto"
+            className="pointer-events-none absolute right-3 z-20 flex w-[min(calc(100%-1.5rem),30rem)] flex-col items-stretch gap-2 overflow-y-auto"
+            style={{
+              top: 'var(--bim-viewport-right-hud-top, var(--bim-viewport-hud-top, 0.75rem))',
+              maxHeight: 'calc(100% - var(--bim-viewport-right-hud-top, var(--bim-viewport-hud-top, 0.75rem)) - 0.75rem)',
+            }}
           >
             {agentHudOpen && (
               <BimAgentHud
