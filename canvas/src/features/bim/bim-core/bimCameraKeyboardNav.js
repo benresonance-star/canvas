@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { resolveAxisViewMode } from './bimViewNavigator.js';
 
 export const BIM_CAMERA_WALK_SHIFT_MULTIPLIER = 3;
 export const BIM_CAMERA_WALK_SPEED_RATIO = 0.35;
@@ -10,6 +11,7 @@ const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const _forward = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _delta = new THREE.Vector3();
+const _viewDirection = new THREE.Vector3();
 const _ndc = new THREE.Vector2();
 const _raycaster = new THREE.Raycaster();
 const _groundPlane = new THREE.Plane();
@@ -84,6 +86,32 @@ export function hasActiveBimCameraWalkInput(keyState = createEmptyKeyState()) {
     || keyState.down;
 }
 
+function resolveCameraRight(camera) {
+  camera.updateMatrixWorld(true);
+  _right.set(
+    camera.matrixWorld.elements[0],
+    camera.matrixWorld.elements[1],
+    camera.matrixWorld.elements[2],
+  );
+  if (_right.lengthSq() < 1e-8) {
+    return _right.set(1, 0, 0);
+  }
+  return _right.normalize();
+}
+
+/** Screen-aligned walk axes for plan/ceiling views (top/bottom presets). */
+export function resolveAxisViewWalkAxes(camera, viewDirection = null) {
+  if (!camera || !viewDirection?.isVector3) return null;
+  if (!resolveAxisViewMode(viewDirection)) return null;
+
+  const viewDir = viewDirection.clone().normalize();
+  const right = resolveCameraRight(camera);
+  const forward = _forward.crossVectors(right, viewDir);
+  if (forward.lengthSq() < 1e-8) return null;
+  forward.normalize();
+  return { forward, right };
+}
+
 function resolveHorizontalForward(camera, controls) {
   if (controls?.target) {
     _forward.copy(controls.target).sub(camera.position);
@@ -124,6 +152,17 @@ export function resolvePointerGroundTarget(
 
 /** Walk forward follows the pointer target when available, otherwise orbit forward. */
 export function resolveWalkForwardDirection(camera, controls, pointerTarget = null) {
+  if (controls?.target) {
+    _viewDirection.copy(camera.position).sub(controls.target);
+    if (_viewDirection.lengthSq() > 1e-12) {
+      _viewDirection.normalize();
+      const axisAxes = resolveAxisViewWalkAxes(camera, _viewDirection);
+      if (axisAxes) {
+        return axisAxes.forward.clone();
+      }
+    }
+  }
+
   if (pointerTarget?.isVector3) {
     _forward.copy(pointerTarget).sub(camera.position);
     _forward.y = 0;
@@ -161,10 +200,24 @@ export function computeBimCameraWalkDelta({
   _delta.set(0, 0, 0);
 
   if (moveForward !== 0 || moveRight !== 0) {
-    const forward = resolveWalkForwardDirection(camera, controls, pointerTarget);
-    _right.crossVectors(forward, WORLD_UP).normalize();
+    let forward = resolveWalkForwardDirection(camera, controls, pointerTarget);
+    let right = null;
+    if (controls?.target) {
+      _viewDirection.copy(camera.position).sub(controls.target);
+      if (_viewDirection.lengthSq() > 1e-12) {
+        _viewDirection.normalize();
+        const axisAxes = resolveAxisViewWalkAxes(camera, _viewDirection);
+        if (axisAxes) {
+          forward = axisAxes.forward;
+          right = axisAxes.right;
+        }
+      }
+    }
+    if (!right) {
+      right = _right.crossVectors(forward, WORLD_UP).normalize();
+    }
     if (moveForward !== 0) _delta.addScaledVector(forward, moveForward * distance);
-    if (moveRight !== 0) _delta.addScaledVector(_right, moveRight * distance);
+    if (moveRight !== 0) _delta.addScaledVector(right, moveRight * distance);
   }
   if (moveUp !== 0) _delta.y += moveUp * distance;
 

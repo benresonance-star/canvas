@@ -910,6 +910,44 @@ Workspace state should be serializable, including at minimum:
 - inspector panel width (`rightPanelWidth`)
 - active saved query reference if any
 
+## 18.5 View navigator gimbal and axis camera presets (shipped MVP, 2026-07-08)
+
+Canvas BIM ships a **view navigator gimbal** in the viewport top-right (`BimViewNavigatorGimbal.jsx`), wired from `BimViewport.jsx`.
+
+### Presets (v1)
+| Preset | Behaviour |
+|---|---|
+| **Home** | Oblique default fit `(1, 0.65, 1)`; `camera.up = world Y`; free OrbitControls orbit |
+| **Top** | Plan view from `+Y`; footprint long-edge alignment via geometry heuristic; `camera.up = world Y` |
+| **Bottom** | Ceiling view from `−Y`; same alignment rules as Top |
+
+- Right-click gimbal cube → context menu: Home / Top / Bottom.
+- Gimbal label from `resolveViewNavigatorLabel()` (`bimViewNavigator.js`): `HOME VIEW`, `TOP VIEW`, `BOTTOM VIEW`, or `ISO VIEW`.
+- **Fit to model** toolbar button removed in v1 (Home preset replaces ad-hoc fit).
+
+### Camera framing implementation
+- Shared fit API: `fitCameraToViewPreset()` in `canvas/src/features/threeDArtifact/utils/cameraFit.js`.
+- Top/Bottom use `resolveFootprintHorizontalAxis()` (PCA on mesh bbox corners in world XZ, Fragments-safe) + `alignAxisPresetAzimuth()` (rotate camera around world Y so footprint axis is screen-horizontal).
+- Small **pole nudge** (`AXIS_VIEW_POLE_NUDGE_FRACTION`) offsets the camera slightly off the exact orbit pole so OrbitControls can rotate at plan/ceiling views.
+- Top/Bottom keyboard walk uses screen-aligned axes (`resolveAxisViewWalkAxes` in `bimCameraKeyboardNav.js`).
+
+### Known limitations (2026-07-08)
+1. **Long-edge alignment is heuristic, not IFC-specific.** Axis comes from geometry in the scene, not `IfcSite.RefDirection`.
+2. **Unweighted PCA** on all mesh bbox corners can mis-rank the dominant building long edge on **L-shaped footprints** and **multi-mesh sites** (trees, pools, furniture weighted equally with slabs).
+3. **Bounding box overlay** (§18.6) draws a **world-axis AABB**, not the footprint-oriented box used for framing — so the orange box can appear skewed relative to aligned model edges in Top view.
+
+### Planned improvement (next engineering)
+Replace PCA with a **model-agnostic footprint long-edge resolver** (area-weighted XZ samples + minimum-area bounding rectangle) and use the **same oriented basis** for both Top/Bottom azimuth alignment and the bounding box overlay OBB.
+
+## 18.6 Bounding box overlay (shipped MVP, 2026-07-08)
+
+- Toolbar toggle (`BoxSelect` icon) immediately **left of wireframe** in the display group (`BimViewport.jsx`).
+- Viewport-local toggle (not persisted in workspace state in v1).
+- Renders world-space **axis-aligned** edges from `Box3.setFromObject(modelRoot)` via `bimBoundingBoxOverlay.js` on the wireframe overlay scene.
+- Uses the same `modelBoundsRef` min/max as sectioning (`syncModelBounds` → `buildViewportBoundsFromBox3`).
+
+**Known limitation:** overlay is a world AABB; it will not hug rotated building edges until footprint OBB lands (see §18.5).
+
 ---
 
 # 19. Table model and inspector behaviour
@@ -1392,6 +1430,8 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 | Saved view sets | **Shipped (MVP)** — IndexedDB-backed carousel with thumbnails; server sync and drag reorder deferred |
 | Wireframe overlay | Shipped — toggle + style controls (weight, transparency, colour, Hdn/All); clay + wireframe compositing with depth-only screen pass for hidden lines; selected-element edge highlight deferred |
 | RL height markers + datum | **Shipped (MVP)** — cross-sphere markers, singleton datum, per-marker datum-relative toggle, floating measurement tools HUD, viewport edit mode with × delete on labels; BIM viewport only (`enableRlOptions`) |
+| View navigator gimbal | **Shipped (MVP)** — wireframe cube gimbal top-right; right-click Home/Top/Bottom; `fitCameraToViewPreset` + footprint PCA azimuth alignment; world-up OrbitControls at plan/ceiling views (`BimViewNavigatorGimbal.jsx`, `bimViewNavigator.js`, `cameraFit.js`) |
+| Bounding box overlay | **Shipped (MVP)** — toolbar toggle left of wireframe; world AABB edges on overlay scene (`bimBoundingBoxOverlay.js`); footprint OBB deferred |
 | `colorBy` display mode | Validated in BQL but not applied in viewport |
 | Saved BQL queries | Shipped — up to 20 persisted in workspace; save/load/delete in BQL HUD |
 | Workspace state on card `version.bim` | Style settings (`version.bim.styleSettings`) read on init and debounced write-back on change; other workspace fields remain IndexedDB-only |
@@ -1401,12 +1441,13 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 
 ## 29.5 Next engineering moves
 
-1. `colorBy` view instruction application in viewport.
-2. Assembly-aware table mode and assembly-level selection/inspector.
-3. Sun study geo time animation playback loop + debounced persistence while scrubbing.
-4. Daylight / heat analysis modules on top of `environmentalAnalysis` (result artifacts, not viewport-only state).
-5. 4D playback + future-task visibility modes (`ghostFuture` / `hideFuture`) + timeline / Gantt UI.
-6. 5D rate matching UI (match-criteria editor) + export.
-7. BQL query history (beyond saved named queries).
-8. Extract `bim-core` / `bim-viewer-ui` packages when Canvas + standalone both need the code.
-9. Standalone `desktop-bim-app` shell reusing the same core.
+1. Footprint **long-edge resolver** (area-weighted MBR) shared by Top/Bottom alignment and bounding box OBB overlay.
+2. `colorBy` view instruction application in viewport.
+3. Assembly-aware table mode and assembly-level selection/inspector.
+4. Sun study geo time animation playback loop + debounced persistence while scrubbing.
+5. Daylight / heat analysis modules on top of `environmentalAnalysis` (result artifacts, not viewport-only state).
+6. 4D playback + future-task visibility modes (`ghostFuture` / `hideFuture`) + timeline / Gantt UI.
+7. 5D rate matching UI (match-criteria editor) + export.
+8. BQL query history (beyond saved named queries).
+9. Extract `bim-core` / `bim-viewer-ui` packages when Canvas + standalone both need the code.
+10. Standalone `desktop-bim-app` shell reusing the same core.

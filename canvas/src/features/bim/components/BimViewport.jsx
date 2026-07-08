@@ -1,13 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Axis3D, Box, Bot, Braces, CalendarDays, Camera, Circle, DollarSign, EyeOff, Ghost, Grid3x3, Images, Layers, LocateFixed, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal, SunMedium } from 'lucide-react';
+import { Axis3D, Box, Bot, BoxSelect, Braces, CalendarDays, Camera, Circle, DollarSign, EyeOff, Ghost, Grid3x3, Images, Layers, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal, SunMedium } from 'lucide-react';
 import { MOUSE } from 'three';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { FragmentsModels, RenderedFaces } from '@thatopen/fragments';
 import fragmentsWorkerUrl from '@thatopen/fragments/dist/Worker/worker.mjs?url';
 import {
-  fitOrthographicCameraToDefaultView,
-  fitPerspectiveCameraToDefaultView,
+  fitCameraToViewPreset,
   syncOrbitControlsAfterCameraFit,
 } from '../../threeDArtifact/utils/cameraFit.js';
 import { MeasurementToolbarControls, MeasurementsListPanel } from '../../threeDArtifact/components/MeasurementUi.jsx';
@@ -30,6 +29,7 @@ import {
   swapBimCamera,
 } from '../bim-core/bimCamera.js';
 import { createBimCameraKeyboardNav } from '../bim-core/bimCameraKeyboardNav.js';
+import { endAxisViewOrbitLock } from '../bim-core/bimAxisViewOrbit.js';
 import { createBimMeasurementController } from '../bim-core/bimMeasurementController.js';
 import { createBimMeasurementOverlay } from '../bim-core/bimMeasurementOverlay.js';
 import { pickRlMarkerFromOverlay } from '../bim-core/bimRlMarkerPick.js';
@@ -48,6 +48,11 @@ import {
   updateWireframeEdgeResolution,
   updateWireframeEdgeVisuals,
 } from '../bim-core/bimWireframeOverlay.js';
+import {
+  disposeModelBoundingBoxEdges,
+  renderOverlayScenePass,
+  syncModelBoundingBoxEdges,
+} from '../bim-core/bimBoundingBoxOverlay.js';
 import {
   applyClayBaseMaterials,
   applyClayViewportMaterials,
@@ -109,6 +114,7 @@ import { BimLayersHud } from './BimLayersHud.jsx';
 import { BimSectionHud } from './BimSectionHud.jsx';
 import { BimSunStudyHud } from './BimSunStudyHud.jsx';
 import { BimViewCarousel } from './BimViewCarousel.jsx';
+import { BimViewNavigatorGimbal } from './BimViewNavigatorGimbal.jsx';
 import { captureBimViewportThumbnail } from '../bim-core/bimViewportCapture.js';
 import { BimSelectedElementHud } from './BimSelectedElementHud.jsx';
 import { Bim4dHud } from './Bim4dHud.jsx';
@@ -119,7 +125,6 @@ import {
   disposeBimSunLightingAdapter,
 } from '../bim-core/bimSunLighting.js';
 import {
-  BIM_VIEWPORT_TOOLBAR_OVERLAY_CLASS,
   resolveBimLayersHudMaxHeightPx,
 } from '../bim-core/bimViewportLayout.js';
 import {
@@ -453,7 +458,11 @@ export function BimViewport({
   const layersHudResizeRef = useRef(null);
   const rendererRef = useRef(null);
   const cameraRef = useRef(null);
+  const cameraQuaternionRef = useRef(new THREE.Quaternion());
+  const cameraViewDirectionRef = useRef(new THREE.Vector3(1, 0.65, 1).normalize());
   const controlsRef = useRef(null);
+  const toolbarControlsRef = useRef(null);
+  const [toolbarHeightPx, setToolbarHeightPx] = useState(32);
   const keyboardNavRef = useRef(null);
   const pointerWalkTargetRef = useRef(null);
   const pointerWalkRaycastSeqRef = useRef(0);
@@ -552,6 +561,8 @@ export function BimViewport({
   const clayComposerRef = useRef(null);
   const clayLightingStateRef = useRef(null);
   const wireframeEdgesRef = useRef(null);
+  const boundingBoxModeRef = useRef(false);
+  const boundingBoxEdgesRef = useRef(null);
   const wireframeBuildSeqRef = useRef(0);
   const wireframeBuildInFlightRef = useRef(false);
   const wireframeRebuildQueuedRef = useRef(false);
@@ -581,6 +592,7 @@ export function BimViewport({
   const [layersHudMaxHeight, setLayersHudMaxHeight] = useState(null);
   const [sectionHudOpen, setSectionHudOpen] = useState(false);
   const [sunStudyHudOpen, setSunStudyHudOpen] = useState(false);
+  const [boundingBoxMode, setBoundingBoxMode] = useState(false);
   const [selectionRefreshNonce, setSelectionRefreshNonce] = useState(0);
   const [clayLocalIdsReadyNonce, setClayLocalIdsReadyNonce] = useState(0);
   const [viewportBounds, setViewportBounds] = useState(() => ({
@@ -606,9 +618,21 @@ export function BimViewport({
   const sectionOverlayDebounceRef = useRef(null);
   const preparedModelRef = useRef(preparedModel);
   preparedModelRef.current = preparedModel;
+  const syncBoundingBoxOverlay = useCallback(() => {
+    if (!boundingBoxModeRef.current) return;
+    const bounds = modelBoundsRef.current;
+    if (!bounds?.min || !bounds?.max) return;
+    boundingBoxEdgesRef.current = syncModelBoundingBoxEdges(
+      boundingBoxEdgesRef.current,
+      bounds,
+      wireframeOverlaySceneRef.current,
+    );
+  }, []);
+
   const syncViewportBounds = useCallback((bounds) => {
     if (bounds) setViewportBounds(bounds);
-  }, []);
+    syncBoundingBoxOverlay();
+  }, [syncBoundingBoxOverlay]);
   const preparedModelKey = preparedModel?.metadata?.fingerprint
     ?? preparedModel?.metadata?.fragmentsModelId
     ?? null;
@@ -900,23 +924,37 @@ export function BimViewport({
     if (state) onCameraChangeRef.current(state);
   }, []);
 
-  const fitModel = useCallback(() => {
+  const fitModelToPreset = useCallback((preset = 'home') => {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     const model = modelRef.current;
     const renderer = rendererRef.current;
     if (!camera || !controls || !model?.object) return;
+    endAxisViewOrbitLock(controls);
     const size = renderer?.getSize(new THREE.Vector2());
     const aspect = size?.y ? size.x / size.y : (camera.aspect ?? 1);
     const fitOptions = { margin: 1.35, viewportAspect: aspect };
-    if (projectionModeRef.current === 'orthographic') {
-      fitOrthographicCameraToDefaultView(camera, controls, model.object, fitOptions);
-    } else {
-      fitPerspectiveCameraToDefaultView(camera, controls, model.object, fitOptions);
+    const fitted = fitCameraToViewPreset(camera, controls, model.object, preset, fitOptions);
+    if (!fitted) return;
+    syncOrbitControlsAfterCameraFit(controls);
+    model.useCamera(camera);
+    camera.updateMatrixWorld(true);
+    camera.getWorldQuaternion(cameraQuaternionRef.current);
+    cameraViewDirectionRef.current.copy(camera.position).sub(controls.target);
+    if (cameraViewDirectionRef.current.lengthSq() > 1e-12) {
+      cameraViewDirectionRef.current.normalize();
     }
     syncModelBounds(model.object, modelBoundsRef, syncViewportBounds);
     emitCameraChange();
   }, [emitCameraChange, syncViewportBounds]);
+
+  const fitModel = useCallback(() => {
+    fitModelToPreset('home');
+  }, [fitModelToPreset]);
+
+  const applyViewPreset = useCallback((preset) => {
+    fitModelToPreset(preset);
+  }, [fitModelToPreset]);
 
   const resetVisibility = useCallback(() => {
     const model = modelRef.current;
@@ -1232,6 +1270,16 @@ export function BimViewport({
       wireframeEdgesRef.current = null;
     }
   }, [wireframeMode, rebuildWireframeEdges]);
+
+  useEffect(() => {
+    boundingBoxModeRef.current = boundingBoxMode;
+    if (boundingBoxMode) {
+      syncBoundingBoxOverlay();
+    } else {
+      disposeModelBoundingBoxEdges(boundingBoxEdgesRef.current);
+      boundingBoxEdgesRef.current = null;
+    }
+  }, [boundingBoxMode, syncBoundingBoxOverlay]);
 
   useEffect(() => {
     wireframeStyleRef.current = {
@@ -1724,15 +1772,32 @@ export function BimViewport({
       }
     }
 
+    const syncViewNavigatorState = () => {
+      const activeCamera = cameraRef.current;
+      const orbitControls = controlsRef.current;
+      if (!activeCamera) return;
+      activeCamera.updateMatrixWorld(true);
+      activeCamera.getWorldQuaternion(cameraQuaternionRef.current);
+      const orbitTarget = orbitControls?.target;
+      if (orbitTarget) {
+        cameraViewDirectionRef.current.copy(activeCamera.position).sub(orbitTarget);
+        if (cameraViewDirectionRef.current.lengthSq() > 1e-12) {
+          cameraViewDirectionRef.current.normalize();
+        }
+      }
+    };
+
     const renderViewportFrame = () => {
       if (disposed || !cameraRef.current) return;
       if (scene.overrideMaterial) scene.overrideMaterial = null;
       syncMeasurementOverlay();
+      syncViewNavigatorState();
       const activeCamera = cameraRef.current;
       const wireframeEdges = wireframeEdgesRef.current;
       const overlayScene = wireframeOverlaySceneRef.current;
       const bounds = modelBoundsRef.current;
       const cameraDistance = resolveBimViewDistance(activeCamera, controlsRef.current, bounds);
+      let overlayRenderedThisFrame = false;
 
       if (
         wireframeModeRef.current
@@ -1784,6 +1849,13 @@ export function BimViewport({
           modelRadius: bounds?.radius,
           boundsCenter: bounds?.center,
         });
+        if (
+          wireframeModeRef.current
+          && wireframeEdges?.parent
+          && overlayScene
+        ) {
+          overlayRenderedThisFrame = true;
+        }
       } else if (wireframeModeRef.current && wireframeEdges?.parent && overlayScene) {
         applyViewportBackground(scene, renderer, viewportBackgroundRef.current);
         const style = wireframeStyleRef.current;
@@ -1795,6 +1867,7 @@ export function BimViewport({
           color: style.color,
           hiddenLines: style.hiddenLines,
         });
+        overlayRenderedThisFrame = true;
       } else {
         applyViewportBackground(scene, renderer, viewportBackgroundRef.current);
         renderer.render(scene, activeCamera);
@@ -1813,6 +1886,15 @@ export function BimViewport({
           mainScene: scene,
           refreshDepth: true,
         });
+      }
+
+      if (
+        !overlayRenderedThisFrame
+        && boundingBoxModeRef.current
+        && boundingBoxEdgesRef.current?.parent
+        && overlayScene
+      ) {
+        renderOverlayScenePass(renderer, overlayScene, activeCamera);
       }
 
       measurementOverlayRef.current?.render(scene, activeCamera);
@@ -1834,6 +1916,7 @@ export function BimViewport({
       lastFrameTime = now;
       keyboardNav.update(deltaSeconds);
       controls.update();
+      syncViewNavigatorState();
       const hasLayerFilter = hiddenStoreysRef.current.length > 0 || hiddenLayersRef.current.length > 0;
       const hasSectionClip = sectionStateRef.current?.enabled === true;
 
@@ -1926,6 +2009,9 @@ export function BimViewport({
       }
       disposeWireframeEdges(wireframeEdgesRef.current);
       wireframeEdgesRef.current = null;
+      endAxisViewOrbitLock(controls);
+      disposeModelBoundingBoxEdges(boundingBoxEdgesRef.current);
+      boundingBoxEdgesRef.current = null;
       disposeSectionOverlay(sectionOverlayGroupRef.current);
       sectionOverlayGroupRef.current = null;
       activeClippingPlanesRef.current = [];
@@ -2748,6 +2834,10 @@ export function BimViewport({
     }));
   }, [environmentPreset, lightingMode, onLightingChange, showEnvironment]);
 
+  const handleToggleBoundingBox = useCallback(() => {
+    setBoundingBoxMode((enabled) => !enabled);
+  }, []);
+
   const handleToggleWireframe = useCallback(() => {
     onWireframeModeChange(!wireframeMode);
   }, [onWireframeModeChange, wireframeMode]);
@@ -2969,6 +3059,7 @@ export function BimViewport({
 
   const toolbarControls = (
     <div
+      ref={toolbarControlsRef}
       className="pointer-events-auto flex w-max max-w-[calc(100%-1.5rem)] items-center overflow-x-auto rounded-md border border-border bg-surface/95 px-2 py-1.5 shadow-lg backdrop-blur-sm"
       aria-label="Viewport controls"
     >
@@ -3033,9 +3124,6 @@ export function BimViewport({
               <button type="button" title="Reset visibility" onClick={resetVisibility} className="rounded border border-border p-1 text-secondary hover:bg-surface-muted">
                 <RotateCcw size={14} strokeWidth={1.7} />
               </button>
-              <button type="button" title="Fit to model" onClick={fitModel} className="rounded border border-border p-1 text-secondary hover:bg-surface-muted">
-                <LocateFixed size={14} strokeWidth={1.7} />
-              </button>
               </div>
               <BimViewportToolbarSeparator />
               <div className="flex items-center gap-1">
@@ -3069,6 +3157,16 @@ export function BimViewport({
               </div>
               <BimViewportToolbarSeparator />
               <div className="flex items-center gap-1">
+              <button
+                type="button"
+                title="Bounding box overlay"
+                onClick={handleToggleBoundingBox}
+                className={`rounded border border-border p-1 ${boundingBoxMode ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                aria-pressed={boundingBoxMode}
+                aria-label="Bounding box overlay"
+              >
+                <BoxSelect size={14} strokeWidth={1.7} />
+              </button>
               <button
                 type="button"
                 title="Wireframe overlay (visible edges)"
@@ -3226,9 +3324,37 @@ export function BimViewport({
     </div>
   );
 
+  useEffect(() => {
+    const toolbarNode = toolbarControlsRef.current;
+    if (!toolbarNode) return undefined;
+
+    const syncToolbarHeight = () => {
+      const nextHeight = Math.round(toolbarNode.getBoundingClientRect().height);
+      if (nextHeight > 0) {
+        setToolbarHeightPx(nextHeight);
+      }
+    };
+
+    syncToolbarHeight();
+    const observer = new ResizeObserver(syncToolbarHeight);
+    observer.observe(toolbarNode);
+    return () => observer.disconnect();
+  }, [loadState, measureHudOpen, measureEditMode, projectionMode, wireframeMode, boundingBoxMode, displayMode]);
+
   const toolbarOverlay = (
-    <div className={BIM_VIEWPORT_TOOLBAR_OVERLAY_CLASS}>
-      {toolbarControls}
+    <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex items-start justify-between gap-2 px-3">
+      <div className="flex min-w-0 flex-1 justify-center">
+        {toolbarControls}
+      </div>
+      {loadState === 'ready' ? (
+        <BimViewNavigatorGimbal
+          className="pointer-events-auto shrink-0"
+          cubeSizePx={toolbarHeightPx}
+          getCameraQuaternion={() => cameraQuaternionRef.current}
+          getViewDirection={() => cameraViewDirectionRef.current}
+          onApplyPreset={applyViewPreset}
+        />
+      ) : null}
     </div>
   );
 

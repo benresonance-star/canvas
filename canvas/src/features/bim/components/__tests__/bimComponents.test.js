@@ -648,6 +648,32 @@ describe('BIM UI components', () => {
     expect(html).not.toContain('Wireframe style controls');
   });
 
+  it('renders the bounding box toggle to the left of the wireframe toggle', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimViewport, {
+        preparedModel: {
+          metadata: {
+            fragmentsStatus: 'success',
+            fragmentsSourceKind: 'fragments',
+          },
+          fragmentsBlob: new Blob([new Uint8Array([1, 2, 3])]),
+          elements: [element],
+        },
+        selectedElement: null,
+        displayMode: 'highlight',
+        wireframeMode: false,
+        onDisplayModeChange: () => {},
+        onWireframeModeChange: () => {},
+        projectId: 'test-project',
+      }),
+    );
+    const boundingBoxIndex = html.indexOf('Bounding box overlay');
+    const wireframeIndex = html.indexOf('Wireframe overlay (visible edges)');
+    expect(boundingBoxIndex).toBeGreaterThan(-1);
+    expect(wireframeIndex).toBeGreaterThan(-1);
+    expect(boundingBoxIndex).toBeLessThan(wireframeIndex);
+  });
+
   it('renders wireframe style controls in the floating style HUD', () => {
     const html = renderToStaticMarkup(
       React.createElement(BimStyleSettingsHud, {

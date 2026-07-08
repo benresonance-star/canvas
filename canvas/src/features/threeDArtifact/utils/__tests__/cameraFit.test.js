@@ -4,10 +4,33 @@ import {
   allBoxCornersInsideCameraView,
   applySavedCameraState,
   computeFitDistanceForBox,
+  fitCameraToViewPreset,
   fitOrthographicCameraToDefaultView,
   fitPerspectiveCameraToCurrentView,
   fitPerspectiveCameraToDefaultView,
+  resolveFootprintHorizontalAxis,
+  resolveViewPresetDirection,
+  syncOrbitControlsAfterCameraFit,
 } from '../cameraFit.js';
+import {
+  simulateOrbitAzimuthDelta,
+} from '../../../bim/bim-core/bimAxisViewOrbit.js';
+
+function createMockOrbitControls(camera, target = new THREE.Vector3()) {
+  return {
+    object: camera,
+    target,
+    minPolarAngle: 0,
+    maxPolarAngle: Math.PI,
+    userData: {},
+    _spherical: new THREE.Spherical(),
+    _sphericalDelta: new THREE.Spherical(),
+    _panOffset: new THREE.Vector3(),
+    _scale: 1,
+    enableDamping: false,
+    update() {},
+  };
+}
 
 describe('fitPerspectiveCameraToDefaultView', () => {
   it('frames a mesh within the camera view', () => {
@@ -143,5 +166,158 @@ describe('applySavedCameraState', () => {
     expect(camera.zoom).toBe(2);
     expect(camera.userData.viewHeight).toBe(12);
     expect(camera.top - camera.bottom).toBeCloseTo(6, 5);
+  });
+});
+
+describe('fitCameraToViewPreset', () => {
+  it('frames a mesh from each world-axis preset direction', () => {
+    const geometry = new THREE.BoxGeometry(2, 4, 6);
+    const material = new THREE.MeshBasicMaterial();
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(mesh);
+
+    for (const preset of ['home', 'top', 'bottom']) {
+      const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+      const controls = createMockOrbitControls(camera);
+      const fitted = fitCameraToViewPreset(camera, controls, mesh, preset, { viewportAspect: 1 });
+      expect(fitted).toBe(true);
+      expect(allBoxCornersInsideCameraView(camera, box)).toBe(true);
+      const viewDir = camera.position.clone().sub(controls.target).normalize();
+      const expectedDir = resolveViewPresetDirection(preset);
+      expect(viewDir.dot(expectedDir)).toBeCloseTo(1, 5);
+    }
+  });
+
+  it('uses world up for top and bottom presets so orbit controls stay stable', () => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(10, 2, 4), new THREE.MeshBasicMaterial());
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    const controls = createMockOrbitControls(camera);
+    fitCameraToViewPreset(camera, controls, mesh, 'top', { viewportAspect: 1 });
+    expect(camera.up.x).toBeCloseTo(0, 5);
+    expect(camera.up.y).toBeCloseTo(1, 5);
+    expect(camera.up.z).toBeCloseTo(0, 5);
+  });
+
+  it('offsets top and bottom presets slightly off the orbit pole for controls', () => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(6, 2, 6), new THREE.MeshBasicMaterial());
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    const controls = createMockOrbitControls(camera);
+    fitCameraToViewPreset(camera, controls, mesh, 'top', { viewportAspect: 1 });
+    syncOrbitControlsAfterCameraFit(controls);
+
+    expect(controls._spherical.phi).toBeGreaterThan(0);
+    expect(controls._spherical.phi).toBeLessThan(0.2);
+    expect(controls.minPolarAngle).toBe(0);
+    expect(controls.maxPolarAngle).toBe(Math.PI);
+  });
+
+  it('resets orbit spherical state after preset fit', () => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    const controls = createMockOrbitControls(camera);
+    controls._spherical.set(2.4, 1.1, 0.8);
+
+    fitCameraToViewPreset(camera, controls, mesh, 'top', { viewportAspect: 1 });
+    syncOrbitControlsAfterCameraFit(controls);
+
+    const offset = camera.position.clone().sub(controls.target);
+    const synced = new THREE.Spherical().setFromVector3(offset);
+    expect(controls._spherical.radius).toBeCloseTo(synced.radius, 5);
+    expect(controls._spherical.phi).toBeCloseTo(synced.phi, 5);
+    expect(controls._spherical.theta).toBeCloseTo(synced.theta, 5);
+    expect(controls._sphericalDelta.radius).toBe(0);
+  });
+
+  it('preserves top view alignment after azimuth orbit deltas without roll locks', () => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(6, 2, 6), new THREE.MeshBasicMaterial());
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    const controls = createMockOrbitControls(camera);
+    fitCameraToViewPreset(camera, controls, mesh, 'top', { viewportAspect: 1 });
+    syncOrbitControlsAfterCameraFit(controls);
+
+    expect(camera.up.y).toBeCloseTo(1, 5);
+    const beforeTheta = controls._spherical.theta;
+    simulateOrbitAzimuthDelta(controls, 0.8);
+    expect(controls._spherical.theta).not.toBeCloseTo(beforeTheta, 3);
+    expect(camera.up.y).toBeCloseTo(1, 5);
+  });
+
+  it('returns false for unknown presets', () => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    expect(fitCameraToViewPreset(camera, null, mesh, 'left')).toBe(false);
+  });
+
+  it('aligns top view roll to the longer footprint axis for axis-aligned models', () => {
+    const geometry = new THREE.BoxGeometry(20, 1, 5);
+    const material = new THREE.MeshBasicMaterial();
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.updateWorldMatrix(true, true);
+
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    const controls = createMockOrbitControls(camera);
+    const fitted = fitCameraToViewPreset(camera, controls, mesh, 'top', { viewportAspect: 1 });
+    expect(fitted).toBe(true);
+
+    camera.updateMatrixWorld(true);
+    const cameraRight = new THREE.Vector3(
+      camera.matrixWorld.elements[0],
+      camera.matrixWorld.elements[1],
+      camera.matrixWorld.elements[2],
+    ).normalize();
+    expect(Math.abs(cameraRight.dot(new THREE.Vector3(1, 0, 0)))).toBeCloseTo(1, 5);
+  });
+
+  it('aligns top view roll to a rotated footprint instead of world axes', () => {
+    const geometry = new THREE.BoxGeometry(20, 1, 5);
+    const material = new THREE.MeshBasicMaterial();
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.y = Math.PI / 4;
+    mesh.updateWorldMatrix(true, true);
+
+    const footprintRight = resolveFootprintHorizontalAxis(mesh);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    const controls = createMockOrbitControls(camera);
+    const fitted = fitCameraToViewPreset(camera, controls, mesh, 'top', { viewportAspect: 1 });
+    expect(fitted).toBe(true);
+
+    camera.updateMatrixWorld(true);
+    const cameraRight = new THREE.Vector3(
+      camera.matrixWorld.elements[0],
+      camera.matrixWorld.elements[1],
+      camera.matrixWorld.elements[2],
+    ).normalize();
+    expect(Math.abs(cameraRight.dot(footprintRight))).toBeCloseTo(1, 5);
+    expect(Math.abs(cameraRight.dot(new THREE.Vector3(1, 0, 0)))).toBeLessThan(0.95);
+  });
+
+  it('aligns top view for meshes without readable vertex buffers', () => {
+    const geometry = new THREE.BoxGeometry(20, 1, 5);
+    const material = new THREE.MeshBasicMaterial();
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.y = Math.PI / 4;
+    mesh.geometry.setAttribute('position', {
+      count: geometry.attributes.position.count,
+      itemSize: 3,
+      getX: geometry.attributes.position.getX.bind(geometry.attributes.position),
+      getY: geometry.attributes.position.getY.bind(geometry.attributes.position),
+      getZ: geometry.attributes.position.getZ.bind(geometry.attributes.position),
+    });
+    mesh.updateWorldMatrix(true, true);
+
+    const footprintRight = resolveFootprintHorizontalAxis(mesh);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    const controls = createMockOrbitControls(camera);
+    expect(() => fitCameraToViewPreset(camera, controls, mesh, 'top', { viewportAspect: 1 })).not.toThrow();
+    expect(fitCameraToViewPreset(camera, controls, mesh, 'top', { viewportAspect: 1 })).toBe(true);
+
+    camera.updateMatrixWorld(true);
+    const cameraRight = new THREE.Vector3(
+      camera.matrixWorld.elements[0],
+      camera.matrixWorld.elements[1],
+      camera.matrixWorld.elements[2],
+    ).normalize();
+    expect(Math.abs(cameraRight.dot(footprintRight))).toBeCloseTo(1, 5);
   });
 });

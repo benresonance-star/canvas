@@ -290,6 +290,8 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Section cut | Yes — horizontal clipping plane + fill/edge overlay (`BimSectionHud.jsx`, `bimSectioning.js`); **off by default** on workspace open |
 | Viewport loading feedback | Yes — phased boot overlay (`BIM_VIEWPORT_LOAD_PHASES`) with spinner + element count |
 | Perspective / orthographic | Yes — toolbar toggle + camera state persistence |
+| View navigator gimbal | Yes — top-right wireframe cube; right-click Home / Top / Bottom; footprint PCA azimuth + world-up orbit (`BimViewNavigatorGimbal.jsx`, `bimViewNavigator.js`, `cameraFit.js`) |
+| Bounding box overlay | Yes — toolbar toggle (left of wireframe); world AABB wireframe on overlay scene (`bimBoundingBoxOverlay.js`) |
 | Measurements | Yes — vertex/edge snap, segment + polyline, units toggle; **Delete / Backspace** (or toolbar trash) cancels draft or exits measure mode; **Escape** closes fullscreen card; shared `MeasurementUi` with 3D artifact viewer |
 | HDRI lighting | Yes — environment preset cycle (off / studio / city / …); **style settings HUD** (standard render only) |
 | Picking/selection | Yes — raycast + GlobalId mapping |
@@ -309,6 +311,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Filesystem cache layout (`model-cache/<fingerprint>/`) | Not built — IndexedDB instead |
 | Embedded SQL database | Not built |
 | `colorBy` display mode | Validated in BQL but not applied in viewport |
+| Footprint long-edge alignment (L-shape / site clutter) | Partial — PCA heuristic; area-weighted MBR + OBB bbox planned |
 | Package split (`bim-core`, `bim-viewer-ui`) | Deferred — monolithic `features/bim/` |
 
 ## 14.3 Key paths
@@ -326,6 +329,8 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Layer visibility | `canvas/src/features/bim/bim-core/bimLayerVisibility.js`, `bimElementLayers.js` |
 | Section cut | `canvas/src/features/bim/bim-core/bimSectioning.js`, `bimScreenDepth.js`, `components/BimSectionHud.jsx` |
 | Viewport boot | `canvas/src/features/bim/bim-core/bimViewportBoot.js` |
+| View navigator / camera presets | `canvas/src/features/bim/bim-core/bimViewNavigator.js`, `components/BimViewNavigatorGimbal.jsx`, `canvas/src/features/threeDArtifact/utils/cameraFit.js` |
+| Bounding box overlay | `canvas/src/features/bim/bim-core/bimBoundingBoxOverlay.js` |
 | Style presets API | `canvas/server/routes/bim.js`, `canvas/server/repositories/bim-style-presets.js` |
 | Query panel | `canvas/src/features/bim/components/BimQueryPanel.jsx`, `BimBqlHud.jsx` |
 | Canvas routing | `canvas/src/components/ModalContent.jsx`, `CardPreview.jsx` |

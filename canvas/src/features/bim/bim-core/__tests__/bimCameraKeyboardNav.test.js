@@ -5,9 +5,11 @@ import {
   BIM_CAMERA_WALK_SHIFT_MULTIPLIER,
   computeBimCameraWalkDelta,
   hasActiveBimCameraWalkInput,
+  resolveAxisViewWalkAxes,
   resolveBimCameraWalkKeyState,
   shouldIgnoreBimKeyboardNavEvent,
 } from '../bimCameraKeyboardNav.js';
+import { fitCameraToViewPreset } from '../../../threeDArtifact/utils/cameraFit.js';
 
 function createWalkFixture() {
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
@@ -149,5 +151,38 @@ describe('bimCameraKeyboardNav', () => {
     expect(camera.position.distanceTo(controls.target)).toBeCloseTo(beforeDistance, 5);
     expect(camera.position.x).toBeCloseTo(11, 5);
     expect(controls.target.x).toBeCloseTo(1, 5);
+  });
+
+  it('uses camera-relative axes for top view walk navigation', () => {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(20, 1, 5),
+      new THREE.MeshBasicMaterial(),
+    );
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    const controls = {
+      target: new THREE.Vector3(0, 0, 0),
+      update: () => {},
+    };
+    fitCameraToViewPreset(camera, controls, mesh, 'top', { viewportAspect: 1 });
+
+    const viewDirection = camera.position.clone().sub(controls.target).normalize();
+    const axes = resolveAxisViewWalkAxes(camera, viewDirection);
+    expect(axes).toBeTruthy();
+    expect(Math.abs(axes.forward.y)).toBeLessThan(0.1);
+    expect(Math.abs(axes.right.y)).toBeLessThan(0.1);
+
+    const delta = computeBimCameraWalkDelta({
+      camera,
+      controls,
+      keyState: { forward: true, backward: false, left: false, right: false, up: false, down: false, shift: false },
+      deltaSeconds: 1,
+      speedRatio: 1,
+      minSpeed: 0,
+      maxSpeed: 1000,
+    });
+    expect(delta.length()).toBeGreaterThan(0);
+    expect(delta.normalize().dot(axes.forward)).toBeGreaterThan(0.9);
+    expect(Math.abs(axes.forward.y)).toBeLessThan(0.01);
+    expect(Math.abs(delta.y)).toBeLessThan(0.01);
   });
 });
