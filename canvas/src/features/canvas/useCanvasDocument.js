@@ -148,6 +148,40 @@ export function bookmarkFolderPathsToRemove(card) {
   return [...paths].filter(Boolean);
 }
 
+function createEmptyBimViewerCard({ title = 'IFC Viewer', position = { x: 100, y: 100 } } = {}) {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  return {
+    id,
+    key: `bim-viewers__${id}`,
+    prefix: 'bim-viewers',
+    name: title,
+    type: 'bim-model',
+    x: position.x,
+    y: position.y,
+    versions: [{
+      version: 1,
+      inline: true,
+      ext: 'ifc-viewer',
+      filename: `${title}.ifc-viewer.json`,
+      createdAt: now,
+      bim: {
+        viewerKind: 'ifc-viewer-session',
+        session: {
+          id: `bim-session:${id}`,
+          modelRefs: [],
+          activeModelId: null,
+          visibilityByModelId: {},
+          queryScope: 'active',
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    }],
+    pinnedVersion: 1,
+  };
+}
+
 export async function resolveBookmarkFolderHandle(projectId, folderHandle) {
   if (folderHandle) return folderHandle;
   if (!projectId) return null;
@@ -1763,6 +1797,50 @@ export function useCanvasDocument({ refs, deps }) {
     stateRef,
   ]);
 
+  const handleSaveNewBimViewer = useCallback(async ({ title = 'IFC Viewer', position } = {}) => {
+    const projectId = activeProjectIdRef.current;
+    if (!projectId) {
+      setSyncStatus({ error: 'Select a project before creating an IFC Viewer.' });
+      setTimeout(() => setSyncStatus(null), 5000);
+      return null;
+    }
+    try {
+      const fallbackPosition = {
+        x: 100 + (stateRef.current.cards.length % 4) * 380,
+        y: 100 + Math.floor(stateRef.current.cards.length / 4) * 260,
+      };
+      const newCard = createEmptyBimViewerCard({
+        title,
+        position: position ?? fallbackPosition,
+      });
+      const nextState = {
+        ...stateRef.current,
+        cards: [...stateRef.current.cards, newCard],
+      };
+      stateRef.current = nextState;
+      setState(nextState);
+      registerOptimisticCard(projectId, newCard.id);
+      await commitProjectDocument(projectId, {
+        state: nextState,
+        stagedSyncCards: stagedSyncCardsRef.current,
+        reason: 'bim-viewer:create',
+        pushRemote: true,
+      });
+      setOpenCardId(newCard.id);
+      return newCard;
+    } catch (error) {
+      setSyncStatus({ error: error.message || 'Could not create IFC Viewer.' });
+      setTimeout(() => setSyncStatus(null), 5000);
+      return null;
+    }
+  }, [
+    activeProjectIdRef,
+    setState,
+    setSyncStatus,
+    stagedSyncCardsRef,
+    stateRef,
+  ]);
+
   const handleSaveNewStudio = useCallback(async ({
     title,
     description = '',
@@ -2311,6 +2389,7 @@ export function useCanvasDocument({ refs, deps }) {
     handleSaveNewTask,
     handleSaveNewLink,
     handleSaveNewFlow,
+    handleSaveNewBimViewer,
     handleSaveNewStudio,
     handleEnsureStudioCard,
     handleSaveNewLive,

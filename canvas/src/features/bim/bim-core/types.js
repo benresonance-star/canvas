@@ -21,6 +21,8 @@ export const BIM_PREPARATION_PHASES = [
 export const BIM_DISPLAY_MODES = ['highlight', 'isolate', 'ghostOthers', 'colorBy'];
 
 export const BIM_PROJECTION_MODES = ['perspective', 'orthographic'];
+export const BIM_MODEL_REF_STATUSES = ['importing', 'preparing', 'ready', 'failed', 'removed'];
+export const BIM_QUERY_SCOPES = ['active', 'visible', 'all'];
 
 export const WIREFRAME_LINE_WEIGHT_MIN = 0.5;
 export const WIREFRAME_LINE_WEIGHT_MAX = 6;
@@ -358,6 +360,53 @@ export function emptyPreparedBimModel(metadata = {}) {
   };
 }
 
+function normalizeBimModelRef(ref = {}) {
+  const modelId = String(ref?.modelId ?? '').trim();
+  if (!modelId) return null;
+  const status = BIM_MODEL_REF_STATUSES.includes(ref?.status) ? ref.status : 'ready';
+  const label = String(ref?.label ?? ref?.sourceName ?? 'IFC model').trim() || 'IFC model';
+  const sourceName = String(ref?.sourceName ?? label).trim() || label;
+  return {
+    modelId,
+    sourceName,
+    label,
+    sourceFileHash: String(ref?.sourceFileHash ?? '').trim(),
+    fingerprint: String(ref?.fingerprint ?? '').trim(),
+    preparedModelKey: String(ref?.preparedModelKey ?? ref?.fingerprint ?? '').trim(),
+    status,
+    discipline: ref?.discipline == null ? null : String(ref.discipline),
+    role: ref?.role == null ? '' : String(ref.role),
+    errorMessage: ref?.errorMessage == null ? null : String(ref.errorMessage),
+    warnings: Array.isArray(ref?.warnings) ? ref.warnings.map(String).slice(0, 8) : [],
+    importedAt: ref?.importedAt ?? null,
+    updatedAt: ref?.updatedAt ?? null,
+  };
+}
+
+export function normalizeBimWorkspaceSession(session = {}) {
+  const modelRefs = Array.isArray(session?.modelRefs)
+    ? session.modelRefs.map(normalizeBimModelRef).filter(Boolean)
+    : [];
+  const modelIds = new Set(modelRefs.map((ref) => ref.modelId));
+  const visibilityByModelId = {};
+  for (const ref of modelRefs) {
+    visibilityByModelId[ref.modelId] = session?.visibilityByModelId?.[ref.modelId] !== false;
+  }
+  const requestedActive = String(session?.activeModelId ?? '').trim();
+  const activeModelId = requestedActive && modelIds.has(requestedActive)
+    ? requestedActive
+    : modelRefs.find((ref) => ref.status !== 'removed')?.modelId ?? null;
+  return {
+    id: String(session?.id ?? 'bim-session:default'),
+    modelRefs,
+    activeModelId,
+    visibilityByModelId,
+    queryScope: BIM_QUERY_SCOPES.includes(session?.queryScope) ? session.queryScope : 'active',
+    createdAt: session?.createdAt ?? null,
+    updatedAt: session?.updatedAt ?? null,
+  };
+}
+
 export function normalizeColorByProperty(value) {
   if (value == null) return null;
   const normalized = String(value).trim();
@@ -441,6 +490,7 @@ export function normalizeBimWorkspaceState(state = {}) {
     activeViewSetId,
     activeViewId: state?.activeViewId == null ? null : String(state.activeViewId),
     viewCarouselOpen: state?.viewCarouselOpen === true,
+    session: normalizeBimWorkspaceSession(state?.session),
     lastOpenedAt: state?.lastOpenedAt ?? null,
     updatedAt: state?.updatedAt ?? null,
   };

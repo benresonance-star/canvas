@@ -24,7 +24,7 @@ import {
 import { prepareBimModel } from '../bim-core/prepareBimModel.js';
 import { logBimPickWarning } from '../bim-core/bimPickDebug.js';
 import { findPreparedElementByGlobalId } from '../bim-core/fragmentsSelection.js';
-import { applyBimViewerDefaults, normalizeBimWorkspaceState, normalizeLayersHudHeight, normalizeLayersHudStoreysHeight, normalizeLeftPanelWidth, normalizeRightPanelWidth } from '../bim-core/types.js';
+import { applyBimViewerDefaults, normalizeBimWorkspaceSession, normalizeBimWorkspaceState, normalizeLayersHudHeight, normalizeLayersHudStoreysHeight, normalizeLeftPanelWidth, normalizeRightPanelWidth } from '../bim-core/types.js';
 import { applyBimStyleSettings, extractBimStyleSettings } from '../bim-core/bimStyleSettings.js';
 import { getClayPresetWorkspacePatch } from '../bim-core/bimClayRender.js';
 import { createBimResultSetFromElements } from '../bim-core/bimResultSets.js';
@@ -35,7 +35,7 @@ import {
 } from '../bim-core/bim4d.js';
 import { createBim5dCostPlan } from '../bim-core/bim5d.js';
 import { requestActionSync } from '../../../lib/actionSync.js';
-import { useBimModelSource } from '../hooks/useBimModelSource.js';
+import { isEmptyBimViewerVersion, useBimModelSource } from '../hooks/useBimModelSource.js';
 import { useBimAgentPanel } from '../hooks/useBimAgentPanel.js';
 import { useBimBqlPanel } from '../hooks/useBimBqlPanel.js';
 import { useBimViewSets } from '../hooks/useBimViewSets.js';
@@ -44,6 +44,8 @@ import { BimElementTable } from './BimElementTable.jsx';
 import { BimInspector } from './BimInspector.jsx';
 import { BimFloatingSidePanel } from './BimFloatingSidePanel.jsx';
 import { BimViewport } from './BimViewport.jsx';
+import BimFileToolbarControls from './BimFileToolbarControls.jsx';
+import { BIM_VIEWPORT_TOOLBAR_SURFACE_CLASS } from '../bim-core/bimViewportLayout.js';
 
 const PHASE_LABELS = {
   preparing: 'Preparing model',
@@ -130,6 +132,13 @@ function BimExtractionFeed({ events }) {
 
 const BIM_STYLE_SYNC_DEBOUNCE_MS = 800;
 
+async function sha256Hex(arrayBuffer) {
+  const digest = await crypto.subtle.digest('SHA-256', arrayBuffer);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 function applyCardUpdate(onUpdateCard, cardId, updates) {
   if (!onUpdateCard || !cardId) return;
   if (onUpdateCard.length >= 2) {
@@ -147,6 +156,7 @@ export function BimWorkspace({
   onUpdateCard = null,
 }) {
   const resolvedProjectId = projectId ?? card?.projectId ?? null;
+  const isSessionViewer = isEmptyBimViewerVersion(version);
   const source = useBimModelSource(version, { folderHandle });
   const versionRef = useRef(version);
   versionRef.current = version;
@@ -156,12 +166,16 @@ export function BimWorkspace({
   const [cacheStatus, setCacheStatus] = useState('preparing');
   const [error, setError] = useState(null);
   const [prepared, setPrepared] = useState(null);
+  const [preparedByModelId, setPreparedByModelId] = useState({});
   const [fingerprint, setFingerprint] = useState(null);
   const loadedFingerprintRef = useRef(null);
   const [workspaceState, setWorkspaceState] = useState(() => applyBimViewerDefaults({
     ...(version?.bim?.workspaceState ?? {}),
+    session: version?.bim?.session,
     ...(version?.bim?.styleSettings ?? {}),
   }));
+  const [importBusy, setImportBusy] = useState(false);
+  const [importStatus, setImportStatus] = useState('');
   const styleSyncTimerRef = useRef(null);
   const [extractionFeed, setExtractionFeed] = useState([]);
   const [queryResult, setQueryResult] = useState(null);
@@ -235,6 +249,12 @@ export function BimWorkspace({
     }, BIM_STYLE_SYNC_DEBOUNCE_MS);
   }, [resolvedProjectId]);
 
+  const persistSession = useCallback((nextSession) => {
+    if (!isSessionViewer) return;
+    patchVersionBim({ session: nextSession });
+    scheduleStyleSync();
+  }, [isSessionViewer, patchVersionBim, scheduleStyleSync]);
+
   useEffect(() => () => {
     if (styleSyncTimerRef.current) {
       clearTimeout(styleSyncTimerRef.current);
@@ -276,6 +296,7 @@ export function BimWorkspace({
 
   useEffect(() => {
     const contentHash = version?.content_hash;
+    if (isSessionViewer) return undefined;
     if (!source.arrayBuffer || !contentHash) return undefined;
     let cancelled = false;
     async function run() {
@@ -317,7 +338,33 @@ export function BimWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [prepRunId, source.arrayBuffer, version?.content_hash]);
+  }, [isSessionViewer, prepRunId, source.arrayBuffer, version?.content_hash]);
+
+  useEffect(() => {
+    if (!isSessionViewer) return undefined;
+    let cancelled = false;
+    async function loadCachedActiveModel() {
+      const session = normalizeBimWorkspaceSession(versionRef.current?.bim?.session ?? workspaceState.session);
+      if (session.modelRefs.length === 0) return;
+      const activeRef = session.modelRefs.find((ref) => ref.modelId === session.activeModelId) ?? session.modelRefs[0];
+      if (!activeRef?.fingerprint) return;
+      const cached = await repositoryRef.current.getPreparedModel(activeRef.fingerprint);
+      if (cancelled || !cached) return;
+      setPreparedByModelId((models) => ({ ...models, [activeRef.modelId]: cached }));
+      setPrepared(cached);
+      setFingerprint(activeRef.fingerprint);
+      setCacheStatus('loaded_cache');
+      setPhase('ready');
+      setWorkspaceState((state) => normalizeBimWorkspaceState({
+        ...state,
+        session,
+      }));
+    }
+    void loadCachedActiveModel();
+    return () => {
+      cancelled = true;
+    };
+  }, [isSessionViewer]);
 
   useEffect(() => {
     if (!fingerprint) return;
@@ -1074,7 +1121,189 @@ export function BimWorkspace({
     }));
   };
 
-  if (source.loading || (!prepared && !error)) {
+  const activeSession = workspaceState.session;
+
+  const commitBimSession = useCallback((nextSession) => {
+    const normalized = normalizeBimWorkspaceSession(nextSession);
+    patchWorkspaceState({ session: normalized });
+    persistSession(normalized);
+    return normalized;
+  }, [patchWorkspaceState, persistSession]);
+
+  const setActiveSessionModel = useCallback(async (modelId) => {
+    const ref = activeSession.modelRefs.find((entry) => entry.modelId === modelId);
+    if (!ref) return;
+    const nextSession = commitBimSession({
+      ...activeSession,
+      activeModelId: modelId,
+      updatedAt: new Date().toISOString(),
+    });
+    const preparedModel = preparedByModelId[modelId]
+      ?? (ref.fingerprint ? await repositoryRef.current.getPreparedModel(ref.fingerprint) : null);
+    if (!preparedModel) return;
+    setPreparedByModelId((models) => ({ ...models, [modelId]: preparedModel }));
+    setPrepared(preparedModel);
+    setFingerprint(ref.fingerprint || preparedModel.metadata?.fingerprint || null);
+    setQueryResult(null);
+    setCacheStatus('loaded_cache');
+    setPhase('ready');
+    if (nextSession.visibilityByModelId[modelId] === false) {
+      commitBimSession({
+        ...nextSession,
+        visibilityByModelId: {
+          ...nextSession.visibilityByModelId,
+          [modelId]: true,
+        },
+      });
+    }
+  }, [activeSession, commitBimSession, preparedByModelId]);
+
+  const toggleSessionModelVisibility = useCallback((modelId) => {
+    commitBimSession({
+      ...activeSession,
+      visibilityByModelId: {
+        ...activeSession.visibilityByModelId,
+        [modelId]: activeSession.visibilityByModelId?.[modelId] === false,
+      },
+      updatedAt: new Date().toISOString(),
+    });
+  }, [activeSession, commitBimSession]);
+
+  const removeSessionModel = useCallback((modelId) => {
+    const remainingRefs = activeSession.modelRefs.filter((ref) => ref.modelId !== modelId);
+    const visibilityByModelId = { ...activeSession.visibilityByModelId };
+    delete visibilityByModelId[modelId];
+    const nextActiveModelId = activeSession.activeModelId === modelId
+      ? remainingRefs[0]?.modelId ?? null
+      : activeSession.activeModelId;
+    commitBimSession({
+      ...activeSession,
+      modelRefs: remainingRefs,
+      activeModelId: nextActiveModelId,
+      visibilityByModelId,
+      updatedAt: new Date().toISOString(),
+    });
+    setPreparedByModelId((models) => {
+      const next = { ...models };
+      delete next[modelId];
+      return next;
+    });
+    if (activeSession.activeModelId === modelId) {
+      const nextPrepared = nextActiveModelId ? preparedByModelId[nextActiveModelId] ?? null : null;
+      setPrepared(nextPrepared);
+      setFingerprint(nextPrepared?.metadata?.fingerprint ?? null);
+      setQueryResult(null);
+    }
+  }, [activeSession, commitBimSession, preparedByModelId]);
+
+  const importIfcFiles = useCallback(async (files) => {
+    if (!isSessionViewer || importBusy) return;
+    const ifcFiles = files.filter((file) => /\.ifc$/i.test(file.name));
+    if (ifcFiles.length === 0) {
+      setImportStatus('Choose one or more .ifc files.');
+      return;
+    }
+    setImportBusy(true);
+    setError(null);
+    setExtractionFeed([]);
+    let latestPrepared = null;
+    let latestFingerprint = null;
+    let nextSession = activeSession;
+    let activeImportModelId = null;
+    try {
+      for (let index = 0; index < ifcFiles.length; index += 1) {
+        const file = ifcFiles[index];
+        setImportStatus(`Importing ${file.name} (${index + 1}/${ifcFiles.length})`);
+        const arrayBuffer = await file.arrayBuffer();
+        const sourceFileHash = await sha256Hex(arrayBuffer);
+        const modelId = `bim-model:${sourceFileHash.slice(0, 16)}`;
+        activeImportModelId = modelId;
+        const importedAt = new Date().toISOString();
+        const preparingRef = {
+          modelId,
+          sourceName: file.name,
+          label: file.name,
+          sourceFileHash,
+          fingerprint: '',
+          preparedModelKey: '',
+          status: 'preparing',
+          role: '',
+          importedAt,
+          updatedAt: importedAt,
+        };
+        nextSession = normalizeBimWorkspaceSession({
+          ...nextSession,
+          modelRefs: [
+            preparingRef,
+            ...nextSession.modelRefs.filter((ref) => ref.modelId !== modelId),
+          ],
+          activeModelId: modelId,
+          visibilityByModelId: {
+            ...nextSession.visibilityByModelId,
+            [modelId]: true,
+          },
+          updatedAt: importedAt,
+        });
+        commitBimSession(nextSession);
+        const result = await prepareBimModel({
+          arrayBuffer,
+          version: {
+            ...(versionRef.current ?? {}),
+            content_hash: sourceFileHash,
+            filename: file.name,
+            size: file.size,
+            relativePath: null,
+          },
+          repository: repositoryRef.current,
+          onPhase: setPhase,
+          onProgress: appendExtractionEvent,
+        });
+        latestPrepared = result.preparedModel;
+        latestFingerprint = result.fingerprint;
+        setPreparedByModelId((models) => ({ ...models, [modelId]: result.preparedModel }));
+        const readyRef = {
+          ...preparingRef,
+          fingerprint: result.fingerprint,
+          preparedModelKey: result.fingerprint,
+          status: 'ready',
+          warnings: result.preparedModel?.warnings ?? [],
+          updatedAt: new Date().toISOString(),
+        };
+        nextSession = normalizeBimWorkspaceSession({
+          ...nextSession,
+          modelRefs: nextSession.modelRefs.map((ref) => (ref.modelId === modelId ? readyRef : ref)),
+          activeModelId: modelId,
+          updatedAt: readyRef.updatedAt,
+        });
+        commitBimSession(nextSession);
+      }
+      if (latestPrepared) {
+        setPrepared(latestPrepared);
+        setFingerprint(latestFingerprint);
+        setCacheStatus('prepared');
+        setQueryResult(null);
+      }
+      setImportStatus(`Imported ${ifcFiles.length} IFC file${ifcFiles.length === 1 ? '' : 's'}.`);
+    } catch (err) {
+      const message = err?.message || 'IFC import failed.';
+      setImportStatus(message);
+      if (activeImportModelId) {
+        commitBimSession({
+          ...nextSession,
+          modelRefs: nextSession.modelRefs.map((ref) => (
+            ref.modelId === activeImportModelId
+              ? { ...ref, status: 'failed', errorMessage: message, updatedAt: new Date().toISOString() }
+              : ref
+          )),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    } finally {
+      setImportBusy(false);
+    }
+  }, [activeSession, commitBimSession, importBusy, isSessionViewer]);
+
+  if (!isSessionViewer && (source.loading || (!prepared && !error))) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-preview-bg text-center px-8">
         <div>
@@ -1086,12 +1315,58 @@ export function BimWorkspace({
     );
   }
 
-  if (source.error || error) {
+  if (!isSessionViewer && (source.error || error)) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-preview-bg text-center px-8">
         <div>
           <div className="serif text-lg text-primary mb-2">Could not prepare BIM model</div>
           <div className="sans text-xs text-warning">{source.error || error}</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isSessionViewer && !prepared) {
+    return (
+      <div className="h-full w-full min-h-0 flex flex-col bg-preview-bg">
+        <div className="shrink-0 border-b border-border bg-surface px-3 py-2 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-wider text-muted">IFC Viewer</div>
+            <div className="serif text-sm text-primary truncate">{card?.name ?? 'IFC Viewer'}</div>
+          </div>
+          <div className="shrink-0 text-right text-[10px] text-muted">
+            <div>{activeSession.modelRefs.length} files loaded</div>
+            <div className="uppercase tracking-wider">Federated BIM session</div>
+          </div>
+        </div>
+        <div className="relative flex-1 min-h-0 bg-preview-bg">
+          <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3">
+            <div className={BIM_VIEWPORT_TOOLBAR_SURFACE_CLASS} aria-label="Viewport controls">
+              <BimFileToolbarControls
+                session={activeSession}
+                prepared={prepared}
+                importBusy={importBusy}
+                importStatus={importStatus}
+                onImportFiles={importIfcFiles}
+                onSetActiveModel={setActiveSessionModel}
+                onToggleModelVisibility={toggleSessionModelVisibility}
+                onRemoveModel={removeSessionModel}
+                compact
+                buttonClassName={(active) => `rounded border border-border p-1 ${
+                  active ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
+                }`}
+                activeButtonClassName="rounded border border-border p-1 bg-accent text-on-accent"
+              />
+            </div>
+          </div>
+          <div className="absolute inset-0 flex items-center justify-center px-8 text-center">
+            <div className="max-w-md">
+              <div className="serif text-xl text-primary mb-2">Import IFC files</div>
+              <div className="sans text-sm text-secondary">
+                Use the file icon in the toolbar to import one or more IFC files, then switch the active file or toggle visibility.
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -1105,13 +1380,21 @@ export function BimWorkspace({
           <div className="serif text-sm text-primary truncate">{card?.name ?? version?.filename}</div>
         </div>
         <div className="shrink-0 text-right text-[10px] text-muted">
-          <div>{prepared.elements.length} elements · {prepared.properties.length} properties</div>
+          <div>
+            {prepared.elements.length} elements · {prepared.properties.length} properties
+            {isSessionViewer ? ` · ${activeSession.modelRefs.length} files loaded` : ''}
+          </div>
           <div className="uppercase tracking-wider">
             {cacheStatus === 'loaded_cache' ? 'Loaded prepared BIM cache' : 'Prepared BIM cache'} · {PHASE_LABELS[phase] ?? 'Ready'}
             {prepared.metadata?.fragmentsStatus === 'failed' ? ' · Fragments conversion failed; evidence view remains available' : ''}
           </div>
         </div>
       </div>
+      {isSessionViewer ? (
+        <div className="shrink-0 border-b border-border bg-surface px-3 py-1 text-[10px] text-muted">
+          ACTIVE FILE: {activeSession.modelRefs.find((ref) => ref.modelId === activeSession.activeModelId)?.label ?? prepared.metadata?.filename ?? 'None'} · {activeSession.modelRefs.length} files loaded · {activeSession.modelRefs.filter((ref) => activeSession.visibilityByModelId?.[ref.modelId] !== false).length} visible
+        </div>
+      ) : null}
       {extractionFeed.length > 0 && cacheStatus !== 'loaded_cache' && (
         <div className="shrink-0 border-b border-border bg-surface px-3 py-1 text-[10px] text-muted">
           {extractionFeed.at(-1)?.message}
@@ -1286,6 +1569,14 @@ export function BimWorkspace({
             onUpdateView={bimViews.updateViewFromCurrent}
             onDeleteView={bimViews.deleteView}
             loadViewThumbnail={bimViews.loadViewThumbnail}
+            sessionViewerEnabled={isSessionViewer}
+            session={activeSession}
+            sessionImportBusy={importBusy}
+            sessionImportStatus={importStatus}
+            onSessionImportFiles={importIfcFiles}
+            onSessionSetActiveModel={setActiveSessionModel}
+            onSessionToggleModelVisibility={toggleSessionModelVisibility}
+            onSessionRemoveModel={removeSessionModel}
           />
         </div>
         {leftPanelOpen ? (

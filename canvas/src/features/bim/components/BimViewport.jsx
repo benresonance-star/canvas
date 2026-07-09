@@ -40,6 +40,7 @@ import {
   fitCameraToFragmentLocalIds,
 } from '../bim-core/bimSelectionCameraFit.js';
 import BimCameraHistoryControls from './BimCameraHistoryControls.jsx';
+import BimFileToolbarControls from './BimFileToolbarControls.jsx';
 import { endAxisViewOrbitLock } from '../bim-core/bimAxisViewOrbit.js';
 import { createBimMeasurementController } from '../bim-core/bimMeasurementController.js';
 import { createBimMeasurementOverlay } from '../bim-core/bimMeasurementOverlay.js';
@@ -444,6 +445,14 @@ export function BimViewport({
   onUpdateView = () => {},
   onDeleteView = () => {},
   loadViewThumbnail = async () => null,
+  sessionViewerEnabled = false,
+  session = null,
+  sessionImportBusy = false,
+  sessionImportStatus = '',
+  onSessionImportFiles = () => {},
+  onSessionSetActiveModel = () => {},
+  onSessionToggleModelVisibility = () => {},
+  onSessionRemoveModel = () => {},
 }) {
   const total = preparedModel?.elements?.length ?? 0;
   const loadDetail = total > 0 ? `${total.toLocaleString()} elements` : null;
@@ -587,6 +596,7 @@ export function BimViewport({
   const [measureModeActive, setMeasureModeActive] = useState(false);
   const [measureHudOpen, setMeasureHudOpen] = useState(false);
   const [cameraHistoryHudOpen, setCameraHistoryHudOpen] = useState(false);
+  const [fileHudOpen, setFileHudOpen] = useState(false);
   const [cameraHistoryStack, setCameraHistoryStack] = useState({
     pastCount: 0,
     futureCount: 0,
@@ -3585,6 +3595,30 @@ export function BimViewport({
               </>
             ) : null}
             <div className="flex flex-wrap items-center justify-center gap-y-1">
+              {sessionViewerEnabled ? (
+                <>
+                  <div className="flex items-center gap-1">
+                    <BimFileToolbarControls
+                      menuOpen={fileHudOpen}
+                      onMenuOpenChange={setFileHudOpen}
+                      session={session}
+                      prepared={preparedModel}
+                      importBusy={sessionImportBusy}
+                      importStatus={sessionImportStatus}
+                      onImportFiles={onSessionImportFiles}
+                      onSetActiveModel={onSessionSetActiveModel}
+                      onToggleModelVisibility={onSessionToggleModelVisibility}
+                      onRemoveModel={onSessionRemoveModel}
+                      compact
+                      buttonClassName={(active) => `rounded border border-border p-1 ${
+                        active ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
+                      }`}
+                      activeButtonClassName="rounded border border-border p-1 bg-accent text-on-accent"
+                    />
+                  </div>
+                  <BimViewportToolbarSeparator />
+                </>
+              ) : null}
               <div className="flex items-center gap-1">
               <button
                 type="button"

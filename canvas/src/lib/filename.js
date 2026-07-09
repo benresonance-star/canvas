@@ -160,6 +160,7 @@ export function isFolderBackedCanvasCard(card) {
   if (type === 'agent') return false;
   if (type === 'music-agent') return false;
   if (type === 'sonic_studio') return false;
+  if (type === 'bim-model' && (card?.versions ?? []).some((version) => version?.bim?.viewerKind === 'ifc-viewer-session')) return false;
   if (card?.prefix === 'links') return false;
   return true;
 }

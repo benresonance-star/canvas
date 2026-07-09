@@ -104,6 +104,7 @@ export function buildWorkspaceViewBundles(ctx) {
       handleSaveNewTask: ctx.handleSaveNewTask,
       handleSaveNewLink: ctx.handleSaveNewLink,
       handleSaveNewFlow: ctx.handleSaveNewFlow,
+      handleSaveNewBimViewer: ctx.handleSaveNewBimViewer,
       handleSaveNewStudio: ctx.handleSaveNewStudio,
       handleEnsureStudioCard: ctx.handleEnsureStudioCard,
       handleSaveNewLive: ctx.handleSaveNewLive,

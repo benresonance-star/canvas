@@ -1,5 +1,6 @@
 import {
   Bot,
+  Building2,
   Link2,
   ListTodo,
   Music,
@@ -17,6 +18,7 @@ export const ADD_MENU_ITEM_IDS = [
   'beat',
   'agent',
   'live',
+  'ifc-viewer',
   'flow',
   'link',
   'task',
@@ -81,6 +83,13 @@ export function buildAddMenuItems({
       id: 'live',
       label: strings.addMenu.addLiveAgent,
       icon: RadioTower,
+      disabled: projectDisabled,
+      disabledReason: projectReason,
+    },
+    {
+      id: 'ifc-viewer',
+      label: strings.addMenu.addIfcViewer,
+      icon: Building2,
       disabled: projectDisabled,
       disabledReason: projectReason,
     },

@@ -207,6 +207,7 @@ export function CanvasWorkspaceView({
     handleSaveNewTask,
     handleSaveNewLink,
     handleSaveNewFlow,
+    handleSaveNewBimViewer,
     handleSaveNewStudio,
     handleEnsureStudioCard,
     handleSaveNewLive,
@@ -617,6 +618,14 @@ export function CanvasWorkspaceView({
       case 'live':
         setCreateLiveOpen(true);
         break;
+      case 'ifc-viewer':
+        void handleSaveNewBimViewer({
+          position: consumeCardPosition({
+            mode: 'center',
+            offset: { x: -190, y: -130 },
+          }),
+        });
+        break;
       case 'flow':
         setCreateFlowOpen(true);
         break;
@@ -639,6 +648,8 @@ export function CanvasWorkspaceView({
     setCreateSonicStudioOpen,
     setCreateAgentOpen,
     setCreateLiveOpen,
+    handleSaveNewBimViewer,
+    consumeCardPosition,
     setCreateFlowOpen,
     setNewNoteOpen,
     setNewTaskOpen,

@@ -3,6 +3,10 @@ import { getPreview } from '../../../lib/previewStore.js';
 import { getFileHandleAtPath } from '../../../lib/folderWrite.js';
 import { isBlobUrl } from '../../../lib/previewUrl.js';
 
+export function isEmptyBimViewerVersion(version) {
+  return version?.bim?.viewerKind === 'ifc-viewer-session';
+}
+
 async function blobFromFolderPath(folderHandle, relativePath) {
   const handle = await getFileHandleAtPath(folderHandle, relativePath);
   const file = await handle.getFile();
@@ -42,6 +46,7 @@ async function resolveVersionBlob(version, folderHandle) {
 /** Stable IFC source identity — ignores viewport/style patches on the version object. */
 export function buildBimSourceIdentity(version) {
   if (!version) return '';
+  if (isEmptyBimViewerVersion(version)) return `empty-ifc-viewer:${version?.bim?.session?.id ?? ''}`;
   return [
     version.content_hash ?? '',
     version.previewCacheKey ?? '',
@@ -72,6 +77,20 @@ export function useBimModelSource(version, { folderHandle = null } = {}) {
   }, []);
 
   const load = useCallback(async ({ force = false } = {}) => {
+    if (isEmptyBimViewerVersion(versionRef.current)) {
+      clearObjectUrl();
+      loadedIdentityRef.current = sourceIdentity;
+      const next = {
+        blob: null,
+        arrayBuffer: null,
+        objectUrl: null,
+        loading: false,
+        error: null,
+      };
+      setSource(next);
+      return next;
+    }
+
     if (!force && loadedIdentityRef.current === sourceIdentity) {
       return;
     }

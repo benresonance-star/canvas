@@ -313,6 +313,7 @@ export const strings = {
     addBeat: 'Add Beat',
     addAgent: 'Add Agent',
     addLiveAgent: 'Add Live Agent',
+    addIfcViewer: 'Add IFC Viewer',
     addFlow: 'Add Flow Exploration',
     addWebLink: 'Add Web Link',
     addTask: 'Add Task',
