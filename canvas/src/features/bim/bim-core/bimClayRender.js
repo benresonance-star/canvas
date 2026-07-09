@@ -5,6 +5,9 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { renderWireframeOverlayPass } from './bimWireframeOverlay.js';
+import {
+  renderClaySelectionOverlayPass,
+} from './bimClaySelectionOverlay.js';
 import { chunkLocalIds } from './bimPickPipeline.js';
 import { resolveFragmentsLocalIdsByGlobalIds, isValidFragmentsLocalId } from './fragmentsSelection.js';
 import {
@@ -95,8 +98,11 @@ export const CLAY_GHOST_MATERIAL = {
   customId: 'canvas-bim-clay-ghost',
 };
 
+/** Matches standard highlight-mode selection (`SELECTED_MATERIAL` in BimViewport). */
+export const BIM_SELECTION_HIGHLIGHT_COLOR = '#f59e0b';
+
 export const CLAY_SELECTED_MATERIAL = {
-  color: new THREE.Color('#e5e5e5'),
+  color: new THREE.Color(BIM_SELECTION_HIGHLIGHT_COLOR),
   renderedFaces: RenderedFaces.TWO,
   opacity: 1,
   transparent: false,
@@ -1412,6 +1418,7 @@ export function renderClayFrame({
   wireframeEdges,
   wireframeEnabled = false,
   wireframeOptions = {},
+  selectionOverlay = null,
   backgroundColor = CLAY_BACKGROUND_DEFAULT,
   aoIntensity = CLAY_AO_INTENSITY_DEFAULT,
   aoRadius = CLAY_AO_RADIUS_DEFAULT,
@@ -1451,6 +1458,21 @@ export function renderClayFrame({
       renderer.shadowMap.enabled = false;
     }
     clayComposerState.composer.render();
+
+    const { width, height } = resolveClayComposerDepthSources(clayComposerState)[0] ?? {};
+    const drawingSize = typeof renderer.getDrawingBufferSize === 'function'
+      ? renderer.getDrawingBufferSize(new THREE.Vector2())
+      : null;
+    const passWidth = drawingSize?.x ?? width ?? 1;
+    const passHeight = drawingSize?.y ?? height ?? 1;
+
+    if (selectionOverlay?.parent && overlayScene) {
+      renderer.setRenderTarget(null);
+      const depthTest = populateScreenDepthFromScene(renderer, scene, camera);
+      renderClaySelectionOverlayPass(renderer, overlayScene, camera, selectionOverlay, {
+        depthTest,
+      });
+    }
 
     const wireframeOpacity = wireframeOptions.opacity;
     const shouldDrawWireframe = wireframeEnabled

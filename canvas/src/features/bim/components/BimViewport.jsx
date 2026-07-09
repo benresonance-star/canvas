@@ -30,6 +30,11 @@ import {
   swapBimCamera,
 } from '../bim-core/bimCamera.js';
 import { createBimCameraKeyboardNav } from '../bim-core/bimCameraKeyboardNav.js';
+import {
+  createBimCameraHistory,
+  createBimCameraHistoryAnimator,
+} from '../bim-core/bimCameraHistory.js';
+import BimCameraHistoryControls from './BimCameraHistoryControls.jsx';
 import { endAxisViewOrbitLock } from '../bim-core/bimAxisViewOrbit.js';
 import { createBimMeasurementController } from '../bim-core/bimMeasurementController.js';
 import { createBimMeasurementOverlay } from '../bim-core/bimMeasurementOverlay.js';
@@ -64,6 +69,7 @@ import {
   scheduleClayMaterialGroupsPrefetch,
   CLAY_GHOST_MATERIAL,
   CLAY_SELECTED_MATERIAL,
+  BIM_SELECTION_HIGHLIGHT_COLOR,
   createClayComposer,
   disposeClayComposer,
   renderClayFrame,
@@ -77,6 +83,12 @@ import {
   updateClaySunDirection,
   updateClaySsaoQuality,
 } from '../bim-core/bimClayRender.js';
+import {
+  attachClaySelectionOverlay,
+  buildClaySelectionOverlay,
+  disposeClaySelectionOverlay,
+  ensureClaySelectionOverlayAttached,
+} from '../bim-core/bimClaySelectionOverlay.js';
 import { createPickTimer, isBimPickDebugEnabled, logBimPickMappingFailure } from '../bim-core/bimPickDebug.js';
 import { createClayApplyTimer, publishClayDebugMarker, publishClayFrameDebugSnapshot, getClayEffectDebugMarker } from '../bim-core/bimClayDebug.js';
 import {
@@ -212,7 +224,7 @@ function getRendererLogicalSize(renderer) {
 }
 
 const SELECTED_MATERIAL = {
-  color: new THREE.Color('#f59e0b'),
+  color: new THREE.Color(BIM_SELECTION_HIGHLIGHT_COLOR),
   renderedFaces: RenderedFaces.TWO,
   opacity: 1,
   transparent: false,
@@ -439,6 +451,8 @@ export function BimViewport({
   const gimbalChromeRef = useRef(null);
   const [toolbarHeightPx, setToolbarHeightPx] = useState(32);
   const keyboardNavRef = useRef(null);
+  const cameraHistoryRef = useRef(null);
+  const cameraHistoryAnimatorRef = useRef(null);
   const pointerWalkTargetRef = useRef(null);
   const pointerWalkRaycastSeqRef = useRef(0);
   const sceneRef = useRef(null);
@@ -450,6 +464,7 @@ export function BimViewport({
   const idCacheRef = useRef(createFragmentsIdCache());
   const pickSeqRef = useRef(0);
   const applySelectionSeqRef = useRef(0);
+  const applySelectionOverlayRef = useRef(null);
   const clayApplySeqRef = useRef(0);
   const clayApplyInFlightRef = useRef(false);
   const clayReapplyInFlightRef = useRef(false);
@@ -545,6 +560,10 @@ export function BimViewport({
   const wireframeRebuildQueuedRef = useRef(false);
   const wireframeRetryAtRef = useRef(0);
   const wireframeOverlaySceneRef = useRef(null);
+  const claySelectionOverlayRef = useRef(null);
+  const claySelectionHiddenLocalIdsRef = useRef([]);
+  const claySelectionBuildSeqRef = useRef(0);
+  const syncClaySelectionOverlayRef = useRef(async () => {});
   const modelBoundsRef = useRef({ radius: 10, center: new THREE.Vector3() });
   const selectedElementRef = useRef(selectedElement);
   const onDeselectElementRef = useRef(onDeselectElement);
@@ -555,6 +574,13 @@ export function BimViewport({
   const [fovInput, setFovInput] = useState(String(initialCamera?.fov ?? BIM_DEFAULT_FOV));
   const [measureModeActive, setMeasureModeActive] = useState(false);
   const [measureHudOpen, setMeasureHudOpen] = useState(false);
+  const [cameraHistoryHudOpen, setCameraHistoryHudOpen] = useState(false);
+  const [cameraHistoryStack, setCameraHistoryStack] = useState({
+    pastCount: 0,
+    futureCount: 0,
+    canGoBack: false,
+    canGoForward: false,
+  });
   const [measureEditMode, setMeasureEditMode] = useState(false);
   const [selectedRlPick, setSelectedRlPick] = useState(null);
   const [measureDraftActive, setMeasureDraftActive] = useState(false);
@@ -908,18 +934,22 @@ export function BimViewport({
     if (state) onCameraChangeRef.current(state);
   }, []);
 
-  const fitModelToPreset = useCallback((preset = 'home') => {
+  const fitModelToPreset = useCallback((preset = 'home', { recordHistory = true } = {}) => {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     const model = modelRef.current;
     const renderer = rendererRef.current;
     if (!camera || !controls || !model?.object) return;
+    if (recordHistory) cameraHistoryRef.current?.beginSession();
     endAxisViewOrbitLock(controls);
     const size = renderer?.getSize(new THREE.Vector2());
     const aspect = size?.y ? size.x / size.y : (camera.aspect ?? 1);
     const fitOptions = { margin: 1.35, viewportAspect: aspect };
     const fitted = fitCameraToViewPreset(camera, controls, model.object, preset, fitOptions);
-    if (!fitted) return;
+    if (!fitted) {
+      if (recordHistory) cameraHistoryRef.current?.commitSession();
+      return;
+    }
     syncOrbitControlsAfterCameraFit(controls);
     model.useCamera(camera);
     camera.updateMatrixWorld(true);
@@ -930,11 +960,35 @@ export function BimViewport({
     }
     syncModelBounds(model.object, modelBoundsRef, syncViewportBounds);
     emitCameraChange();
+    if (recordHistory) cameraHistoryRef.current?.commitSession();
   }, [emitCameraChange, syncViewportBounds]);
 
-  const fitModel = useCallback(() => {
-    fitModelToPreset('home');
+  const fitModel = useCallback((options = {}) => {
+    fitModelToPreset('home', options);
   }, [fitModelToPreset]);
+
+  const restoreCameraFromHistory = useCallback((targetSnapshot) => {
+    const controls = controlsRef.current;
+    const animator = cameraHistoryAnimatorRef.current;
+    const history = cameraHistoryRef.current;
+    if (!targetSnapshot || !controls || !animator || animator.isAnimating) return;
+    history?.setRestoring(true);
+    controls.enabled = false;
+    if (!animator.start(targetSnapshot)) {
+      history?.setRestoring(false);
+      controls.enabled = true;
+    }
+  }, []);
+
+  const handleCameraHistoryGoBack = useCallback(() => {
+    const target = cameraHistoryRef.current?.goBack();
+    if (target) restoreCameraFromHistory(target);
+  }, [restoreCameraFromHistory]);
+
+  const handleCameraHistoryGoForward = useCallback(() => {
+    const target = cameraHistoryRef.current?.goForward();
+    if (target) restoreCameraFromHistory(target);
+  }, [restoreCameraFromHistory]);
 
   const applyViewPreset = useCallback((preset) => {
     fitModelToPreset(preset);
@@ -949,6 +1003,58 @@ export function BimViewport({
       }
     });
   }, []);
+
+  const restoreClaySelectionHiddenFragments = useCallback(async () => {
+    const model = modelRef.current;
+    const hiddenIds = claySelectionHiddenLocalIdsRef.current;
+    if (!model || !hiddenIds.length) return;
+    try {
+      await model.setVisible(hiddenIds, true);
+      await updateFragmentsRef.current?.(true).catch(() => {});
+    } catch (error) {
+      if (!isStaleFragmentsLifecycleError(error)) {
+        setRenderError(error?.message || 'Could not restore BIM selection visibility.');
+      }
+    }
+    claySelectionHiddenLocalIdsRef.current = [];
+  }, []);
+
+  const syncClaySelectionOverlay = useCallback(async (localIds = []) => {
+    const buildSeq = ++claySelectionBuildSeqRef.current;
+    disposeClaySelectionOverlay(claySelectionOverlayRef.current);
+    claySelectionOverlayRef.current = null;
+    await restoreClaySelectionHiddenFragments();
+
+    if (renderStyleRef.current !== 'clay') return;
+
+    const model = modelRef.current;
+    const overlayScene = wireframeOverlaySceneRef.current;
+    if (!model || !overlayScene || !localIds?.length) return;
+
+    const overlay = await buildClaySelectionOverlay(model, localIds);
+    if (buildSeq !== claySelectionBuildSeqRef.current) {
+      disposeClaySelectionOverlay(overlay);
+      return;
+    }
+    if (!overlay) return;
+
+    attachClaySelectionOverlay(overlayScene, model.object, overlay);
+    claySelectionOverlayRef.current = overlay;
+
+    try {
+      await model.setVisible(localIds, false);
+      claySelectionHiddenLocalIdsRef.current = [...localIds];
+      await updateFragmentsRef.current?.(true).catch(() => {});
+    } catch (error) {
+      if (!isStaleFragmentsLifecycleError(error)) {
+        setRenderError(error?.message || 'Could not hide clay selection geometry.');
+      }
+    }
+  }, [restoreClaySelectionHiddenFragments]);
+
+  useEffect(() => {
+    syncClaySelectionOverlayRef.current = syncClaySelectionOverlay;
+  }, [syncClaySelectionOverlay]);
 
   const rebuildWireframeEdges = useCallback(async () => {
     const model = modelRef.current;
@@ -1388,6 +1494,48 @@ export function BimViewport({
     };
     controls.addEventListener('end', emitSceneCameraChange);
 
+    const cameraHistory = createBimCameraHistory({
+      getCamera: () => cameraRef.current,
+      getControls: () => controlsRef.current,
+      getProjectionMode: () => projectionModeRef.current,
+      onStackChange: (stack) => {
+        setCameraHistoryStack(stack);
+      },
+    });
+    cameraHistoryRef.current = cameraHistory;
+
+    const cameraHistoryAnimator = createBimCameraHistoryAnimator({
+      getCamera: () => cameraRef.current,
+      getControls: () => controlsRef.current,
+      getViewportSize: () => {
+        const rect = container.getBoundingClientRect();
+        return {
+          width: Math.max(1, Math.floor(rect.width)),
+          height: Math.max(1, Math.floor(rect.height)),
+        };
+      },
+      onComplete: () => {
+        cameraHistory.setRestoring(false);
+        controls.enabled = true;
+        emitSceneCameraChange();
+      },
+    });
+    cameraHistoryAnimatorRef.current = cameraHistoryAnimator;
+
+    const onControlsStart = () => {
+      cameraHistory.handleControlsStart();
+    };
+    const onControlsEnd = () => {
+      cameraHistory.handleControlsEnd();
+      emitSceneCameraChange();
+    };
+    const onControlsChange = () => {
+      cameraHistory.handleControlsChange();
+    };
+    controls.addEventListener('start', onControlsStart);
+    controls.addEventListener('end', onControlsEnd);
+    controls.addEventListener('change', onControlsChange);
+
     const schedulePointerWalkTargetRaycast = (clientX, clientY) => {
       const seq = ++pointerWalkRaycastSeqRef.current;
       void (async () => {
@@ -1423,6 +1571,8 @@ export function BimViewport({
       getPointerWalkTarget: () => pointerWalkTargetRef.current,
       onPointerMove: schedulePointerWalkTargetRaycast,
       onCameraMoved: emitSceneCameraChange,
+      onCameraSessionBegin: () => cameraHistory.beginSession(),
+      onCameraSessionEnd: () => cameraHistory.commitSession(),
     });
     keyboardNavRef.current = keyboardNav;
 
@@ -1544,6 +1694,7 @@ export function BimViewport({
           });
         } else if (baseResult.ok) {
           publishClayFrameDebugSnapshot(baseResult.stats, { localIdsCount: allLocalIds.length });
+          await applySelectionOverlayRef.current?.();
         }
       } finally {
         clayReapplyInFlightRef.current = false;
@@ -1563,7 +1714,9 @@ export function BimViewport({
       if (!modelReadyRef.current) return;
 
       if (firstValidSize && fitToModelOnLoadRef.current) {
-        fitModel();
+        cameraHistory.setRecordingEnabled(false);
+        fitModel({ recordHistory: false });
+        cameraHistory.setRecordingEnabled(true);
       }
 
       void updateFragments(true, { retryModelRegistration: true })
@@ -1654,12 +1807,16 @@ export function BimViewport({
           const hasSavedCamera = Boolean(savedCamera);
           resize();
           if (hasSavedCamera) {
+            cameraHistory.setRecordingEnabled(false);
             restoreBimCameraState(activeCamera, controls, savedCamera, {
               width: rect.width,
               height: rect.height,
             });
+            cameraHistory.setRecordingEnabled(true);
           } else {
-            fitModel();
+            cameraHistory.setRecordingEnabled(false);
+            fitModel({ recordHistory: false });
+            cameraHistory.setRecordingEnabled(true);
           }
 
           await primeViewportRendererForBoot(renderer, scene, activeCamera);
@@ -1800,6 +1957,14 @@ export function BimViewport({
         ensureWireframeEdgesAttached(overlayScene, modelRef.current?.object ?? null, wireframeEdges);
       }
 
+      if (renderStyleRef.current === 'clay') {
+        ensureClaySelectionOverlayAttached(
+          overlayScene,
+          modelRef.current?.object ?? null,
+          claySelectionOverlayRef.current,
+        );
+      }
+
       if (
         boundingBoxModeRef.current
         && !boundingBoxEdgesRef.current?.parent
@@ -1825,6 +1990,7 @@ export function BimViewport({
           camera: activeCamera,
           wireframeEdges,
           wireframeEnabled: wireframeModeRef.current,
+          selectionOverlay: claySelectionOverlayRef.current,
           wireframeOptions: {
             ...wfOpts,
             cameraDistance,
@@ -1907,6 +2073,7 @@ export function BimViewport({
       const deltaSeconds = Math.min((now - lastFrameTime) / 1000, 0.1);
       lastFrameTime = now;
       keyboardNav.update(deltaSeconds);
+      cameraHistoryAnimator.update(deltaSeconds);
       controls.update();
       syncViewNavigatorState();
       const hasLayerFilter = hiddenStoreysRef.current.length > 0 || hiddenLayersRef.current.length > 0;
@@ -2001,6 +2168,9 @@ export function BimViewport({
       }
       disposeWireframeEdges(wireframeEdgesRef.current);
       wireframeEdgesRef.current = null;
+      disposeClaySelectionOverlay(claySelectionOverlayRef.current);
+      claySelectionOverlayRef.current = null;
+      void restoreClaySelectionHiddenFragments();
       endAxisViewOrbitLock(controls);
       disposeModelBoundingBoxEdges(boundingBoxEdgesRef.current);
       boundingBoxEdgesRef.current = null;
@@ -2015,7 +2185,13 @@ export function BimViewport({
       if (animationRef.current) window.cancelAnimationFrame(animationRef.current);
       resizeObserver.disconnect();
       window.removeEventListener('resize', resizeAndRefresh);
-      controls.removeEventListener('end', emitSceneCameraChange);
+      controls.removeEventListener('end', onControlsEnd);
+      controls.removeEventListener('start', onControlsStart);
+      controls.removeEventListener('change', onControlsChange);
+      cameraHistory.dispose();
+      cameraHistoryRef.current = null;
+      cameraHistoryAnimator.cancel();
+      cameraHistoryAnimatorRef.current = null;
       keyboardNav.dispose();
       keyboardNavRef.current = null;
       pointerWalkTargetRef.current = null;
@@ -2250,22 +2426,29 @@ export function BimViewport({
   }, [measureModeActive, measureEditMode]);
 
   useEffect(() => {
+    if (renderStyle !== 'clay') {
+      void syncClaySelectionOverlay([]);
+    }
+  }, [renderStyle, syncClaySelectionOverlay]);
+
+  useEffect(() => {
     syncMeasurementOverlay();
   }, [measurements, measureUnits, measureSnapMode, measureKind, measurementsVisible, syncMeasurementOverlay]);
 
   useEffect(() => {
     const model = modelRef.current;
     if (!model || !modelReadyRef.current || loadState !== 'ready') return;
-    const runSeq = ++applySelectionSeqRef.current;
-    const timer = createPickTimer('applySelection');
-    const cache = idCacheRef.current;
 
     async function applySelection() {
+      const runSeq = ++applySelectionSeqRef.current;
+      const timer = createPickTimer('applySelection');
+      const cache = idCacheRef.current;
       const isClay = renderStyle === 'clay';
       const normalizedDisplayMode = displayMode === 'isolate' ? 'highlight' : displayMode;
       const effectiveDisplayMode = isClay && normalizedDisplayMode === 'colorBy' ? 'highlight' : normalizedDisplayMode;
       const ghostMaterial = isClay ? CLAY_GHOST_MATERIAL : GHOST_MATERIAL;
       const selectedMaterial = isClay ? CLAY_SELECTED_MATERIAL : SELECTED_MATERIAL;
+      let clayOrangeLocalIds = [];
       const queryBatchIsolate = queryViewerMode === 'isolate' && highlightElementIds.length > 0;
       const selectionIsolate = isolateOnSelect && Boolean(selectedElement);
       const shouldIsolate = queryBatchIsolate || selectionIsolate;
@@ -2312,12 +2495,19 @@ export function BimViewport({
             );
             const primaryLocalId = selectedIdMap.get(selectedElement.ifcGlobalId);
             if (isValidFragmentsLocalId(primaryLocalId)) {
-              await model.highlight([primaryLocalId], selectedMaterial);
+              if (isClay) {
+                clayOrangeLocalIds = [primaryLocalId];
+              } else {
+                await model.highlight([primaryLocalId], selectedMaterial);
+              }
             }
           }
         }
         if (!shouldApplySelectionRun(runSeq, applySelectionSeqRef.current)) return;
         await applyBimLayerStoreyVisibility(model, preparedModel, cache, { hiddenStoreys, hiddenLayers });
+        if (isClay) {
+          await syncClaySelectionOverlayRef.current(clayOrangeLocalIds);
+        }
         timer.finish({ displayMode, targetCount: 0, localIdCount: 0 });
         return;
       }
@@ -2358,23 +2548,41 @@ export function BimViewport({
       }
 
       if (!shouldApplySelectionRun(runSeq, applySelectionSeqRef.current)) return;
-      if (effectiveDisplayMode !== 'colorBy') await model.highlight(localIds, selectedMaterial);
+      clayOrangeLocalIds = [...new Set(localIds)];
       if (selectedElement && isValidFragmentsLocalId(primaryLocalId)) {
-        await model.highlight([primaryLocalId], selectedMaterial);
+        clayOrangeLocalIds.push(primaryLocalId);
+        clayOrangeLocalIds = [...new Set(clayOrangeLocalIds)];
+      }
+      if (!isClay) {
+        if (effectiveDisplayMode !== 'colorBy') await model.highlight(localIds, selectedMaterial);
+        if (selectedElement && isValidFragmentsLocalId(primaryLocalId)) {
+          await model.highlight([primaryLocalId], selectedMaterial);
+        }
       }
 
       if (!shouldApplySelectionRun(runSeq, applySelectionSeqRef.current)) return;
       await applyBimLayerStoreyVisibility(model, preparedModel, cache, { hiddenStoreys, hiddenLayers });
+      if (isClay) {
+        await syncClaySelectionOverlayRef.current(clayOrangeLocalIds);
+      }
 
       timer.mark('highlight');
       timer.finish({ displayMode, targetCount: targetElements.length, localIdCount: localIds.length });
     }
 
+    applySelectionOverlayRef.current = applySelection;
+
     void applySelection().catch((error) => {
-      if (shouldApplySelectionRun(runSeq, applySelectionSeqRef.current) && !isStaleFragmentsLifecycleError(error)) {
+      if (!isStaleFragmentsLifecycleError(error)) {
         setRenderError(error?.message || 'Could not apply BIM selection.');
       }
     });
+
+    return () => {
+      if (applySelectionOverlayRef.current === applySelection) {
+        applySelectionOverlayRef.current = null;
+      }
+    };
   }, [
     colorByProperty,
     displayMode,
@@ -2469,6 +2677,9 @@ export function BimViewport({
             localIdsCount: result.localIdsCount,
             totalMs: result.totalMs,
           });
+          if (result.ok) {
+            setSelectionRefreshNonce((nonce) => nonce + 1);
+          }
         } catch (error) {
           if (!shouldCancel()) {
             publishClayDebugMarker({
@@ -2722,10 +2933,12 @@ export function BimViewport({
     }
 
     const rect = container.getBoundingClientRect();
+    cameraHistoryRef.current?.setRecordingEnabled(false);
     restoreBimCameraState(cameraRef.current, controls, viewApplyRequest.camera, {
       width: rect.width,
       height: rect.height,
     });
+    cameraHistoryRef.current?.setRecordingEnabled(true);
 
     if (cameraRef.current?.isPerspectiveCamera) {
       setFovInput(String(Math.round(cameraRef.current.fov)));
@@ -3197,6 +3410,21 @@ export function BimViewport({
                   ? <Axis3D size={14} strokeWidth={1.7} />
                   : <Camera size={14} strokeWidth={1.7} />}
               </button>
+              <BimCameraHistoryControls
+                menuOpen={cameraHistoryHudOpen}
+                onMenuOpenChange={setCameraHistoryHudOpen}
+                canGoBack={cameraHistoryStack.canGoBack}
+                canGoForward={cameraHistoryStack.canGoForward}
+                pastCount={cameraHistoryStack.pastCount}
+                futureCount={cameraHistoryStack.futureCount}
+                onGoBack={handleCameraHistoryGoBack}
+                onGoForward={handleCameraHistoryGoForward}
+                compact
+                buttonClassName={(active) => `rounded border border-border p-1 ${
+                  active ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
+                }`}
+                activeButtonClassName="rounded border border-border p-1 bg-accent text-on-accent"
+              />
               </div>
               <BimViewportToolbarSeparator />
               <div className="flex items-center gap-1">

@@ -276,7 +276,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Storey extraction | Yes — `storeyId` on element records and shown in table column |
 | Viewer rendering | Yes — `BimViewport.jsx` (Fragments + Three.js); boot gated on layout + worker registration via `bimViewportBoot.js` |
 | Wireframe overlay | Yes — feature-edge overlay over lit/ghost/highlight/clay; **style settings HUD** controls when enabled (weight, transparency, colour, Hdn/All); persisted in workspace state (`wireframeHiddenLines` default true) |
-| Clay / Arctic render | Yes — `renderStyle: 'clay'` with SSAO + optional wireframe compositing; circle icon toggle in display toolbar group; **Orig** blends native IFC colours toward Surf (partial only where IFC colour metadata exists; 100% uniform Surf) |
+| Clay / Arctic render | Yes — `renderStyle: 'clay'` with SSAO + optional wireframe compositing; circle icon toggle in display toolbar group; **Orig** blends native IFC colours toward Surf (partial only where IFC colour metadata exists; 100% uniform Surf); **selection** uses post-SSAO orange overlay (`bimClaySelectionOverlay.js`, `#f59e0b`) |
 | Viewport boot | Yes — `bimViewportBoot.js` (layout wait, registration, fast sync, phased loading UI) |
 | Default open state | Yes — highlight display mode, standard render, all storeys/layers visible, **section cut off** (`BIM_VIEWER_DEFAULTS` + `applyBimViewerDefaults`) |
 | Style settings HUD | Yes — toolbar sliders icon toggles floating panel; background + presets always; HDRI lighting (standard only); clay/wireframe sliders + clay debug when active (`BimStyleSettingsHud.jsx`, `BimStyleToolbarControls.jsx`, `BimClayDebugPanel.jsx`) |
@@ -290,6 +290,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Section cut | Yes — horizontal clipping plane + fill/edge overlay (`BimSectionHud.jsx`, `bimSectioning.js`); **off by default** on workspace open; left HUD stack |
 | Viewport loading feedback | Yes — phased boot overlay (`BIM_VIEWPORT_LOAD_PHASES`) with spinner + element count |
 | Perspective / orthographic | Yes — toolbar toggle + camera state persistence |
+| Camera history undo | Yes — toolbar `History` HUD; up to 10 back/forward steps; 750 ms settle coalescing per gesture; animated restore (`bimCameraHistory.js`, `BimCameraHistoryControls.jsx`) |
 | View navigator gimbal | Yes — top-right wireframe cube (absolute); right-click Home / Top / Bottom; footprint **MBR** long-edge azimuth + fixed-width label; right HUD panels sit below gimbal chrome (`BimViewNavigatorGimbal.jsx`, `bimViewNavigator.js`, `bimViewportLayout.js`, `cameraFit.js`) |
 | Bounding box overlay | Yes — toolbar toggle (right of **Color by IFC type**, left of wireframe); footprint **OBB** wireframe on overlay scene (`bimBoundingBoxOverlay.js`, `buildFootprintOrientedBounds` in `cameraFit.js`) |
 | Color-by IFC type | Yes — toolbar `Palette` toggle; `displayMode: colorBy` + `colorByProperty: ifcClass`; element-table swatches; BQL `colorBy` supported (`bimColorBy.js`) |
@@ -324,7 +325,8 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Repository | `canvas/src/features/bim/bim-core/bimRepository.js` |
 | Workspace UI | `canvas/src/features/bim/components/BimWorkspace.jsx` |
 | Wireframe overlay | `canvas/src/features/bim/bim-core/bimWireframeOverlay.js` |
-| Clay / Arctic render | `canvas/src/features/bim/bim-core/bimClayRender.js`, `bimClayDebug.js` |
+| Clay / Arctic render | `canvas/src/features/bim/bim-core/bimClayRender.js`, `bimClaySelectionOverlay.js`, `bimClayDebug.js` |
+| Camera history | `canvas/src/features/bim/bim-core/bimCameraHistory.js`, `components/BimCameraHistoryControls.jsx` |
 | Style settings | `canvas/src/features/bim/bim-core/bimStyleSettings.js`, `components/BimStyleSettingsHud.jsx`, `BimStyleToolbarControls.jsx`, `BimClayDebugPanel.jsx` |
 | Layer visibility | `canvas/src/features/bim/bim-core/bimLayerVisibility.js`, `bimElementLayers.js` |
 | Section cut | `canvas/src/features/bim/bim-core/bimSectioning.js`, `bimScreenDepth.js`, `components/BimSectionHud.jsx` |

@@ -240,6 +240,8 @@ export function createBimCameraKeyboardNav({
   getPointerWalkTarget = () => null,
   onPointerMove = null,
   onCameraMoved = () => {},
+  onCameraSessionBegin = () => {},
+  onCameraSessionEnd = () => {},
   emitIntervalMs = BIM_CAMERA_WALK_EMIT_INTERVAL_MS,
 } = {}) {
   let disposed = false;
@@ -249,10 +251,15 @@ export function createBimCameraKeyboardNav({
   let lastEmitAt = 0;
   let movedSinceLastEmit = false;
   let lastPointerClient = null;
+  let walkSessionActive = false;
 
   const isViewportActive = () => isHovered || isFocused;
 
   const clearKeyState = () => {
+    if (walkSessionActive) {
+      walkSessionActive = false;
+      onCameraSessionEnd();
+    }
     keyState = createEmptyKeyState();
   };
 
@@ -274,8 +281,13 @@ export function createBimCameraKeyboardNav({
       return;
     }
     if (MOVEMENT_KEY_CODES.has(event.code)) event.preventDefault();
+    const hadMovement = hasActiveBimCameraWalkInput(keyState);
     const next = resolveBimCameraWalkKeyState(event.code, true, keyState);
     keyState = next;
+    if (!hadMovement && hasActiveBimCameraWalkInput(keyState)) {
+      walkSessionActive = true;
+      onCameraSessionBegin();
+    }
   };
 
   const handleKeyUp = (event) => {
@@ -287,6 +299,10 @@ export function createBimCameraKeyboardNav({
     keyState = resolveBimCameraWalkKeyState(event.code, false, keyState);
     if (hadMovement && !hasActiveBimCameraWalkInput(keyState)) {
       emitCameraMoved(true);
+      if (walkSessionActive) {
+        walkSessionActive = false;
+        onCameraSessionEnd();
+      }
     }
   };
 

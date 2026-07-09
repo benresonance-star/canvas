@@ -988,8 +988,8 @@ describe('bimClayRender', () => {
     expect(directional.intensity).toBeCloseTo(0.068);
   });
 
-  it('uses subtle grey clay selection material', () => {
-    expect(CLAY_SELECTED_MATERIAL.color.getHexString()).toBe('e5e5e5');
+  it('uses the same orange selection color as highlight mode', () => {
+    expect(CLAY_SELECTED_MATERIAL.color.getHexString()).toBe('f59e0b');
   });
 
   it('copies render-target depth to the screen buffer when blitFramebuffer is available', () => {
