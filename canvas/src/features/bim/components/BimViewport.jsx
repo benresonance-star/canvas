@@ -207,6 +207,24 @@ function syncModelBounds(modelRoot, boundsRef, onBoundsChange) {
   onBoundsChange?.(next);
 }
 
+function syncModelBoundsForRoots(modelRoots, boundsRef, onBoundsChange) {
+  const roots = modelRoots.filter(Boolean);
+  if (roots.length === 0) return;
+  const box = new THREE.Box3();
+  for (const root of roots) {
+    root.updateWorldMatrix(true, true);
+    box.union(new THREE.Box3().setFromObject(root));
+  }
+  const next = buildViewportBoundsFromBox3(box);
+  boundsRef.current = {
+    radius: next.radius,
+    center: new THREE.Vector3(next.center.x, next.center.y, next.center.z),
+    min: next.min,
+    max: next.max,
+  };
+  onBoundsChange?.(next);
+}
+
 function resolveBimViewDistance(camera, controls, bounds) {
   return resolveClayViewDistance(camera, controls?.target, bounds?.center);
 }
@@ -299,6 +317,9 @@ function isEditableKeyboardTarget(target) {
 
 export function BimViewport({
   preparedModel,
+  preparedModels = [],
+  activeModelId = null,
+  visibilityByModelId = {},
   selectedElement,
   selectedProperties = [],
   highlightElementIds = [],
@@ -479,6 +500,7 @@ export function BimViewport({
   const sceneRef = useRef(null);
   const fragmentsRef = useRef(null);
   const modelRef = useRef(null);
+  const runtimeModelsRef = useRef(new Map());
   const modelReadyRef = useRef(false);
   const animationRef = useRef(null);
   const localIdsRef = useRef([]);
@@ -744,6 +766,30 @@ export function BimViewport({
   const preparedModelKey = preparedModel?.metadata?.fingerprint
     ?? preparedModel?.metadata?.fragmentsModelId
     ?? null;
+  const runtimeModelsToLoad = useMemo(() => {
+    const sessionModels = Array.isArray(preparedModels)
+      ? preparedModels.filter((entry) => entry?.modelId && entry?.preparedModel?.fragmentsBlob)
+      : [];
+    if (sessionModels.length > 0) return sessionModels;
+    return preparedModel?.fragmentsBlob
+      ? [{ modelId: activeModelId ?? 'active', preparedModel }]
+      : [];
+  }, [activeModelId, preparedModel, preparedModels]);
+  const activeRuntimeEntryId = activeModelId
+    ?? runtimeModelsToLoad[0]?.modelId
+    ?? null;
+  const contextModelsToLoad = useMemo(() => runtimeModelsToLoad.filter((entry) => (
+    entry.modelId !== activeRuntimeEntryId
+  )), [activeRuntimeEntryId, runtimeModelsToLoad]);
+  const runtimeModelsKey = runtimeModelsToLoad
+    .map((entry) => `${entry.modelId}:${entry.preparedModel?.metadata?.fingerprint ?? entry.preparedModel?.metadata?.fragmentsModelId ?? 'unknown'}`)
+    .join('|');
+  const activeRuntimeEntryIdRef = useRef(activeRuntimeEntryId);
+  activeRuntimeEntryIdRef.current = activeRuntimeEntryId;
+  const contextModelsToLoadRef = useRef(contextModelsToLoad);
+  contextModelsToLoadRef.current = contextModelsToLoad;
+  const visibilityByModelIdRef = useRef(visibilityByModelId);
+  visibilityByModelIdRef.current = visibilityByModelId;
   const layerCatalog = useMemo(
     () => buildBimLayerCatalog(preparedModel),
     [preparedModelKey],
@@ -763,6 +809,20 @@ export function BimViewport({
   useEffect(() => {
     hiddenStoreysRef.current = hiddenStoreys;
   }, [hiddenStoreys]);
+
+  useEffect(() => {
+    const runtimeModels = runtimeModelsRef.current;
+    if (!runtimeModels || runtimeModels.size === 0) return;
+    for (const [modelId, runtimeEntry] of runtimeModels.entries()) {
+      if (!runtimeEntry?.model?.object) continue;
+      runtimeEntry.model.object.visible = visibilityByModelId?.[modelId] !== false;
+    }
+    const visibleRoots = Array.from(runtimeModels.entries())
+      .filter(([modelId, runtimeEntry]) => visibilityByModelId?.[modelId] !== false && runtimeEntry?.model?.object)
+      .map(([, runtimeEntry]) => runtimeEntry.model.object);
+    syncModelBoundsForRoots(visibleRoots, modelBoundsRef, syncViewportBounds);
+    resizeAndRefreshRef.current?.();
+  }, [syncViewportBounds, visibilityByModelId]);
 
   useEffect(() => {
     hiddenLayersRef.current = hiddenLayers;
@@ -1319,6 +1379,32 @@ export function BimViewport({
     }
   }, []);
 
+  useEffect(() => {
+    if (!activeRuntimeEntryId || loadState !== 'ready') return;
+    const runtimeEntry = runtimeModelsRef.current.get(activeRuntimeEntryId);
+    if (!runtimeEntry?.model) return;
+    modelRef.current = runtimeEntry.model;
+    preparedModelRef.current = runtimeEntry.preparedModel;
+    idCacheRef.current = runtimeEntry.idCache;
+    localIdsRef.current = runtimeEntry.localIds ?? [];
+    loadedFragmentsModelIdRef.current = runtimeEntry.runtimeModelId;
+    for (const [modelId, entry] of runtimeModelsRef.current.entries()) {
+      entry.model?.useCamera?.(cameraRef.current);
+      entry.model.getClippingPlanesEvent = modelId === activeRuntimeEntryId
+        ? () => activeClippingPlanesRef.current
+        : () => [];
+    }
+    setSelectionRefreshNonce((nonce) => nonce + 1);
+    refreshSelectionOverlayRef.current?.();
+    if (wireframeModeRef.current) void rebuildWireframeEdges();
+    resizeAndRefreshRef.current?.();
+    void updateFragmentsRef.current?.(true, { retryModelRegistration: true }).catch((error) => {
+      if (!isStaleFragmentsLifecycleError(error)) {
+        setRenderError(error?.message || 'Could not update active BIM model.');
+      }
+    });
+  }, [activeRuntimeEntryId, loadState, rebuildWireframeEdges]);
+
   const syncSectionClipping = useCallback(() => {
     const bounds = modelBoundsRef.current;
     const normalized = normalizeBimSectionState(sectionStateRef.current, {
@@ -1596,10 +1682,14 @@ export function BimViewport({
     let updatePending = false;
     let updatePendingStartedAt = 0;
     const FRAGMENTS_UPDATE_FRAME_TIMEOUT_MS = 12000;
+    const initialActiveRuntimeEntryId = activeRuntimeEntryIdRef.current;
+    const initialContextModelsToLoad = contextModelsToLoadRef.current;
+    const initialVisibilityByModelId = visibilityByModelIdRef.current;
     modelReadyRef.current = false;
     viewportSizedRef.current = false;
     loadedFragmentsModelIdRef.current = null;
     idCacheRef.current = createFragmentsIdCache();
+    runtimeModelsRef.current = new Map();
     resetFragmentsBootUpdateQueue();
     setLoadState('loading');
     setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.preparing);
@@ -1940,6 +2030,58 @@ export function BimViewport({
     window.addEventListener('resize', resizeAndRefresh);
     resizeAndRefresh();
 
+    async function loadContextModels(activeFragments, activeCamera, activeRuntimeModelId) {
+      const loadedContextModels = [];
+      for (const entry of initialContextModelsToLoad) {
+        if (!isEffectActive()) return loadedContextModels;
+        const contextPrepared = entry.preparedModel;
+        if (!contextPrepared?.fragmentsBlob) continue;
+        const contextRuntimeModelId = resolveBimViewportRuntimeModelId(contextPrepared);
+        if (!contextRuntimeModelId || contextRuntimeModelId === activeRuntimeModelId) continue;
+        try {
+          const buffer = await contextPrepared.fragmentsBlob.arrayBuffer();
+          if (!isEffectActive()) return loadedContextModels;
+          const contextModel = await activeFragments.load(buffer.slice(0), {
+            modelId: contextRuntimeModelId,
+            camera: activeCamera,
+          });
+          if (!isEffectActive()) {
+            await Promise.resolve(contextModel?.dispose?.()).catch(() => {});
+            return loadedContextModels;
+          }
+          if (!contextModel) continue;
+          contextModel.useCamera(activeCamera);
+          contextModel.getClippingPlanesEvent = () => [];
+          contextModel.object.visible = initialVisibilityByModelId?.[entry.modelId] !== false;
+          scene.add(contextModel.object);
+          const contextIdCache = createFragmentsIdCache();
+          const runtimeEntry = {
+            model: contextModel,
+            preparedModel: contextPrepared,
+            runtimeModelId: contextRuntimeModelId,
+            idCache: contextIdCache,
+            localIds: [],
+          };
+          runtimeModelsRef.current.set(entry.modelId, runtimeEntry);
+          void contextModel.getLocalIds().then(async (ids) => {
+            if (!isEffectActive() || runtimeModelsRef.current.get(entry.modelId) !== runtimeEntry) return;
+            runtimeEntry.localIds = ids;
+            await populateFragmentsIdCache(contextModel, contextIdCache, ids);
+          }).catch((error) => {
+            if (!disposed && !isStaleFragmentsLifecycleError(error)) {
+              console.warn('Could not build IFC context model ID cache:', entry.modelId, error);
+            }
+          });
+          loadedContextModels.push(contextModel);
+        } catch (error) {
+          if (!isStaleFragmentsLifecycleError(error)) {
+            console.warn('Could not load IFC context model:', entry.modelId, error);
+          }
+        }
+      }
+      return loadedContextModels;
+    }
+
     async function loadFragments() {
       try {
         setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.reading);
@@ -1979,8 +2121,27 @@ export function BimViewport({
         clearClayMaterialGroupCache(model);
         model.useCamera(activeCamera);
         model.getClippingPlanesEvent = () => activeClippingPlanesRef.current;
+        model.object.visible = initialVisibilityByModelId?.[initialActiveRuntimeEntryId] !== false;
         scene.add(model.object);
-        syncModelBounds(model.object, modelBoundsRef, syncViewportBounds);
+        const activeRuntimeEntry = {
+          model,
+          preparedModel: preparedModelRef.current,
+          runtimeModelId,
+          idCache: idCacheRef.current,
+          localIds: [],
+        };
+        runtimeModelsRef.current.set(initialActiveRuntimeEntryId ?? runtimeModelId, activeRuntimeEntry);
+        const contextModels = await loadContextModels(fragments, activeCamera, runtimeModelId);
+        if (!isEffectActive()) {
+          await Promise.all(contextModels.map((contextModel) => Promise.resolve(contextModel.dispose?.()).catch(() => {})));
+          return;
+        }
+        syncModelBoundsForRoots(
+          [model.object, ...contextModels.map((contextModel) => contextModel.object)]
+            .filter((root) => root?.visible !== false),
+          modelBoundsRef,
+          syncViewportBounds,
+        );
 
         setLoadPhase(BIM_VIEWPORT_LOAD_PHASES.registering);
         const registered = await waitForFragmentsModelRegistered(fragments, runtimeModelId, {
@@ -2058,6 +2219,10 @@ export function BimViewport({
           void model.getLocalIds().then(async (ids) => {
             if (disposed || modelRef.current !== model) return;
             localIdsRef.current = ids;
+            const runtimeEntry = runtimeModelsRef.current.get(initialActiveRuntimeEntryId ?? runtimeModelId);
+            if (runtimeEntry?.model === model) {
+              runtimeEntry.localIds = ids;
+            }
             if (wireframeModeRef.current && !wireframeEdgesRef.current) {
               void rebuildWireframeEdges();
             }
@@ -2429,11 +2594,12 @@ export function BimViewport({
       sectionOverlaySceneRef.current = null;
       fragmentsRef.current = null;
       modelRef.current = null;
+      runtimeModelsRef.current = new Map();
       localIdsRef.current = [];
       idCacheRef.current = createFragmentsIdCache();
       void Promise.resolve(fragmentsToDispose?.dispose?.()).catch(() => {});
     };
-  }, [fitModel, preparedModelKey, rebuildWireframeEdges, syncMeasurementOverlay]);
+  }, [fitModel, rebuildWireframeEdges, runtimeModelsKey, syncMeasurementOverlay]);
 
   useEffect(() => {
     if (loadState !== 'ready' || !modelReadyRef.current) return undefined;

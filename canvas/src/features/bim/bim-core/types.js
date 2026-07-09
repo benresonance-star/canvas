@@ -23,6 +23,8 @@ export const BIM_DISPLAY_MODES = ['highlight', 'isolate', 'ghostOthers', 'colorB
 export const BIM_PROJECTION_MODES = ['perspective', 'orthographic'];
 export const BIM_MODEL_REF_STATUSES = ['importing', 'preparing', 'ready', 'failed', 'removed'];
 export const BIM_QUERY_SCOPES = ['active', 'visible', 'all'];
+export const BIM_MODEL_SOURCE_KINDS = ['indexedDbUpload', 'linkedFolder'];
+export const BIM_MODEL_SOURCE_STATUSES = ['current', 'newerAvailable', 'missing', 'checking', 'unknown'];
 
 export const WIREFRAME_LINE_WEIGHT_MIN = 0.5;
 export const WIREFRAME_LINE_WEIGHT_MAX = 6;
@@ -81,6 +83,9 @@ export const BIM_VIEWER_DEFAULTS = {
   hiddenLayers: [],
   isolateOnSelect: false,
   zoomToSelectionOnSelect: false,
+};
+export const BIM_SESSION_VIEWER_DEFAULTS = {
+  panels: { left: false, right: false },
 };
 export const DEFAULT_LEFT_PANEL_WIDTH = 320;
 export const DEFAULT_RIGHT_PANEL_WIDTH = 320;
@@ -371,6 +376,12 @@ function normalizeBimModelRef(ref = {}) {
     sourceName,
     label,
     sourceFileHash: String(ref?.sourceFileHash ?? '').trim(),
+    sourceStorageKey: String(ref?.sourceStorageKey ?? '').trim(),
+    sourceKind: BIM_MODEL_SOURCE_KINDS.includes(ref?.sourceKind) ? ref.sourceKind : 'indexedDbUpload',
+    sourcePath: ref?.sourcePath == null ? null : String(ref.sourcePath),
+    sourceLastModified: Number.isFinite(Number(ref?.sourceLastModified)) ? Number(ref.sourceLastModified) : null,
+    sourceSize: Number.isFinite(Number(ref?.sourceSize)) ? Number(ref.sourceSize) : null,
+    sourceStatus: BIM_MODEL_SOURCE_STATUSES.includes(ref?.sourceStatus) ? ref.sourceStatus : 'unknown',
     fingerprint: String(ref?.fingerprint ?? '').trim(),
     preparedModelKey: String(ref?.preparedModelKey ?? ref?.fingerprint ?? '').trim(),
     status,
@@ -505,6 +516,14 @@ export function applyBimViewerDefaults(state = {}) {
       ...(state?.section ?? {}),
       enabled: false,
     }),
+  });
+}
+
+/** Federated IFC viewer sessions start with side panels collapsed for a wider viewport. */
+export function applyBimSessionViewerDefaults(state = {}) {
+  return applyBimViewerDefaults({
+    ...state,
+    ...BIM_SESSION_VIEWER_DEFAULTS,
   });
 }
 

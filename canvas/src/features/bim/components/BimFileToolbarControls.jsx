@@ -73,7 +73,10 @@ export function BimFileManagerPanel({
                   onClick={() => onSetActiveModel(ref.modelId)}
                 >
                   <div className="truncate">{ref.label}</div>
-                  <div className="text-[10px] uppercase tracking-wider text-muted">{ref.status}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted">
+                    {ref.status}
+                    {ref.sourceStatus && ref.sourceStatus !== 'unknown' ? ` · ${ref.sourceStatus}` : ''}
+                  </div>
                 </button>
                 <button
                   type="button"

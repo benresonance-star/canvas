@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getAgentHealth, listAgentConnectors, sendAgentChat } from '../../../lib/agentApi.js';
 import { DEFAULT_SINGLE_CONNECTOR_ID, getConnectorById } from '../../../lib/agentConnectors.js';
+import { getFileHandleAtPath } from '../../../lib/folderWrite.js';
 import { createIndexedDbBimRepository } from '../bim-core/bimRepository.js';
 import {
   draftBqlFromNaturalLanguage,
@@ -24,7 +25,7 @@ import {
 import { prepareBimModel } from '../bim-core/prepareBimModel.js';
 import { logBimPickWarning } from '../bim-core/bimPickDebug.js';
 import { findPreparedElementByGlobalId } from '../bim-core/fragmentsSelection.js';
-import { applyBimViewerDefaults, normalizeBimWorkspaceSession, normalizeBimWorkspaceState, normalizeLayersHudHeight, normalizeLayersHudStoreysHeight, normalizeLeftPanelWidth, normalizeRightPanelWidth } from '../bim-core/types.js';
+import { applyBimSessionViewerDefaults, applyBimViewerDefaults, normalizeBimWorkspaceSession, normalizeBimWorkspaceState, normalizeLayersHudHeight, normalizeLayersHudStoreysHeight, normalizeLeftPanelWidth, normalizeRightPanelWidth } from '../bim-core/types.js';
 import { applyBimStyleSettings, extractBimStyleSettings } from '../bim-core/bimStyleSettings.js';
 import { getClayPresetWorkspacePatch } from '../bim-core/bimClayRender.js';
 import { createBimResultSetFromElements } from '../bim-core/bimResultSets.js';
@@ -139,6 +140,29 @@ async function sha256Hex(arrayBuffer) {
     .join('');
 }
 
+function bimSourceStorageKey(sourceFileHash) {
+  return `bim-source:${sourceFileHash}`;
+}
+
+async function arrayBufferFromStoredModelSource(source) {
+  if (!source) return null;
+  if (source.arrayBuffer instanceof ArrayBuffer) return source.arrayBuffer.slice(0);
+  if (source.blob?.arrayBuffer) return source.blob.arrayBuffer();
+  return null;
+}
+
+function chooseExistingModelForImportedFile(session, file, sourceFileHash) {
+  const refs = session?.modelRefs ?? [];
+  const sameHash = refs.find((ref) => ref.sourceFileHash === sourceFileHash);
+  if (sameHash) return { action: 'activate', ref: sameHash };
+  const sameName = refs.find((ref) => ref.sourceName === file.name || ref.label === file.name);
+  if (!sameName) return { action: 'add', ref: null };
+  const updateExisting = window.confirm(
+    `A file named "${file.name}" is already loaded, but the selected file is different. Click OK to update the existing file, or Cancel to add it as a new file.`,
+  );
+  return updateExisting ? { action: 'update', ref: sameName } : { action: 'add', ref: sameName };
+}
+
 function applyCardUpdate(onUpdateCard, cardId, updates) {
   if (!onUpdateCard || !cardId) return;
   if (onUpdateCard.length >= 2) {
@@ -169,13 +193,22 @@ export function BimWorkspace({
   const [preparedByModelId, setPreparedByModelId] = useState({});
   const [fingerprint, setFingerprint] = useState(null);
   const loadedFingerprintRef = useRef(null);
-  const [workspaceState, setWorkspaceState] = useState(() => applyBimViewerDefaults({
-    ...(version?.bim?.workspaceState ?? {}),
-    session: version?.bim?.session,
-    ...(version?.bim?.styleSettings ?? {}),
-  }));
+  const [workspaceState, setWorkspaceState] = useState(() => (
+    isSessionViewer
+      ? applyBimSessionViewerDefaults({
+        ...(version?.bim?.workspaceState ?? {}),
+        session: version?.bim?.session,
+        ...(version?.bim?.styleSettings ?? {}),
+      })
+      : applyBimViewerDefaults({
+        ...(version?.bim?.workspaceState ?? {}),
+        session: version?.bim?.session,
+        ...(version?.bim?.styleSettings ?? {}),
+      })
+  ));
   const [importBusy, setImportBusy] = useState(false);
   const [importStatus, setImportStatus] = useState('');
+  const sourceUpdatePromptedRef = useRef(new Set());
   const styleSyncTimerRef = useRef(null);
   const [extractionFeed, setExtractionFeed] = useState([]);
   const [queryResult, setQueryResult] = useState(null);
@@ -343,28 +376,122 @@ export function BimWorkspace({
   useEffect(() => {
     if (!isSessionViewer) return undefined;
     let cancelled = false;
-    async function loadCachedActiveModel() {
-      const session = normalizeBimWorkspaceSession(versionRef.current?.bim?.session ?? workspaceState.session);
+    async function restoreSessionModels() {
+      let session = normalizeBimWorkspaceSession(versionRef.current?.bim?.session ?? workspaceState.session);
       if (session.modelRefs.length === 0) return;
-      const activeRef = session.modelRefs.find((ref) => ref.modelId === session.activeModelId) ?? session.modelRefs[0];
-      if (!activeRef?.fingerprint) return;
-      const cached = await repositoryRef.current.getPreparedModel(activeRef.fingerprint);
-      if (cancelled || !cached) return;
-      setPreparedByModelId((models) => ({ ...models, [activeRef.modelId]: cached }));
-      setPrepared(cached);
-      setFingerprint(activeRef.fingerprint);
+      const restoredModels = {};
+      let activePrepared = null;
+      let activeFingerprint = null;
+      let changed = false;
+
+      for (const ref of session.modelRefs) {
+        if (cancelled) return;
+        if (ref.status === 'removed') continue;
+        let preparedModel = ref.fingerprint
+          ? await repositoryRef.current.getPreparedModel(ref.fingerprint)
+          : null;
+        if (!preparedModel && ref.sourceStorageKey) {
+          const sourceRecord = await repositoryRef.current.getModelSource?.(ref.sourceStorageKey);
+          const arrayBuffer = await arrayBufferFromStoredModelSource(sourceRecord);
+          if (arrayBuffer) {
+            const preparingAt = new Date().toISOString();
+            session = normalizeBimWorkspaceSession({
+              ...session,
+              modelRefs: session.modelRefs.map((entry) => (
+                entry.modelId === ref.modelId
+                  ? { ...entry, status: 'preparing', updatedAt: preparingAt }
+                  : entry
+              )),
+              updatedAt: preparingAt,
+            });
+            if (!cancelled) {
+              setWorkspaceState((state) => normalizeBimWorkspaceState({ ...state, session }));
+              persistSession(session);
+            }
+            const result = await prepareBimModel({
+              arrayBuffer,
+              version: {
+                ...(versionRef.current ?? {}),
+                content_hash: ref.sourceFileHash,
+                filename: ref.sourceName,
+                size: ref.sourceSize ?? arrayBuffer.byteLength,
+                relativePath: ref.sourcePath ?? null,
+              },
+              repository: repositoryRef.current,
+              onPhase: (nextPhase) => {
+                if (!cancelled) setPhase(nextPhase);
+              },
+              onProgress: (event) => {
+                if (!cancelled) appendExtractionEvent(event);
+              },
+            });
+            preparedModel = result.preparedModel;
+            const readyAt = new Date().toISOString();
+            session = normalizeBimWorkspaceSession({
+              ...session,
+              modelRefs: session.modelRefs.map((entry) => (
+                entry.modelId === ref.modelId
+                  ? {
+                      ...entry,
+                      fingerprint: result.fingerprint,
+                      preparedModelKey: result.fingerprint,
+                      status: 'ready',
+                      sourceStatus: 'current',
+                      updatedAt: readyAt,
+                    }
+                  : entry
+              )),
+              updatedAt: readyAt,
+            });
+            changed = true;
+          }
+        }
+        if (preparedModel) {
+          restoredModels[ref.modelId] = preparedModel;
+          if (ref.modelId === session.activeModelId) {
+            activePrepared = preparedModel;
+            activeFingerprint = preparedModel.metadata?.fingerprint ?? ref.fingerprint;
+          }
+        } else if (ref.sourceStorageKey) {
+          const failedAt = new Date().toISOString();
+          session = normalizeBimWorkspaceSession({
+            ...session,
+            modelRefs: session.modelRefs.map((entry) => (
+              entry.modelId === ref.modelId
+                ? { ...entry, status: 'failed', errorMessage: 'Stored IFC source is unavailable.', updatedAt: failedAt }
+                : entry
+            )),
+            updatedAt: failedAt,
+          });
+          changed = true;
+        }
+      }
+      if (cancelled) return;
+      if (!activePrepared) {
+        const fallbackRef = session.modelRefs.find((ref) => restoredModels[ref.modelId]);
+        if (fallbackRef) {
+          activePrepared = restoredModels[fallbackRef.modelId];
+          activeFingerprint = activePrepared.metadata?.fingerprint ?? fallbackRef.fingerprint;
+          session = normalizeBimWorkspaceSession({ ...session, activeModelId: fallbackRef.modelId });
+          changed = true;
+        }
+      }
+      setPreparedByModelId(restoredModels);
+      setPrepared(activePrepared);
+      setFingerprint(activeFingerprint);
       setCacheStatus('loaded_cache');
       setPhase('ready');
       setWorkspaceState((state) => normalizeBimWorkspaceState({
         ...state,
         session,
       }));
+      if (changed) persistSession(session);
     }
-    void loadCachedActiveModel();
+    void restoreSessionModels();
     return () => {
       cancelled = true;
     };
-  }, [isSessionViewer]);
+  }, [isSessionViewer, persistSession]);
 
   useEffect(() => {
     if (!fingerprint) return;
@@ -1159,15 +1286,33 @@ export function BimWorkspace({
   }, [activeSession, commitBimSession, preparedByModelId]);
 
   const toggleSessionModelVisibility = useCallback((modelId) => {
+    const currentlyVisible = activeSession.visibilityByModelId?.[modelId] !== false;
+    let nextVisible = !currentlyVisible;
+    const replacementActiveId = !nextVisible && activeSession.activeModelId === modelId
+      ? activeSession.modelRefs.find((ref) =>
+          ref.modelId !== modelId && activeSession.visibilityByModelId?.[ref.modelId] !== false && ref.status === 'ready')?.modelId ?? null
+      : null;
+    if (!nextVisible && activeSession.activeModelId === modelId && !replacementActiveId) {
+      nextVisible = true;
+      setImportStatus('At least one active IFC file must remain visible.');
+    }
+    const nextVisibilityByModelId = {
+      ...activeSession.visibilityByModelId,
+      [modelId]: nextVisible,
+    };
+    const nextActiveModelId = !nextVisible && activeSession.activeModelId === modelId && replacementActiveId
+      ? replacementActiveId
+      : activeSession.activeModelId;
     commitBimSession({
       ...activeSession,
-      visibilityByModelId: {
-        ...activeSession.visibilityByModelId,
-        [modelId]: activeSession.visibilityByModelId?.[modelId] === false,
-      },
+      activeModelId: nextActiveModelId,
+      visibilityByModelId: nextVisibilityByModelId,
       updatedAt: new Date().toISOString(),
     });
-  }, [activeSession, commitBimSession]);
+    if (nextActiveModelId !== activeSession.activeModelId) {
+      void setActiveSessionModel(nextActiveModelId);
+    }
+  }, [activeSession, commitBimSession, setActiveSessionModel]);
 
   const removeSessionModel = useCallback((modelId) => {
     const remainingRefs = activeSession.modelRefs.filter((ref) => ref.modelId !== modelId);
@@ -1196,7 +1341,7 @@ export function BimWorkspace({
     }
   }, [activeSession, commitBimSession, preparedByModelId]);
 
-  const importIfcFiles = useCallback(async (files) => {
+  const importIfcFiles = useCallback(async (files, options = {}) => {
     if (!isSessionViewer || importBusy) return;
     const ifcFiles = files.filter((file) => /\.ifc$/i.test(file.name));
     if (ifcFiles.length === 0) {
@@ -1216,14 +1361,49 @@ export function BimWorkspace({
         setImportStatus(`Importing ${file.name} (${index + 1}/${ifcFiles.length})`);
         const arrayBuffer = await file.arrayBuffer();
         const sourceFileHash = await sha256Hex(arrayBuffer);
-        const modelId = `bim-model:${sourceFileHash.slice(0, 16)}`;
+        const forcedRef = options.forceUpdateModelId
+          ? nextSession.modelRefs.find((ref) => ref.modelId === options.forceUpdateModelId)
+          : null;
+        const sourceMetadataRef = forcedRef ?? options.sourceRef ?? null;
+        const importChoice = options.forceAddAsNew
+          ? { action: 'add', ref: null }
+          : forcedRef
+          ? { action: 'update', ref: forcedRef }
+          : chooseExistingModelForImportedFile(nextSession, file, sourceFileHash);
+        if (importChoice.action === 'activate' && importChoice.ref) {
+          await setActiveSessionModel(importChoice.ref.modelId);
+          setImportStatus(`${file.name} is already loaded.`);
+          continue;
+        }
+        const modelId = importChoice.action === 'update' && importChoice.ref
+          ? importChoice.ref.modelId
+          : `bim-model:${sourceFileHash.slice(0, 16)}`;
         activeImportModelId = modelId;
         const importedAt = new Date().toISOString();
+        const sourceStorageKey = bimSourceStorageKey(sourceFileHash);
+        await repositoryRef.current.putModelSource?.(sourceStorageKey, {
+          blob: new Blob([arrayBuffer], { type: file.type || 'application/x-step' }),
+          metadata: {
+            sourceName: file.name,
+            sourceFileHash,
+            sourceKind: sourceMetadataRef?.sourceKind ?? 'indexedDbUpload',
+            sourcePath: sourceMetadataRef?.sourcePath ?? null,
+            sourceLastModified: Number.isFinite(file.lastModified) ? file.lastModified : null,
+            sourceSize: file.size,
+            cachedAt: importedAt,
+          },
+        });
         const preparingRef = {
           modelId,
           sourceName: file.name,
           label: file.name,
           sourceFileHash,
+          sourceStorageKey,
+          sourceKind: sourceMetadataRef?.sourceKind ?? 'indexedDbUpload',
+          sourcePath: sourceMetadataRef?.sourcePath ?? null,
+          sourceLastModified: Number.isFinite(file.lastModified) ? file.lastModified : null,
+          sourceSize: file.size,
+          sourceStatus: 'current',
           fingerprint: '',
           preparedModelKey: '',
           status: 'preparing',
@@ -1266,6 +1446,7 @@ export function BimWorkspace({
           fingerprint: result.fingerprint,
           preparedModelKey: result.fingerprint,
           status: 'ready',
+          sourceStatus: 'current',
           warnings: result.preparedModel?.warnings ?? [],
           updatedAt: new Date().toISOString(),
         };
@@ -1301,7 +1482,62 @@ export function BimWorkspace({
     } finally {
       setImportBusy(false);
     }
-  }, [activeSession, commitBimSession, importBusy, isSessionViewer]);
+  }, [activeSession, commitBimSession, importBusy, isSessionViewer, setActiveSessionModel]);
+
+  const sessionPreparedModels = useMemo(() => {
+    if (!isSessionViewer) return [];
+    return activeSession.modelRefs
+      .map((ref) => ({
+        modelId: ref.modelId,
+        preparedModel: preparedByModelId[ref.modelId],
+      }))
+      .filter((entry) => entry.preparedModel);
+  }, [activeSession.modelRefs, isSessionViewer, preparedByModelId]);
+
+  useEffect(() => {
+    if (!isSessionViewer || !folderHandle || activeSession.modelRefs.length === 0) return undefined;
+    let cancelled = false;
+    const checkLinkedFolderSources = async () => {
+      for (const ref of activeSession.modelRefs) {
+        if (cancelled || ref.sourceKind !== 'linkedFolder' || !ref.sourcePath || ref.status === 'removed') continue;
+        try {
+          const handle = await getFileHandleAtPath(folderHandle, ref.sourcePath);
+          const file = await handle.getFile();
+          const fileChanged =
+            (Number.isFinite(ref.sourceLastModified) && file.lastModified > ref.sourceLastModified)
+            || (Number.isFinite(ref.sourceSize) && file.size !== ref.sourceSize);
+          if (!fileChanged) continue;
+          const promptKey = `${ref.modelId}:${file.lastModified}:${file.size}`;
+          if (sourceUpdatePromptedRef.current.has(promptKey)) continue;
+          sourceUpdatePromptedRef.current.add(promptKey);
+          const updateExisting = window.confirm(
+            `A newer IFC appears to be available for "${ref.label || ref.sourceName}". Click OK to update the existing file, or Cancel to add it as a new file.`,
+          );
+          if (cancelled) return;
+          await importIfcFiles([file], updateExisting
+            ? { forceUpdateModelId: ref.modelId }
+            : { forceAddAsNew: true, sourceRef: ref });
+        } catch {
+          const missingAt = new Date().toISOString();
+          commitBimSession({
+            ...activeSession,
+            modelRefs: activeSession.modelRefs.map((entry) => (
+              entry.modelId === ref.modelId
+                ? { ...entry, sourceStatus: 'missing', updatedAt: missingAt }
+                : entry
+            )),
+            updatedAt: missingAt,
+          });
+        }
+      }
+    };
+    void checkLinkedFolderSources();
+    const intervalId = window.setInterval(checkLinkedFolderSources, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activeSession, commitBimSession, folderHandle, importIfcFiles, isSessionViewer]);
 
   if (!isSessionViewer && (source.loading || (!prepared && !error))) {
     return (
@@ -1409,6 +1645,9 @@ export function BimWorkspace({
         <div className="absolute inset-0 min-h-0 min-w-0">
           <BimViewport
             preparedModel={prepared}
+            preparedModels={sessionPreparedModels}
+            activeModelId={activeSession.activeModelId}
+            visibilityByModelId={activeSession.visibilityByModelId}
             selectedElement={selectedElement}
             selectedProperties={selectedProperties}
             highlightElementIds={viewportHighlightElementIds}

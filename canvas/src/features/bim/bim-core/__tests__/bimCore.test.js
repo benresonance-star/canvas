@@ -28,6 +28,7 @@ import {
   CLAY_SURFACE_COLOR_DEFAULT,
   normalizeBimWorkspaceState,
   applyBimViewerDefaults,
+  applyBimSessionViewerDefaults,
   BIM_VIEWER_DEFAULTS,
   wireframeLineOpacityFromTransparency,
   wireframeTransparencyFromLineOpacity,
@@ -211,6 +212,13 @@ describe('BIM core fingerprinting and cache', () => {
         fillColor: '#abcdef',
       }),
       camera: { position: [1, 2, 3], target: [0, 0, 0], up: [0, 1, 0], fov: 45, zoom: 1 },
+    });
+  });
+
+  it('applyBimSessionViewerDefaults collapses side panels by default', () => {
+    expect(applyBimSessionViewerDefaults({})).toMatchObject({
+      panels: { left: false, right: false },
+      ...BIM_VIEWER_DEFAULTS,
     });
   });
 

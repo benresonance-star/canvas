@@ -266,8 +266,9 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Requirement | Status |
 |---|---|
 | Open IFC | Yes — `.ifc` → `bim-model` artifact via drag/drop, folder sync, reload, or **empty federated IFC viewer session** (Add menu → IFC Viewer) |
-| Multi-file federated IFC viewer session | Yes — `viewerKind: 'ifc-viewer-session'` on `bim-model` cards; session persisted on `version.bim.session` (`modelRefs`, `activeModelId`, `visibilityByModelId`, `queryScope`); multi-file import prepares each model to IndexedDB; active file drives viewport/table (`BimWorkspace.jsx`, `types.js`, `useCanvasDocument.js`) |
+| Multi-file federated IFC viewer session | Yes — `viewerKind: 'ifc-viewer-session'` on `bim-model` cards; session persisted on `version.bim.session` (`modelRefs`, `activeModelId`, `visibilityByModelId`, `queryScope`); multi-file import prepares each model to IndexedDB; **active file** drives selection/table/inspector; **all visible files** render together in the viewport (`BimViewport.jsx` runtime model map + `visibilityByModelId`); uploaded IFC blobs cached in IndexedDB `modelSources` store (`bimRepository.js` DB v3) |
 | File manager toolbar HUD | Yes — **File** icon on **far left** of viewport toolbar toggles floating panel below icon (`BimFileToolbarControls.jsx`); same portal/positioning pattern as measurement/camera-history HUDs (`resolveMeasurementHudStyle`); click icon again, **Escape**, or outside click closes; **Import**, active-file summary, per-file visibility/remove list |
+| Federated session default layout | Yes — `applyBimSessionViewerDefaults()` collapses left/right side panels on open (`panels: { left: false, right: false }`) for a wider viewport |
 | Automatic first-open preparation | Yes — `prepareBimModel()` in modal open |
 | Fingerprinting and cache reuse | Yes — `computeBimModelFingerprint()` + IndexedDB store |
 | Cache rebuild | Yes — `deletePreparedModel()` via `BimQueryPanel` rebuild control |
@@ -283,7 +284,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Default open state | Yes — highlight display mode, standard render, all storeys/layers visible, **section cut off** (`BIM_VIEWER_DEFAULTS` + `applyBimViewerDefaults`) |
 | Style settings HUD | Yes — toolbar sliders icon toggles floating panel; background + presets always; HDRI lighting (standard only); clay/wireframe sliders + clay debug when active (`BimStyleSettingsHud.jsx`, `BimStyleToolbarControls.jsx`, `BimClayDebugPanel.jsx`) |
 | Viewport toolbar layout | Yes — **viewport-centred floating HUD** with gimbal **absolutely positioned** top-right; grouped sections: **files** (federated session only) → panels → measure → view (**reset visibility**, **isolate**, **zoom to selection**) → camera → display → tools; left/right HUD stacks measured below toolbar / gimbal via `bimViewportLayout.js` |
-| Floating side panels | Yes — element list + inspector as **overlay HUDs** over full canvas (`BimFloatingSidePanel.jsx`); adjustable width 240–720 px; invisible resize handles; below toolbar (`top-14`) |
+| Floating side panels | Yes — element list + inspector as **overlay HUDs** over full canvas (`BimFloatingSidePanel.jsx`); adjustable width 240–720 px; invisible resize handles; below toolbar (`top-14`); **collapsed by default** in federated IFC viewer sessions |
 | Saved view carousel | Yes — **floating bottom-centre HUD** (`max-w-[75vw]`, width adapts to thumbnails); `Images` toolbar icon |
 | Workspace header | Yes — single row: project title + element/property counts + cache status (no separate status strip) |
 | Storey / layer HUD | Yes — `BimLayersHud.jsx` + `bimLayerVisibility.js` (left HUD stack, below toolbar) |
@@ -325,7 +326,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Prep pipeline | `canvas/src/features/bim/bim-core/prepareBimModel.js` |
 | IFC projection | `canvas/src/features/bim/bim-core/ifcProjection.js` |
 | Fragments conversion | `canvas/src/features/bim/bim-core/fragmentsConversion.js` |
-| Repository | `canvas/src/features/bim/bim-core/bimRepository.js` |
+| Repository | `canvas/src/features/bim/bim-core/bimRepository.js` (DB v3: `preparedModels`, `workspaceStates`, `viewThumbnails`, `modelSources`) |
 | Workspace UI | `canvas/src/features/bim/components/BimWorkspace.jsx` |
 | File manager HUD | `canvas/src/features/bim/components/BimFileToolbarControls.jsx` |
 | Wireframe overlay | `canvas/src/features/bim/bim-core/bimWireframeOverlay.js` |
