@@ -261,7 +261,7 @@ BQL **validator**, **executor**, **manual query UI**, **NL agent translation**, 
 | Agent → BQL translation (LLM connectors) | Yes | `bimLlmAgent.js`, `useBimAgentPanel.js` |
 | NL BIM agent HUD | Yes | `BimAgentHud.jsx` |
 | Saved queries (persist, load, delete; max 20) | Yes | `BimWorkspace.jsx`, `useBimBqlPanel.js`, `BimBqlHud.jsx` |
-| `colorBy` view instruction application | Yes | `bimColorBy.js` → `applyColorByHighlight` in `BimViewport.jsx`; `colorByProperty` in workspace state |
+| `colorBy` view instruction application | Yes | `bimColorBy.js` → `applyColorByHighlight` / `refreshStandardSelectionOverlay` in `BimViewport.jsx`; `colorByProperty` + `ifcClassFilter` in workspace state |
 
 ## 14.2 Not yet shipped
 

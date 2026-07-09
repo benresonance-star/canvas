@@ -2,19 +2,115 @@ import * as THREE from 'three';
 import { RenderedFaces } from '@thatopen/fragments';
 import { chunkLocalIds } from './bimPickPipeline.js';
 import { isValidFragmentsLocalId, resolveFragmentsLocalIdsByGlobalIds } from './fragmentsSelection.js';
+import { BIM_SELECTION_HIGHLIGHT_COLOR } from './bimClayRender.js';
 
+/** Palette colours kept distinct from selection orange (`#f59e0b`). */
 export const BIM_COLOR_BY_PALETTE = [
-  '#eab308',
   '#38bdf8',
-  '#fb7185',
   '#34d399',
   '#a78bfa',
-  '#f97316',
-  '#f472b6',
+  '#fb7185',
+  '#22c55e',
+  '#6366f1',
+  '#14b8a6',
+  '#ec4899',
+];
+
+/** Minimum Euclidean distance in normalised RGB for a colour-by swatch vs selection orange. */
+export const BIM_COLOR_BY_SELECTION_MIN_DISTANCE = 0.2;
+
+const BIM_COLOR_BY_SELECTION_FALLBACKS = [
+  '#38bdf8',
+  '#6366f1',
+  '#14b8a6',
+  '#a78bfa',
+  '#34d399',
+  '#fb7185',
+  '#ec4899',
   '#22c55e',
 ];
 
+function normalizeHexColor(color) {
+  const value = String(color ?? '').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : null;
+}
+
+function hexToRgbNormalized(hex) {
+  const normalized = normalizeHexColor(hex);
+  if (!normalized) return null;
+  return {
+    r: parseInt(normalized.slice(1, 3), 16) / 255,
+    g: parseInt(normalized.slice(3, 5), 16) / 255,
+    b: parseInt(normalized.slice(5, 7), 16) / 255,
+  };
+}
+
+export function colorDistanceRgb(hexA, hexB) {
+  const a = hexToRgbNormalized(hexA);
+  const b = hexToRgbNormalized(hexB);
+  if (!a || !b) return 1;
+  return Math.sqrt(
+    (a.r - b.r) ** 2
+    + (a.g - b.g) ** 2
+    + (a.b - b.b) ** 2,
+  );
+}
+
+export function isColorTooCloseToSelectionColor(
+  color,
+  {
+    selectionColor = BIM_SELECTION_HIGHLIGHT_COLOR,
+    minDistance = BIM_COLOR_BY_SELECTION_MIN_DISTANCE,
+  } = {},
+) {
+  const normalized = normalizeHexColor(color);
+  const selection = normalizeHexColor(selectionColor);
+  if (!normalized || !selection) return false;
+  if (normalized === selection) return true;
+  return colorDistanceRgb(normalized, selection) < minDistance;
+}
+
+export function resolveSafeColorByHex(
+  color,
+  {
+    selectionColor = BIM_SELECTION_HIGHLIGHT_COLOR,
+    minDistance = BIM_COLOR_BY_SELECTION_MIN_DISTANCE,
+  } = {},
+) {
+  const normalized = normalizeHexColor(color);
+  if (!normalized) return BIM_COLOR_BY_PALETTE[0];
+  if (!isColorTooCloseToSelectionColor(normalized, { selectionColor, minDistance })) {
+    return normalized;
+  }
+  for (const candidate of BIM_COLOR_BY_SELECTION_FALLBACKS) {
+    if (!isColorTooCloseToSelectionColor(candidate, { selectionColor, minDistance })) {
+      return candidate;
+    }
+  }
+  return BIM_COLOR_BY_PALETTE[0];
+}
+
 export const BIM_COLOR_BY_DEFAULT_PROPERTY = 'ifcClass';
+
+export function elementMatchesColorByIfcClassFilter(element, ifcClassFilter) {
+  const filter = String(ifcClassFilter ?? '').trim();
+  if (!filter) return true;
+  return element?.ifcClass === filter;
+}
+
+export function filterElementsForColorByDisplay(elements = [], { ifcClassFilter } = {}) {
+  const filter = String(ifcClassFilter ?? '').trim();
+  if (!filter) return elements;
+  return elements.filter((element) => elementMatchesColorByIfcClassFilter(element, filter));
+}
+
+export function shouldShowElementColorBySwatch(
+  element,
+  { colorByActive = false, ifcClassFilter } = {},
+) {
+  if (!colorByActive) return false;
+  return elementMatchesColorByIfcClassFilter(element, ifcClassFilter);
+}
 
 export function resolveColorByGroupKey(element, property, preparedModel = null) {
   const normalizedProperty = String(property ?? '').trim();
@@ -44,7 +140,8 @@ export function resolveStablePaletteIndex(groupKey) {
 }
 
 export function resolveColorByPaletteColor(groupKey) {
-  return BIM_COLOR_BY_PALETTE[resolveStablePaletteIndex(groupKey)];
+  const base = BIM_COLOR_BY_PALETTE[resolveStablePaletteIndex(groupKey)];
+  return resolveSafeColorByHex(base);
 }
 
 export function resolveElementColorByPaletteColor(
@@ -69,7 +166,7 @@ export function groupElementsByColorKey(elements = [], property = BIM_COLOR_BY_D
 }
 
 export function buildColorByHighlightMaterial(groupKey, paletteIndex = resolveStablePaletteIndex(groupKey)) {
-  const color = BIM_COLOR_BY_PALETTE[paletteIndex % BIM_COLOR_BY_PALETTE.length];
+  const color = resolveColorByPaletteColor(groupKey);
   return {
     color: new THREE.Color(color),
     renderedFaces: RenderedFaces.TWO,

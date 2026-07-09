@@ -4,12 +4,18 @@ import {
   BIM_COLOR_BY_DEFAULT_PROPERTY,
   BIM_COLOR_BY_PALETTE,
   buildColorByHighlightMaterial,
+  colorDistanceRgb,
+  filterElementsForColorByDisplay,
   groupElementsByColorKey,
+  isColorTooCloseToSelectionColor,
   resolveColorByGroupKey,
   resolveColorByPaletteColor,
   resolveElementColorByPaletteColor,
+  resolveSafeColorByHex,
   resolveStablePaletteIndex,
+  shouldShowElementColorBySwatch,
 } from '../bimColorBy.js';
+import { BIM_SELECTION_HIGHLIGHT_COLOR } from '../bimClayRender.js';
 
 describe('bimColorBy', () => {
   const slab = { id: 'e1', ifcGlobalId: 'slab-guid', ifcClass: 'IfcSlab', name: 'Slab 1' };
@@ -50,6 +56,21 @@ describe('bimColorBy', () => {
     expect(material.customId).toContain('IfcBeam');
     expect(material.opacity).toBe(0.92);
     expect(material.transparent).toBe(true);
+    expect(isColorTooCloseToSelectionColor(`#${material.color.getHexString()}`)).toBe(false);
+  });
+
+  it('keeps palette and resolved swatch colours away from selection orange', () => {
+    for (const color of BIM_COLOR_BY_PALETTE) {
+      expect(isColorTooCloseToSelectionColor(color)).toBe(false);
+    }
+    expect(isColorTooCloseToSelectionColor('#f97316')).toBe(true);
+    expect(isColorTooCloseToSelectionColor('#eab308')).toBe(true);
+    expect(isColorTooCloseToSelectionColor(BIM_SELECTION_HIGHLIGHT_COLOR)).toBe(true);
+    expect(resolveSafeColorByHex('#f97316')).not.toBe('#f97316');
+    expect(isColorTooCloseToSelectionColor(resolveColorByPaletteColor('IfcSlab'))).toBe(false);
+    expect(isColorTooCloseToSelectionColor(resolveElementColorByPaletteColor(slab, 'ifcClass'))).toBe(false);
+    expect(colorDistanceRgb(resolveColorByPaletteColor('IfcBeam'), BIM_SELECTION_HIGHLIGHT_COLOR))
+      .toBeGreaterThanOrEqual(0.2);
   });
 
   it('applies grouped highlights to fragment local ids', async () => {
@@ -71,5 +92,18 @@ describe('bimColorBy', () => {
     expect(result.groupCount).toBe(2);
     expect(result.localIdCount).toBe(2);
     expect(highlight).toHaveBeenCalledTimes(2);
+  });
+
+  it('limits color-by display to the active IFC class filter', () => {
+    expect(filterElementsForColorByDisplay([slab, beam, wall], { ifcClassFilter: 'IfcBeam' }))
+      .toEqual([beam]);
+    expect(filterElementsForColorByDisplay([slab, beam], { ifcClassFilter: '' }))
+      .toEqual([slab, beam]);
+    expect(shouldShowElementColorBySwatch(beam, { colorByActive: true, ifcClassFilter: 'IfcBeam' }))
+      .toBe(true);
+    expect(shouldShowElementColorBySwatch(slab, { colorByActive: true, ifcClassFilter: 'IfcBeam' }))
+      .toBe(false);
+    expect(shouldShowElementColorBySwatch(slab, { colorByActive: true, ifcClassFilter: '' }))
+      .toBe(true);
   });
 });

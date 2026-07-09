@@ -113,6 +113,7 @@ import {
 import { applyBimLayerStoreyVisibility, buildBimLayerCatalog } from '../bim-core/bimLayerVisibility.js';
 import {
   applyColorByHighlight,
+  filterElementsForColorByDisplay,
   BIM_COLOR_BY_DEFAULT_PROPERTY,
 } from '../bim-core/bimColorBy.js';
 import {
@@ -308,6 +309,7 @@ export function BimViewport({
   hiddenLayers = [],
   section = null,
   colorByProperty = null,
+  ifcClassFilter = '',
   leftPanelOpen = true,
   rightPanelOpen = true,
   layersHudHeight,
@@ -631,6 +633,31 @@ export function BimViewport({
   const sectionOverlayDebounceRef = useRef(null);
   const preparedModelRef = useRef(preparedModel);
   preparedModelRef.current = preparedModel;
+  const displayModeRef = useRef(displayMode);
+  displayModeRef.current = displayMode;
+  const colorByPropertyRef = useRef(colorByProperty);
+  colorByPropertyRef.current = colorByProperty;
+  const ifcClassFilterRef = useRef(ifcClassFilter);
+  ifcClassFilterRef.current = ifcClassFilter;
+  const highlightElementIdsRef = useRef(highlightElementIds);
+  highlightElementIdsRef.current = highlightElementIds;
+  const queryViewerModeRef = useRef(queryViewerMode);
+  queryViewerModeRef.current = queryViewerMode;
+  const isolateOnSelectRef = useRef(isolateOnSelect);
+  isolateOnSelectRef.current = isolateOnSelect;
+  const refreshSelectionOverlayRef = useRef(null);
+  const colorByOverlaySyncDepthRef = useRef(0);
+  const colorByOverlayRefreshSeqRef = useRef(0);
+  const lastAppliedDisplayModeRef = useRef(null);
+
+  const beginColorByOverlaySync = useCallback(() => {
+    colorByOverlaySyncDepthRef.current += 1;
+  }, []);
+
+  const endColorByOverlaySync = useCallback(() => {
+    colorByOverlaySyncDepthRef.current = Math.max(0, colorByOverlaySyncDepthRef.current - 1);
+  }, []);
+
   const syncBoundingBoxOverlay = useCallback(() => {
     if (!boundingBoxModeRef.current) return;
     const modelRoot = modelRef.current?.object;
@@ -647,6 +674,58 @@ export function BimViewport({
     );
   }, []);
   syncBoundingBoxOverlayRef.current = syncBoundingBoxOverlay;
+
+  const refreshStandardSelectionOverlay = useCallback(async ({ shouldCancel = () => false } = {}) => {
+    const model = modelRef.current;
+    if (!model || !modelReadyRef.current || renderStyleRef.current === 'clay') return;
+
+    const activeDisplayMode = displayModeRef.current;
+    const normalizedDisplayMode = activeDisplayMode === 'isolate' ? 'highlight' : activeDisplayMode;
+    if (normalizedDisplayMode !== 'colorBy') return;
+
+    const refreshSeq = ++colorByOverlayRefreshSeqRef.current;
+    beginColorByOverlaySync();
+    try {
+      const prepared = preparedModelRef.current;
+      const cache = idCacheRef.current;
+      const activeSelectedElement = selectedElementRef.current;
+      const activeHighlightElementIds = highlightElementIdsRef.current ?? [];
+      const activeColorByProperty = colorByPropertyRef.current ?? BIM_COLOR_BY_DEFAULT_PROPERTY;
+      const activeIfcClassFilter = ifcClassFilterRef.current;
+
+      const resultElements = (prepared?.elements ?? []).filter(
+        (element) => activeHighlightElementIds.includes(element.id),
+      );
+      const colorByElements = filterElementsForColorByDisplay(
+        resultElements.length > 0 ? resultElements : (prepared?.elements ?? []),
+        { ifcClassFilter: activeIfcClassFilter },
+      );
+
+      await applyColorByHighlight(model, prepared, cache, {
+        elements: colorByElements,
+        property: activeColorByProperty,
+        shouldCancel: () => shouldCancel() || refreshSeq !== colorByOverlayRefreshSeqRef.current,
+      });
+      if (shouldCancel() || refreshSeq !== colorByOverlayRefreshSeqRef.current) return;
+
+      if (activeSelectedElement) {
+        const selectedIdMap = await resolveFragmentsLocalIdsByGlobalIds(
+          model,
+          [activeSelectedElement.ifcGlobalId],
+          cache,
+        );
+        const primaryLocalId = selectedIdMap.get(activeSelectedElement.ifcGlobalId);
+        if (isValidFragmentsLocalId(primaryLocalId)) {
+          await model.highlight([primaryLocalId], SELECTED_MATERIAL);
+        }
+      }
+    } finally {
+      if (refreshSeq === colorByOverlayRefreshSeqRef.current) {
+        endColorByOverlaySync();
+      }
+    }
+  }, [beginColorByOverlaySync, endColorByOverlaySync]);
+  refreshSelectionOverlayRef.current = refreshStandardSelectionOverlay;
 
   const syncViewportBounds = useCallback((bounds) => {
     if (bounds) setViewportBounds(bounds);
@@ -1588,7 +1667,11 @@ export function BimViewport({
       const state = serializeBimCameraState(cameraRef.current, controls, projectionModeRef.current);
       if (state) onCameraChangeRef.current(state);
     };
-    controls.addEventListener('end', emitSceneCameraChange);
+    const isColorByDisplayMode = () => {
+      const activeDisplayMode = displayModeRef.current;
+      const normalizedDisplayMode = activeDisplayMode === 'isolate' ? 'highlight' : activeDisplayMode;
+      return normalizedDisplayMode === 'colorBy' && renderStyleRef.current !== 'clay';
+    };
 
     const cameraHistory = createBimCameraHistory({
       getCamera: () => cameraRef.current,
@@ -1700,9 +1783,13 @@ export function BimViewport({
       }
       syncOrbitControlsAfterCameraFit(controls);
     };
+    const refreshColorByOverlayAfterFragmentsUpdate = async () => {
+      if (!isColorByDisplayMode()) return;
+      await refreshSelectionOverlayRef.current?.();
+    };
     const updateFragments = async (
       force = false,
-      { retryModelRegistration = false, requireModelReady = true } = {},
+      { retryModelRegistration = false, requireModelReady = true, skipColorByOverlayRefresh = false } = {},
     ) => {
       if (!isEffectActive() || (requireModelReady && !modelReadyRef.current)) return false;
       if (!fragments) return false;
@@ -1717,6 +1804,9 @@ export function BimViewport({
       try {
         if (force) fragments.settings.maxUpdateRate = 0;
         await fragments.update(force);
+        if (!skipColorByOverlayRefresh) {
+          await refreshColorByOverlayAfterFragmentsUpdate();
+        }
         return true;
       } catch (error) {
         if (retryModelRegistration && isFragmentsModelNotFound(error)) {
@@ -1726,6 +1816,9 @@ export function BimViewport({
             if (!isFragmentsModelRegistered(fragments, modelId)) continue;
             try {
               await fragments.update(force);
+              if (!skipColorByOverlayRefresh) {
+                await refreshColorByOverlayAfterFragmentsUpdate();
+              }
               return true;
             } catch (retryError) {
               if (!isFragmentsModelNotFound(retryError)) throw retryError;
@@ -2193,6 +2286,20 @@ export function BimViewport({
         return;
       }
 
+      if (isColorByDisplayMode()) {
+        modelRef.current?.useCamera?.(cameraRef.current);
+        if (wireframeModeRef.current && wireframeEdgesRef.current) {
+          ensureWireframeEdgesAttached(
+            wireframeOverlaySceneRef.current,
+            modelRef.current?.object ?? null,
+            wireframeEdgesRef.current,
+          );
+        }
+        renderViewportFrame();
+        animationRef.current = window.requestAnimationFrame(animate);
+        return;
+      }
+
       if (modelReadyRef.current && !updatePending) {
         updatePending = true;
         updatePendingStartedAt = performance.now();
@@ -2545,19 +2652,26 @@ export function BimViewport({
       const timer = createPickTimer('applySelection');
       const cache = idCacheRef.current;
       const isActiveRun = () => shouldApplySelectionRun(runSeq, applySelectionSeqRef.current);
+      const isClay = renderStyle === 'clay';
+      const normalizedDisplayMode = displayMode === 'isolate' ? 'highlight' : displayMode;
+      const effectiveDisplayMode = isClay && normalizedDisplayMode === 'colorBy' ? 'highlight' : normalizedDisplayMode;
       const resyncSelectionIfStale = () => {
         if (!isActiveRun()) {
           void Promise.resolve().then(() => {
+            if (effectiveDisplayMode === 'colorBy' && !isClay) {
+              refreshSelectionOverlayRef.current?.();
+              return;
+            }
             applySelectionOverlayRef.current?.();
           });
         }
       };
-      const isClay = renderStyle === 'clay';
-      const normalizedDisplayMode = displayMode === 'isolate' ? 'highlight' : displayMode;
-      const effectiveDisplayMode = isClay && normalizedDisplayMode === 'colorBy' ? 'highlight' : normalizedDisplayMode;
       const ghostMaterial = isClay ? CLAY_GHOST_MATERIAL : GHOST_MATERIAL;
       const selectedMaterial = isClay ? CLAY_SELECTED_MATERIAL : SELECTED_MATERIAL;
+      const trackColorByOverlaySync = effectiveDisplayMode === 'colorBy' && !isClay;
+      if (trackColorByOverlaySync) beginColorByOverlaySync();
       let clayOrangeLocalIds = [];
+      try {
       const queryBatchIsolate = queryViewerMode === 'isolate' && highlightElementIds.length > 0;
       const selectionIsolate = isolateOnSelect && Boolean(selectedElement);
       const shouldIsolate = queryBatchIsolate || selectionIsolate;
@@ -2566,7 +2680,10 @@ export function BimViewport({
         || effectiveDisplayMode === 'colorBy'
         || (isolateOnSelect && !selectedElement)
         || (!shouldIsolate && effectiveDisplayMode === 'highlight');
-      if (!isClay) {
+      if (!isClay && effectiveDisplayMode !== 'colorBy') {
+        await model.resetHighlight();
+        if (!isActiveRun()) return;
+      } else if (!isClay && effectiveDisplayMode === 'colorBy' && lastAppliedDisplayModeRef.current !== 'colorBy') {
         await model.resetHighlight();
         if (!isActiveRun()) return;
       }
@@ -2580,12 +2697,6 @@ export function BimViewport({
       const resultElements = (preparedModel?.elements ?? []).filter((element) => highlightElementIds.includes(element.id));
       const selectedOnly = selectedElement ? [selectedElement] : [];
       const targetElements = resultElements.length > 0 ? resultElements : selectedOnly;
-      const effectiveColorByProperty = effectiveDisplayMode === 'colorBy'
-        ? (colorByProperty ?? BIM_COLOR_BY_DEFAULT_PROPERTY)
-        : null;
-      const colorByElements = resultElements.length > 0
-        ? resultElements
-        : (preparedModel?.elements ?? []);
 
       if (targetElements.length === 0) {
         if (effectiveDisplayMode === 'ghostOthers') {
@@ -2599,40 +2710,20 @@ export function BimViewport({
             }
           }
         } else if (effectiveDisplayMode === 'colorBy') {
-          await applyColorByHighlight(model, preparedModel, cache, {
-            elements: colorByElements,
-            property: effectiveColorByProperty,
-            shouldCancel: () => !isActiveRun(),
-          });
-          if (selectedElement) {
-            const selectedIdMap = await resolveFragmentsLocalIdsByGlobalIds(
-              model,
-              [selectedElement.ifcGlobalId],
-              cache,
-            );
-            const primaryLocalId = selectedIdMap.get(selectedElement.ifcGlobalId);
-            if (isValidFragmentsLocalId(primaryLocalId)) {
-              if (isClay) {
-                clayOrangeLocalIds = [primaryLocalId];
-              } else {
-                await model.highlight([primaryLocalId], selectedMaterial);
-                if (!isActiveRun()) {
-                  resyncSelectionIfStale();
-                  return;
-                }
-              }
-            }
-          }
+          // Color-by overlays are restored by updateFragments → refreshColorByOverlayAfterFragmentsUpdate.
         }
         if (!isActiveRun()) return;
         await applyBimLayerStoreyVisibility(model, preparedModel, cache, { hiddenStoreys, hiddenLayers });
         if (isClay) {
           await syncClaySelectionOverlayRef.current(clayOrangeLocalIds);
+        } else if (effectiveDisplayMode === 'colorBy') {
+          await refreshStandardSelectionOverlay({ shouldCancel: () => !isActiveRun() });
         } else {
           await updateFragmentsRef.current?.(true).catch(() => {});
         }
         if (!isActiveRun()) return;
         timer.finish({ displayMode, targetCount: 0, localIdCount: 0 });
+        lastAppliedDisplayModeRef.current = effectiveDisplayMode;
         return;
       }
 
@@ -2653,11 +2744,7 @@ export function BimViewport({
         : localIds[0];
 
       if (effectiveDisplayMode === 'colorBy') {
-        await applyColorByHighlight(model, preparedModel, cache, {
-          elements: colorByElements,
-          property: effectiveColorByProperty,
-          shouldCancel: () => !isActiveRun(),
-        });
+        // Color-by overlays are restored by updateFragments → refreshColorByOverlayAfterFragmentsUpdate.
       } else if (shouldIsolate) {
         await model.setVisible(undefined, false);
         if (!isActiveRun()) return;
@@ -2692,7 +2779,7 @@ export function BimViewport({
             return;
           }
         }
-        if (selectedElement && isValidFragmentsLocalId(primaryLocalId)) {
+        if (selectedElement && effectiveDisplayMode !== 'colorBy' && isValidFragmentsLocalId(primaryLocalId)) {
           await model.highlight([primaryLocalId], selectedMaterial);
           if (!isActiveRun()) {
             resyncSelectionIfStale();
@@ -2705,6 +2792,8 @@ export function BimViewport({
       await applyBimLayerStoreyVisibility(model, preparedModel, cache, { hiddenStoreys, hiddenLayers });
       if (isClay) {
         await syncClaySelectionOverlayRef.current(clayOrangeLocalIds);
+      } else if (effectiveDisplayMode === 'colorBy') {
+        await refreshStandardSelectionOverlay({ shouldCancel: () => !isActiveRun() });
       } else {
         await updateFragmentsRef.current?.(true).catch(() => {});
       }
@@ -2712,6 +2801,10 @@ export function BimViewport({
 
       timer.mark('highlight');
       timer.finish({ displayMode, targetCount: targetElements.length, localIdCount: localIds.length });
+      lastAppliedDisplayModeRef.current = effectiveDisplayMode;
+      } finally {
+        if (trackColorByOverlaySync) endColorByOverlaySync();
+      }
     }
 
     applySelectionOverlayRef.current = applySelection;
@@ -2730,6 +2823,7 @@ export function BimViewport({
   }, [
     colorByProperty,
     displayMode,
+    ifcClassFilter,
     isolateOnSelect,
     hiddenStoreys,
     hiddenLayers,
@@ -2740,6 +2834,9 @@ export function BimViewport({
     renderStyle,
     selectedElement,
     selectionRefreshNonce,
+    beginColorByOverlaySync,
+    endColorByOverlaySync,
+    refreshStandardSelectionOverlay,
   ]);
 
   useEffect(() => {

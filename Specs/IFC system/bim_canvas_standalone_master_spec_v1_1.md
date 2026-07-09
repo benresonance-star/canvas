@@ -950,13 +950,35 @@ Canvas BIM ships a **view navigator gimbal** in the viewport top-right (`BimView
 
 - Toolbar toggle (`Palette` icon) immediately **left of bounding box** in the display group (`BimViewport.jsx`).
 - Sets workspace `displayMode: 'colorBy'` and `colorByProperty: 'ifcClass'` (persisted in IndexedDB workspace state).
-- **Standard render:** tints all model elements by IFC class using stable palette colours from `bimColorBy.js` (`applyColorByHighlight` via Fragments `highlight`).
+- **Standard render:** tints model elements by IFC class using stable palette colours from `bimColorBy.js` (`applyColorByHighlight` via Fragments `highlight`).
 - **Clay render:** falls back to highlight (no type colouring in v1).
 - **BQL / agent:** `view.mode: 'colorBy'` with `colorByProperty` still supported; active query `viewerState` takes precedence over toolbar defaults. Query result subset colours when `highlightElementIds` is non-empty; otherwise full model.
 - **Selection accent:** selected element keeps orange (`#f59e0b`) highlight on top of class colour — standard render via Fragments `highlight`; clay render via post-SSAO overlay (see §18.8).
 - **Element table:** when colour-by is active, each row shows a leading swatch matching the viewport class colour (`BimElementTable.jsx`).
 
-**Deferred:** colour legend overlay, clay-render type colouring, per-subtype palettes beyond shared `ifcClass` key.
+### 18.7.1 Palette vs selection orange (shipped, 2026-07-09)
+
+- Shared selection colour: `BIM_SELECTION_HIGHLIGHT_COLOR` (`#f59e0b`) in `bimClayRender.js`.
+- **Palette:** eight hues chosen to stay visually distinct from selection orange; removed near-orange entries (e.g. `#eab308`, `#f97316`, `#f472b6`).
+- **Safety:** `resolveSafeColorByHex()` rejects any resolved swatch within **0.2** normalised RGB distance of `#f59e0b` (`BIM_COLOR_BY_SELECTION_MIN_DISTANCE`); falls back to the next safe palette entry. Viewport highlights and element-table swatches both use `resolveColorByPaletteColor()` / `resolveElementColorByPaletteColor()`.
+
+### 18.7.2 IFC class filter scoping (shipped, 2026-07-09)
+
+When colour-by is active **and** the element table’s **IFC class filter** is set (not “All classes”):
+
+- **Viewport:** only elements of the filtered class receive IFC palette colours; all other elements render in default highlight appearance (no class tint).
+- **Element table:** colour swatches appear only for rows matching the active filter (`shouldShowElementColorBySwatch()` in `bimColorBy.js`; `ifcClassFilter` passed from `BimWorkspace` → `BimViewport` / `BimElementTable`).
+- Clearing the filter restores full-model class colouring.
+
+### 18.7.3 Stable colours during camera interaction (shipped, 2026-07-09)
+
+`fragments.update()` clears transient Fragments `highlight()` state, which previously caused colour-by to flash back to default/highlight appearance during zoom and orbit.
+
+- **Standard colour-by render loop:** the animation loop **does not** call per-frame `fragments.update()`; it updates `model.useCamera()` and re-renders only, preserving IFC tints during active camera movement.
+- **Apply path:** colour-by selection apply skips routine `resetHighlight()` (except once when **entering** colour-by from another display mode); reapplies overlays via `refreshStandardSelectionOverlay()` instead of a full fragment sync on every apply.
+- **Other modes unchanged:** highlight / ghost / isolate still use the per-frame fragment update loop.
+
+**Deferred:** colour legend overlay, clay-render type colouring, per-subtype palettes beyond shared `ifcClass` key; LOD refresh during colour-by zoom (trade-off accepted for stable tints).
 
 ## 18.8 Clay mode selection highlight (shipped MVP, 2026-07-09)
 
@@ -1031,7 +1053,7 @@ If a physical member of a semantic assembly is selected, the inspector should be
 - **Search + class filter:** `tableSearch` matches name, class, GlobalId, type, storey, and visible column values; `ifcClassFilter` narrows by IFC class.
 - **Floating side panels (2026-07-06):** element list (left) and inspector (right) are **overlay HUDs** over the full viewport (`BimFloatingSidePanel.jsx`), not docked columns — opening/closing or resizing them does **not** shrink the canvas or move the toolbar. Width adjustable 240–720 px (default 320 / 320) via invisible inner-edge drag handles (`leftPanelWidth`, `rightPanelWidth` persisted). Panels span `top-14` → `bottom-3` below the floating toolbar band.
 - **Grid styling:** inset vertical column dividers; horizontal row borders; search input retains focus while typing (regression-tested).
-- **Color-by swatches (2026-07-09):** when `displayMode === 'colorBy'`, a leading colour square per row matches the viewport IFC-class palette (`bimColorBy.js`); tooltip shows class name.
+- **Color-by swatches (2026-07-09):** when `displayMode === 'colorBy'`, a leading colour square per row matches the viewport IFC-class palette (`bimColorBy.js`); tooltip shows class name. When an **IFC class filter** is active, swatches show only for rows of that class (see master spec §18.7.2).
 
 # 20. Canvas BIM host requirements
 
@@ -1485,7 +1507,7 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 | RL height markers + datum | **Shipped (MVP)** — cross-sphere markers, singleton datum, per-marker datum-relative toggle, floating measurement tools HUD, viewport edit mode with × delete on labels; BIM viewport only (`enableRlOptions`) |
 | View navigator gimbal | **Shipped (MVP)** — wireframe cube gimbal top-right; right-click Home/Top/Bottom; `fitCameraToViewPreset` + footprint MBR long-edge alignment; fixed-width label; viewport-centred toolbar; right HUD stack anchors below gimbal chrome (`BimViewNavigatorGimbal.jsx`, `bimViewNavigator.js`, `bimViewportLayout.js`, `cameraFit.js`) |
 | Bounding box overlay | **Shipped (MVP)** — toolbar toggle left of wireframe; footprint **OBB** edges on overlay scene (`bimBoundingBoxOverlay.js`, `buildFootprintOrientedBounds` in `cameraFit.js`) |
-| Color-by IFC type | **Shipped (MVP)** — toolbar `Palette` toggle; `displayMode: colorBy` + `colorByProperty: ifcClass`; element-table swatches; BQL `colorBy` supported (`bimColorBy.js`) |
+| Color-by IFC type | **Shipped (MVP)** — toolbar `Palette` toggle; `displayMode: colorBy` + `colorByProperty: ifcClass`; palette vs selection-orange safety; IFC class filter scoping; stable camera interaction (§18.7.1–§18.7.3); element-table swatches; BQL `colorBy` supported (`bimColorBy.js`) |
 | `colorBy` display mode (BQL only) | **Superseded** — now applied in viewport (§18.7) |
 | Saved BQL queries | Shipped — up to 20 persisted in workspace; save/load/delete in BQL HUD |
 | Workspace state on card `version.bim` | Style settings (`version.bim.styleSettings`) read on init and debounced write-back on change; other workspace fields remain IndexedDB-only |

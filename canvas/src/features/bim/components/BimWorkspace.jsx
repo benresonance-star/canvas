@@ -1140,6 +1140,7 @@ export function BimWorkspace({
               queryResult?.viewerState?.colorByProperty
               ?? (workspaceState.displayMode === 'colorBy' ? (workspaceState.colorByProperty ?? 'ifcClass') : null)
             }
+            ifcClassFilter={workspaceState.ifcClassFilter}
             leftPanelOpen={leftPanelOpen}
             rightPanelOpen={rightPanelOpen}
             layersHudHeight={workspaceState.layersHudHeight}

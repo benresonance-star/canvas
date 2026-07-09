@@ -4,6 +4,7 @@ import {
   BIM_COLOR_BY_DEFAULT_PROPERTY,
   resolveColorByGroupKey,
   resolveElementColorByPaletteColor,
+  shouldShowElementColorBySwatch,
 } from '../bim-core/bimColorBy.js';
 import { buildPropertiesByElement } from '../bim-core/bimSectioning.js';
 import {
@@ -612,10 +613,14 @@ export function BimElementTable({
         {sortedRows.map((element) => {
           const elementProperties = propertiesByElement.get(element.id) ?? [];
           const isSelected = selectedElementId === element.id;
-          const colorGroupLabel = colorByActive
+          const showColorSwatch = shouldShowElementColorBySwatch(element, {
+            colorByActive,
+            ifcClassFilter,
+          });
+          const colorGroupLabel = showColorSwatch
             ? String(resolveColorByGroupKey(element, effectiveColorByProperty, preparedModel))
             : null;
-          const colorSwatch = colorByActive
+          const colorSwatch = showColorSwatch
             ? resolveElementColorByPaletteColor(element, effectiveColorByProperty, preparedModel)
             : null;
           return (
@@ -636,11 +641,15 @@ export function BimElementTable({
               style={{ gridTemplateColumns: gridTemplate }}
             >
               {colorByActive ? (
-                <ElementColorSwatch
-                  color={colorSwatch}
-                  label={colorGroupLabel}
-                  selected={isSelected}
-                />
+                showColorSwatch ? (
+                  <ElementColorSwatch
+                    color={colorSwatch}
+                    label={colorGroupLabel}
+                    selected={isSelected}
+                  />
+                ) : (
+                  <span className="px-1 py-1.5" aria-hidden="true" />
+                )
               ) : null}
               {columns.map((column, columnIndex) => {
                 const value = resolveTableColumnValue(element, elementProperties, column);
