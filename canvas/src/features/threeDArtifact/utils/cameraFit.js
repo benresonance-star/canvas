@@ -760,6 +760,54 @@ export function fitPerspectiveCameraToCurrentView(
   return true;
 }
 
+export function fitOrthographicCameraToCurrentView(
+  camera,
+  controls,
+  object,
+  {
+    margin = THREE_D_CAMERA_FIT_MARGIN,
+    viewportAspect = null,
+  } = {},
+) {
+  if (!object || !camera?.isOrthographicCamera) return false;
+
+  object.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(object);
+  if (box.isEmpty()) return false;
+
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  const center = sphere.center;
+  const orbitTarget = controls?.target?.clone?.() ?? center;
+  const viewDir = camera.position.clone().sub(orbitTarget);
+  if (viewDir.lengthSq() < 1e-12) {
+    viewDir.copy(DEFAULT_FIT_DIRECTION);
+  } else {
+    viewDir.normalize();
+  }
+
+  const aspect = Number.isFinite(viewportAspect) && viewportAspect > 0
+    ? viewportAspect
+    : Math.max((camera.right - camera.left) / Math.max(camera.top - camera.bottom, Number.EPSILON), Number.EPSILON);
+
+  const diameter = sphere.radius * 2 * margin;
+  const viewHeight = diameter / Math.min(1, aspect);
+  setOrthographicViewHeight(camera, viewHeight);
+  updateOrthographicFrustum(camera, aspect, 1);
+
+  const distance = Math.max(sphere.radius * 4, 10);
+  if (controls?.target) {
+    controls.target.copy(center);
+  }
+  camera.position.copy(center).addScaledVector(viewDir, distance);
+  camera.near = Math.max(0.01, distance / 100);
+  camera.far = Math.max(camera.far, distance * 100);
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+  syncOrbitControlsAfterCameraFit(controls);
+
+  return true;
+}
+
 export function fitCameraToViewPreset(
   camera,
   controls,

@@ -56,6 +56,7 @@ function normalizeViewState(state = {}) {
     hiddenLayers: normalizeHiddenLayerState(state?.hiddenLayers),
     displayMode: rawDisplayMode === 'isolate' ? 'highlight' : rawDisplayMode,
     isolateOnSelect: state?.isolateOnSelect === true,
+    zoomToSelectionOnSelect: state?.zoomToSelectionOnSelect === true,
     ...stylePatch,
   };
 }
@@ -265,6 +266,7 @@ export function applyBimViewStatePatch(viewState = {}) {
     hiddenLayers,
     displayMode,
     isolateOnSelect,
+    zoomToSelectionOnSelect,
     schemaVersion,
     isPerspective,
     fieldOfView,
@@ -278,6 +280,7 @@ export function applyBimViewStatePatch(viewState = {}) {
     hiddenLayers,
     displayMode,
     isolateOnSelect,
+    zoomToSelectionOnSelect,
     ...stylePatch,
   };
 }

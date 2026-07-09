@@ -78,6 +78,7 @@ export const BIM_VIEWER_DEFAULTS = {
   hiddenStoreys: [],
   hiddenLayers: [],
   isolateOnSelect: false,
+  zoomToSelectionOnSelect: false,
 };
 export const DEFAULT_LEFT_PANEL_WIDTH = 320;
 export const DEFAULT_RIGHT_PANEL_WIDTH = 320;
@@ -380,6 +381,7 @@ export function normalizeBimWorkspaceState(state = {}) {
   const rawDisplayMode = BIM_DISPLAY_MODES.includes(state?.displayMode) ? state.displayMode : 'highlight';
   const displayMode = rawDisplayMode === 'isolate' ? 'highlight' : rawDisplayMode;
   const isolateOnSelect = state?.isolateOnSelect === true;
+  const zoomToSelectionOnSelect = state?.zoomToSelectionOnSelect === true;
   const colorByProperty = normalizeColorByProperty(state?.colorByProperty);
   const viewSets = normalizeBimViewSets(state?.viewSets);
   const activeViewSetId = resolveActiveViewSetId(viewSets, state?.activeViewSetId);
@@ -389,6 +391,7 @@ export function normalizeBimWorkspaceState(state = {}) {
     selectedObjectKind: state?.selectedObjectKind ?? 'physicalElement',
     displayMode,
     isolateOnSelect,
+    zoomToSelectionOnSelect,
     colorByProperty,
     hiddenStoreys: normalizeHiddenLayerState(state?.hiddenStoreys),
     hiddenLayers: normalizeHiddenLayerState(state?.hiddenLayers),

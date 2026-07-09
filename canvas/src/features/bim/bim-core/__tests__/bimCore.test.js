@@ -180,6 +180,7 @@ describe('BIM core fingerprinting and cache', () => {
       hiddenStoreys: [],
       hiddenLayers: [],
       isolateOnSelect: false,
+      zoomToSelectionOnSelect: false,
     });
 
     const state = normalizeBimWorkspaceState({

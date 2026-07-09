@@ -280,7 +280,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Viewport boot | Yes — `bimViewportBoot.js` (layout wait, registration, fast sync, phased loading UI) |
 | Default open state | Yes — highlight display mode, standard render, all storeys/layers visible, **section cut off** (`BIM_VIEWER_DEFAULTS` + `applyBimViewerDefaults`) |
 | Style settings HUD | Yes — toolbar sliders icon toggles floating panel; background + presets always; HDRI lighting (standard only); clay/wireframe sliders + clay debug when active (`BimStyleSettingsHud.jsx`, `BimStyleToolbarControls.jsx`, `BimClayDebugPanel.jsx`) |
-| Viewport toolbar layout | Yes — **viewport-centred floating HUD** with gimbal **absolutely positioned** top-right; `flex-wrap` + reserved gimbal width; grouped sections: panels → measure → view → camera → display (incl. saved views) → tools; **Delete** cancels measurement; **isolate** toggle in reset-visibility group; left/right HUD stacks measured below toolbar / gimbal via `bimViewportLayout.js` |
+| Viewport toolbar layout | Yes — **viewport-centred floating HUD** with gimbal **absolutely positioned** top-right; grouped sections: panels → measure → view (**reset visibility**, **isolate**, **zoom to selection**) → camera → display → tools; left/right HUD stacks measured below toolbar / gimbal via `bimViewportLayout.js` |
 | Floating side panels | Yes — element list + inspector as **overlay HUDs** over full canvas (`BimFloatingSidePanel.jsx`); adjustable width 240–720 px; invisible resize handles; below toolbar (`top-14`) |
 | Saved view carousel | Yes — **floating bottom-centre HUD** (`max-w-[75vw]`, width adapts to thumbnails); `Images` toolbar icon |
 | Workspace header | Yes — single row: project title + element/property counts + cache status (no separate status strip) |
@@ -291,12 +291,13 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Viewport loading feedback | Yes — phased boot overlay (`BIM_VIEWPORT_LOAD_PHASES`) with spinner + element count |
 | Perspective / orthographic | Yes — toolbar toggle + camera state persistence |
 | Camera history undo | Yes — toolbar `History` HUD; up to 10 back/forward steps; 750 ms settle coalescing per gesture; animated restore (`bimCameraHistory.js`, `BimCameraHistoryControls.jsx`) |
+| Zoom to selection | Yes — toolbar `Focus` toggle right of isolate; `zoomToSelectionOnSelect` persisted; animated camera fit to selected geometry from current view (`bimSelectionCameraFit.js`, `cameraFit.js`) |
 | View navigator gimbal | Yes — top-right wireframe cube (absolute); right-click Home / Top / Bottom; footprint **MBR** long-edge azimuth + fixed-width label; right HUD panels sit below gimbal chrome (`BimViewNavigatorGimbal.jsx`, `bimViewNavigator.js`, `bimViewportLayout.js`, `cameraFit.js`) |
 | Bounding box overlay | Yes — toolbar toggle (right of **Color by IFC type**, left of wireframe); footprint **OBB** wireframe on overlay scene (`bimBoundingBoxOverlay.js`, `buildFootprintOrientedBounds` in `cameraFit.js`) |
 | Color-by IFC type | Yes — toolbar `Palette` toggle; `displayMode: colorBy` + `colorByProperty: ifcClass`; element-table swatches; BQL `colorBy` supported (`bimColorBy.js`) |
 | Measurements | Yes — vertex/edge snap, segment + polyline, units toggle; **Delete / Backspace** (or toolbar trash) cancels draft or exits measure mode; **Escape** closes fullscreen card; shared `MeasurementUi` with 3D artifact viewer |
 | HDRI lighting | Yes — environment preset cycle (off / studio / city / …); **style settings HUD** (standard render only) |
-| Picking/selection | Yes — raycast + GlobalId mapping |
+| Picking/selection | Yes — raycast + GlobalId mapping; **single selection** enforced via sequenced `applySelection` + `resetHighlight` + forced fragments refresh |
 | Element table | Yes — configurable columns (add/remove/reorder/resize/sort), search + class filter, **floating left overlay panel**, header sort menu anchored to column title, inset grid dividers; **IFC-class colour swatches** when colour-by active (`bimTableColumns.js`, `bimColorBy.js`) |
 | Properties inspector | Yes — grouped Psets, provenance, assembly membership, attribute search, wrapping labels, **floating right overlay panel** (`bimInspectorSearch.js`) |
 | Viewer ↔ table sync | Yes — bidirectional via `ifcGlobalId` |
@@ -327,6 +328,7 @@ Stage 1 capabilities are **shipped inside Canvas** as the first host, before the
 | Wireframe overlay | `canvas/src/features/bim/bim-core/bimWireframeOverlay.js` |
 | Clay / Arctic render | `canvas/src/features/bim/bim-core/bimClayRender.js`, `bimClaySelectionOverlay.js`, `bimClayDebug.js` |
 | Camera history | `canvas/src/features/bim/bim-core/bimCameraHistory.js`, `components/BimCameraHistoryControls.jsx` |
+| Zoom to selection | `canvas/src/features/bim/bim-core/bimSelectionCameraFit.js`, `canvas/src/features/threeDArtifact/utils/cameraFit.js` |
 | Style settings | `canvas/src/features/bim/bim-core/bimStyleSettings.js`, `components/BimStyleSettingsHud.jsx`, `BimStyleToolbarControls.jsx`, `BimClayDebugPanel.jsx` |
 | Layer visibility | `canvas/src/features/bim/bim-core/bimLayerVisibility.js`, `bimElementLayers.js` |
 | Section cut | `canvas/src/features/bim/bim-core/bimSectioning.js`, `bimScreenDepth.js`, `components/BimSectionHud.jsx` |

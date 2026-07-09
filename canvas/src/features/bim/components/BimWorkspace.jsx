@@ -1132,6 +1132,7 @@ export function BimWorkspace({
             queryViewerMode={viewportQueryMode}
             displayMode={workspaceState.displayMode}
             isolateOnSelect={workspaceState.isolateOnSelect}
+            zoomToSelectionOnSelect={workspaceState.zoomToSelectionOnSelect}
             hiddenStoreys={workspaceState.hiddenStoreys}
             hiddenLayers={workspaceState.hiddenLayers}
             section={workspaceState.section}
@@ -1156,6 +1157,7 @@ export function BimWorkspace({
             onDisplayModeChange={(displayMode) => patchWorkspaceState({ displayMode })}
             onColorByPropertyChange={(colorByProperty) => patchWorkspaceState({ colorByProperty })}
             onIsolateOnSelectChange={(isolateOnSelect) => patchWorkspaceState({ isolateOnSelect })}
+            onZoomToSelectionOnSelectChange={(zoomToSelectionOnSelect) => patchWorkspaceState({ zoomToSelectionOnSelect })}
             onHiddenStoreysChange={(hiddenStoreys) => patchWorkspaceState({ hiddenStoreys })}
             onHiddenLayersChange={(hiddenLayers) => patchWorkspaceState({ hiddenLayers })}
             onSectionChange={(section) => patchWorkspaceState({ section })}
