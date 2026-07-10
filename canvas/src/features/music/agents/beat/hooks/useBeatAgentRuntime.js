@@ -14,6 +14,8 @@ import {
   updateBeatTrackSynthState,
   updateBeatAgentAudioState,
   updateBeatAgentTemporalActiveState,
+  updateBeatAgentGlitchState,
+  updateBeatAgentPocketState,
   updateBeatTrackSoundState,
 } from '../domain/beatRuntimeState.js';
 import {
@@ -658,6 +660,26 @@ export function useBeatAgentRuntime({
     void persist(result.state, 'Audio settings saved', options);
   }, [persist]);
 
+  const updatePocket = useCallback((patch, options = {}) => {
+    const result = updateBeatAgentPocketState(stateRef.current, patch);
+    if (!result.ok) {
+      setError(result.reason);
+      setStatus(result.reason);
+      return;
+    }
+    void persist(result.state, 'Pocket saved', options);
+  }, [persist]);
+
+  const updateGlitch = useCallback((patch, options = {}) => {
+    const result = updateBeatAgentGlitchState(stateRef.current, patch);
+    if (!result.ok) {
+      setError(result.reason);
+      setStatus(result.reason);
+      return;
+    }
+    void persist(result.state, 'Glitch saved', options);
+  }, [persist]);
+
   const setTemporalActive = useCallback((active, options = {}) => {
     const result = updateBeatAgentTemporalActiveState(stateRef.current, active);
     if (!result.ok) {
@@ -881,6 +903,8 @@ export function useBeatAgentRuntime({
     updateTrackSynth,
     updateTrackSound,
     updateAgentAudio,
+    updatePocket,
+    updateGlitch,
     setTemporalActive,
     updateTransportSettings,
     persist,

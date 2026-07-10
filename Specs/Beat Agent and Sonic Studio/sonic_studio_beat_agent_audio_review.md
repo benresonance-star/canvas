@@ -1,8 +1,8 @@
 # Sonic Studio ↔ Beat Agent Audio Review
-**Version:** v1.1  
-**Date:** 2026-07-04  
-**Status:** Architecture review / integration reference (updated after beat audio worklet unification)  
-**Depends on:** `Specs/sonic_studio_spec.md`, `Specs/Canvas_Music_Framework_Beat_Agent_MVP_Spec_v2.md`, `Specs/Canvas_Sonic_Sketches_Full_Spec_v9.md`
+**Version:** v1.2  
+**Date:** 2026-07-11  
+**Status:** Architecture review / integration reference (updated after pocket + glitch schedule integration)  
+**Depends on:** `Specs/Beat Agent and Sonic Studio/sonic_studio_spec.md`, `Specs/Beat Agent and Sonic Studio/Canvas_Music_Framework_Beat_Agent_MVP_Spec_v2.md`, `Specs/Beat Agent and Sonic Studio/Canvas_Sonic_Sketches_Full_Spec_v9.md`, `Specs/Beat Agent and Sonic Studio/canvas_beat_agent_pocket_engine_spec.md`, `Specs/Beat Agent and Sonic Studio/canvas_beat_agent_glitch_engine_spec.md`
 
 ---
 
@@ -20,7 +20,7 @@ Sonic Studio and Beat Agents **already share the same synthesis library** (`@can
 
 There is **no live audio bus** between artifacts. Beat playback uses **offline-rendered `Float32Array` buffers** baked into `beat-agent-processor` via `MusicAudioTransportService` (both local preview and clock sync).
 
-**Bottom line:** Playback plumbing is unified on the worklet path. The **voice-resolution bridge** to full Sonic Studio voices is still deferred (Surface A spike).
+**Bottom line:** Playback plumbing is unified on the worklet path with **pocket + glitch schedule expansion** before the processor. The **voice-resolution bridge** to full Sonic Studio voices is still deferred (Surface A spike). **Offline render parity** for expanded glitch schedules needs verification.
 
 ---
 
@@ -42,7 +42,7 @@ There is **no live audio bus** between artifacts. Beat playback uses **offline-r
 
 | Layer | Spec reference | Status |
 |---|---|---|
-| Real-time DSP graph | `Specs/sonic_studio_spec.md` §2 (`SonicStudioBridge.ts`) | Not built |
+| Real-time DSP graph | `Specs/Beat Agent and Sonic Studio/sonic_studio_spec.md` §2 (`SonicStudioBridge.ts`) | Not built |
 | Live audio graph ownership inside Sonic Studio | `sonic_studio_spec.md` §3.1 | Not built — Canvas calls core offline only |
 | Rendered asset pipeline | `sonicRenderedAssets` on card | Schema only — field exists but is not populated with playable buffers |
 | Effects UI | `engineState.effects[]` | Defined in state; no editor or runtime consumer in Sonic Studio |
@@ -97,7 +97,10 @@ Sonic Studio default kit uses `createDefaultPercussionKit()` from `percussionPre
 | Offline artifact analysis | `music/agents/beat/domain/analyzeAudioArtifacts.js` | Shipped — Vitest click/clip/silence detection |
 | Local playback engine (legacy) | `music/agents/beat/engine/BeatEngine.js` | Retained for **temporal FX bus only** in fullscreen — no longer drives sequenced beat hits |
 | Temporal FX send | `temporal-delay-processor.js` + BeatEngine send bus | Shipped on beat fullscreen path only |
-| Pattern / track state | `beatAgentState.js`, `music-core/patterns/beatPattern.js` | Shipped — kick/snare/hat/clap + 16-step grid |
+| Pattern / track state | `beatAgentState.js`, `music-core/patterns/beatPattern.js` | Shipped — kick/snare/hat/clap + 16-step grid; **`pocket`** + **`glitch`** state normalized on load |
+| Pocket Engine | `domain/pocket/PocketEngine.js` | Shipped (2026-07-11) — role timing, swing, accent, seeded variation → `pocketSchedule` |
+| Glitch Engine | `domain/glitch/GlitchEngine.js` | Shipped (2026-07-11) — phrase-block mutations (stutter, ratchet, dropout, repeat, pitch, gate) |
+| Pocket / Glitch UI | `BeatAgentFullscreen.jsx` | Shipped — `PocketPanel`, `GlitchPanel`, schedule previews |
 | Track synth sliders | `beatTrackSynth.js` | Shipped — gain, attackMs, decayMs, pitch, tone, distortion |
 | Sonic-core integration | `sonic-core/integration/beatAdapter.js` | Shipped — simplified mapping only |
 | Sonic sketch metadata | `BeatAgentFullscreen.jsx`, `musicApi.js` | Shipped — descriptor/space/temporal state via sketch APIs |
@@ -112,7 +115,9 @@ Sonic Studio default kit uses `createDefaultPercussionKit()` from `percussionPre
 | MusicEventBus beat publishing | Event bus exists; beat agents do not publish/subscribe today |
 | Canvas chat agent / MCP beat control | No connection |
 | Sample file loading | Tracks use `filePath: 'generated://kick'` placeholders; sound is procedural |
-| NL agent beat editing | `beatAi.js` is deterministic JSON patch only |
+| NL agent beat editing | `beatAi.js` — JSON patch for `/pattern/`, `/pocket/`, `/glitch/` only |
+| Pocket/glitch offline render parity | Live worklet uses `pocketSchedule`; Sonic Core offline path should match — **verify** |
+| Glitch Phase 2 sonic overrides | Per-trigger filter/tone/material fields spec'd; not wired to voices |
 | Voice-to-MIDI / cross-agent routing | Spec'd in Beat Agent MVP; not built |
 
 ## 3.3 Playback transport (v1.1 — unified worklet)
@@ -375,9 +380,9 @@ Significantly larger than current offline-sample architecture. Deferred unless l
 
 | Path | Role |
 |---|---|
-| `Specs/sonic_studio_spec.md` | Sonic Studio target architecture (incl. bridge) |
-| `Specs/Canvas_Music_Framework_Beat_Agent_MVP_Spec_v2.md` | Beat Agent + Music Kernel spec |
-| `Specs/Canvas_Sonic_Sketches_Full_Spec_v9.md` | Sonic sketches + performer UIKs |
+| `Specs/Beat Agent and Sonic Studio/sonic_studio_spec.md` | Sonic Studio target architecture (incl. bridge) |
+| `Specs/Beat Agent and Sonic Studio/Canvas_Music_Framework_Beat_Agent_MVP_Spec_v2.md` | Beat Agent + Music Kernel spec |
+| `Specs/Beat Agent and Sonic Studio/Canvas_Sonic_Sketches_Full_Spec_v9.md` | Sonic sketches + performer UIKs |
 
 ---
 

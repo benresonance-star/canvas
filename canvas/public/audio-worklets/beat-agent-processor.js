@@ -15,6 +15,10 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
     this.isPlaying = false;
     this.absoluteStep = 0;
     this.nextStepFrame = 0;
+    this.transportStartFrame = 0;
+    this.transportStartTick = 0;
+    this.lastScheduleLoopFrame = null;
+    this.lastScheduleFrames = new Map();
     this.agents = new Map();
     this.voices = [];
     this.seed = 0x1234abcd;
@@ -40,6 +44,10 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
       if (message.type === 'transport.play') {
         this.absoluteStep = Math.max(0, Math.floor(Number(message.startTick) || 0));
         this.nextStepFrame = currentFrame + 1;
+        this.transportStartFrame = this.nextStepFrame;
+        this.transportStartTick = this.absoluteStep;
+        this.lastScheduleLoopFrame = null;
+        this.lastScheduleFrames.clear();
         this.isPlaying = true;
         this.postPosition();
         return;
@@ -48,6 +56,10 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
         this.isPlaying = false;
         this.absoluteStep = 0;
         this.nextStepFrame = currentFrame;
+        this.transportStartFrame = currentFrame;
+        this.transportStartTick = 0;
+        this.lastScheduleLoopFrame = null;
+        this.lastScheduleFrames.clear();
         this.voices = [];
         this.postPosition();
         return;
@@ -62,6 +74,7 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
       }
       if (message.type === 'agent.remove') {
         this.agents.delete(message.id);
+        this.lastScheduleFrames.delete(message.id);
         this.voices = this.voices.filter((voice) => voice.agentId !== message.id);
         return;
       }
@@ -98,6 +111,8 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
       id: agent.id,
       pattern: agent.pattern ?? previous?.pattern ?? null,
       parameters: agent.parameters ?? previous?.parameters ?? {},
+      pocket: agent.pocket ?? previous?.pocket ?? null,
+      pocketSchedule: normalizePocketSchedule(agent.pocketSchedule ?? previous?.pocketSchedule),
       sonicSamples: {
         ...(previous?.sonicSamples ?? {}),
         ...normalizeSonicSamples(agent.sonicSamples),
@@ -105,7 +120,9 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
       muted: agent.muted === true,
       solo: agent.solo === true,
       gain: finite(agent.gain, previous?.gain ?? 1),
-      isolatedTrackId: agent.isolatedTrackId ?? previous?.isolatedTrackId ?? null,
+      isolatedTrackId: agent.isolatedTrackId !== undefined
+        ? agent.isolatedTrackId
+        : (previous?.isolatedTrackId ?? null),
       performanceExecution: normalizePerformanceExecution(
         agent.performanceExecution ?? previous?.performanceExecution,
       ),
@@ -157,31 +174,116 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
         );
         const sample = agent.sonicSamples?.[track.id] ?? agent.sonicSamples?.[track.role];
         const sampleMode = track.soundSource === 'sonic_voice' ? 'sonic' : 'generated';
-        this.voices.push(createVoice({
-          agentId: agent.id,
-          role: track.role ?? track.id,
-          velocity,
-          gain: velocity * trackGain * agentGain,
-          synth,
-          sample,
-          sampleMode,
-          seed: this.random(),
-        }));
+        this.pushTrackVoice(agent, track, { velocity, trackGain, agentGain, synth, sample, sampleMode });
         if (perf.tapChance > 0 && this.random() < perf.tapChance) {
-          this.voices.push(createVoice({
-            agentId: agent.id,
-            role: track.role ?? track.id,
+          this.pushTrackVoice(agent, track, {
             velocity: clamp(velocity * 0.72, 0.05, 1),
-            gain: velocity * trackGain * agentGain * 0.65,
+            trackGain,
+            agentGain: agentGain * 0.65,
             synth,
             sample,
             sampleMode,
-            seed: this.random(),
-          }));
+          });
         }
       }
     }
     this.postPosition(step);
+  }
+
+  hasActivePocketSchedules() {
+    for (const agent of this.agents.values()) {
+      if (agent.pocketSchedule?.enabled && agent.pocketSchedule.events?.length) return true;
+    }
+    return false;
+  }
+
+  triggerScheduledEvents(frame) {
+    if (!this.isPlaying || !this.hasActivePocketSchedules()) return;
+    const stepFrames = this.stepDurationFrames();
+    const loopStartTick = Math.max(0, Math.floor(Number(this.transport.loopStartTick) || 0));
+    const loopEndTick = Math.max(loopStartTick + 1, Math.floor(Number(this.transport.loopEndTick) || STEPS_PER_BAR));
+    const loopStartFrame = loopStartTick * stepFrames;
+    const loopEndFrame = loopEndTick * stepFrames;
+    const loopLengthFrames = Math.max(1, loopEndFrame - loopStartFrame);
+    const absoluteFramePosition = (this.transportStartTick * stepFrames) + Math.max(0, frame - this.transportStartFrame);
+    const loopFrame = loopStartFrame + positiveModulo(absoluteFramePosition - loopStartFrame, loopLengthFrames);
+
+    const agents = [...this.agents.values()];
+    const hasSolo = agents.some((agent) => agent.solo);
+    for (const agent of agents) {
+      if (agent.muted || (hasSolo && !agent.solo)) continue;
+      const schedule = agent.pocketSchedule;
+      if (!schedule?.enabled || !schedule.events?.length) continue;
+      const scheduleFrames = Math.max(1, finite(schedule.phraseFrames, finite(schedule.loopFrames, loopLengthFrames)));
+      const scheduleFrame = positiveModulo(absoluteFramePosition - loopStartFrame, scheduleFrames);
+      const agentCursorKey = agent.id;
+      const lastFrame = this.lastScheduleFrames.has(agentCursorKey)
+        ? this.lastScheduleFrames.get(agentCursorKey)
+        : null;
+      const previousFrame = lastFrame == null ? scheduleFrame - 1 : lastFrame;
+      const wrapped = scheduleFrame < previousFrame;
+      for (const event of schedule.events) {
+        const eventFrame = clamp(finite(event.timeFrames, 0), 0, scheduleFrames - 1);
+        const due = wrapped
+          ? eventFrame > previousFrame || eventFrame <= scheduleFrame
+          : eventFrame > previousFrame && eventFrame <= scheduleFrame;
+        if (!due || event.probabilityPass === false) continue;
+        this.triggerScheduledEvent(agent, event);
+      }
+      this.lastScheduleFrames.set(agentCursorKey, scheduleFrame);
+    }
+    this.lastScheduleLoopFrame = loopFrame;
+  }
+
+  triggerScheduledEvent(agent, event) {
+    const pattern = agent.pattern;
+    const track = pattern?.tracks?.find((candidate) => candidate.id === event.trackId);
+    if (!track || track.muted) return;
+    const isolatedTrackId = agent.isolatedTrackId ?? null;
+    if (isolatedTrackId && track.id !== isolatedTrackId) return;
+    const stepCount = Math.max(1, Math.floor(Number(pattern?.stepCount) || STEPS_PER_BAR));
+    const stepData = track.steps?.[positiveModulo(event.sourceStep, stepCount)];
+    if (!stepData?.active) return;
+    const perf = agent.performanceExecution ?? NEUTRAL_PERFORMANCE;
+    const synth = track.synth ?? {};
+    const velocity = clamp(finite(event.velocity, finite(stepData.velocity, 0.8)), 0, 1);
+    const trackGain = clamp(finite(synth.gain, finite(track.gain, 1)), 0, 1.5);
+    const agentGain = clamp(
+      finite(agent.parameters?.gain, finite(agent.gain, 1)) * (1 + perf.masterGainBias + perf.gainTrim),
+      0,
+      1.5,
+    );
+    const sample = agent.sonicSamples?.[track.id] ?? agent.sonicSamples?.[track.role];
+    const sampleMode = track.soundSource === 'sonic_voice' ? 'sonic' : 'generated';
+    this.pushTrackVoice(agent, track, {
+      velocity,
+      trackGain,
+      agentGain,
+      synth,
+      sample,
+      sampleMode,
+      event,
+    });
+  }
+
+  pushTrackVoice(agent, track, { velocity, trackGain, agentGain, synth, sample, sampleMode, event = {} }) {
+    this.voices.push(createVoice({
+      agentId: agent.id,
+      role: track.role ?? track.id,
+      velocity,
+      gain: velocity * trackGain * agentGain * clamp(finite(event.gain, 1), 0, 1.5),
+      synth,
+      sample,
+      sampleMode,
+      pitchOffsetSemitones: event.pitchOffsetSemitones,
+      durationFrames: event.durationFrames,
+      gate: event.gate,
+      reverse: event.reverse,
+      toneOffset: event.toneOffset,
+      distortionAmount: event.distortionAmount,
+      temporalSend: event.temporalSend,
+      seed: this.random(),
+    }));
   }
 
   postPosition(step = this.loopedStep()) {
@@ -213,10 +315,15 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
     for (let index = 0; index < dryLeft.length; index += 1) {
       const frame = currentFrame + index;
       while (this.isPlaying && frame >= this.nextStepFrame) {
-        this.triggerStep(this.loopedStep());
+        if (this.hasActivePocketSchedules()) {
+          this.postPosition(this.loopedStep());
+        } else {
+          this.triggerStep(this.loopedStep());
+        }
         this.absoluteStep += 1;
         this.nextStepFrame += this.stepDurationFrames();
       }
+      this.triggerScheduledEvents(frame);
       const sample = this.renderVoices();
       const sendLevel = clamp(sample.sendLevel ?? 0.18, 0, 1);
       const dryScale = 1 - sendLevel;
@@ -238,7 +345,9 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
       const sample = voiceSample(voice);
       left += sample.left;
       right += sample.right;
-      const roleSend = roleTemporalSend(voice.role, this.roleSendLevels);
+      const roleSend = voice.temporalSend == null
+        ? roleTemporalSend(voice.role, this.roleSendLevels)
+        : clamp(voice.temporalSend, 0, 1);
       sendLevel += roleSend * Math.max(Math.abs(sample.left), Math.abs(sample.right));
       weight += Math.max(Math.abs(sample.left), Math.abs(sample.right));
       voice.age += 1;
@@ -258,10 +367,26 @@ class BeatAgentProcessor extends AudioWorkletProcessor {
   }
 }
 
-function createVoice({ agentId, role, velocity, gain, synth, sample, sampleMode = 'generated', seed }) {
+function createVoice({
+  agentId,
+  role,
+  velocity,
+  gain,
+  synth,
+  sample,
+  sampleMode = 'generated',
+  seed,
+  pitchOffsetSemitones = 0,
+  durationFrames: overrideDurationFrames,
+  gate = 1,
+  reverse = false,
+  toneOffset = 0,
+  distortionAmount = 0,
+  temporalSend,
+}) {
   const decayFrames = sampleRate * clamp(finite(synth.decayMs, role === 'kick' ? 220 : 140) / 1000, 0.02, 0.8);
   const attackFrames = sampleRate * clamp(finite(synth.attackMs, 0) / 1000, 0, 0.08);
-  const pitchRatio = 2 ** (clamp(finite(synth.pitch, 0), -24, 24) / 12);
+  const pitchRatio = 2 ** (clamp(finite(synth.pitch, 0) + finite(pitchOffsetSemitones, 0), -36, 36) / 12);
   const sampleLength = sample?.left?.length ?? 0;
   let durationFrames = Math.ceil(decayFrames + sampleRate * 0.04);
   if (sampleLength > 0) {
@@ -269,6 +394,10 @@ function createVoice({ agentId, role, velocity, gain, synth, sample, sampleMode 
       ? Math.min(Math.ceil(sampleLength / Math.max(pitchRatio, 0.25)), Math.ceil(decayFrames))
       : sampleLength;
   }
+  if (Number.isFinite(Number(overrideDurationFrames))) {
+    durationFrames = Math.min(durationFrames, Math.max(1, Math.floor(Number(overrideDurationFrames))));
+  }
+  durationFrames = Math.max(1, Math.floor(durationFrames * clamp(finite(gate, 1), 0.02, 1)));
   return {
     agentId,
     role,
@@ -277,14 +406,16 @@ function createVoice({ agentId, role, velocity, gain, synth, sample, sampleMode 
     decayFrames,
     attackFrames,
     gain: clamp(gain, 0, 1.5),
-    tone: clamp(finite(synth.tone, 0.5), 0, 1),
+    tone: clamp(finite(synth.tone, 0.5) + finite(toneOffset, 0), 0, 1),
     pitchRatio,
-    distortion: clamp(finite(synth.distortion, 0), 0, 1),
+    distortion: clamp(finite(synth.distortion, 0) + finite(distortionAmount, 0), 0, 1),
+    temporalSend: temporalSend == null ? undefined : clamp(temporalSend, 0, 1),
     sampleMode,
     phase: 0,
     sample,
+    reverse: reverse === true && sampleLength > 0,
     filterState: { left: 0, right: 0 },
-    readPosition: 0,
+    readPosition: reverse === true && sampleLength > 0 ? sampleLength - 1 : 0,
     noiseState: Math.max(1, Math.floor(seed * 0x7fffffff)),
     velocity,
   };
@@ -312,7 +443,7 @@ function voiceSample(voice) {
     const fadeFrames = Math.min(3, Math.max(0, remaining));
     const fade = fadeFrames > 0 ? fadeFrames / 3 : 1;
     if (voice.sampleMode === 'sonic') {
-      voice.readPosition += voice.pitchRatio;
+      voice.readPosition += voice.reverse ? -voice.pitchRatio : voice.pitchRatio;
       let { left, right } = readSampleAt(voice, voice.readPosition);
       const toneCutoff = 0.12 + voice.tone * 0.78;
       voice.filterState.left += toneCutoff * (left - voice.filterState.left);
@@ -331,8 +462,11 @@ function voiceSample(voice) {
         right: clamp(right, -0.98, 0.98),
       };
     }
-    const left = voice.sample.left[voice.age] ?? 0;
-    const right = voice.sample.right?.[voice.age] ?? left;
+    const sampleIndex = voice.reverse
+      ? Math.max(0, voice.sample.left.length - 1 - voice.age)
+      : voice.age;
+    const left = voice.sample.left[sampleIndex] ?? 0;
+    const right = voice.sample.right?.[sampleIndex] ?? left;
     return {
       left: clamp(left * voice.gain * fade, -0.98, 0.98),
       right: clamp(right * voice.gain * fade, -0.98, 0.98),
@@ -430,6 +564,49 @@ function normalizeSonicSamples(samples = {}) {
     };
   }
   return normalized;
+}
+
+function normalizePocketSchedule(schedule) {
+  if (!schedule?.enabled || !Array.isArray(schedule.events)) {
+    return {
+      enabled: false,
+      events: [],
+    };
+  }
+  return {
+    enabled: true,
+    profileId: schedule.profileId ?? 'tight',
+    glitchEnabled: schedule.glitchEnabled === true,
+    glitchProfileId: schedule.glitchProfileId ?? null,
+    loopFrames: Math.max(1, Math.floor(finite(schedule.loopFrames, 1))),
+    phraseFrames: Math.max(1, Math.floor(finite(schedule.phraseFrames, finite(schedule.loopFrames, 1)))),
+    phraseLengthLoops: Math.max(1, Math.floor(finite(schedule.phraseLengthLoops, 1))),
+    events: schedule.events
+      .map((event) => ({
+        timeFrames: Math.max(0, Math.floor(finite(event.timeFrames, 0))),
+        trackId: event.trackId,
+        role: event.role ?? event.trackId,
+        sourceStep: Math.max(0, Math.floor(finite(event.sourceStep, 0))),
+        velocity: clamp(event.velocity ?? 0.8, 0, 1),
+        probabilityPass: event.probabilityPass !== false,
+        articulation: event.articulation ?? 'normal',
+        pitchOffsetSemitones: clamp(event.pitchOffsetSemitones ?? 0, -24, 24),
+        durationFrames: event.durationFrames == null
+          ? undefined
+          : Math.max(1, Math.floor(finite(event.durationFrames, 1))),
+        gate: event.gate == null ? undefined : clamp(event.gate, 0.02, 1),
+        reverse: event.reverse === true,
+        gain: event.gain == null ? undefined : clamp(event.gain, 0, 1.5),
+        toneOffset: event.toneOffset == null ? undefined : clamp(event.toneOffset, -1, 1),
+        distortionAmount: event.distortionAmount == null ? undefined : clamp(event.distortionAmount, 0, 1),
+        temporalSend: event.temporalSend == null ? undefined : clamp(event.temporalSend, 0, 1),
+        sourceEventId: event.sourceEventId ?? '',
+        mutationId: event.mutationId ?? '',
+        operation: event.operation ?? 'base',
+        traceId: event.traceId ?? '',
+      }))
+      .filter((event) => event.trackId),
+  };
 }
 
 const NEUTRAL_PERFORMANCE = {

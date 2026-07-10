@@ -1,6 +1,7 @@
 # Canvas Music Framework + Beat Agent MVP Specification v2.0
 
 **Target repo:** Canvas desktop/web app  
+**Spec folder:** `Specs/Beat Agent and Sonic Studio/` (2026-07-11 — Beat Agent and Sonic Studio specs consolidated here)  
 **Primary stack assumed:** React, TypeScript, Postgres, Docker Desktop, local/cloud LLM providers, project folder storage  
 **First concrete implementation:** Beat Agent  
 **Long-term direction:** Modular music agents, effects, mixer, master, arrangement, and Pocket Player interoperability
@@ -2197,6 +2198,69 @@ Postgres
 Canvas UI
   lets the user see, edit, compare and direct the agent
 ```
+
+---
+
+## 33. Shipped Beat Agent extensions (2026-07-11)
+
+### 33.1 Spec layout
+
+Beat Agent and Sonic Studio specifications live under:
+
+```text
+Specs/Beat Agent and Sonic Studio/
+  Canvas_Music_Framework_Beat_Agent_MVP_Spec_v2.md
+  canvas_beat_agent_pocket_engine_spec.md
+  canvas_beat_agent_glitch_engine_spec.md
+  sonic_studio_spec.md
+  sonic_studio_beat_agent_audio_review.md
+  Canvas_Sonic_Sketches_Full_Spec_v9.md
+```
+
+### 33.2 Pocket Engine (partial MVP)
+
+**Code:** `canvas/src/features/music/agents/beat/domain/pocket/` (`PocketEngine.js`, unit tests)
+
+**Shipped:**
+
+- Pure domain `applyPocket()` / `buildPocketSchedule()` pipeline between pattern events and AudioWorklet schedule
+- Profile library: Tight, Laid Back, Forward, Deep Pocket, Loose Funk, Custom
+- Role-aware timing offsets, swing, accent cycle, seeded variation, trace output
+- State in Beat Agent artifact (`state.pocket`); normalized via `normalizePocketState()` in `beatAgentState.js`
+- **Pocket** panel in `BeatAgentFullscreen.jsx` (enable, bypass, profile, amount, swing, accent, per-role ms sliders, seed, schedule preview)
+- Worklet playback via expanded `pocketSchedule` in `beat-agent-processor.js`
+- AI patch validation allows `/pocket/` paths (`beatAi.js`)
+
+**Deferred:** offline Sonic Core render parity audit; agent semantic pocket commands; preset/profile save beyond artifact state; pocket visualization on step grid.
+
+### 33.3 Glitch / Mutation Engine (partial MVP)
+
+**Code:** `canvas/src/features/music/agents/beat/domain/glitch/` (`GlitchEngine.js`, unit tests)
+
+**Shipped:**
+
+- `applyGlitch()` / `buildGlitchSchedule()` after pocket; phrase-block precomputation (`phraseLengthLoops`, `phraseFrames`)
+- Profiles: Subtle, Stutter, Broken, IDM, Fill Driven, Sonic Fracture (data only), Custom
+- Operations: stutter, ratchet, dropout, repeat, pitch offset, gate; role protection for kick/snare anchors
+- State in Beat Agent artifact (`state.glitch`); normalized via `normalizeGlitchState()`
+- **Glitch** panel in `BeatAgentFullscreen.jsx` (enable, bypass, profile, amount/density/phrase/reset, phrase length, operation weights, sonic intensity placeholders, schedule preview)
+- Worklet schedule events extended with `pitchOffsetSemitones`, `durationFrames`, `gate`, `mutationId`, `operation`
+- Payload cache includes pocket + glitch in `buildBeatAgentAudioPayload()` (`beatClockSync.js`)
+
+**Known gaps — needs further attention:**
+
+| Area | Status |
+|---|---|
+| **Offline render parity** | Live worklet uses `pocketSchedule`; Sonic Core offline beat path should consume the same expanded schedule — verify end-to-end |
+| **Dense schedule stress** | Phrase-block stutter/ratchet at high density needs sustained playback stress tests |
+| **Phase 2 sonic overrides** | Per-trigger filter/tone/material/temporal sends specified but not wired to voices |
+| **Sample reverse / slice** | Deferred; generated synth voices ignore unsupported fields |
+
+**Deferred:** phrase evolution UI on transport; commit mutations back to pattern; MIDI export of expanded events; dedicated glitch trace inspector.
+
+### 33.4 Related transport UI
+
+- `BeatTransportStrip.jsx` — BPM text input commit on blur/Enter (transport strip polish, 2026-07-11)
 
 ---
 

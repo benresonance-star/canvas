@@ -31,8 +31,71 @@ describe('beat worklet playback helpers', () => {
       performanceExecution: expect.objectContaining({
         stepProbabilityBias: expect.any(Number),
       }),
+      pocket: expect.objectContaining({ enabled: false }),
+      glitch: expect.objectContaining({ enabled: false }),
+      pocketSchedule: expect.objectContaining({
+        enabled: false,
+        events: expect.any(Array),
+      }),
     }));
     expect(payload.sonicSamples.kick.left.length).toBeGreaterThan(0);
+  });
+
+  it('includes phrase glitch schedule events when glitch is enabled', () => {
+    const state = createDefaultBeatAgentState({
+      glitch: {
+        enabled: true,
+        profileId: 'stutter',
+        amount: 1,
+        density: 1,
+        phraseLengthLoops: 4,
+        resetStrength: 0,
+        seed: 123,
+        operations: {
+          stutter: 1,
+          ratchet: 0,
+          dropout: 0,
+          repeat: 0,
+          pitch: 0,
+          gate: 0,
+        },
+        roleRules: {
+          hat: { probability: 1, protectPrimary: false, maxRepeats: 4 },
+        },
+        sonic: {
+          enabled: true,
+          intensity: 1,
+          temporalSend: 0.5,
+          toneOffset: 0.25,
+          distortionAmount: 0.4,
+        },
+      },
+    });
+
+    const payload = buildBeatAgentAudioPayload('beat-glitch', state, {
+      sampleRate: 48000,
+      transport: { bpm: 120 },
+    });
+
+    expect(payload.glitch).toEqual(expect.objectContaining({ enabled: true }));
+    expect(payload.pocketSchedule).toEqual(expect.objectContaining({
+      enabled: true,
+      glitchEnabled: true,
+      phraseLengthLoops: 4,
+      phraseFrames: expect.any(Number),
+    }));
+    expect(payload.pocketSchedule.events.some((event) => event.operation === 'stutter')).toBe(true);
+    expect(payload.pocketSchedule.events[0]).toEqual(expect.objectContaining({
+      mutationId: expect.any(String),
+      sourceEventId: expect.any(String),
+      pitchOffsetSemitones: expect.any(Number),
+    }));
+    const mutated = payload.pocketSchedule.events.find((event) => event.operation === 'stutter');
+    expect(mutated).toEqual(expect.objectContaining({
+      temporalSend: expect.any(Number),
+      distortionAmount: expect.any(Number),
+    }));
+    expect(mutated.temporalSend).toBeGreaterThan(0);
   });
 
   it('includes active performance execution when descriptor bypass is off', () => {

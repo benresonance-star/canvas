@@ -3,6 +3,15 @@ import {
   createBeatSonicSampleMapForPattern,
 } from './beatSampleResolver.js';
 import { resolveBeatDescriptorExecution } from '../../../../../../packages/music-core/src/index.js';
+import {
+  createDefaultPocketState,
+  normalizePocketState,
+} from './pocket/index.js';
+import {
+  buildGlitchSchedule,
+  createDefaultGlitchState,
+  normalizeGlitchState,
+} from './glitch/index.js';
 
 const beatAudioPayloadCache = new Map();
 const DEFAULT_SAMPLE_RATE = 48000;
@@ -24,6 +33,7 @@ export function buildBeatAgentAudioPayload(
     descriptorGraph = null,
     audioRouting = null,
     isolatedTrackId = null,
+    transport = null,
   } = {},
 ) {
   const performanceExecution = resolveBeatDescriptorExecution({
@@ -36,6 +46,12 @@ export function buildBeatAgentAudioPayload(
     localPreview,
     pattern: state?.pattern,
     parameters: state?.parameters,
+    pocket: state?.pocket,
+    glitch: state?.glitch,
+    transport: {
+      bpm: transport?.bpm ?? state?.transport?.bpm,
+      timeSignature: transport?.timeSignature ?? state?.transport?.timeSignature,
+    },
     muted: state?.muted,
     solo: state?.solo,
     performanceExecution,
@@ -46,10 +62,20 @@ export function buildBeatAgentAudioPayload(
     })),
   });
   const cached = beatAudioPayloadCache.get(signature);
+  const pocket = normalizePocketState(state?.pocket ?? createDefaultPocketState());
+  const glitch = normalizeGlitchState(state?.glitch ?? createDefaultGlitchState());
+  const pocketSchedule = buildGlitchSchedule(state?.pattern, pocket, glitch, {
+    sampleRate,
+    tempoBpm: transport?.bpm ?? state?.transport?.bpm ?? 120,
+    timeSignature: transport?.timeSignature ?? state?.transport?.timeSignature,
+  });
   const basePayload = cached ?? {
     id,
     pattern: state?.pattern ?? null,
     parameters: state?.parameters ?? {},
+    pocket,
+    glitch,
+    pocketSchedule,
     gain: Number.isFinite(Number(state?.parameters?.gain)) ? Number(state.parameters.gain) : 1,
     muted: state?.muted === true,
     solo: localPreview ? true : state?.solo === true,
@@ -64,6 +90,9 @@ export function buildBeatAgentAudioPayload(
   }
   return {
     ...basePayload,
+    pocket,
+    glitch,
+    pocketSchedule,
     isolatedTrackId: isolatedTrackId ?? null,
   };
 }
@@ -90,6 +119,7 @@ export async function startBeatWorkletSession(entry, universalTransport, runtime
   descriptorGraph = null,
   audioRouting = null,
   isolatedTrackId = null,
+  transport = null,
 } = {}) {
   if (!entry || !universalTransport || !runtimeKey) return () => {};
   entry.workletRefs = Math.max(0, entry.workletRefs ?? 0) + 1;
@@ -102,6 +132,7 @@ export async function startBeatWorkletSession(entry, universalTransport, runtime
       descriptorGraph,
       audioRouting,
       isolatedTrackId: isolatedTrackId ?? entry.isolatedTrackId ?? null,
+      transport: transport ?? state?.transport ?? universalTransport.transportState,
     }),
   );
   return () => releaseBeatWorkletSession(entry, runtimeKey);
@@ -117,6 +148,7 @@ export async function updateBeatWorkletAgent(
     descriptorGraph = null,
     audioRouting = null,
     isolatedTrackId = null,
+    transport = null,
   } = {},
 ) {
   if (!universalTransport || !runtimeKey) return;
@@ -130,6 +162,7 @@ export async function updateBeatWorkletAgent(
       descriptorGraph,
       audioRouting,
       isolatedTrackId,
+      transport: transport ?? state?.transport ?? universalTransport.transportState,
     }),
   );
 }

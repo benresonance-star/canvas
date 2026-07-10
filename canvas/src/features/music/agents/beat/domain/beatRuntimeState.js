@@ -6,6 +6,8 @@ import {
   createDefaultBeatSonicTemporalState,
   normalizeSonicTemporal,
 } from '../../../../../../packages/music-core/src/index.js';
+import { normalizePocketState } from './pocket/index.js';
+import { normalizeGlitchState } from './glitch/index.js';
 
 export function resolveBeatAgentId(card) {
   return card?.musicAgentId || card?.versions?.[0]?.musicAgentId || null;
@@ -70,6 +72,28 @@ export function updateBeatAgentAudioState(state, patch = {}) {
   if (patch.sonicTemporal !== undefined) next.sonicTemporal = patch.sonicTemporal;
   if (patch.audioRouting !== undefined) next.audioRouting = patch.audioRouting;
   if (patch.mixSettings !== undefined) next.mixSettings = patch.mixSettings;
+  next.updatedAt = new Date().toISOString();
+  return { ok: true, state: next };
+}
+
+export function updateBeatAgentPocketState(state, patch = {}) {
+  const next = structuredClone(state);
+  next.pocket = normalizePocketState({
+    ...(next.pocket ?? {}),
+    ...(patch ?? {}),
+    updatedAt: new Date().toISOString(),
+  });
+  next.updatedAt = new Date().toISOString();
+  return { ok: true, state: next };
+}
+
+export function updateBeatAgentGlitchState(state, patch = {}) {
+  const next = structuredClone(state);
+  next.glitch = normalizeGlitchState({
+    ...(next.glitch ?? {}),
+    ...(patch ?? {}),
+    updatedAt: new Date().toISOString(),
+  });
   next.updatedAt = new Date().toISOString();
   return { ok: true, state: next };
 }

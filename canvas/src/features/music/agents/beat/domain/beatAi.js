@@ -1,4 +1,6 @@
 import { validateBeatPattern } from '../../../../../../packages/music-core/src/index.js';
+import { normalizePocketState } from './pocket/index.js';
+import { normalizeGlitchState } from './glitch/index.js';
 
 const ALLOWED_PATCH_OPS = new Set(['replace', 'add']);
 
@@ -9,8 +11,11 @@ export function applyBeatAgentJsonPatch(state, patchOps) {
   const next = JSON.parse(JSON.stringify(state));
   for (const op of patchOps) {
     if (!ALLOWED_PATCH_OPS.has(op?.op)) return { ok: false, reason: 'unsupported patch op' };
-    if (typeof op.path !== 'string' || !op.path.startsWith('/pattern/')) {
-      return { ok: false, reason: 'AI may only edit pattern paths' };
+    if (
+      typeof op.path !== 'string'
+      || (!op.path.startsWith('/pattern/') && !op.path.startsWith('/pocket/') && !op.path.startsWith('/glitch/'))
+    ) {
+      return { ok: false, reason: 'AI may only edit pattern, pocket, or glitch paths' };
     }
     if (next.locks?.[op.path]) return { ok: false, reason: `locked path: ${op.path}` };
     const parts = op.path.split('/').slice(1);
@@ -25,6 +30,8 @@ export function applyBeatAgentJsonPatch(state, patchOps) {
   }
   const validation = validateBeatPattern(next.pattern);
   if (!validation.ok) return validation;
+  if (next.pocket) next.pocket = normalizePocketState(next.pocket);
+  if (next.glitch) next.glitch = normalizeGlitchState(next.glitch);
   next.updatedAt = new Date().toISOString();
   return { ok: true, state: next };
 }

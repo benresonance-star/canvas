@@ -44,6 +44,18 @@ import { ChronicleTimeline } from '../../../chronicle/ChronicleTimeline.jsx';
 import { SpacePanel } from '../../../space/SpacePanel.jsx';
 import { ReflectionPanel } from '../../../reflection/ReflectionPanel.jsx';
 import { ExplorationWorkspace } from '../../../workspace/ExplorationWorkspace.jsx';
+import {
+  buildPocketSchedule,
+  createDefaultPocketState,
+  normalizePocketState,
+  POCKET_PROFILE_IDS,
+} from '../domain/pocket/index.js';
+import {
+  buildGlitchSchedule,
+  createDefaultGlitchState,
+  GLITCH_PROFILE_IDS,
+  normalizeGlitchState,
+} from '../domain/glitch/index.js';
 
 function StepCell({ active, velocity, isPlayhead, onClick }) {
   return (
@@ -115,6 +127,8 @@ export function BeatAgentFullscreen({
     updateTrackSynth,
     updateTrackSound,
     updateAgentAudio,
+    updatePocket,
+    updateGlitch,
     setTemporalActive,
     updateTransportSettings,
     clockSync,
@@ -503,6 +517,19 @@ export function BeatAgentFullscreen({
               ))}
             </div>
           </div>
+          <PocketPanel
+            pattern={state.pattern}
+            pocket={state.pocket}
+            transportState={transport.state}
+            onChange={(patch) => updatePocket(patch, { debounce: true })}
+          />
+          <GlitchPanel
+            pattern={state.pattern}
+            pocket={state.pocket}
+            glitch={state.glitch}
+            transportState={transport.state}
+            onChange={(patch) => updateGlitch(patch, { debounce: true })}
+          />
           <div className="border border-border rounded-lg bg-surface p-3">
             <div className="sans text-[10px] uppercase tracking-wider text-muted mb-3">
               Instrument Controls
@@ -705,6 +732,458 @@ export function BeatAgentFullscreen({
           {status && <div className="sans text-xs text-warning">{status}</div>}
           </div>
         </aside>
+      </div>
+    </div>
+  );
+}
+
+const POCKET_PROFILE_LABELS = {
+  tight: 'Tight',
+  'laid-back': 'Laid Back',
+  forward: 'Forward',
+  'deep-pocket': 'Deep Pocket',
+  'loose-funk': 'Loose Funk',
+  custom: 'Custom',
+};
+
+const GLITCH_PROFILE_LABELS = {
+  subtle: 'Subtle',
+  stutter: 'Stutter',
+  broken: 'Broken',
+  idm: 'IDM',
+  'fill-driven': 'Fill Driven',
+  'sonic-fracture': 'Sonic Fracture',
+  custom: 'Custom',
+};
+
+const GLITCH_OPERATION_LABELS = {
+  stutter: 'Stutter',
+  ratchet: 'Ratchet',
+  dropout: 'Dropout',
+  repeat: 'Repeat',
+  pitch: 'Pitch',
+  gate: 'Gate',
+};
+
+const GLITCH_OPERATION_DESCRIPTIONS = {
+  stutter: 'Rapidly retriggers selected hits in a tight burst.',
+  ratchet: 'Divides a hit into tempo-locked subdivisions.',
+  dropout: 'Temporarily removes selected hits while protecting anchors.',
+  repeat: 'Copies a hit to a nearby rhythmic position.',
+  pitch: 'Adds per-trigger pitch offsets to mutated hits.',
+  gate: 'Shortens mutated hits for clipped, chopped articulation.',
+};
+
+function GlitchPanel({ pattern, pocket, glitch, transportState, onChange }) {
+  const state = normalizeGlitchState(glitch ?? createDefaultGlitchState());
+  const schedule = buildGlitchSchedule(pattern, pocket, state, {
+    tempoBpm: transportState?.bpm ?? 120,
+    sampleRate: 48000,
+    timeSignature: transportState?.timeSignature,
+  });
+  const mutatedEvents = schedule.events
+    .filter((event) => event.operation && event.operation !== 'base')
+    .slice(0, 24);
+
+  function updateNumber(key, value) {
+    onChange({ [key]: Number(value) });
+  }
+
+  function updateOperation(operation, value) {
+    onChange({
+      operations: {
+        ...state.operations,
+        [operation]: Number(value),
+      },
+    });
+  }
+
+  function resetGlitch() {
+    onChange(createDefaultGlitchState({
+      enabled: false,
+      seed: state.seed,
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+
+  return (
+    <div className="border border-border rounded-lg bg-surface p-3">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="sans text-[10px] uppercase tracking-wider text-muted">Glitch</div>
+        <div className="flex items-center gap-2">
+          <label className="sans text-xs text-secondary inline-flex items-center gap-1.5" title="Turns phrase-aware event mutations on or off.">
+            <input
+              type="checkbox"
+              checked={state.enabled}
+              onChange={(event) => onChange({ enabled: event.target.checked })}
+            />
+            Enable
+          </label>
+          <label className="sans text-xs text-secondary inline-flex items-center gap-1.5" title="Bypasses glitch while keeping the current settings for comparison.">
+            <input
+              type="checkbox"
+              checked={state.bypass}
+              disabled={!state.enabled}
+              onChange={(event) => onChange({ bypass: event.target.checked })}
+            />
+            A/B
+          </label>
+        </div>
+      </div>
+      <div className="grid gap-3 md:grid-cols-[10rem_1fr]">
+        <label className="grid gap-1 sans text-xs text-secondary" title="Chooses the overall mutation character and role rules.">
+          Profile
+          <select
+            className="bg-surface-muted border border-border rounded px-2 py-1.5"
+            value={state.profileId}
+            onChange={(event) => onChange({ profileId: event.target.value })}
+          >
+            {GLITCH_PROFILE_IDS.map((profileId) => (
+              <option key={profileId} value={profileId}>{GLITCH_PROFILE_LABELS[profileId]}</option>
+            ))}
+          </select>
+        </label>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          <PocketSlider label="Amount" description="Scales how strongly selected mutations alter the base groove." value={state.amount} onChange={(value) => updateNumber('amount', value)} />
+          <PocketSlider label="Density" description="Controls how often eligible hits are selected for mutation." value={state.density} onChange={(value) => updateNumber('density', value)} />
+          <PocketSlider label="Phrase" description="Biases mutations toward phrase endings and fill moments." value={state.phraseBias} onChange={(value) => updateNumber('phraseBias', value)} />
+          <PocketSlider label="Reset" description="Preserves clean groove identity at phrase starts." value={state.resetStrength} onChange={(value) => updateNumber('resetStrength', value)} />
+          <GlitchLoopSlider
+            value={state.phraseLengthLoops}
+            onChange={(value) => onChange({ phraseLengthLoops: value })}
+          />
+        </div>
+      </div>
+      <details className="mt-3">
+        <summary className="sans text-xs text-muted cursor-pointer" title="Weights which mutation types are chosen when a hit is selected.">Operations</summary>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-6 mt-3">
+          {Object.entries(GLITCH_OPERATION_LABELS).map(([operation, label]) => (
+            <PocketSlider
+              key={operation}
+              label={label}
+              description={GLITCH_OPERATION_DESCRIPTIONS[operation]}
+              value={state.operations[operation] ?? 0}
+              onChange={(value) => updateOperation(operation, value)}
+            />
+          ))}
+        </div>
+      </details>
+      <details className="mt-3">
+        <summary className="sans text-xs text-muted cursor-pointer" title="Adds per-trigger timbral and FX changes to mutated events.">Sonic</summary>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5 mt-3">
+          <label className="sans text-xs text-secondary inline-flex items-center gap-1.5" title="Allows mutations to alter tone, distortion, gain, and temporal FX send.">
+            <input
+              type="checkbox"
+              checked={state.sonic.enabled}
+              onChange={(event) => onChange({ sonic: { ...state.sonic, enabled: event.target.checked } })}
+            />
+            Sonic overrides
+          </label>
+          <PocketSlider
+            label="Intensity"
+            description="Macro depth for all sonic changes applied to mutated hits."
+            value={state.sonic.intensity}
+            onChange={(value) => onChange({ sonic: { ...state.sonic, intensity: value } })}
+          />
+          <PocketSlider
+            label="FX send"
+            description="Overrides how much mutated hits feed delay/reverb style temporal processing."
+            value={state.sonic.temporalSend}
+            onChange={(value) => onChange({ sonic: { ...state.sonic, temporalSend: value } })}
+          />
+          <GlitchToneSlider
+            value={state.sonic.toneOffset}
+            onChange={(value) => onChange({ sonic: { ...state.sonic, toneOffset: value } })}
+          />
+          <PocketSlider
+            label="Distort"
+            description="Adds per-trigger saturation to mutated hits."
+            value={state.sonic.distortionAmount}
+            onChange={(value) => onChange({ sonic: { ...state.sonic, distortionAmount: value } })}
+          />
+        </div>
+      </details>
+      <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_auto] items-end">
+        <GlitchSchedulePreview
+          events={mutatedEvents}
+          enabled={state.enabled && !state.bypass}
+          phraseLengthLoops={schedule.phraseLengthLoops}
+          totalEvents={schedule.events.length}
+        />
+        <div className="flex gap-2 justify-end">
+          <button
+            type="button"
+            className="sans text-xs border border-border rounded px-3 py-2"
+            title="Generates a new deterministic mutation seed."
+            onClick={() => onChange({ seed: Date.now() % 1000000 })}
+          >
+            New Seed
+          </button>
+          <button type="button" className="sans text-xs border border-border rounded px-3 py-2" title="Returns glitch settings to their default disabled state while keeping the seed." onClick={resetGlitch}>
+            Reset
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GlitchLoopSlider({ value, onChange }) {
+  return (
+    <label className="grid gap-1 sans text-xs text-secondary" title="Sets how many loops are precomputed before the glitch phrase repeats.">
+      <span className="flex justify-between gap-2">
+        <span>Loops</span>
+        <span className="tabular-nums text-muted">{value}</span>
+      </span>
+      <input
+        type="range"
+        min="1"
+        max="8"
+        step="1"
+        value={value ?? 4}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </label>
+  );
+}
+
+function GlitchToneSlider({ value, onChange }) {
+  return (
+    <label className="grid gap-1 sans text-xs text-secondary" title="Moves mutated hits darker or brighter through per-trigger tone offsets.">
+      <span className="flex justify-between gap-2">
+        <span>Tone</span>
+        <span className="tabular-nums text-muted">{Math.round((value ?? 0) * 100)}%</span>
+      </span>
+      <input
+        type="range"
+        min="-1"
+        max="1"
+        step="0.01"
+        value={value ?? 0}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </label>
+  );
+}
+
+function GlitchSchedulePreview({ events, enabled, phraseLengthLoops, totalEvents }) {
+  return (
+    <div className={`grid gap-1 ${enabled ? '' : 'opacity-50'}`}>
+      <div className="sans text-[10px] uppercase tracking-wider text-muted">
+        Mutations / {phraseLengthLoops} loops / {totalEvents} events
+      </div>
+      {events.length === 0 ? (
+        <div className="sans text-xs text-muted">No mutations in the current preview</div>
+      ) : (
+        <div className="grid grid-cols-8 gap-1">
+          {events.map((event) => (
+            <div
+              key={event.mutationId}
+              className="h-7 rounded-sm border border-border-subtle bg-surface-muted overflow-hidden px-1 flex items-center justify-center"
+              title={`${event.operation} ${event.role} step ${event.sourceStep + 1}`}
+            >
+              <span className="sans text-[9px] text-secondary truncate">
+                {String(event.operation ?? 'base').slice(0, 3)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PocketPanel({ pattern, pocket, transportState, onChange }) {
+  const state = normalizePocketState(pocket ?? createDefaultPocketState());
+  const schedule = buildPocketSchedule(pattern, state, {
+    tempoBpm: transportState?.bpm ?? 120,
+    sampleRate: 48000,
+    timeSignature: transportState?.timeSignature,
+  });
+  const previewEvents = schedule.events.slice(0, 24);
+
+  function updateNumber(key, value) {
+    onChange({ [key]: Number(value) });
+  }
+
+  function resetPocket() {
+    onChange(createDefaultPocketState({
+      enabled: false,
+      seed: state.seed,
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+
+  return (
+    <div className="border border-border rounded-lg bg-surface p-3">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="sans text-[10px] uppercase tracking-wider text-muted">Pocket</div>
+        <div className="flex items-center gap-2">
+          <label className="sans text-xs text-secondary inline-flex items-center gap-1.5" title="Turns pocket timing and dynamics on or off.">
+            <input
+              type="checkbox"
+              checked={state.enabled}
+              onChange={(event) => onChange({ enabled: event.target.checked })}
+            />
+            Enable
+          </label>
+          <label className="sans text-xs text-secondary inline-flex items-center gap-1.5" title="Bypasses pocket while preserving current settings for comparison.">
+            <input
+              type="checkbox"
+              checked={state.bypass}
+              disabled={!state.enabled}
+              onChange={(event) => onChange({ bypass: event.target.checked })}
+            />
+            A/B
+          </label>
+        </div>
+      </div>
+      <div className="grid gap-3 md:grid-cols-[10rem_1fr]">
+        <label className="grid gap-1 sans text-xs text-secondary" title="Chooses the groove feel profile and default role timing.">
+          Profile
+          <select
+            className="bg-surface-muted border border-border rounded px-2 py-1.5"
+            value={state.profileId}
+            onChange={(event) => onChange({ profileId: event.target.value })}
+          >
+            {POCKET_PROFILE_IDS.map((profileId) => (
+              <option key={profileId} value={profileId}>{POCKET_PROFILE_LABELS[profileId]}</option>
+            ))}
+          </select>
+        </label>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <PocketSlider label="Amount" description="Scales how far pocket timing and dynamics move from the base grid." value={state.amount} onChange={(value) => updateNumber('amount', value)} />
+          <PocketSlider label="Swing" description="Delays alternating subdivisions for a swung or shuffled feel." value={state.swing} onChange={(value) => updateNumber('swing', value)} />
+          <PocketSlider label="Accent" description="Controls how strongly the repeating accent contour shapes velocity." value={state.accentDepth} onChange={(value) => updateNumber('accentDepth', value)} />
+          <PocketSlider
+            label="Variation"
+            description="Adds bounded seeded timing and velocity variation around the pocket target."
+            value={state.variation.timingRangeMs / 16}
+            onChange={(value) => onChange({
+              variation: {
+                ...state.variation,
+                timingRangeMs: Number(value) * 16,
+                velocityRange: Number(value) * 0.12,
+              },
+            })}
+          />
+        </div>
+      </div>
+      <details className="mt-3">
+        <summary className="sans text-xs text-muted cursor-pointer" title="Fine-tunes per-role timing relationships.">Advanced</summary>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4 mt-3">
+          <PocketMsSlider
+            label="Snare drag"
+            description="Moves snare hits later or earlier relative to the grid."
+            value={state.roleTiming.snare?.offsetMs ?? 18}
+            onChange={(offsetMs) => onChange({ roleTiming: { ...state.roleTiming, snare: { ...(state.roleTiming.snare ?? {}), offsetMs } } })}
+          />
+          <PocketMsSlider
+            label="Hat push"
+            description="Moves hat hits earlier or later to change forward motion."
+            value={state.roleTiming.hat?.offsetMs ?? -7}
+            onChange={(offsetMs) => onChange({ roleTiming: { ...state.roleTiming, hat: { ...(state.roleTiming.hat ?? {}), offsetMs } } })}
+          />
+          <PocketMsSlider
+            label="Clap lag"
+            description="Offsets clap timing, useful for flam or width behind the snare."
+            value={state.roleTiming.clap?.offsetMs ?? 24}
+            onChange={(offsetMs) => onChange({ roleTiming: { ...state.roleTiming, clap: { ...(state.roleTiming.clap ?? {}), offsetMs } } })}
+          />
+          <PocketSlider
+            label="Kick stability"
+            description="Controls how tightly kick timing resists seeded drift."
+            value={state.roleTiming.kick?.stability ?? 0.96}
+            onChange={(stability) => onChange({ roleTiming: { ...state.roleTiming, kick: { ...(state.roleTiming.kick ?? {}), stability } } })}
+          />
+        </div>
+      </details>
+      <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_auto] items-end">
+        <PocketSchedulePreview events={previewEvents} enabled={state.enabled && !state.bypass} />
+        <div className="flex gap-2 justify-end">
+          <button
+            type="button"
+            className="sans text-xs border border-border rounded px-3 py-2"
+            title="Generates a new deterministic pocket seed."
+            onClick={() => onChange({ seed: Math.floor(Math.random() * 1000000) })}
+          >
+            New Seed
+          </button>
+          <button type="button" className="sans text-xs border border-border rounded px-3 py-2" title="Returns pocket settings to their default disabled state while keeping the seed." onClick={resetPocket}>
+            Reset
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PocketSlider({ label, value, onChange, description }) {
+  return (
+    <label className="grid gap-1 sans text-xs text-secondary" title={description}>
+      <span className="flex justify-between gap-2">
+        <span title={description}>{label}</span>
+        <span className="tabular-nums text-muted">{Math.round((value ?? 0) * 100)}%</span>
+      </span>
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.01"
+        value={value ?? 0}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </label>
+  );
+}
+
+function PocketMsSlider({ label, value, onChange, description }) {
+  return (
+    <label className="grid gap-1 sans text-xs text-secondary" title={description}>
+      <span className="flex justify-between gap-2">
+        <span title={description}>{label}</span>
+        <span className="tabular-nums text-muted">{Math.round(value)}ms</span>
+      </span>
+      <input
+        type="range"
+        min="-30"
+        max="36"
+        step="1"
+        value={value ?? 0}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </label>
+  );
+}
+
+function PocketSchedulePreview({ events, enabled }) {
+  if (!events.length) {
+    return <div className="sans text-xs text-muted">No active hits to preview</div>;
+  }
+  return (
+    <div className={`grid gap-1 ${enabled ? '' : 'opacity-50'}`}>
+      <div className="sans text-[10px] uppercase tracking-wider text-muted">Timing / velocity</div>
+      <div className="grid grid-cols-8 gap-1">
+        {events.map((event) => {
+          const offset = Math.max(-30, Math.min(36, event.offsetMs ?? 0));
+          const left = 50 + (offset / 36) * 42;
+          return (
+            <div
+              key={event.traceId}
+              className="relative h-7 rounded-sm border border-border-subtle bg-surface-muted overflow-hidden"
+              title={`${event.role} step ${event.sourceStep + 1}: ${Math.round(event.offsetMs ?? 0)}ms / ${Math.round(event.velocity * 100)}%`}
+            >
+              <span className="absolute left-1/2 top-1 bottom-1 w-px bg-muted/40" />
+              <span
+                className="absolute top-1 bottom-1 w-1 rounded bg-accent"
+                style={{
+                  left: `${left}%`,
+                  opacity: Math.max(0.35, event.velocity),
+                }}
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );

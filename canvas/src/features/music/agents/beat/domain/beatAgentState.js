@@ -6,6 +6,8 @@ import {
   createDefaultBeatSonicTemporalState,
 } from '../../../../../../packages/music-core/src/index.js';
 import { normalizeBeatPatternSynth } from './beatTrackSynth.js';
+import { createDefaultPocketState } from './pocket/index.js';
+import { createDefaultGlitchState } from './glitch/index.js';
 
 export function createDefaultBeatAgentState(overrides = {}) {
   const {
@@ -25,6 +27,8 @@ export function createDefaultBeatAgentState(overrides = {}) {
     sonicTemporal: createDefaultBeatSonicTemporalState(rest.sonicTemporal),
     audioRouting: createDefaultBeatAudioRouting(rest.audioRouting),
     mixSettings: createDefaultBeatMixSettings(rest.mixSettings),
+    pocket: createDefaultPocketState(rest.pocket),
+    glitch: createDefaultGlitchState(rest.glitch),
     samples: [
       { id: 'kick', name: 'Kick', role: 'kick', filePath: 'generated://kick', gain: 1 },
       { id: 'snare', name: 'Snare', role: 'snare', filePath: 'generated://snare', gain: 0.9 },
@@ -48,7 +52,15 @@ export function validateBeatAgentState(state) {
   if (!state || state.agentType !== 'beat') {
     return { ok: false, reason: 'Beat Agent state is required' };
   }
-  return validateBeatPattern(state.pattern);
+  const patternValidation = validateBeatPattern(state.pattern);
+  if (!patternValidation.ok) return patternValidation;
+  if (state.pocket && typeof state.pocket !== 'object') {
+    return { ok: false, reason: 'pocket must be an object' };
+  }
+  if (state.glitch && typeof state.glitch !== 'object') {
+    return { ok: false, reason: 'glitch must be an object' };
+  }
+  return { ok: true };
 }
 
 export function summarizeBeatBlackboard(state) {

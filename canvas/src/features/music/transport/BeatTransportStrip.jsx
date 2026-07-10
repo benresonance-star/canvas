@@ -1,5 +1,61 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Clock, Pause, Play, Square, Volume2 } from 'lucide-react';
+
+function BeatBpmInput({ value, onChange }) {
+  const [draft, setDraft] = useState(String(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) {
+      setDraft(String(value));
+    }
+  }, [focused, value]);
+
+  const commitDraft = (raw) => {
+    const trimmed = raw.trim();
+    if (trimmed === '') {
+      setDraft(String(value));
+      return;
+    }
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value));
+      return;
+    }
+    onChange(parsed);
+  };
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      pattern="[0-9]*"
+      maxLength={3}
+      value={focused ? draft : String(value)}
+      onFocus={() => {
+        setFocused(true);
+        setDraft(String(value));
+      }}
+      onChange={(event) => {
+        const next = event.target.value;
+        if (/^\d*$/.test(next)) {
+          setDraft(next);
+        }
+      }}
+      onBlur={() => {
+        setFocused(false);
+        commitDraft(draft);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.currentTarget.blur();
+        }
+      }}
+      className="w-14 bg-surface border border-border rounded px-2 py-1 text-primary text-xs tabular-nums"
+      aria-label="BPM"
+    />
+  );
+}
 
 export function BeatTransportStrip({
   state,
@@ -33,14 +89,7 @@ export function BeatTransportStrip({
       <div className="flex items-center gap-2 border border-border bg-surface-muted px-2 py-1.5 rounded-md">
         <label className="sans text-[10px] uppercase tracking-wider text-muted flex items-center gap-1">
           BPM
-          <input
-            type="number"
-            min="30"
-            max="300"
-            value={state.bpm}
-            onChange={(event) => onBpmChange(Number(event.target.value))}
-            className="w-14 bg-surface border border-border rounded px-2 py-1 text-primary text-xs"
-          />
+          <BeatBpmInput value={state.bpm} onChange={onBpmChange} />
         </label>
         <span className="sans text-[10px] text-muted tabular-nums border-l border-border pl-2">
           {state.currentBar}.{state.currentBeat}.{state.currentTick}
