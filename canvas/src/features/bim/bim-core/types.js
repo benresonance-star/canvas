@@ -9,6 +9,7 @@ import { normalizeBim5dCostPlans } from './bim5d.js';
 import { normalizeTableColumns, normalizeTableSort } from './bimTableColumns.js';
 import { normalizeBimViewSets, resolveActiveViewSetId } from './bimViewSets.js';
 import { normalizeBimEnvironmentalAnalysisState } from './bimSunStudy.js';
+import { normalizeGeometryRepairs } from './bimGeometryRepair.js';
 
 export const BIM_PREPARATION_PHASES = [
   'preparing',
@@ -502,6 +503,7 @@ export function normalizeBimWorkspaceState(state = {}) {
     activeViewId: state?.activeViewId == null ? null : String(state.activeViewId),
     viewCarouselOpen: state?.viewCarouselOpen === true,
     session: normalizeBimWorkspaceSession(state?.session),
+    geometryRepairs: normalizeGeometryRepairs(state?.geometryRepairs),
     lastOpenedAt: state?.lastOpenedAt ?? null,
     updatedAt: state?.updatedAt ?? null,
   };

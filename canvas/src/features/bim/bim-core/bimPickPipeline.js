@@ -8,6 +8,10 @@ export function isFragmentsRaycastHit(hit) {
   return [hit.localId, hit.itemId].some(isValidFragmentsLocalId);
 }
 
+export function resolveFragmentsPickLocalIds(hit) {
+  return [...new Set([hit?.itemId, hit?.localId].filter(isValidFragmentsLocalId))];
+}
+
 export function shouldSuppressPickFromDrag(pointerDown, pointerUp, threshold = PICK_DRAG_THRESHOLD_PX) {
   if (!pointerDown || !pointerUp) return false;
   return Math.hypot(pointerUp.x - pointerDown.x, pointerUp.y - pointerDown.y) > threshold;

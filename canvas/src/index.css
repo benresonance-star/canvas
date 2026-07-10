@@ -58,6 +58,8 @@
   --color-agent-artifact-muted: #a78bfa;
   --color-agent-artifact-icon-bg: rgb(139 92 246 / 0.2);
   --color-agent-artifact-icon-border: rgb(167 139 250 / 0.38);
+  --color-bim-toolbar-active: #0ea5e9;
+  --color-on-bim-toolbar-active: #141210;
   --canvas-header-height: 3.5rem;
 }
 
@@ -116,6 +118,8 @@
   --color-agent-artifact-muted: #c4b5fd;
   --color-agent-artifact-icon-bg: rgb(139 92 246 / 0.22);
   --color-agent-artifact-icon-border: rgb(167 139 250 / 0.42);
+  --color-bim-toolbar-active: #38bdf8;
+  --color-on-bim-toolbar-active: #141210;
 }
 
 [data-theme='green'] {
@@ -250,6 +254,8 @@
   --color-accent: var(--color-accent);
   --color-accent-hover: var(--color-accent-hover);
   --color-on-accent: var(--color-on-accent);
+  --color-bim-toolbar-active: var(--color-bim-toolbar-active);
+  --color-on-bim-toolbar-active: var(--color-on-bim-toolbar-active);
   --color-danger: var(--color-danger);
   --color-danger-muted: var(--color-danger-muted);
   --color-danger-border: var(--color-danger-border);

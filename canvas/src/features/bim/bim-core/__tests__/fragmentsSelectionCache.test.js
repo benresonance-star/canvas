@@ -7,6 +7,7 @@ import {
   normalizeIfcGlobalId,
   populateFragmentsIdCache,
   resolveFragmentsGlobalIdByLocalId,
+  resolveFragmentsLocalIdForPreparedElement,
   resolveFragmentsLocalIdsByGlobalIds,
   resolvePickGuidFromHit,
 } from '../fragmentsSelection.js';
@@ -89,5 +90,26 @@ describe('Fragments ID cache and batched lookups', () => {
     const elements = [{ id: 'ifc:1', ifcGlobalId: 'abc123XYZ' }];
     expect(normalizeIfcGlobalId(' abc123xyz ')).toBe('ABC123XYZ');
     expect(findPreparedElementByGlobalId(elements, 'abc123xyz')).toMatchObject({ id: 'ifc:1' });
+  });
+
+  it('resolves prepared element local ids from GlobalId or expressId fallback', async () => {
+    const getLocalIdsByGuids = vi.fn(async (guids) => (
+      guids.map((guid) => (guid === 'CAR-GUID' ? 7 : null))
+    ));
+    const model = { getLocalIdsByGuids };
+
+    await expect(resolveFragmentsLocalIdForPreparedElement(model, {
+      id: 'ifc:car-1',
+      ifcGlobalId: 'car-guid',
+      expressId: 44,
+    })).resolves.toBe(7);
+    expect(getLocalIdsByGuids).toHaveBeenCalledTimes(2);
+    expect(getLocalIdsByGuids).toHaveBeenNthCalledWith(1, ['car-guid']);
+    expect(getLocalIdsByGuids).toHaveBeenNthCalledWith(2, ['CAR-GUID']);
+
+    await expect(resolveFragmentsLocalIdForPreparedElement({ getLocalIdsByGuids }, {
+      id: 'ifc:proxy-1',
+      expressId: 44,
+    })).resolves.toBe(44);
   });
 });

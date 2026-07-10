@@ -40,17 +40,47 @@ export async function populateFragmentsIdCache(model, cache, localIds = []) {
   return cache;
 }
 
+function getCachedLocalIdByGlobalIdVariants(cache, globalId) {
+  if (!cache || !globalId) return null;
+  const direct = getCachedLocalIdByGlobalId(cache, globalId);
+  if (direct != null) return direct;
+  const normalized = normalizeIfcGlobalId(globalId);
+  if (normalized === globalId) return null;
+  return getCachedLocalIdByGlobalId(cache, normalized);
+}
+
 export async function resolveFragmentsLocalIdByGlobalId(model, globalId, cache = null) {
   if (!model || !globalId || typeof model.getLocalIdsByGuids !== 'function') return null;
-  const cached = getCachedLocalIdByGlobalId(cache, globalId);
+  const cached = getCachedLocalIdByGlobalIdVariants(cache, globalId);
   if (cached != null) return cached;
-  const [localId] = await model.getLocalIdsByGuids([globalId]);
-  if (!isValidFragmentsLocalId(localId)) return null;
-  if (cache) {
-    cache.globalIdToLocalId.set(globalId, localId);
-    cache.localIdToGlobalId.set(localId, globalId);
+  const candidates = [...new Set([
+    String(globalId).trim(),
+    normalizeIfcGlobalId(globalId),
+  ].filter(Boolean))];
+  for (const candidate of candidates) {
+    const [localId] = await model.getLocalIdsByGuids([candidate]);
+    if (!isValidFragmentsLocalId(localId)) continue;
+    if (cache) {
+      cache.globalIdToLocalId.set(candidate, localId);
+      cache.localIdToGlobalId.set(localId, candidate);
+      if (candidate !== globalId) {
+        cache.globalIdToLocalId.set(globalId, localId);
+      }
+    }
+    return localId;
   }
-  return localId;
+  return null;
+}
+
+export async function resolveFragmentsLocalIdForPreparedElement(model, element, cache = null) {
+  if (!model || !element) return null;
+  if (element.ifcGlobalId) {
+    const resolved = await resolveFragmentsLocalIdByGlobalId(model, element.ifcGlobalId, cache);
+    if (isValidFragmentsLocalId(resolved)) return resolved;
+  }
+  const expressLocalId = Number(element.expressId);
+  if (isValidFragmentsLocalId(expressLocalId)) return expressLocalId;
+  return null;
 }
 
 export function normalizeIfcGlobalId(globalId) {
@@ -97,7 +127,7 @@ export async function resolveFragmentsLocalIdsByGlobalIds(model, globalIds = [],
   const resolved = new Map();
   const missing = [];
   uniqueGlobalIds.forEach((globalId) => {
-    const cached = getCachedLocalIdByGlobalId(cache, globalId);
+    const cached = getCachedLocalIdByGlobalIdVariants(cache, globalId);
     if (cached != null) resolved.set(globalId, cached);
     else missing.push(globalId);
   });

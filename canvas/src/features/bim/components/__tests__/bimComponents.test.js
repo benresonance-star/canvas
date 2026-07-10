@@ -21,6 +21,10 @@ import {
   MeasurementToolbarControls,
   MeasurementToolsHud,
 } from '../../../threeDArtifact/components/MeasurementUi.jsx';
+import {
+  BimGeometryRepairHud,
+  BimGeometryRepairToolbarControls,
+} from '../BimGeometryRepairToolbarControls.jsx';
 import { BIM_AGENT_INFO } from '../bimAgentPanelShared.js';
 import { createBimViewFromWorkspaceState, createBimViewSet } from '../../bim-core/bimViewSets.js';
 
@@ -433,6 +437,55 @@ describe('BIM UI components', () => {
     expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain('Measurement unit');
     expect(html).toContain('value="m"');
+  });
+
+  it('renders geometry repair toolbar controls in the BIM viewport', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(BimViewport, {
+        preparedModel: {
+          metadata: {
+            fragmentsStatus: 'success',
+            fragmentsSourceKind: 'fragments',
+          },
+          fragmentsBlob: new Blob([new Uint8Array([1, 2, 3])]),
+          elements: [element],
+        },
+        selectedElement: null,
+        displayMode: 'highlight',
+        measureUnits: 'm',
+        onDisplayModeChange: () => {},
+      }),
+    );
+    expect(html).toContain('Geometry repair');
+    expect(html).toContain('aria-haspopup="menu"');
+  });
+
+  it('renders geometry repair HUD when the repair menu is open', () => {
+    const toolbarHtml = renderToStaticMarkup(
+      React.createElement(BimGeometryRepairToolbarControls, {
+        menuOpen: true,
+        selectedElement: element,
+        geometryEditMode: true,
+        onGeometryEditModeChange: () => {},
+      }),
+    );
+    expect(toolbarHtml).toContain('aria-expanded="true"');
+
+    const hudHtml = renderToStaticMarkup(
+      React.createElement(BimGeometryRepairHud, {
+        selectedElement: element,
+        geometryEditMode: true,
+        shellCount: 2,
+        selectedShellIndex: 0,
+        onGeometryEditModeChange: () => {},
+        onSelectShell: () => {},
+        onFlipNormals: () => {},
+      }),
+    );
+    expect(hudHtml).toContain('Geometry repair');
+    expect(hudHtml).toContain('Edit geometry');
+    expect(hudHtml).toContain('Shell 1');
+    expect(hudHtml).toContain('Flip normals');
   });
 
   it('renders RL measurement HUD trigger when the measure menu is open', () => {

@@ -3,7 +3,9 @@ import {
   applyBimViewportToolbarLayout,
   BIM_VIEWPORT_BOTTOM_INSET_PX,
   BIM_VIEWPORT_CHROME_GAP_PX,
+  BIM_VIEWPORT_DISPLAY_TOOLBAR_BUTTON_ACTIVE_CLASS,
   BIM_VIEWPORT_HUD_TOP_PX,
+  bimViewportDisplayToolbarButtonClass,
   resolveBimLayersHudMaxHeightPx,
   resolveBimViewportHudTopPx,
   resolveBimViewportRightHudTopPx,
@@ -26,6 +28,12 @@ describe('bimViewportLayout', () => {
     expect(resolveBimLayersHudMaxHeightPx({
       viewportHeight: 800,
     })).toBe(800 - BIM_VIEWPORT_HUD_TOP_PX - BIM_VIEWPORT_BOTTOM_INSET_PX - BIM_VIEWPORT_CHROME_GAP_PX);
+  });
+
+  it('uses bright blue classes for active display toolbar buttons', () => {
+    expect(bimViewportDisplayToolbarButtonClass(true)).toBe(BIM_VIEWPORT_DISPLAY_TOOLBAR_BUTTON_ACTIVE_CLASS);
+    expect(bimViewportDisplayToolbarButtonClass(true)).toContain('bg-bim-toolbar-active');
+    expect(bimViewportDisplayToolbarButtonClass(false)).not.toContain('bg-accent');
   });
 
   it('writes toolbar and HUD CSS variables on the viewport container', () => {

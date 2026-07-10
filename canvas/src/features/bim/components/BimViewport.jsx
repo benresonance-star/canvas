@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Axis3D, Box, Bot, BoxSelect, Braces, CalendarDays, Camera, Circle, DollarSign, EyeOff, Focus, Ghost, Grid3x3, Images, Layers, Palette, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, RotateCcw, Slice, SlidersHorizontal, SunMedium } from 'lucide-react';
 import { MOUSE } from 'three';
 import * as THREE from 'three';
@@ -11,6 +11,7 @@ import {
   syncOrbitControlsAfterCameraFit,
 } from '../../threeDArtifact/utils/cameraFit.js';
 import { MeasurementToolbarControls, MeasurementsListPanel } from '../../threeDArtifact/components/MeasurementUi.jsx';
+import { BimGeometryRepairToolbarControls } from './BimGeometryRepairToolbarControls.jsx';
 import { resolveEnvironmentPreset } from '../../threeDArtifact/utils/environmentConfig.js';
 import {
   applyHdriEnvironment,
@@ -101,11 +102,13 @@ import {
   chunkLocalIds,
   isFragmentsRaycastHit,
   isPickSuperseded,
+  resolveFragmentsPickLocalIds,
   shouldApplySelectionRun,
   shouldSuppressPickFromDrag,
 } from '../bim-core/bimPickPipeline.js';
 import {
   createFragmentsIdCache,
+  findPreparedElementByGlobalId,
   isValidFragmentsLocalId,
   populateFragmentsIdCache,
   resolveFragmentsLocalIdsByGlobalIds,
@@ -152,6 +155,7 @@ import {
   applyBimViewportToolbarLayout,
   BIM_VIEWPORT_GIMBAL_RESERVE_CLASS,
   BIM_VIEWPORT_TOOLBAR_SURFACE_CLASS,
+  bimViewportDisplayToolbarButtonClass,
   readBimViewportHudTopPx,
   resolveBimLayersHudMaxHeightPx,
 } from '../bim-core/bimViewportLayout.js';
@@ -174,6 +178,28 @@ import {
   normalizeLayersHudStoreysHeight,
   VIEWPORT_BACKGROUND_DEFAULT,
 } from '../bim-core/types.js';
+import {
+  buildGeometryRepairPatch,
+  buildShellStatesFromMeshData,
+  loadMeshShellsForPreparedElementWithRetry,
+  normalizeGeometryRepairs,
+  resolveGeometrySourceLocalIdsForElement,
+  resolveHideLocalIdsForGeometryRepair,
+  resolveFlippedShellIndexes,
+  setFragmentsVisibilityWithRetry,
+  shouldMaintainGeometryRepairOverlay,
+  toggleShellFlip,
+} from '../bim-core/bimGeometryRepair.js';
+import {
+  attachGeometryRepairOverlay,
+  buildGeometryRepairOverlay,
+  clearGeometryRepairOverlaysFromScene,
+  disposeGeometryRepairOverlay,
+  ensureGeometryRepairOverlayAttached,
+  pickGeometryRepairShell,
+  renderGeometryRepairOverlayPass,
+  updateGeometryRepairShellSelection,
+} from '../bim-core/bimGeometryRepairOverlay.js';
 import {
   BIM_VIEWPORT_LOAD_PHASES,
   FRAGMENTS_BOOT_IDLE_TIMEOUT_MS,
@@ -355,6 +381,8 @@ export function BimViewport({
   onProjectionModeChange = () => {},
   measurements = [],
   measureUnits = 'm',
+  geometryRepairs = {},
+  onGeometryRepairsChange = () => {},
   measureSnapMode = 'vertex',
   measureKind = 'segment',
   measurementsVisible = true,
@@ -603,10 +631,22 @@ export function BimViewport({
   const wireframeRebuildQueuedRef = useRef(false);
   const wireframeRetryAtRef = useRef(0);
   const wireframeOverlaySceneRef = useRef(null);
+  const geometryRepairOverlayRef = useRef(null);
+  const geometryRepairModelRef = useRef(null);
+  const geometryRepairHiddenLocalIdsRef = useRef([]);
+  const geometryRepairLocalIdByElementRef = useRef(new Map());
+  const geometryRepairShellCacheRef = useRef(new Map());
+  const geometryRepairBuildSeqRef = useRef(0);
+  const geometryEditModeRef = useRef(false);
+  const geometryRepairsRef = useRef(geometryRepairs);
+  const selectedFragmentsPickRef = useRef({ elementId: null, localIds: [], itemIds: [] });
+  const [selectedFragmentsPickNonce, setSelectedFragmentsPickNonce] = useState(0);
+  const repairRaycasterRef = useRef(new THREE.Raycaster());
   const claySelectionOverlayRef = useRef(null);
   const claySelectionHiddenLocalIdsRef = useRef([]);
   const claySelectionBuildSeqRef = useRef(0);
   const syncClaySelectionOverlayRef = useRef(async () => {});
+  const syncGeometryRepairOverlayRef = useRef(async () => {});
   const modelBoundsRef = useRef({ radius: 10, center: new THREE.Vector3() });
   const selectedElementRef = useRef(selectedElement);
   const onDeselectElementRef = useRef(onDeselectElement);
@@ -617,6 +657,12 @@ export function BimViewport({
   const [fovInput, setFovInput] = useState(String(initialCamera?.fov ?? BIM_DEFAULT_FOV));
   const [measureModeActive, setMeasureModeActive] = useState(false);
   const [measureHudOpen, setMeasureHudOpen] = useState(false);
+  const [repairHudOpen, setRepairHudOpen] = useState(false);
+  const [geometryEditMode, setGeometryEditMode] = useState(false);
+  const [selectedRepairShellIndex, setSelectedRepairShellIndex] = useState(null);
+  const selectedRepairShellIndexRef = useRef(null);
+  const [repairShellCount, setRepairShellCount] = useState(0);
+  const [repairShellLoading, setRepairShellLoading] = useState(false);
   const [cameraHistoryHudOpen, setCameraHistoryHudOpen] = useState(false);
   const [fileHudOpen, setFileHudOpen] = useState(false);
   const [cameraHistoryStack, setCameraHistoryStack] = useState({
@@ -858,6 +904,28 @@ export function BimViewport({
   }, [measureHudOpen]);
 
   useEffect(() => {
+    if (!selectedElement) {
+      setGeometryEditMode(false);
+      setSelectedRepairShellIndex(null);
+      setRepairShellCount(0);
+      selectedFragmentsPickRef.current = { elementId: null, localIds: [], itemIds: [] };
+    }
+  }, [selectedElement]);
+
+  useEffect(() => {
+    if (!geometryEditMode) {
+      setSelectedRepairShellIndex(null);
+      setRepairShellCount(0);
+    }
+  }, [geometryEditMode]);
+
+  useEffect(() => {
+    if (geometryEditMode && selectedElement) {
+      setRepairHudOpen(true);
+    }
+  }, [geometryEditMode, selectedElement]);
+
+  useEffect(() => {
     measureDraftActiveRef.current = measureDraftActive;
   }, [measureDraftActive]);
 
@@ -919,7 +987,7 @@ export function BimViewport({
     environmentPresetRef.current = environmentPreset;
   }, [environmentPreset]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     selectedElementRef.current = selectedElement;
   }, [selectedElement]);
 
@@ -1300,6 +1368,417 @@ export function BimViewport({
   useEffect(() => {
     syncClaySelectionOverlayRef.current = syncClaySelectionOverlay;
   }, [syncClaySelectionOverlay]);
+
+  const ensureFragmentsReadyForGeometryRepair = useCallback(async (shouldAbort = () => false) => {
+    if (shouldAbort()) return false;
+    const fragments = fragmentsRef.current;
+    const modelId = loadedFragmentsModelIdRef.current ?? modelRef.current?.modelId;
+    if (!fragments || !modelId || !modelReadyRef.current) return false;
+
+    if (!isFragmentsModelRegistered(fragments, modelId)) {
+      await waitForFragmentsModelRegistered(fragments, modelId, {
+        disposed: shouldAbort,
+      });
+      if (shouldAbort() || !isFragmentsModelRegistered(fragments, modelId)) return false;
+    }
+
+    await updateFragmentsRef.current?.(true, {
+      retryModelRegistration: true,
+      skipColorByOverlayRefresh: true,
+    }).catch(() => false);
+    if (shouldAbort()) return false;
+
+    const activeModel = modelRef.current;
+    if (activeModel) {
+      await waitForFragmentsModelIdle(activeModel, { disposed: shouldAbort });
+    }
+
+    return !shouldAbort() && isFragmentsModelRegistered(fragments, modelId);
+  }, []);
+
+  const retryGeometryRepairFragments = useCallback(async (attempt, shouldAbort = () => false) => {
+    await delay(FRAGMENTS_MODEL_REGISTRATION_RETRY_DELAYS_MS[
+      Math.min(Math.max(attempt - 1, 0), FRAGMENTS_MODEL_REGISTRATION_RETRY_DELAYS_MS.length - 1)
+    ] ?? 150 * attempt);
+    await ensureFragmentsReadyForGeometryRepair(shouldAbort);
+  }, [ensureFragmentsReadyForGeometryRepair]);
+
+  const restoreGeometryRepairHiddenLocalIds = useCallback(async (localIds = []) => {
+    const model = modelRef.current;
+    const ids = [...new Set(localIds.filter((localId) => isValidFragmentsLocalId(localId)))];
+    if (!model || !ids.length) return;
+    try {
+      const visible = await setFragmentsVisibilityWithRetry(model, ids, true, {
+        ensureReady: () => ensureFragmentsReadyForGeometryRepair(),
+        onBeforeRetry: (attempt) => retryGeometryRepairFragments(attempt),
+      });
+      if (!visible) return;
+      await updateFragmentsRef.current?.(true, { retryModelRegistration: true }).catch(() => {});
+    } catch (error) {
+      if (!isStaleFragmentsLifecycleError(error)) {
+        setRenderError(error?.message || 'Could not restore geometry repair visibility.');
+      }
+    }
+  }, [ensureFragmentsReadyForGeometryRepair, retryGeometryRepairFragments]);
+
+  const restoreGeometryRepairHiddenFragments = useCallback(async () => {
+    const hiddenIds = geometryRepairHiddenLocalIdsRef.current;
+    geometryRepairHiddenLocalIdsRef.current = [];
+    await restoreGeometryRepairHiddenLocalIds(hiddenIds);
+  }, [restoreGeometryRepairHiddenLocalIds]);
+
+  const teardownGeometryRepairView = useCallback(async ({
+    invalidateBuild = true,
+    resetShellUi = true,
+  } = {}) => {
+    if (invalidateBuild) {
+      geometryRepairBuildSeqRef.current += 1;
+    }
+    disposeGeometryRepairOverlay(geometryRepairOverlayRef.current);
+    geometryRepairOverlayRef.current = null;
+    geometryRepairModelRef.current = null;
+    clearGeometryRepairOverlaysFromScene(wireframeOverlaySceneRef.current, geometryRepairOverlayRef.current);
+    const hiddenIds = [
+      ...geometryRepairHiddenLocalIdsRef.current,
+      ...geometryRepairLocalIdByElementRef.current.values(),
+    ].flat();
+    geometryRepairHiddenLocalIdsRef.current = [];
+    geometryRepairLocalIdByElementRef.current.clear();
+    await restoreGeometryRepairHiddenLocalIds(hiddenIds);
+    if (resetShellUi) {
+      setRepairShellCount(0);
+      setRepairShellLoading(false);
+    }
+  }, [restoreGeometryRepairHiddenLocalIds]);
+
+  const syncGeometryRepairOverlay = useCallback(async () => {
+    const buildSeq = ++geometryRepairBuildSeqRef.current;
+    const abortIfStale = () => buildSeq !== geometryRepairBuildSeqRef.current;
+    const finishForActiveBuild = (updates = {}) => {
+      if (abortIfStale()) return;
+      if (updates.shellCount != null) setRepairShellCount(updates.shellCount);
+      if (updates.shellLoading != null) setRepairShellLoading(updates.shellLoading);
+    };
+
+    const model = modelRef.current;
+    const overlayScene = wireframeOverlaySceneRef.current;
+    const elements = preparedModel?.elements ?? [];
+    const repairs = normalizeGeometryRepairs(geometryRepairsRef.current);
+    const editElement = geometryEditModeRef.current ? selectedElementRef.current : null;
+    const maintainOverlay = shouldMaintainGeometryRepairOverlay({
+      geometryEditMode: geometryEditModeRef.current,
+      selectedElement: selectedElementRef.current,
+    });
+    const affectedElementIds = editElement?.id ? new Set([editElement.id]) : new Set();
+
+    if (!model || !overlayScene || !modelReadyRef.current || !maintainOverlay || affectedElementIds.size === 0) {
+      if (abortIfStale()) return;
+      await teardownGeometryRepairView({ invalidateBuild: false, resetShellUi: true });
+      finishForActiveBuild({ shellCount: 0, shellLoading: false });
+      return;
+    }
+
+    const fragmentsReady = await ensureFragmentsReadyForGeometryRepair(abortIfStale);
+    if (abortIfStale()) {
+      finishForActiveBuild({ shellLoading: false });
+      return;
+    }
+    if (!fragmentsReady) {
+      finishForActiveBuild({ shellLoading: true });
+    }
+
+    const shellCache = geometryRepairShellCacheRef.current;
+    const canRebuildFromCache = [...affectedElementIds].every((elementId) => {
+      const cached = shellCache.get(elementId);
+      return Array.isArray(cached) && cached.length > 0;
+    });
+
+    if (canRebuildFromCache) {
+      const cachedShellCount = editElement?.id
+        ? shellCache.get(editElement.id)?.length ?? 0
+        : 0;
+      finishForActiveBuild({
+        shellCount: cachedShellCount,
+        shellLoading: false,
+      });
+    } else {
+      disposeGeometryRepairOverlay(geometryRepairOverlayRef.current);
+      geometryRepairOverlayRef.current = null;
+      await restoreGeometryRepairHiddenFragments();
+      finishForActiveBuild({ shellLoading: true });
+    }
+
+    const idCache = idCacheRef.current;
+    const runtimeContexts = [...runtimeModelsRef.current.values()].filter((entry) => entry?.model);
+    const overlayEntries = [];
+    let repairModel = model;
+    const hiddenLocalIds = canRebuildFromCache
+      ? [...geometryRepairHiddenLocalIdsRef.current]
+      : [];
+    let selectedShellTotal = editElement?.id
+      ? shellCache.get(editElement.id)?.length ?? 0
+      : 0;
+
+    try {
+      for (const elementId of affectedElementIds) {
+        if (abortIfStale()) return;
+        const element = elements.find((entry) => entry.id === elementId);
+        if (!element) continue;
+
+        const pickedLocalIds = selectedFragmentsPickRef.current.elementId === elementId
+          ? selectedFragmentsPickRef.current.localIds
+          : [];
+        const pickedItemIds = selectedFragmentsPickRef.current.elementId === elementId
+          ? selectedFragmentsPickRef.current.itemIds
+          : [];
+
+        let meshShells = shellCache.get(elementId);
+        let geometryLocalIds = [];
+        if (!meshShells?.length) {
+          const resolved = await loadMeshShellsForPreparedElementWithRetry(model, {
+            element,
+            cache: idCache,
+            pickedLocalIds,
+            pickedItemIds,
+            runtimeContexts,
+            shouldAbort: abortIfStale,
+            ensureReady: () => ensureFragmentsReadyForGeometryRepair(abortIfStale),
+            onBeforeRetry: (attempt) => retryGeometryRepairFragments(attempt, abortIfStale),
+          });
+          if (abortIfStale()) return;
+          if (!resolved?.shells?.length) continue;
+          meshShells = resolved.shells;
+          repairModel = resolved.model ?? model;
+          geometryLocalIds = resolved.geometryLocalIds?.length
+            ? resolved.geometryLocalIds
+            : await resolveHideLocalIdsForGeometryRepair(resolved.model ?? model, {
+              element,
+              cache: idCache,
+              pickedLocalIds,
+            });
+          shellCache.set(elementId, meshShells);
+        } else {
+          geometryLocalIds = await resolveHideLocalIdsForGeometryRepair(repairModel ?? model, {
+            element,
+            cache: idCache,
+            pickedLocalIds,
+            geometryLocalIds: await resolveGeometrySourceLocalIdsForElement(repairModel ?? model, {
+              element,
+              cache: idCache,
+              pickedLocalIds,
+            }),
+          });
+        }
+        if (abortIfStale()) return;
+        if (!meshShells?.length) continue;
+
+        geometryLocalIds.forEach((geometryLocalId) => {
+          if (!hiddenLocalIds.includes(geometryLocalId)) {
+            hiddenLocalIds.push(geometryLocalId);
+          }
+        });
+        if (geometryLocalIds.length) {
+          geometryRepairLocalIdByElementRef.current.set(elementId, geometryLocalIds);
+        }
+
+        const flippedShellIndexes = resolveFlippedShellIndexes(repairs, elementId);
+        overlayEntries.push({
+          elementId,
+          shells: buildShellStatesFromMeshData(meshShells, flippedShellIndexes),
+        });
+        if (editElement?.id === elementId) {
+          selectedShellTotal = meshShells.length;
+          finishForActiveBuild({ shellCount: selectedShellTotal });
+        }
+      }
+    } catch (error) {
+      if (abortIfStale()) return;
+      if (!isStaleFragmentsLifecycleError(error)) {
+        setRenderError(error?.message || 'Could not load geometry repair shells.');
+      }
+      finishForActiveBuild({
+        shellLoading: false,
+        shellCount: canRebuildFromCache ? selectedShellTotal : 0,
+      });
+      return;
+    }
+
+    if (abortIfStale()) return;
+    if (!overlayEntries.length) {
+      await teardownGeometryRepairView({ invalidateBuild: false, resetShellUi: true });
+      finishForActiveBuild({ shellCount: 0, shellLoading: false });
+      return;
+    }
+
+    const nextOverlay = buildGeometryRepairOverlay(overlayEntries, {
+      editElementId: editElement?.id ?? null,
+      selectedShellIndex: selectedRepairShellIndexRef.current,
+    });
+    if (abortIfStale()) {
+      disposeGeometryRepairOverlay(nextOverlay);
+      return;
+    }
+
+    const previousOverlay = geometryRepairOverlayRef.current;
+    if (abortIfStale()) {
+      disposeGeometryRepairOverlay(nextOverlay);
+      return;
+    }
+
+    const previousHidden = geometryRepairHiddenLocalIdsRef.current;
+    const localIdsToRestore = previousHidden.filter((localId) => !hiddenLocalIds.includes(localId));
+    if (localIdsToRestore.length) {
+      if (abortIfStale()) return;
+      await restoreGeometryRepairHiddenLocalIds(localIdsToRestore);
+    }
+
+    if (hiddenLocalIds.length) {
+      try {
+        if (abortIfStale()) return;
+        const activeDisplayMode = displayModeRef.current;
+        const normalizedDisplayMode = activeDisplayMode === 'isolate' ? 'highlight' : activeDisplayMode;
+        const preserveGhostHighlight = normalizedDisplayMode === 'ghostOthers';
+        if (!preserveGhostHighlight && renderStyleRef.current !== 'clay' && typeof (repairModel ?? model).resetHighlight === 'function') {
+          await (repairModel ?? model).resetHighlight();
+          if (abortIfStale()) return;
+        }
+        const hidden = await setFragmentsVisibilityWithRetry(repairModel ?? model, hiddenLocalIds, false, {
+          shouldAbort: abortIfStale,
+          ensureReady: () => ensureFragmentsReadyForGeometryRepair(abortIfStale),
+          onBeforeRetry: (attempt) => retryGeometryRepairFragments(attempt, abortIfStale),
+        });
+        if (hidden) {
+          geometryRepairHiddenLocalIdsRef.current = [...hiddenLocalIds];
+          await updateFragmentsRef.current?.(true, {
+            retryModelRegistration: true,
+            skipColorByOverlayRefresh: true,
+          }).catch(() => {});
+          if (abortIfStale()) return;
+          await setFragmentsVisibilityWithRetry(repairModel ?? model, hiddenLocalIds, false, {
+            shouldAbort: abortIfStale,
+            ensureReady: () => ensureFragmentsReadyForGeometryRepair(abortIfStale),
+            onBeforeRetry: (attempt) => retryGeometryRepairFragments(attempt, abortIfStale),
+          });
+        }
+      } catch (error) {
+        if (!isStaleFragmentsLifecycleError(error)) {
+          setRenderError(error?.message || 'Could not hide geometry being repaired.');
+        }
+        await restoreGeometryRepairHiddenLocalIds(hiddenLocalIds);
+        disposeGeometryRepairOverlay(nextOverlay);
+        finishForActiveBuild({ shellLoading: false, shellCount: selectedShellTotal });
+        return;
+      }
+    }
+
+    if (abortIfStale()) {
+      disposeGeometryRepairOverlay(nextOverlay);
+      return;
+    }
+    attachGeometryRepairOverlay(overlayScene, repairModel?.object ?? model.object, nextOverlay);
+    geometryRepairOverlayRef.current = nextOverlay;
+    geometryRepairModelRef.current = repairModel ?? model;
+    disposeGeometryRepairOverlay(previousOverlay);
+    updateGeometryRepairShellSelection(nextOverlay, {
+      editElementId: editElement?.id ?? null,
+      selectedShellIndex: geometryEditModeRef.current ? selectedRepairShellIndexRef.current : null,
+    });
+
+    finishForActiveBuild({
+      shellCount: selectedShellTotal,
+      shellLoading: false,
+    });
+  }, [
+    preparedModel?.elements,
+    restoreGeometryRepairHiddenFragments,
+    restoreGeometryRepairHiddenLocalIds,
+    teardownGeometryRepairView,
+    ensureFragmentsReadyForGeometryRepair,
+    retryGeometryRepairFragments,
+  ]);
+
+  useEffect(() => {
+    syncGeometryRepairOverlayRef.current = syncGeometryRepairOverlay;
+  }, [syncGeometryRepairOverlay]);
+
+  useEffect(() => {
+    geometryRepairsRef.current = normalizeGeometryRepairs(geometryRepairs);
+  }, [geometryRepairs]);
+
+  useEffect(() => {
+    geometryRepairShellCacheRef.current.clear();
+  }, [preparedModel?.metadata?.fingerprint]);
+
+  useEffect(() => {
+    if (!geometryEditModeRef.current) return;
+    void syncGeometryRepairOverlay();
+  }, [selectedFragmentsPickNonce, syncGeometryRepairOverlay]);
+
+  useLayoutEffect(() => {
+    geometryEditModeRef.current = geometryEditMode;
+  }, [geometryEditMode]);
+
+  useEffect(() => {
+    if (shouldMaintainGeometryRepairOverlay({
+      geometryEditMode,
+      selectedElement,
+    })) {
+      return;
+    }
+    void teardownGeometryRepairView();
+  }, [geometryEditMode, selectedElement, teardownGeometryRepairView]);
+
+  useEffect(() => {
+    if (repairHudOpen) return;
+    setGeometryEditMode(false);
+  }, [repairHudOpen]);
+
+  useEffect(() => {
+    selectedRepairShellIndexRef.current = selectedRepairShellIndex;
+  }, [selectedRepairShellIndex]);
+
+  useEffect(() => {
+    if (!modelReadyRef.current || loadState !== 'ready') return undefined;
+    if (!geometryEditMode || !selectedElement?.id) return undefined;
+    void syncGeometryRepairOverlay();
+    return () => {
+      geometryRepairBuildSeqRef.current += 1;
+    };
+  }, [
+    geometryEditMode,
+    geometryRepairs,
+    selectedElement,
+    selectedFragmentsPickNonce,
+    loadState,
+    syncGeometryRepairOverlay,
+  ]);
+
+  useEffect(() => {
+    if (!geometryRepairOverlayRef.current) return;
+    updateGeometryRepairShellSelection(geometryRepairOverlayRef.current, {
+      editElementId: geometryEditMode ? selectedElement?.id ?? null : null,
+      selectedShellIndex: geometryEditMode ? selectedRepairShellIndex : null,
+    });
+  }, [geometryEditMode, selectedElement, selectedRepairShellIndex]);
+
+  useEffect(() => () => {
+    void teardownGeometryRepairView();
+  }, [teardownGeometryRepairView]);
+
+  const handleFlipRepairShellNormals = useCallback(() => {
+    const element = selectedElementRef.current;
+    const shellIndex = selectedRepairShellIndexRef.current;
+    if (!element?.id || !Number.isInteger(shellIndex)) return;
+    const nextFlipped = toggleShellFlip(
+      resolveFlippedShellIndexes(geometryRepairsRef.current, element.id),
+      shellIndex,
+    );
+    onGeometryRepairsChange(buildGeometryRepairPatch({
+      element,
+      flippedShellIndexes: nextFlipped,
+      previousRepairs: geometryRepairsRef.current,
+    }));
+  }, [onGeometryRepairsChange]);
 
   const rebuildWireframeEdges = useCallback(async () => {
     const model = modelRef.current;
@@ -2334,8 +2813,20 @@ export function BimViewport({
         );
       }
 
-      if (
-        boundingBoxModeRef.current
+      const maintainRepairOverlay = shouldMaintainGeometryRepairOverlay({
+        geometryEditMode: geometryEditModeRef.current,
+        selectedElement: selectedElementRef.current,
+      });
+
+      if (maintainRepairOverlay && geometryRepairOverlayRef.current && overlayScene) {
+        ensureGeometryRepairOverlayAttached(
+          overlayScene,
+          geometryRepairModelRef.current?.object ?? modelRef.current?.object ?? null,
+          geometryRepairOverlayRef.current,
+        );
+      }
+
+      if (boundingBoxModeRef.current
         && !boundingBoxEdgesRef.current?.parent
         && modelReadyRef.current
       ) {
@@ -2422,6 +2913,28 @@ export function BimViewport({
         && overlayScene
       ) {
         renderOverlayScenePass(renderer, overlayScene, activeCamera);
+      }
+
+      if (
+        maintainRepairOverlay
+        && geometryRepairOverlayRef.current
+        && overlayScene
+      ) {
+        ensureGeometryRepairOverlayAttached(
+          overlayScene,
+          geometryRepairModelRef.current?.object ?? modelRef.current?.object ?? null,
+          geometryRepairOverlayRef.current,
+        );
+        renderGeometryRepairOverlayPass(
+          renderer,
+          overlayScene,
+          activeCamera,
+          geometryRepairOverlayRef.current,
+          {
+            mainScene: scene,
+            refreshScreenDepth: renderStyleRef.current !== 'clay',
+          },
+        );
       }
 
       measurementOverlayRef.current?.render(scene, activeCamera);
@@ -2554,6 +3067,9 @@ export function BimViewport({
       disposeClaySelectionOverlay(claySelectionOverlayRef.current);
       claySelectionOverlayRef.current = null;
       void restoreClaySelectionHiddenFragments();
+      disposeGeometryRepairOverlay(geometryRepairOverlayRef.current);
+      geometryRepairOverlayRef.current = null;
+      void restoreGeometryRepairHiddenFragments();
       endAxisViewOrbitLock(controls);
       disposeModelBoundingBoxEdges(boundingBoxEdgesRef.current);
       boundingBoxEdgesRef.current = null;
@@ -2617,7 +3133,10 @@ export function BimViewport({
 
   useEffect(() => {
     if (loadState !== 'ready' || !modelReadyRef.current) return;
-    void updateFragmentsRef.current?.(true, { retryModelRegistration: true }).catch((error) => {
+    void updateFragmentsRef.current?.(true, {
+      retryModelRegistration: true,
+      skipColorByOverlayRefresh: true,
+    }).catch((error) => {
       if (!isStaleFragmentsLifecycleError(error)) {
         setRenderError(error?.message || 'Could not update BIM view.');
       }
@@ -2831,6 +3350,7 @@ export function BimViewport({
       const isClay = renderStyle === 'clay';
       const normalizedDisplayMode = displayMode === 'isolate' ? 'highlight' : displayMode;
       const effectiveDisplayMode = isClay && normalizedDisplayMode === 'colorBy' ? 'highlight' : normalizedDisplayMode;
+      const geometryEditActive = geometryEditModeRef.current && Boolean(selectedElementRef.current?.id);
       const resyncSelectionIfStale = () => {
         if (!isActiveRun()) {
           void Promise.resolve().then(() => {
@@ -2851,15 +3371,27 @@ export function BimViewport({
       const queryBatchIsolate = queryViewerMode === 'isolate' && highlightElementIds.length > 0;
       const selectionIsolate = isolateOnSelect && Boolean(selectedElement);
       const shouldIsolate = queryBatchIsolate || selectionIsolate;
-      const needsVisibilityReset = shouldIsolate
+      const previousDisplayMode = lastAppliedDisplayModeRef.current;
+      const displayModeChanged = previousDisplayMode != null && previousDisplayMode !== effectiveDisplayMode;
+      const leavingGhostOthers = previousDisplayMode === 'ghostOthers' && effectiveDisplayMode !== 'ghostOthers';
+      const needsVisibilityReset = (
+        shouldIsolate
         || effectiveDisplayMode === 'ghostOthers'
         || effectiveDisplayMode === 'colorBy'
         || (isolateOnSelect && !selectedElement)
-        || (!shouldIsolate && effectiveDisplayMode === 'highlight');
-      if (!isClay && effectiveDisplayMode !== 'colorBy') {
-        await model.resetHighlight();
-        if (!isActiveRun()) return;
-      } else if (!isClay && effectiveDisplayMode === 'colorBy' && lastAppliedDisplayModeRef.current !== 'colorBy') {
+        || (!geometryEditActive && !shouldIsolate && effectiveDisplayMode === 'highlight')
+        || (geometryEditActive && leavingGhostOthers)
+      );
+      const shouldResetHighlight = !isClay && (
+        (effectiveDisplayMode === 'colorBy' && previousDisplayMode !== 'colorBy' && !geometryEditActive)
+        || (effectiveDisplayMode !== 'colorBy' && (
+          !geometryEditActive
+          || effectiveDisplayMode === 'ghostOthers'
+          || shouldIsolate
+          || (geometryEditActive && displayModeChanged)
+        ))
+      );
+      if (shouldResetHighlight) {
         await model.resetHighlight();
         if (!isActiveRun()) return;
       }
@@ -2890,7 +3422,15 @@ export function BimViewport({
         }
         if (!isActiveRun()) return;
         await applyBimLayerStoreyVisibility(model, preparedModel, cache, { hiddenStoreys, hiddenLayers });
-        if (isClay) {
+        if (geometryEditActive) {
+          await syncGeometryRepairOverlayRef.current?.();
+          if (!isActiveRun()) return;
+          if (!isClay && effectiveDisplayMode !== 'colorBy') {
+            await updateFragmentsRef.current?.(true, { skipColorByOverlayRefresh: true }).catch(() => {});
+            if (!isActiveRun()) return;
+            await syncGeometryRepairOverlayRef.current?.();
+          }
+        } else if (isClay) {
           await syncClaySelectionOverlayRef.current(clayOrangeLocalIds);
         } else if (effectiveDisplayMode === 'colorBy') {
           await refreshStandardSelectionOverlay({ shouldCancel: () => !isActiveRun() });
@@ -2913,7 +3453,7 @@ export function BimViewport({
       const localIds = targetElements
         .map((element) => idMap.get(element.ifcGlobalId))
         .filter(isValidFragmentsLocalId);
-      if (localIds.length === 0 && effectiveDisplayMode !== 'colorBy') return;
+      if (localIds.length === 0 && effectiveDisplayMode !== 'colorBy' && !geometryEditActive) return;
 
       const primaryLocalId = selectedElement
         ? idMap.get(selectedElement.ifcGlobalId)
@@ -2947,7 +3487,7 @@ export function BimViewport({
         clayOrangeLocalIds.push(primaryLocalId);
         clayOrangeLocalIds = [...new Set(clayOrangeLocalIds)];
       }
-      if (!isClay) {
+      if (!isClay && !geometryEditActive) {
         if (effectiveDisplayMode !== 'colorBy') {
           await model.highlight(localIds, selectedMaterial);
           if (!isActiveRun()) {
@@ -2966,7 +3506,15 @@ export function BimViewport({
 
       if (!isActiveRun()) return;
       await applyBimLayerStoreyVisibility(model, preparedModel, cache, { hiddenStoreys, hiddenLayers });
-      if (isClay) {
+      if (geometryEditActive) {
+        await syncGeometryRepairOverlayRef.current?.();
+        if (!isActiveRun()) return;
+        if (!isClay && effectiveDisplayMode !== 'colorBy') {
+          await updateFragmentsRef.current?.(true, { skipColorByOverlayRefresh: true }).catch(() => {});
+          if (!isActiveRun()) return;
+          await syncGeometryRepairOverlayRef.current?.();
+        }
+      } else if (isClay) {
         await syncClaySelectionOverlayRef.current(clayOrangeLocalIds);
       } else if (effectiveDisplayMode === 'colorBy') {
         await refreshStandardSelectionOverlay({ shouldCancel: () => !isActiveRun() });
@@ -3008,6 +3556,7 @@ export function BimViewport({
     loadState,
     preparedModel,
     renderStyle,
+    geometryEditMode,
     selectedElement,
     selectionRefreshNonce,
     beginColorByOverlaySync,
@@ -3163,6 +3712,33 @@ export function BimViewport({
     const fragments = fragmentsRef.current;
     const cache = idCacheRef.current;
     const elements = preparedModel?.elements ?? [];
+
+    if (geometryEditModeRef.current) {
+      const overlay = geometryRepairOverlayRef.current;
+      if (overlay) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const pointer = new THREE.Vector2(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -(((event.clientY - rect.top) / rect.height) * 2 - 1),
+        );
+        const pick = pickGeometryRepairShell(
+          overlay,
+          repairRaycasterRef.current,
+          pointer,
+          camera,
+        );
+        if (pick?.shellIndex != null) {
+          setSelectedRepairShellIndex(pick.shellIndex);
+          timer.finish({ outcome: 'repair-shell-select', shellIndex: pick.shellIndex });
+          return;
+        }
+        timer.finish({ outcome: 'repair-shell-miss' });
+      } else {
+        timer.finish({ outcome: 'repair-shell-loading' });
+      }
+      return;
+    }
+
     const raycast = async () => {
       if (!modelReadyRef.current || modelRef.current !== model) return null;
       return model.raycast({ camera, mouse, dom: renderer.domElement });
@@ -3230,6 +3806,13 @@ export function BimViewport({
         }
 
         if (guid) {
+          const matchedElement = findPreparedElementByGlobalId(elements, guid);
+          selectedFragmentsPickRef.current = {
+            elementId: matchedElement?.id ?? null,
+            localIds: resolveFragmentsPickLocalIds(hit),
+            itemIds: isValidFragmentsLocalId(hit?.itemId) ? [hit.itemId] : [],
+          };
+          setSelectedFragmentsPickNonce((nonce) => nonce + 1);
           const selected = onSelectElementByGlobalId(guid);
           if (selected === false) {
             logBimPickMappingFailure('guid-not-in-prepared-index', { guid, hit });
@@ -3909,7 +4492,7 @@ export function BimViewport({
                 type="button"
                 title="Color by IFC type"
                 onClick={handleToggleColorByIfcClass}
-                className={`rounded border border-border p-1 ${displayMode === 'colorBy' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                className={bimViewportDisplayToolbarButtonClass(displayMode === 'colorBy')}
                 aria-pressed={displayMode === 'colorBy'}
                 aria-label="Color by IFC type"
               >
@@ -3919,7 +4502,7 @@ export function BimViewport({
                 type="button"
                 title="Bounding box overlay"
                 onClick={handleToggleBoundingBox}
-                className={`rounded border border-border p-1 ${boundingBoxMode ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                className={bimViewportDisplayToolbarButtonClass(boundingBoxMode)}
                 aria-pressed={boundingBoxMode}
                 aria-label="Bounding box overlay"
               >
@@ -3929,7 +4512,7 @@ export function BimViewport({
                 type="button"
                 title="Wireframe overlay (visible edges)"
                 onClick={handleToggleWireframe}
-                className={`rounded border border-border p-1 ${wireframeMode ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                className={bimViewportDisplayToolbarButtonClass(wireframeMode)}
               >
                 <Grid3x3 size={14} strokeWidth={1.7} />
               </button>
@@ -3937,9 +4520,7 @@ export function BimViewport({
                 type="button"
                 title="Clay render (Arctic)"
                 onClick={handleToggleClay}
-                className={`rounded border border-border p-1 ${
-                  renderStyle === 'clay' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
-                }`}
+                className={bimViewportDisplayToolbarButtonClass(renderStyle === 'clay')}
                 aria-pressed={renderStyle === 'clay'}
                 aria-label="Clay render (Arctic)"
               >
@@ -3949,7 +4530,7 @@ export function BimViewport({
                 type="button"
                 title="Highlight"
                 onClick={() => onDisplayModeChange('highlight')}
-                className={`rounded border border-border p-1 ${displayMode === 'highlight' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                className={bimViewportDisplayToolbarButtonClass(displayMode === 'highlight')}
               >
                 <Box size={14} strokeWidth={1.7} />
               </button>
@@ -3957,7 +4538,7 @@ export function BimViewport({
                 type="button"
                 title={displayMode === 'ghostOthers' ? 'Show all (exit ghost)' : 'Ghost others'}
                 onClick={handleToggleGhost}
-                className={`rounded border border-border p-1 ${displayMode === 'ghostOthers' ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'}`}
+                className={bimViewportDisplayToolbarButtonClass(displayMode === 'ghostOthers')}
                 aria-pressed={displayMode === 'ghostOthers'}
                 aria-label={displayMode === 'ghostOthers' ? 'Exit ghost mode' : 'Ghost others'}
               >
@@ -3990,6 +4571,26 @@ export function BimViewport({
               >
                 <Images size={14} strokeWidth={1.7} />
               </button>
+              <BimGeometryRepairToolbarControls
+                selectedElement={selectedElement}
+                geometryEditMode={geometryEditMode}
+                selectedShellIndex={selectedRepairShellIndex}
+                shellCount={repairShellCount}
+                shellLoading={repairShellLoading}
+                flippedShellIndexes={selectedElement
+                  ? resolveFlippedShellIndexes(geometryRepairs, selectedElement.id)
+                  : []}
+                menuOpen={repairHudOpen}
+                onMenuOpenChange={setRepairHudOpen}
+                onGeometryEditModeChange={setGeometryEditMode}
+                onSelectShell={setSelectedRepairShellIndex}
+                onFlipNormals={handleFlipRepairShellNormals}
+                compact
+                buttonClassName={(active) => `rounded border border-border p-1 ${
+                  active ? 'bg-accent text-on-accent' : 'text-secondary hover:bg-surface-muted'
+                }`}
+                activeButtonClassName="rounded border border-border p-1 bg-accent text-on-accent"
+              />
               </div>
               <BimViewportToolbarSeparator />
               <div className="flex items-center gap-1">
@@ -4141,6 +4742,7 @@ export function BimViewport({
         {toolbarOverlay}
         <canvas
           ref={canvasRef}
+          data-bim-viewport-canvas=""
           className="absolute inset-0 h-full w-full"
         />
         {loadState === 'loading' && (

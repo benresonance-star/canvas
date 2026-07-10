@@ -22,6 +22,18 @@ export const BIM_VIEWPORT_GIMBAL_RESERVE_CLASS = 'pe-[5rem]';
 export const BIM_VIEWPORT_TOOLBAR_SURFACE_CLASS =
   'pointer-events-auto flex w-max max-w-full flex-wrap items-center justify-center gap-y-1 overflow-x-hidden rounded-md border border-border bg-surface/95 px-2 py-1.5 shadow-lg backdrop-blur-sm';
 
+export const BIM_VIEWPORT_DISPLAY_TOOLBAR_BUTTON_INACTIVE_CLASS =
+  'rounded border border-border p-1 text-secondary hover:bg-surface-muted';
+
+export const BIM_VIEWPORT_DISPLAY_TOOLBAR_BUTTON_ACTIVE_CLASS =
+  'rounded border border-border p-1 bg-bim-toolbar-active text-on-bim-toolbar-active';
+
+export function bimViewportDisplayToolbarButtonClass(active) {
+  return active
+    ? BIM_VIEWPORT_DISPLAY_TOOLBAR_BUTTON_ACTIVE_CLASS
+    : BIM_VIEWPORT_DISPLAY_TOOLBAR_BUTTON_INACTIVE_CLASS;
+}
+
 export function resolveBimViewportHudTopPx(toolbarBottomPx) {
   return toolbarBottomPx + BIM_VIEWPORT_CHROME_GAP_PX;
 }

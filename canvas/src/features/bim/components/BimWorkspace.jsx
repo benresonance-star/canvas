@@ -1722,6 +1722,8 @@ export function BimWorkspace({
             onMeasurementsVisibleChange={(measurementsVisible) => patchWorkspaceState({ measurementsVisible })}
             onRlDatumChange={(rlDatum) => patchWorkspaceState({ rlDatum })}
             onDeleteRlDatum={() => patchWorkspaceState({ rlDatum: null })}
+            geometryRepairs={workspaceState.geometryRepairs}
+            onGeometryRepairsChange={(geometryRepairs) => patchWorkspaceState({ geometryRepairs })}
             onWireframeModeChange={(wireframeMode) => patchWorkspaceState({ wireframeMode })}
             onWireframeStyleChange={(wireframeStylePatch) => patchWorkspaceState(wireframeStylePatch)}
             onRenderStyleChange={(nextRenderStyle) => {

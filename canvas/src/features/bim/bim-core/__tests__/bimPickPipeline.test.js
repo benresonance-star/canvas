@@ -5,6 +5,7 @@ import {
   isFragmentsRaycastHit,
   isPickSuperseded,
   PICK_DRAG_THRESHOLD_PX,
+  resolveFragmentsPickLocalIds,
   shouldApplySelectionRun,
   shouldSuppressPickFromDrag,
 } from '../bimPickPipeline.js';
@@ -15,6 +16,12 @@ describe('bimPickPipeline', () => {
     expect(isFragmentsRaycastHit({ localId: -1, itemId: -1 })).toBe(false);
     expect(isFragmentsRaycastHit({ localId: 3, itemId: 99 })).toBe(true);
     expect(isFragmentsRaycastHit({ itemId: 7 })).toBe(true);
+  });
+
+  it('collects unique fragment local ids from raycast hits', () => {
+    expect(resolveFragmentsPickLocalIds({ localId: 3, itemId: 99 })).toEqual([99, 3]);
+    expect(resolveFragmentsPickLocalIds({ localId: 3, itemId: 3 })).toEqual([3]);
+    expect(resolveFragmentsPickLocalIds(null)).toEqual([]);
   });
 
   it('suppresses pick when pointer drag exceeds threshold', () => {
