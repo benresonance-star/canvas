@@ -20,10 +20,14 @@ export function NewTaskDialog({ onClose, onSave, saving, linkableCards = [] }) {
           cardId: c.id,
           name: c.name,
           type: c.type,
+          prefix: c.prefix,
           artifactRef: pinned?.artifactRef,
         };
       })
-      .filter((t) => t.artifactRef?.id);
+      .filter(
+        (t) => t.artifactRef?.id
+          || (t.type === 'bim-model' && t.prefix === 'bim-viewers'),
+      );
   }, [linkableCards]);
 
   const toggleTarget = (cardId) => {
@@ -38,15 +42,19 @@ export function NewTaskDialog({ onClose, onSave, saving, linkableCards = [] }) {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!name.trim()) return;
-    const linkTargetRefs = targets
-      .filter((t) => selectedCardIds.has(t.cardId))
-      .map((t) => t.artifactRef);
+    const selectedTargets = targets.filter((t) => selectedCardIds.has(t.cardId));
+    const linkTargetCards = selectedTargets
+      .map((t) => linkableCards.find((c) => c.id === t.cardId))
+      .filter(Boolean);
     onSave({
       prefix: prefix.trim() || 'tasks',
       name: name.trim(),
       body,
       taskStatus,
-      linkTargetRefs,
+      linkTargetRefs: selectedTargets
+        .map((t) => t.artifactRef)
+        .filter((ref) => ref?.id),
+      linkTargetCards,
     });
   };
 

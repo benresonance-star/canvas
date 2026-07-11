@@ -38,6 +38,7 @@ describe('createUserTaskArtifact', () => {
         reason: 'api_unavailable',
         byFilename: {},
       })),
+      lookupIngestByFilename: vi.fn(() => null),
     }));
 
     const folderHandle = {

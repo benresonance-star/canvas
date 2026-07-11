@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.07.03.5
-**Version label:** gltf-package-scan
+**Version:** 2026.07.11.1
+**Version label:** artifact-linking
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -551,6 +551,23 @@ API additions on existing routers:
 | POST/GET/PATCH | `/state-machines`, `/projects/:projectId/state-machines` | Lifecycle CRUD |
 
 Client: `PrimitiveInspectorPanel.jsx` exposes Identity, Lifecycle, State, Capabilities, Events, and Relationships for workspace artifacts; `primitivesApi.fetchArtifactEvents` loads event history. Transition UI and permissions are deferred.
+
+### Canvas graph artifact linking (shipped)
+
+Canvas relationship wires (graph drag-to-link, new-task link targets, agent output wires) require a primitives `artifactRef` on each participating card version.
+
+Resolution order in `ensureCardArtifactRef`:
+
+1. Return pinned version ref when already present.
+2. Flush artifact-sync outbox for the card key.
+3. Match existing project artifact via `lookupArtifactRefForCard` (card key, filename, content hash).
+4. **Folder-backed cards:** read linked-folder file and `ingestFoundFiles`.
+5. **Canvas-native IFC Viewer sessions** (`prefix: 'bim-viewers'`, `viewerKind: 'ifc-viewer-session'`): `registerBimViewerSessionArtifact` posts a `bim_model` ingest with stable session identity hash — no folder handle required.
+6. On success, `onPatchCardVersion` / `persistCardEdits` writes `artifactRef` back onto the card before `POST /artifact-relationships`.
+
+Task create path: `handleSaveNewTask` → user-task ingest → `requestStructuralSync({ awaitLocal: true })` → `finalizeArtifactLinks` with resolved `linkTargetRefs` (including BIM viewer cards passed as `linkTargetCards` from `NewTaskDialog`).
+
+Structural sync fix: when `awaitLocal: true`, push diffs against the pre-second-commit payload baseline so new cards are not dropped from the Postgres upsert.
 
 Exploration agent context (same release): `useFlowAgentContext.js` derives selection scope (optional connected-network expansion), builds `flowContextSteps` for the agent sidebar, and formats subgraph markdown for agent sends; `FlowEditorSelection.js` handles shift-click additive node selection in the exploration editor.
 
@@ -1278,6 +1295,16 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-07-11 — Canvas graph artifact linking + structural sync fix (implemented)
+
+- Bumped app architecture spec to `2026-07-11-artifact-linking` in `systemArchitectureSpec.js`.
+- Bumped the active spec to `2026.07.11.1`.
+- **Graph linking:** Canvas drag-to-link and new-task linking require `artifactRef` on both cards. `ensureCardArtifactRef` resolves or creates primitives refs via catalog lookup, outbox flush, folder ingest, or canvas-native registration.
+- **IFC Viewer sessions:** Federated `bim-viewers` cards (`viewerKind: 'ifc-viewer-session'`) are not folder-backed; `registerBimViewerSessionArtifact` ingests a stable `bim_model` artifact (`canvas-bim-viewer:` URI, content hash from session identity) so viewer sessions are linkable without a connected folder. New IFC Viewer cards register on create; existing cards backfill on first link attempt.
+- **User tasks:** `finalizeArtifactLinks` runs after task save + structural sync; `NewTaskDialog` passes `linkTargetCards` for BIM viewer targets lacking refs. `createUserTask` and `artifactSyncRetry` persist relationship outbox entries with catalog fallback.
+- **Structural sync:** `requestStructuralSync({ awaitLocal: true })` diffs against the payload snapshot captured **before** the second commit so new cards reach Postgres (`actionSync.js`).
+- **Related paths:** `ensureCardArtifactRef.js`, `artifactRefLookup.js`, `ingest/bimViewerArtifact.js`, `ingest/finalizeArtifactLinks.js`, `ingest/createUserTask.js`, `actionSync.js`, `useCanvasDocument.js`, `NewTaskDialog.jsx`, `Canvas.jsx`.
 
 ### 2026-07-03 — 3D measure hover preview and edge one-click (implemented)
 

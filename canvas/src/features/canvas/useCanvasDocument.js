@@ -19,6 +19,8 @@ import { registerOptimisticCard } from '../../lib/optimisticCards.js';
 import { ensureWritePermission, writeBookmarkFile, fileExistsAtFolderPath, removeFileAtFolderPath, bookmarkMarkdownFilenameFromShortcut } from '../../lib/folderWrite.js';
 import { createUserNoteArtifact } from '../../lib/ingest/createUserNote.js';
 import { createUserTaskArtifact } from '../../lib/ingest/createUserTask.js';
+import { finalizeArtifactLinks } from '../../lib/ingest/finalizeArtifactLinks.js';
+import { ensureCardArtifactRef } from '../../lib/ensureCardArtifactRef.js';
 import { createBookmarkArtifact } from '../../lib/ingest/createBookmarkArtifact.js';
 import { saveUserNote } from '../../lib/ingest/saveUserNote.js';
 import { saveUserTask } from '../../lib/ingest/saveUserTask.js';
@@ -1580,6 +1582,7 @@ export function useCanvasDocument({ refs, deps }) {
     body,
     taskStatus = 'general',
     linkTargetRefs = [],
+    linkTargetCards = [],
     position = null,
   }) => {
     const projectId = activeProjectIdRef.current;
@@ -1643,6 +1646,83 @@ export function useCanvasDocument({ refs, deps }) {
         pushRemote: false,
       });
       await requestStructuralSync({ awaitLocal: true });
+      const resolvedLinkTargetRefs = [...(linkTargetRefs ?? []).filter((ref) => ref?.id)];
+      for (const targetCard of linkTargetCards ?? []) {
+        const pinned =
+          targetCard.versions?.find((v) => v.version === targetCard.pinnedVersion)
+          || targetCard.versions?.[0];
+        if (pinned?.artifactRef?.id) {
+          if (!resolvedLinkTargetRefs.some((ref) => ref.id === pinned.artifactRef.id)) {
+            resolvedLinkTargetRefs.push(pinned.artifactRef);
+          }
+          continue;
+        }
+        const ensured = await ensureCardArtifactRef({
+          projectId,
+          projectName: stateRef.current.projectName,
+          folderHandle,
+          card: targetCard,
+        });
+        if (!ensured.ok || !ensured.artifactRef?.id) continue;
+        resolvedLinkTargetRefs.push(ensured.artifactRef);
+        const pinnedVersion = targetCard.pinnedVersion ?? pinned?.version ?? 1;
+        persistCardEdits(targetCard.id, {
+          versions: (targetCard.versions ?? []).map((v) =>
+            v.version === pinnedVersion
+              ? {
+                  ...v,
+                  ...ensured.version,
+                  artifactSyncState: 'synced',
+                }
+              : v,
+          ),
+        });
+      }
+      if (resolvedLinkTargetRefs.length > 0) {
+        const linkResult = await finalizeArtifactLinks({
+          projectId,
+          projectName: stateRef.current.projectName,
+          folderHandle,
+          card: newCard,
+          linkTargetRefs: resolvedLinkTargetRefs,
+          clusterId: result.ingest.clusterId || clusterId,
+          artifactRef: result.artifactRef,
+        });
+        if (linkResult.versionPatch) {
+          const pinned = newCard.pinnedVersion ?? newCard.versions?.[0]?.version ?? 1;
+          persistCardEdits(newCard.id, {
+            versions: (newCard.versions ?? []).map((v) =>
+              v.version === pinned
+                ? {
+                    ...v,
+                    ...linkResult.versionPatch,
+                    artifactSyncState: 'synced',
+                  }
+                : v,
+            ),
+          });
+        }
+        if (linkResult.clusterId) {
+          clusterContextProjectIdRef.current = projectId;
+          setClusterId(linkResult.clusterId);
+        }
+        if (!linkResult.ok) {
+          const msg =
+            linkResult.reason === 'api_unavailable'
+              ? strings.sync.primitivesNotUpdated
+              : linkResult.reason === 'no_cluster'
+                ? strings.graph.linkNeedsCluster
+                : strings.graph.linkNeedsRefs;
+          setSyncStatus({ error: msg });
+          setTimeout(() => setSyncStatus(null), 6000);
+        } else if (linkResult.linked > 0) {
+          await refreshGraph({
+            clusterId: linkResult.clusterId,
+            projectId,
+            force: true,
+          });
+        }
+      }
       setFolderPresentKeys((keys) => {
         const next = new Set(keys || []);
         next.add(result.card.key);
@@ -1670,6 +1750,8 @@ export function useCanvasDocument({ refs, deps }) {
     clusterContextProjectIdRef,
     setNewTaskOpen,
     setState,
+    persistCardEdits,
+    folderHandle,
   ]);
 
   const handleSaveNewLink = useCallback(async ({
@@ -1813,6 +1895,22 @@ export function useCanvasDocument({ refs, deps }) {
         title,
         position: position ?? fallbackPosition,
       });
+      const pinned = newCard.versions[0];
+      const { registerBimViewerSessionArtifact } = await import('../../lib/ingest/bimViewerArtifact.js');
+      const registered = await registerBimViewerSessionArtifact({
+        projectId,
+        projectName: stateRef.current.projectName,
+        card: newCard,
+        pinned,
+      });
+      if (registered.ok) {
+        newCard.versions[0] = {
+          ...pinned,
+          artifactRef: registered.artifactRef,
+          content_hash: registered.content_hash ?? pinned.content_hash,
+          artifactSyncState: 'synced',
+        };
+      }
       const nextState = {
         ...stateRef.current,
         cards: [...stateRef.current.cards, newCard],

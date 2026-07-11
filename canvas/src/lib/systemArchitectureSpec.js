@@ -1,7 +1,7 @@
 /** Bump when architecture or shipped load behavior changes. */
 import { getArchitectureGraphManifest } from './architecture/index.js';
 
-export const ARCHITECTURE_SPEC_VERSION = '2026-07-03-3d-measure-hover';
+export const ARCHITECTURE_SPEC_VERSION = '2026-07-11-artifact-linking';
 
 export const ARCHITECTURE_LAYERS = [
   {

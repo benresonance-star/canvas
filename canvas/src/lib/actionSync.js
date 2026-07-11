@@ -290,11 +290,12 @@ export function requestActionSync(reason, options = {}) {
           }
           syncTraceLog(traceId, 'actionSync:placement-no-commit', { projectId });
         }
+        const beforePayload =
+          getPriorPayloadForPatch(projectId) ?? getCommittedPayload(projectId);
         const { payload, localOk } = await persistViaCommit(projectId, reason);
         if (!payload || !handlers) return;
         if (!localOk) handlers.onLocalCacheFailed(projectId);
-        const beforePayload = getPriorPayloadForPatch(projectId);
-        void pushPayloadForProject(
+        await pushPayloadForProject(
           projectId,
           payload,
           reason,
@@ -358,6 +359,8 @@ async function flushLocalAndPush(projectId, reason, pushOptions = {}) {
   if (handlers.getProjectId() !== projectId) {
     return null;
   }
+  const beforePayload =
+    getPriorPayloadForPatch(projectId) ?? getCommittedPayload(projectId);
   const { payload, localOk } = await persistViaCommit(projectId, reason);
   if (!payload) return null;
 
@@ -365,7 +368,6 @@ async function flushLocalAndPush(projectId, reason, pushOptions = {}) {
     handlers.onLocalCacheFailed(projectId);
   }
 
-  const beforePayload = getPriorPayloadForPatch(projectId);
   return pushPayloadForProject(projectId, payload, reason, null, beforePayload, pushOptions);
 }
 

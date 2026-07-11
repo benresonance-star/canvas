@@ -1,10 +1,11 @@
-import { parseFilename } from '../filename.js';
+import { normalizeFolderRelativePath, parseFilename } from '../filename.js';
 import { previewCacheKey } from '../previewStore.js';
 import { readFileEntry } from '../readFile.js';
 import { writeUserTaskFile } from '../folderWrite.js';
 import { enqueueArtifactSyncRetry } from '../artifactSyncOutbox.js';
 import { serializeUserTask, DEFAULT_USER_TASK_STATUS } from '../../features/tasks/domain/userTaskContent.js';
-import { ingestFoundFiles } from './syncIngest.js';
+import { ingestFoundFiles, lookupIngestByFilename } from './syncIngest.js';
+import { lookupArtifactRefForCard } from '../artifactRefLookup.js';
 import {
   createLinksFromSource,
   ingestLinksFromVersions,
@@ -54,7 +55,21 @@ export async function createUserTaskArtifact({
     };
   }
 
-  const artifactRef = ingest.byFilename[filename]?.artifactRef ?? null;
+  const ing = lookupIngestByFilename(ingest.byFilename, { filename, relativePath: filename });
+  let artifactRef = ing?.artifactRef ?? null;
+  if (!artifactRef?.id) {
+    const catalogHit = await lookupArtifactRefForCard(projectId, {
+      key: parsed.fullBase,
+      name: parsed.name,
+      type: 'user_task',
+    }, {
+      ...file,
+      ...parsed,
+      filename,
+      version: parsed.version,
+    });
+    artifactRef = catalogHit?.artifactRef ?? null;
+  }
   const effectiveClusterId = ingest.clusterId || clusterId;
 
   if (!artifactRef) {
@@ -72,6 +87,8 @@ export async function createUserTaskArtifact({
       contentHash: file.content_hash,
       retrievedAt: new Date(file.lastModified || Date.now()).toISOString(),
       lastError: ingest.reason ?? 'ingest_failed',
+      linkTargetRefs,
+      clusterId: effectiveClusterId,
     });
   }
 

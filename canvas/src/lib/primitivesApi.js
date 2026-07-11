@@ -102,6 +102,15 @@ export async function deleteProjectArtifactPrimitive(projectId, artifactId) {
   );
 }
 
+export async function listProjectArtifacts(projectId, { limit = 200 } = {}) {
+  const params = new URLSearchParams();
+  if (limit) params.set('limit', String(limit));
+  const q = params.toString();
+  return request(
+    `/projects/${encodeURIComponent(projectId)}/artifacts${q ? `?${q}` : ''}`,
+  );
+}
+
 export async function deleteSubCluster(clusterId) {
   return request(`/clusters/${clusterId}`, { method: 'DELETE' });
 }

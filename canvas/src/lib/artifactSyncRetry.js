@@ -86,9 +86,11 @@ function fileForOutboxEntry(entry) {
       prefix: entry.prefix ?? null,
       name: entry.name ?? null,
       ...codeMetadata(entry),
-      ...(entry.cardType === 'user_note' || entry.kind === 'user_note'
-        ? { canvas_kind: 'user_note' }
-        : {}),
+      ...(entry.cardType === 'user_task' || entry.kind === 'user_task'
+        ? { canvas_kind: 'user_task' }
+        : entry.cardType === 'user_note' || entry.kind === 'user_note'
+          ? { canvas_kind: 'user_note' }
+          : {}),
     },
   };
 }
@@ -115,7 +117,7 @@ export async function processArtifactSyncRetryEntry(entry) {
   }
 
   const clusterId = ingest.clusterId || cluster?.id;
-  if (clusterId && entry.kind === 'bookmark' && entry.linkTargetRefs?.length) {
+  if (clusterId && entry.linkTargetRefs?.length) {
     await createLinksFromSource(clusterId, artifactRef, entry.linkTargetRefs);
   }
 

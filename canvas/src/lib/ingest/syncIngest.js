@@ -8,6 +8,21 @@ function artifactFileKey(version) {
   return normalizeFolderRelativePath(version?.relativePath ?? version?.filename);
 }
 
+export function lookupIngestByFilename(byFilename, version) {
+  if (!byFilename || !version) return null;
+  const candidates = [
+    artifactFileKey(version),
+    normalizeFolderRelativePath(version?.filename),
+    version?.filename,
+    version?.relativePath,
+  ].filter(Boolean);
+  for (const key of candidates) {
+    const hit = byFilename[key];
+    if (hit?.artifactRef?.id) return hit;
+  }
+  return null;
+}
+
 function codeMetadata(version) {
   if (version.cardType !== 'code') return {};
   const ext = version.ext ?? parseFilename(version.filename ?? '').ext;
@@ -153,6 +168,21 @@ export async function ingestFoundFiles(projectId, projectName, flatVersions, pre
         if (!v.relativePath) byFilename[v.filename] = value;
       }
     }
+  }
+  if (
+    Object.keys(byFilename).length === 0
+    && flatVersions.length === 1
+    && (ingestRes.artifacts || []).length === 1
+  ) {
+    const a = ingestRes.artifacts[0];
+    const v = flatVersions[0];
+    const key = artifactFileKey(v);
+    const value = {
+      content_hash: a.content_hash,
+      artifactRef: a.artifactRef,
+    };
+    byFilename[key] = value;
+    if (v.filename) byFilename[v.filename] = value;
   }
 
   const relationships = [];

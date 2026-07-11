@@ -1,8 +1,15 @@
 import { readFileEntry } from './readFile.js';
 import { isApiAvailable } from './primitivesApi.js';
-import { ingestFoundFiles } from './ingest/syncIngest.js';
+import { ingestFoundFiles, lookupIngestByFilename } from './ingest/syncIngest.js';
 import { folderRelativePathFromVersion } from './filename.js';
 import { getFileHandleAtPath } from './folderWrite.js';
+import { flushArtifactSyncOutbox } from './artifactSyncOutbox.js';
+import { processArtifactSyncRetryEntry } from './artifactSyncRetry.js';
+import { lookupArtifactRefForCard } from './artifactRefLookup.js';
+import {
+  isBimViewerSessionCard,
+  registerBimViewerSessionArtifact,
+} from './ingest/bimViewerArtifact.js';
 
 /**
  * Resolve or create a primitives artifact ref for a canvas card's pinned version.
@@ -32,13 +39,60 @@ export async function ensureCardArtifactRef({
     return { ok: true, artifactRef: pinned.artifactRef, version: pinned };
   }
 
-  if (!projectId || !folderHandle || !pinned.filename) {
+  if (!projectId) {
     return { ok: false, reason: 'not_synced' };
   }
 
   const apiOk = await isApiAvailable();
   if (!apiOk) {
     return { ok: false, reason: 'api_unavailable' };
+  }
+
+  await flushArtifactSyncOutbox(async (entry) => {
+    if (entry.projectId !== projectId || entry.cardKey !== card.key) {
+      return { ok: false };
+    }
+    return processArtifactSyncRetryEntry(entry);
+  }, { projectId });
+
+  const catalogHit = await lookupArtifactRefForCard(projectId, card, pinned);
+  if (catalogHit?.artifactRef?.id) {
+    return {
+      ok: true,
+      artifactRef: catalogHit.artifactRef,
+      version: {
+        ...pinned,
+        artifactRef: catalogHit.artifactRef,
+        content_hash: catalogHit.content_hash ?? pinned.content_hash,
+        artifactSyncState: 'synced',
+      },
+    };
+  }
+
+  if (isBimViewerSessionCard(card, pinned)) {
+    const registered = await registerBimViewerSessionArtifact({
+      projectId,
+      projectName,
+      card,
+      pinned,
+    });
+    if (registered.ok) {
+      return {
+        ok: true,
+        artifactRef: registered.artifactRef,
+        version: {
+          ...pinned,
+          artifactRef: registered.artifactRef,
+          content_hash: registered.content_hash ?? pinned.content_hash,
+          artifactSyncState: 'synced',
+        },
+      };
+    }
+    return { ok: false, reason: registered.reason ?? 'ingest_failed' };
+  }
+
+  if (!folderHandle || !pinned.filename) {
+    return { ok: false, reason: 'not_synced' };
   }
 
   try {
@@ -64,7 +118,10 @@ export async function ensureCardArtifactRef({
       flat,
       {},
     );
-    const ing = ingest.byFilename?.[relativePath];
+    const ing = lookupIngestByFilename(ingest.byFilename, {
+      filename: pinned.filename,
+      relativePath,
+    });
     if (!ing?.artifactRef?.id) {
       return {
         ok: false,

@@ -178,6 +178,82 @@ describe('actionSync', () => {
     expect(pushCalled).toBe(true);
   });
 
+  it('structuralChange with awaitLocal diffs against snapshot before second commit', async () => {
+    const {
+      commitProjectDocument,
+      setCommittedPayloadForTests,
+      resetProjectDocumentCommitForTests,
+    } = await import('../projectDocumentCommit.js');
+
+    resetProjectDocumentCommitForTests();
+
+    const priorPayload = {
+      cards: [{ id: 'c1', key: 'notes__a', x: 0, y: 0 }],
+      stagedSyncCards: [],
+      canvasView: { x: 0, y: 0, zoom: 1 },
+      artifactPlacements: {},
+    };
+    const nextPayload = {
+      cards: [
+        { id: 'c1', key: 'notes__a', x: 0, y: 0 },
+        { id: 'c2', key: 'tasks__todo', type: 'user_task', x: 100, y: 100 },
+      ],
+      stagedSyncCards: [],
+      canvasView: { x: 0, y: 0, zoom: 1 },
+      artifactPlacements: {},
+    };
+
+    setCommittedPayloadForTests('p1', priorPayload);
+    await commitProjectDocument('p1', {
+      state: {
+        cards: nextPayload.cards,
+        canvasView: nextPayload.canvasView,
+        projectName: 'P',
+      },
+      stagedSyncCards: [],
+      reason: 'saveProjectById',
+      pushRemote: false,
+    });
+
+    flushOutgoingProjectDocument.mockImplementation(async (_projectId, payload, options) => {
+      expect(options.beforePayload?.cards).toHaveLength(1);
+      expect(payload.cards).toHaveLength(2);
+      return { ok: true };
+    });
+
+    registerActionSyncHandlers({
+      getProjectId: () => 'p1',
+      getState: () => ({
+        cards: nextPayload.cards,
+        projectName: 'P',
+        canvasView: nextPayload.canvasView,
+      }),
+      getStagedSyncCards: () => [],
+      buildPayload: (s, staged) => ({
+        ...s,
+        stagedSyncCards: staged,
+        artifactPlacements: {},
+      }),
+      commitProjectDocument: (projectId, options) =>
+        commitProjectDocument(projectId, {
+          state: {
+            cards: nextPayload.cards,
+            projectName: 'P',
+            canvasView: nextPayload.canvasView,
+          },
+          stagedSyncCards: [],
+          ...options,
+        }),
+      touchIndex: vi.fn(),
+      onLocalCacheFailed: vi.fn(),
+      reconcileInbound: vi.fn(),
+      flushAll: vi.fn(),
+    });
+
+    await requestActionSync('structuralChange', { projectId: 'p1', awaitLocal: true });
+    expect(flushOutgoingProjectDocument).toHaveBeenCalled();
+  });
+
   it('structuralChange notifies when server push fails', async () => {
     flushOutgoingProjectDocument.mockResolvedValueOnce({
       ok: false,
