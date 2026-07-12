@@ -890,6 +890,52 @@ describe('placeStagedCardOnCanvas', () => {
     expect(cards[0].x).not.toBe(10);
     expect(cards[0].y).not.toBe(20);
   });
+
+  it('places folder IFC dock entries as bim-viewers session cards', () => {
+    const folderIfcStaged = {
+      stagingId: 'ifc-1',
+      key: 'IFC/Resort Villa',
+      prefix: 'general',
+      name: 'Resort Villa',
+      type: 'bim-model',
+      relativePath: 'IFC/Resort Villa.ifc',
+      versions: [{
+        version: 1,
+        filename: 'Resort Villa.ifc',
+        relativePath: 'IFC/Resort Villa.ifc',
+        content_hash: 'abc123',
+      }],
+      pinnedVersion: 1,
+    };
+    const { cards, placed, movedExisting } = placeStagedCardOnCanvas(
+      [],
+      folderIfcStaged,
+      500,
+      400,
+    );
+    expect(placed).toBe(true);
+    expect(movedExisting).toBe(false);
+    expect(cards[0].prefix).toBe('bim-viewers');
+    expect(cards[0].key).toMatch(/^bim-viewers__/);
+    expect(cards[0].folderSyncKey).toBe('IFC/Resort Villa');
+    expect(cards[0].versions[0].bim.viewerKind).toBe('ifc-viewer-session');
+  });
+
+  it('moves existing folder-linked bim-viewers card on repeat drop', () => {
+    const folderIfcStaged = {
+      stagingId: 'ifc-2',
+      key: 'IFC/Resort Villa',
+      name: 'Resort Villa',
+      type: 'bim-model',
+      versions: [{ version: 1, filename: 'Resort Villa.ifc', content_hash: 'abc123' }],
+      pinnedVersion: 1,
+    };
+    const first = placeStagedCardOnCanvas([], folderIfcStaged, 100, 100);
+    const second = placeStagedCardOnCanvas(first.cards, folderIfcStaged, 500, 400);
+    expect(second.movedExisting).toBe(true);
+    expect(second.cards).toHaveLength(1);
+    expect(second.cards[0].id).toBe(first.cards[0].id);
+  });
 });
 
 describe('canvasCardToStaged', () => {
@@ -937,6 +983,39 @@ describe('canvasCardToStaged', () => {
       }],
     });
     expect(staged.relativePath).toBe('refs/img__photo-v1.png');
+  });
+
+  it('rebuilds folder IFC dock staging from folder-linked bim-viewers cards', () => {
+    const staged = canvasCardToStaged({
+      id: 'card-bim',
+      key: 'bim-viewers__abc',
+      folderSyncKey: 'IFC/Resort Villa',
+      prefix: 'bim-viewers',
+      name: 'Resort Villa',
+      type: 'bim-model',
+      pinnedVersion: 1,
+      versions: [{
+        version: 1,
+        bim: {
+          viewerKind: 'ifc-viewer-session',
+          session: {
+            modelRefs: [{
+              modelId: 'bim-model:abc123',
+              sourceKind: 'linkedFolder',
+              sourcePath: 'IFC/Resort Villa.ifc',
+              sourceName: 'Resort Villa.ifc',
+              sourceFileHash: 'abc123',
+              label: 'Resort Villa',
+            }],
+          },
+        },
+      }],
+    });
+    expect(staged.folderSyncKey).toBe('IFC/Resort Villa');
+    expect(staged.key).toBe('IFC/Resort Villa');
+    expect(staged.type).toBe('bim-model');
+    expect(staged.versions[0].relativePath).toBe('IFC/Resort Villa.ifc');
+    expect(staged.versions[0].bim).toBeUndefined();
   });
 
   it('falls back to card id when key is missing', () => {

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getAgentHealth, listAgentConnectors, sendAgentChat } from '../../../lib/agentApi.js';
 import { DEFAULT_SINGLE_CONNECTOR_ID, getConnectorById } from '../../../lib/agentConnectors.js';
 import { getFileHandleAtPath } from '../../../lib/folderWrite.js';
+import { bimSourceStorageKey } from '../../../lib/ingest/bimViewerFromFolder.js';
 import { createIndexedDbBimRepository } from '../bim-core/bimRepository.js';
 import {
   draftBqlFromNaturalLanguage,
@@ -140,10 +141,6 @@ async function sha256Hex(arrayBuffer) {
     .join('');
 }
 
-function bimSourceStorageKey(sourceFileHash) {
-  return `bim-source:${sourceFileHash}`;
-}
-
 async function arrayBufferFromStoredModelSource(source) {
   if (!source) return null;
   if (source.arrayBuffer instanceof ArrayBuffer) return source.arrayBuffer.slice(0);
@@ -214,6 +211,15 @@ export function BimWorkspace({
   const [queryResult, setQueryResult] = useState(null);
   const [semanticAliasMemory, setSemanticAliasMemory] = useState({});
   const [prepRunId, setPrepRunId] = useState(0);
+  const sessionRestoreKey = useMemo(() => {
+    const refs = version?.bim?.session?.modelRefs ?? [];
+    return refs.map((ref) => [
+      ref.modelId,
+      ref.sourcePath,
+      ref.sourceFileHash,
+    ].join(':')).join('|');
+  }, [version?.bim?.session]);
+  const sessionRestoreInFlightRef = useRef(false);
   const [agentRunState, setAgentRunState] = useState({
     status: 'idle',
     message: null,
@@ -375,10 +381,19 @@ export function BimWorkspace({
 
   useEffect(() => {
     if (!isSessionViewer) return undefined;
+    if (!sessionRestoreKey) return undefined;
     let cancelled = false;
+    sessionRestoreInFlightRef.current = true;
     async function restoreSessionModels() {
       let session = normalizeBimWorkspaceSession(versionRef.current?.bim?.session ?? workspaceState.session);
-      if (session.modelRefs.length === 0) return;
+      if (session.modelRefs.length === 0) {
+        sessionRestoreInFlightRef.current = false;
+        return;
+      }
+      if (!cancelled) {
+        setPhase('preparing');
+        setCacheStatus('preparing');
+      }
       const restoredModels = {};
       let activePrepared = null;
       let activeFingerprint = null;
@@ -390,25 +405,72 @@ export function BimWorkspace({
         let preparedModel = ref.fingerprint
           ? await repositoryRef.current.getPreparedModel(ref.fingerprint)
           : null;
+        let arrayBuffer = null;
         if (!preparedModel && ref.sourceStorageKey) {
           const sourceRecord = await repositoryRef.current.getModelSource?.(ref.sourceStorageKey);
-          const arrayBuffer = await arrayBufferFromStoredModelSource(sourceRecord);
-          if (arrayBuffer) {
-            const preparingAt = new Date().toISOString();
-            session = normalizeBimWorkspaceSession({
-              ...session,
-              modelRefs: session.modelRefs.map((entry) => (
-                entry.modelId === ref.modelId
-                  ? { ...entry, status: 'preparing', updatedAt: preparingAt }
-                  : entry
-              )),
-              updatedAt: preparingAt,
-            });
-            if (!cancelled) {
-              setWorkspaceState((state) => normalizeBimWorkspaceState({ ...state, session }));
-              persistSession(session);
+          arrayBuffer = await arrayBufferFromStoredModelSource(sourceRecord);
+        }
+        if (
+          !preparedModel
+          && !arrayBuffer
+          && ref.sourceKind === 'linkedFolder'
+          && ref.sourcePath
+          && folderHandle
+        ) {
+          try {
+            const handle = await getFileHandleAtPath(folderHandle, ref.sourcePath);
+            const file = await handle.getFile();
+            arrayBuffer = await file.arrayBuffer();
+          } catch {
+            arrayBuffer = null;
+          }
+        }
+        if (!preparedModel && arrayBuffer) {
+          let sourceStorageKey = ref.sourceStorageKey || null;
+          if (
+            ref.sourceKind === 'linkedFolder'
+            && ref.sourceFileHash
+            && repositoryRef.current.putModelSource
+          ) {
+            sourceStorageKey = bimSourceStorageKey(ref.sourceFileHash);
+            try {
+              await repositoryRef.current.putModelSource(sourceStorageKey, {
+                blob: new Blob([arrayBuffer], { type: 'application/x-step' }),
+                metadata: {
+                  sourceName: ref.sourceName,
+                  sourceFileHash: ref.sourceFileHash,
+                  sourceKind: 'linkedFolder',
+                  sourcePath: ref.sourcePath ?? null,
+                  sourceLastModified: ref.sourceLastModified ?? null,
+                  sourceSize: ref.sourceSize ?? arrayBuffer.byteLength,
+                  cachedAt: new Date().toISOString(),
+                },
+              });
+            } catch {
+              sourceStorageKey = ref.sourceStorageKey || null;
             }
-            const result = await prepareBimModel({
+          }
+          const preparingAt = new Date().toISOString();
+          session = normalizeBimWorkspaceSession({
+            ...session,
+            modelRefs: session.modelRefs.map((entry) => (
+              entry.modelId === ref.modelId
+                ? {
+                    ...entry,
+                    status: 'preparing',
+                    ...(sourceStorageKey ? { sourceStorageKey } : {}),
+                    updatedAt: preparingAt,
+                  }
+                : entry
+            )),
+            updatedAt: preparingAt,
+          });
+          if (!cancelled) {
+            setWorkspaceState((state) => normalizeBimWorkspaceState({ ...state, session }));
+          }
+          let result;
+          try {
+            result = await prepareBimModel({
               arrayBuffer,
               version: {
                 ...(versionRef.current ?? {}),
@@ -425,26 +487,46 @@ export function BimWorkspace({
                 if (!cancelled) appendExtractionEvent(event);
               },
             });
-            preparedModel = result.preparedModel;
-            const readyAt = new Date().toISOString();
+          } catch (prepareError) {
+            if (cancelled) return;
+            const failedAt = new Date().toISOString();
             session = normalizeBimWorkspaceSession({
               ...session,
               modelRefs: session.modelRefs.map((entry) => (
                 entry.modelId === ref.modelId
                   ? {
                       ...entry,
-                      fingerprint: result.fingerprint,
-                      preparedModelKey: result.fingerprint,
-                      status: 'ready',
-                      sourceStatus: 'current',
-                      updatedAt: readyAt,
+                      status: 'failed',
+                      errorMessage: prepareError?.message ?? 'Could not prepare BIM model.',
+                      updatedAt: failedAt,
                     }
                   : entry
               )),
-              updatedAt: readyAt,
+              updatedAt: failedAt,
             });
             changed = true;
+            continue;
           }
+          if (cancelled) return;
+          preparedModel = result.preparedModel;
+          const readyAt = new Date().toISOString();
+          session = normalizeBimWorkspaceSession({
+            ...session,
+            modelRefs: session.modelRefs.map((entry) => (
+              entry.modelId === ref.modelId
+                ? {
+                    ...entry,
+                    fingerprint: result.fingerprint,
+                    preparedModelKey: result.fingerprint,
+                    status: 'ready',
+                    sourceStatus: 'current',
+                    updatedAt: readyAt,
+                  }
+                : entry
+            )),
+            updatedAt: readyAt,
+          });
+          changed = true;
         }
         if (preparedModel) {
           restoredModels[ref.modelId] = preparedModel;
@@ -452,13 +534,20 @@ export function BimWorkspace({
             activePrepared = preparedModel;
             activeFingerprint = preparedModel.metadata?.fingerprint ?? ref.fingerprint;
           }
-        } else if (ref.sourceStorageKey) {
+        } else if (ref.sourceStorageKey || (ref.sourceKind === 'linkedFolder' && ref.sourcePath)) {
           const failedAt = new Date().toISOString();
           session = normalizeBimWorkspaceSession({
             ...session,
             modelRefs: session.modelRefs.map((entry) => (
               entry.modelId === ref.modelId
-                ? { ...entry, status: 'failed', errorMessage: 'Stored IFC source is unavailable.', updatedAt: failedAt }
+                ? {
+                    ...entry,
+                    status: 'failed',
+                    errorMessage: ref.sourceKind === 'linkedFolder'
+                      ? 'Linked IFC file is unavailable. Reconnect the project folder and try again.'
+                      : 'Stored IFC source is unavailable.',
+                    updatedAt: failedAt,
+                  }
                 : entry
             )),
             updatedAt: failedAt,
@@ -479,19 +568,23 @@ export function BimWorkspace({
       setPreparedByModelId(restoredModels);
       setPrepared(activePrepared);
       setFingerprint(activeFingerprint);
-      setCacheStatus('loaded_cache');
-      setPhase('ready');
+      setCacheStatus(activePrepared ? 'loaded_cache' : 'preparing');
+      setPhase(activePrepared ? 'ready' : 'preparing');
       setWorkspaceState((state) => normalizeBimWorkspaceState({
         ...state,
         session,
       }));
       if (changed) persistSession(session);
+      sessionRestoreInFlightRef.current = false;
     }
-    void restoreSessionModels();
+    void restoreSessionModels().catch(() => {
+      sessionRestoreInFlightRef.current = false;
+    });
     return () => {
       cancelled = true;
+      sessionRestoreInFlightRef.current = false;
     };
-  }, [isSessionViewer, persistSession]);
+  }, [folderHandle, isSessionViewer, sessionRestoreKey]);
 
   useEffect(() => {
     if (!fingerprint) return;
@@ -1249,6 +1342,21 @@ export function BimWorkspace({
   };
 
   const activeSession = workspaceState.session;
+  const pendingSessionRefs = useMemo(
+    () => (activeSession?.modelRefs ?? []).filter((ref) => ref.status !== 'removed'),
+    [activeSession?.modelRefs],
+  );
+  const failedSessionRef = useMemo(
+    () => pendingSessionRefs.find((ref) => ref.status === 'failed') ?? null,
+    [pendingSessionRefs],
+  );
+  const showSessionImportPlaceholder = isSessionViewer
+    && !prepared
+    && pendingSessionRefs.length === 0;
+  const showSessionPreparing = isSessionViewer
+    && !prepared
+    && pendingSessionRefs.length > 0
+    && !failedSessionRef;
 
   const commitBimSession = useCallback((nextSession) => {
     const normalized = normalizeBimWorkspaceSession(nextSession);
@@ -1562,7 +1670,34 @@ export function BimWorkspace({
     );
   }
 
-  if (isSessionViewer && !prepared) {
+  if (showSessionPreparing) {
+    const preparingLabel = pendingSessionRefs.find((ref) => ref.modelId === activeSession.activeModelId)?.label
+      ?? pendingSessionRefs[0]?.label
+      ?? card?.name
+      ?? 'IFC model';
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-preview-bg text-center px-8">
+        <div>
+          <div className="serif text-lg text-primary mb-2">{PHASE_LABELS[phase] ?? 'Preparing model'}</div>
+          <div className="sans text-xs text-muted">{preparingLabel}</div>
+          <BimExtractionFeed events={extractionFeed} />
+        </div>
+      </div>
+    );
+  }
+
+  if (isSessionViewer && !prepared && failedSessionRef) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-preview-bg text-center px-8">
+        <div>
+          <div className="serif text-lg text-primary mb-2">Could not prepare BIM model</div>
+          <div className="sans text-xs text-warning">{failedSessionRef.errorMessage ?? error ?? 'IFC source is unavailable.'}</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (showSessionImportPlaceholder) {
     return (
       <div className="h-full w-full min-h-0 flex flex-col bg-preview-bg">
         <div className="shrink-0 border-b border-border bg-surface px-3 py-2 flex items-center justify-between gap-3">

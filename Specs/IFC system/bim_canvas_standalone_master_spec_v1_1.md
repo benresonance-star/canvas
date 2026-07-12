@@ -1510,6 +1510,8 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 
 **Discovery:** Linked-folder scan (`scanFolderFiles`) maps `.ifc` → `bim-model` with no extension blocklist. Nested paths use folder keys (e.g. `IFC/models__clinic-v1.ifc` → key `IFC/models__clinic`). Recommended on-disk naming: `prefix__name-vN.ifc`.
 
+**Dock → canvas (2026-07-12):** Folder `.ifc` files still stage to the sync holding tray as `bim-model` chips. When dragged onto the canvas, placement converts them into federated **IFC Viewer session** cards (`prefix: bim-viewers`, header `bim-viewers | BIM MODEL`, `viewerKind: ifc-viewer-session`) via `bimViewerFromFolder.js`. Each placed card stores `folderSyncKey` for exclusive sync matching and seeds a `linkedFolder` `modelRef` (`sourcePath`, `sourceFileHash`). Scan-time Postgres ingest for folder IFC is skipped; `registerBimViewerSessionArtifact` runs on placement. Placement does **not** auto-open the modal. On first open, `BimWorkspace.restoreSessionModels` loads the linked IFC (IndexedDB cache or folder handle), shows a **Preparing model** state (not the empty import placeholder), and persists session status only after prepare completes. Legacy folder-backed `general | BIM MODEL` cards already on the canvas remain readable but are deprecated for new placements.
+
 **Dock vs canvas:** Placement is exclusive — an artefact is on the canvas **or** in the dock, not both. New folder files (including IFC) reach the dock only after **Sync → Apply** (or auto-apply on folder connect/reconnect). Agent-chat sidecars auto-stage; BIM models follow the confirm path like other types.
 
 **Ingest fixes (2026-07-04):**
@@ -1522,7 +1524,7 @@ Dependencies: `web-ifc@0.0.69`, `@thatopen/fragments@3.1.4`, `@thatopen/componen
 | IFC preview IndexedDB write failure could block scan registration | `readFile.js` treats BIM preview cache as optional (scan still registers the file) |
 | Dock chip visibility | `stagingColors.js` adds distinct colors for `bim-model` and `3d-model` |
 
-**Related paths:** `folderScan.js`, `readFile.js`, `syncIngest.js`, `syncStaging.js`, `useFolderLinkScan.js`, `server/routes/artifacts.js`, `server/repositories/artifacts.js`.
+**Related paths:** `folderScan.js`, `readFile.js`, `syncIngest.js`, `syncStaging.js`, `ingest/bimViewerFromFolder.js`, `useFolderLinkScan.js`, `server/routes/artifacts.js`, `server/repositories/artifacts.js`.
 
 **Beat Agent create (same release):** `createMusicAgent` artifact insert now sets required `artifact.title` and `project_id` columns (migration `0021_artifact_base_schema.sql` NOT NULL constraint).
 

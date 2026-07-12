@@ -1,4 +1,9 @@
+import {
+  createBimViewerCardFromFolderStaged,
+  isFolderIfcStagedEntry,
+} from './ingest/bimViewerFromFolder.js';
 import { cardTypeFromSync } from './ingest/artifactType.js';
+import { artifactDateFieldsFromVersion } from './artifactDates.js';
 import {
   cardKeyFromFilename,
   cardPrefixFromRow,
@@ -31,6 +36,7 @@ export function buildStagedSyncCardFromChange(change) {
   const displayName = primaryVersion?.threeDIsPackage
     ? primaryVersion.name
     : parsed.name;
+  const dateFields = artifactDateFieldsFromVersion(primaryVersion);
   return {
     stagingId: crypto.randomUUID(),
     key: change.key,
@@ -45,6 +51,7 @@ export function buildStagedSyncCardFromChange(change) {
     type,
     versions: change.group.versions,
     pinnedVersion: primaryVersion.version,
+    ...dateFields,
     ...(primaryVersion?.threeDIsPackage ? { threeDIsPackage: true } : {}),
     ...(primaryVersion?.threeDPackageRoot ? { threeDPackageRoot: primaryVersion.threeDPackageRoot } : {}),
     ...(defaultSkin ? { audioSkinColor: defaultSkin } : {}),
@@ -146,6 +153,10 @@ export function isSuppressedBookmarkFolderChange(change, suppressedBookmarkUrls)
  */
 function entryMatchesFolderKey(entry, folderKey) {
   if (!entry || !folderKey) return false;
+  if (entry.folderSyncKey && syncKeysMatch(entry.folderSyncKey, folderKey)) return true;
+  if (entry.relativePath && syncKeysMatch(cardKeyFromFilename(entry.relativePath), folderKey)) {
+    return true;
+  }
   if (syncKeysMatch(canonicalKeyForSyncEntry(entry), folderKey)) return true;
   for (const v of entry.versions ?? []) {
     const relativePath = folderRelativePathFromVersion(v);
@@ -663,6 +674,10 @@ export function stagedSyncCardToCanvasCard(staged, worldX, worldY) {
     type: staged.type,
     versions: staged.versions,
     pinnedVersion: staged.pinnedVersion,
+    ...artifactDateFieldsFromVersion(
+      (staged.versions ?? []).find((v) => v.version === staged.pinnedVersion)
+      ?? staged.versions?.[0],
+    ),
     x: worldX - w / 2,
     y: worldY - h / 2,
     ...(staged.threeDIsPackage ? { threeDIsPackage: true } : {}),
@@ -680,6 +695,21 @@ export function stagedSyncCardToCanvasCard(staged, worldX, worldY) {
  * @param {number} worldY
  */
 export function placeStagedCardOnCanvas(cards, staged, worldX, worldY) {
+  if (isFolderIfcStagedEntry(staged)) {
+    const card = createBimViewerCardFromFolderStaged(staged, worldX, worldY);
+    const folderKey = toCanonicalSyncKey(staged.key);
+    const existing = findSyncEntryByFolderKey(cards, folderKey);
+    if (existing) {
+      const idx = cards.findIndex((c) => c.id === existing.id);
+      if (idx >= 0) {
+        const next = [...cards];
+        next[idx] = { ...next[idx], x: card.x, y: card.y };
+        return { cards: next, placed: true, movedExisting: true };
+      }
+    }
+    return { cards: [...cards, card], placed: true, movedExisting: false };
+  }
+
   const card = stagedSyncCardToCanvasCard(staged, worldX, worldY);
   const idx = cards.findIndex((c) => syncKeysMatch(c.key, card.key));
   if (idx >= 0) {
@@ -695,9 +725,42 @@ export function placeStagedCardOnCanvas(cards, staged, worldX, worldY) {
  */
 export function canvasCardToStaged(card) {
   const relativePath = card.relativePath ?? card.versions?.[0]?.relativePath ?? null;
+  const folderSyncKey = card.folderSyncKey ?? null;
+  const pinned = (card.versions ?? []).find((v) => v.version === card.pinnedVersion)
+    ?? card.versions?.[0]
+    ?? null;
+  const folderLinkedModelRef = pinned?.bim?.viewerKind === 'ifc-viewer-session'
+    ? pinned?.bim?.session?.modelRefs?.find((ref) => ref?.sourceKind === 'linkedFolder')
+    : null;
+
+  if (folderSyncKey && folderLinkedModelRef) {
+    return {
+      stagingId: crypto.randomUUID(),
+      key: folderSyncKey,
+      folderSyncKey,
+      relativePath: folderLinkedModelRef.sourcePath ?? relativePath,
+      ...(folderLinkedModelRef.sourcePath
+        ? { folderPath: folderLinkedModelRef.sourcePath }
+        : {}),
+      prefix: card.prefix === 'bim-viewers' ? 'general' : (card.prefix ?? 'general'),
+      name: card.name ?? card.key ?? card.id,
+      type: 'bim-model',
+      versions: [{
+        version: 1,
+        filename: folderLinkedModelRef.sourceName ?? `${card.name ?? 'IFC model'}.ifc`,
+        relativePath: folderLinkedModelRef.sourcePath ?? relativePath,
+        content_hash: folderLinkedModelRef.sourceFileHash ?? pinned?.content_hash ?? null,
+        lastModified: folderLinkedModelRef.sourceLastModified ?? null,
+        size: folderLinkedModelRef.sourceSize ?? null,
+      }],
+      pinnedVersion: 1,
+    };
+  }
+
   return {
     stagingId: crypto.randomUUID(),
-    key: card.key ?? card.id,
+    key: folderSyncKey ?? card.key ?? card.id,
+    ...(folderSyncKey ? { folderSyncKey } : {}),
     ...(relativePath ? { relativePath, folderPath: relativePath } : {}),
     prefix: card.prefix ?? '',
     name: card.name ?? card.key ?? card.id,

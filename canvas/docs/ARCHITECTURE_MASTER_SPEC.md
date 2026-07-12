@@ -1296,6 +1296,16 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 
 ## 14. Changelog
 
+### 2026-07-12 — Folder IFC dock → bim-viewers session placement (implemented)
+
+- Folder `.ifc` files continue to appear in the sync holding tray as `bim-model` chips.
+- Dropping a dock IFC onto the canvas creates a federated **IFC Viewer session** card (`bim-viewers | BIM MODEL`) instead of a legacy folder-backed `general | BIM MODEL` card.
+- `bimViewerFromFolder.js` converts staged folder IFC into session cards with `linkedFolder` model refs; `registerBimViewerSessionArtifact` runs on placement; scan-time `ingestFoundFiles` skips `bim-model`.
+- `folderSyncKey` preserves exclusive sync matching for session cards; `BimWorkspace` loads linked-folder refs on first open when IndexedDB cache is absent.
+- Dock placement does not auto-open the viewer modal; first open shows **Preparing model** (not the empty import screen) while `restoreSessionModels` runs once without mid-prepare session persist loops.
+- Legacy folder-backed BIM cards already on the canvas remain readable; no auto-migration.
+- Bumped app architecture spec to `2026-07-12-folder-ifc-dock` in `systemArchitectureSpec.js`.
+
 ### 2026-07-11 — Canvas graph artifact linking + structural sync fix (implemented)
 
 - Bumped app architecture spec to `2026-07-11-artifact-linking` in `systemArchitectureSpec.js`.

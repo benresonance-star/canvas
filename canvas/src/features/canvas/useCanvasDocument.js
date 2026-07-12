@@ -45,10 +45,17 @@ import {
   bookmarkUrlForSyncEntry,
   buildStagedSyncCardFromChange,
   canonicalKeyForSyncEntry,
+  findSyncEntryByFolderKey,
   mergeNewlyStaged,
   mergeVersionsForSyncUpdate,
 } from '../../lib/syncStaging.js';
-import { enforceExclusivePlacement } from '../../lib/artifactPlacement.js';
+import {
+  applySourceStorageKeyToCard,
+  cacheFolderIfcToModelSources,
+  isFolderIfcStagedEntry,
+} from '../../lib/ingest/bimViewerFromFolder.js';
+import { createIndexedDbBimRepository } from '../bim/bim-core/bimRepository.js';
+import { enforceExclusivePlacement, canonicalKeyForEntry } from '../../lib/artifactPlacement.js';
 import {
   transferStagedToCanvas,
   transferCardToDock,
@@ -65,6 +72,7 @@ import {
   buildPlacementsFromArrays,
   patchPlacementsMapFromArrays,
 } from '../../lib/artifactPlacementsMap.js';
+import { dockPersistAheadOfCommit } from '../../lib/folderScanDockPersist.js';
 import { syncKeysMatch, noteRequiresProjectOnlySave, cardKeyFromFilename, toCanonicalSyncKey } from '../../lib/filename.js';
 import { addSuppressedSyncKey, addSuppressedBookmarkUrl } from '../../lib/syncSuppressedKeys.js';
 import { getCachedFolderHandle } from '../../lib/folderSessionCache.js';
@@ -687,7 +695,7 @@ export function useCanvasDocument({ refs, deps }) {
   ]);
 
   const applySyncChangesFromList = useCallback(
-    ({ changes, applyMode = 'merge' } = {}) => {
+    async ({ changes, applyMode = 'merge' } = {}) => {
       if (!changes?.length) return { applied: false, stagedCount: 0 };
       const newlyStaged = changes
         .filter((c) => c.type === 'new')
@@ -748,7 +756,33 @@ export function useCanvasDocument({ refs, deps }) {
         setStagedSyncCards(exclusive.stagedSyncCards);
       }
       invalidateFolderScan();
-      requestStructuralSync({ awaitLocal: true });
+      const projectId = activeProjectIdRef.current;
+      if (
+        projectId
+        && commitPlacementState
+        && dockPersistAheadOfCommit(
+          stagedSyncCardsRef.current ?? [],
+          getCommittedPayload(projectId),
+        )
+      ) {
+        const liveStaged = stagedSyncCardsRef.current ?? [];
+        const patchedMap = patchPlacementsMapFromArrays(
+          getCommittedPayload(projectId)?.artifactPlacements
+          ?? buildPlacementsFromArrays(stateRef.current.cards ?? [], liveStaged),
+          stateRef.current.cards ?? [],
+          liveStaged,
+        );
+        try {
+          await commitPlacementState(projectId, {
+            artifactPlacements: patchedMap,
+            reason: 'importApply:dockPersist',
+            pushRemote: true,
+          });
+        } catch (e) {
+          console.warn('Import apply dock persist failed:', e);
+        }
+      }
+      await requestStructuralSync({ awaitLocal: true });
       void refreshGraph();
       void (async () => {
         const projectId = activeProjectIdRef.current;
@@ -770,6 +804,7 @@ export function useCanvasDocument({ refs, deps }) {
     [
       refreshGraph,
       requestStructuralSync,
+      commitPlacementState,
       invalidateFolderScan,
       setState,
       stateRef,
@@ -781,7 +816,7 @@ export function useCanvasDocument({ refs, deps }) {
 
   const applySyncChanges = useCallback(() => {
     if (!confirmChanges) return;
-    applySyncChangesFromList(confirmChanges);
+    void applySyncChangesFromList(confirmChanges);
     setConfirmChanges(null);
   }, [confirmChanges, applySyncChangesFromList]);
 
@@ -913,6 +948,63 @@ export function useCanvasDocument({ refs, deps }) {
       );
       if (!result.placed) return;
 
+      const prevIds = new Set((stateRef.current.cards ?? []).map((c) => c.id));
+      let cardsForCommit = result.cards;
+      let artifactPlacementsForCommit = result.artifactPlacements;
+
+      if (isFolderIfcStagedEntry(staged)) {
+        const folderKey = canonicalKeyForEntry(staged);
+        let placedCard = findSyncEntryByFolderKey(cardsForCommit, folderKey)
+          ?? cardsForCommit.find((c) => !prevIds.has(c.id));
+        if (placedCard) {
+          const pinnedVersion = (staged.versions ?? []).find(
+            (v) => v.version === staged.pinnedVersion,
+          ) ?? staged.versions?.[0];
+          const repository = createIndexedDbBimRepository();
+          const cache = await cacheFolderIfcToModelSources(pinnedVersion, repository, { folderHandle });
+          if (cache.sourceStorageKey) {
+            placedCard = applySourceStorageKeyToCard(placedCard, cache.sourceStorageKey);
+          }
+          const pinned = (placedCard.versions ?? []).find(
+            (v) => v.version === placedCard.pinnedVersion,
+          ) ?? placedCard.versions?.[0];
+          const { registerBimViewerSessionArtifact } = await import('../../lib/ingest/bimViewerArtifact.js');
+          const registered = await registerBimViewerSessionArtifact({
+            projectId,
+            projectName: stateRef.current.projectName,
+            card: placedCard,
+            pinned,
+          });
+          if (registered.ok) {
+            placedCard = {
+              ...placedCard,
+              versions: (placedCard.versions ?? []).map((version) => (
+                version.version === pinned.version
+                  ? {
+                      ...version,
+                      artifactRef: registered.artifactRef,
+                      content_hash: registered.content_hash ?? version.content_hash,
+                      artifactSyncState: 'synced',
+                    }
+                  : version
+              )),
+            };
+          }
+          cardsForCommit = cardsForCommit.map((c) => (
+            c.id === placedCard.id ? placedCard : c
+          ));
+          if (artifactPlacementsForCommit && folderKey) {
+            artifactPlacementsForCommit = {
+              ...artifactPlacementsForCommit,
+              [folderKey]: {
+                ...artifactPlacementsForCommit[folderKey],
+                record: placedCard,
+              },
+            };
+          }
+        }
+      }
+
       const traceId = createSyncTraceId();
       if (isPlacementCommitBlocked(canMutateCanvasRef)) {
         syncTraceLog(traceId, 'placement:ui-before-ready', {
@@ -923,19 +1015,18 @@ export function useCanvasDocument({ refs, deps }) {
       syncTraceLog(traceId, 'ui:placement-canvas', {
         projectId,
         stagingId,
-        key: result.artifactPlacements
-          ? Object.keys(result.artifactPlacements)[0]
+        key: artifactPlacementsForCommit
+          ? Object.keys(artifactPlacementsForCommit)[0]
           : null,
       });
 
-      const prevIds = new Set((stateRef.current.cards ?? []).map((c) => c.id));
       invalidateFolderScan();
-      stateRef.current = { ...stateRef.current, cards: result.cards };
-      setState((s) => ({ ...s, cards: result.cards }));
+      stateRef.current = { ...stateRef.current, cards: cardsForCommit };
+      setState((s) => ({ ...s, cards: cardsForCommit }));
       setStagedSyncCards(result.stagedSyncCards);
       stagedSyncCardsRef.current = result.stagedSyncCards;
       setStagingDragActive(false);
-      for (const c of result.cards) {
+      for (const c of cardsForCommit) {
         if (c?.id && !prevIds.has(c.id)) {
           registerOptimisticCard(projectId, c.id);
         }
@@ -945,7 +1036,7 @@ export function useCanvasDocument({ refs, deps }) {
         && singleConnectorIdRef.current
         && projectId
       ) {
-        const placed = result.cards.find((c) => !prevIds.has(c.id));
+        const placed = cardsForCommit.find((c) => !prevIds.has(c.id));
         if (placed) {
           const thread = resolveThreadForCard(
             agentChatThreadIndexRef.current,
@@ -971,7 +1062,7 @@ export function useCanvasDocument({ refs, deps }) {
       }
       if (projectId) {
         const commitResult = await commitPlacementState(projectId, {
-          artifactPlacements: result.artifactPlacements,
+          artifactPlacements: artifactPlacementsForCommit,
           reason: 'placementTransfer:canvas',
           traceId,
         });
@@ -997,6 +1088,7 @@ export function useCanvasDocument({ refs, deps }) {
       activeThreadIdRef,
       agentChatArtifactMetaRef,
       setSyncStatus,
+      folderHandle,
     ],
   );
 

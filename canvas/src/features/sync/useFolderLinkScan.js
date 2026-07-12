@@ -69,6 +69,7 @@ import {
   buildPlacementsFromArrays,
 } from '../../lib/artifactPlacementsMap.js';
 import { getCommittedPayload } from '../../lib/persistence.js';
+import { dockPersistAheadOfCommit } from '../../lib/folderScanDockPersist.js';
 import { requestActionSync } from '../../lib/actionSync.js';
 import { deleteProjectArtifactPrimitive } from '../../lib/primitivesApi.js';
 import { runExclusive } from '../../lib/projectSyncCoordinator.js';
@@ -409,6 +410,34 @@ export function useFolderLinkScan({
     }
   }, [projectList]);
 
+  const persistDockAheadOfCommitForProject = useCallback(
+    async (scanProjectId) => {
+      if (!scanProjectId || !commitPlacementState) return;
+      const liveStaged = stagedSyncCardsRef.current ?? [];
+      const committed = getCommittedPayload(scanProjectId);
+      if (!dockPersistAheadOfCommit(liveStaged, committed)) return;
+      const patchedMap = patchPlacementsMapFromArrays(
+        committed?.artifactPlacements
+        ?? buildPlacementsFromArrays(
+          stateRef.current.cards ?? [],
+          liveStaged,
+        ),
+        stateRef.current.cards ?? [],
+        liveStaged,
+      );
+      try {
+        await commitPlacementState(scanProjectId, {
+          artifactPlacements: patchedMap,
+          reason: 'folderScan:dockPersist',
+          pushRemote: true,
+        });
+      } catch (e) {
+        console.warn('Folder scan dock persist failed:', e);
+      }
+    },
+    [commitPlacementState, stateRef, stagedSyncCardsRef],
+  );
+
   const scanFolder = useCallback(async (handle, options = {}) => {
     const {
       baseCards,
@@ -512,10 +541,11 @@ export function useFolderLinkScan({
         });
       });
       try {
+        const ingestFlat = flat.filter((v) => v.cardType !== 'bim-model');
         const ingest = await ingestFoundFiles(
           projectId,
           stateRef.current.projectName,
-          flat,
+          ingestFlat,
           buildPreviousArtifactMap(cardsBaseline),
         );
         if (ingest.ok) {
@@ -906,12 +936,16 @@ export function useFolderLinkScan({
     ) {
       const applyMode = replaceCanvas ? 'replace' : 'merge';
       if (autoApplyImport && confirmChangesList.length > 0) {
-        const applied = applySyncChangesFromList?.({
+        const applied = await applySyncChangesFromList?.({
           changes: confirmChangesList,
           applyMode,
         });
-        if (applied?.newlyStagedCount > 0) {
-          setTrayRevealActive(true);
+        if (applied?.applied) {
+          if (applied.newlyStagedCount > 0) {
+            setTrayRevealActive(true);
+          }
+          const scanProjectId = projectIdOption ?? activeProjectIdRef.current;
+          await persistDockAheadOfCommitForProject(scanProjectId);
         }
         exitStatus = { previewsRestored: true };
       } else {
@@ -957,6 +991,7 @@ export function useFolderLinkScan({
       });
     }
     if (folderScanProjectId) {
+      await persistDockAheadOfCommitForProject(folderScanProjectId);
       const cached = getCommittedPayload(folderScanProjectId);
       if (cached) {
         auditPlacementStep('folderScan:before-sync', cached, {
@@ -980,6 +1015,7 @@ export function useFolderLinkScan({
     }
   }, [
     commitPlacementState,
+    persistDockAheadOfCommitForProject,
     refreshGraph,
     refreshProjectClusterState,
     invalidateFolderScan,

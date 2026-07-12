@@ -22,6 +22,8 @@ export const AGENT_CHAT_SPAWN_BASE_Y = 80;
  */
 export function canonicalKeyForEntry(entry) {
   if (!entry) return '';
+  if (entry.folderSyncKey) return toCanonicalSyncKey(entry.folderSyncKey);
+  if (entry.relativePath) return cardKeyFromFilename(entry.relativePath);
   const fromFile = folderRelativePathFromVersion(entry.versions?.[0]);
   if (fromFile) return cardKeyFromFilename(fromFile);
   return toCanonicalSyncKey(entry.key);

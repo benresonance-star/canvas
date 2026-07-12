@@ -1,7 +1,7 @@
 /** Bump when architecture or shipped load behavior changes. */
 import { getArchitectureGraphManifest } from './architecture/index.js';
 
-export const ARCHITECTURE_SPEC_VERSION = '2026-07-11-artifact-linking';
+export const ARCHITECTURE_SPEC_VERSION = '2026-07-12-folder-ifc-dock';
 
 export const ARCHITECTURE_LAYERS = [
   {
@@ -246,6 +246,15 @@ export const ARCHITECTURE_FEATURES = [
       '`3d-model` cards (`.glb`/`.gltf`) render via lazy `ThreeDArtifactView` (`src/features/threeDArtifact/*`) in `CardPreview` and `ModalContent`. Unpacked GLTF folders collapse at scan (`gltfPackageScan.js`) so bin/textures/license companions stay out of the sync dock; package cards use the folder name. Files ≤100 MB auto-load from preview cache; 100–500 MB use **Load from folder** in fullscreen when linked.',
     layerIds: ['client'],
     tags: ['media', 'ux', '3d'],
+    status: 'current',
+  },
+  {
+    id: 'folder-ifc-dock-bim-viewers',
+    title: 'Folder IFC dock → bim-viewers session',
+    shortDescription:
+      'Linked-folder `.ifc` files stage to the sync holding tray as `bim-model` chips. Dock → canvas placement (`bimViewerFromFolder.js`, `placeStagedCardOnCanvas`) creates federated IFC Viewer session cards (`prefix: bim-viewers`, `viewerKind: ifc-viewer-session`) with `folderSyncKey` + `linkedFolder` model refs. Scan-time `ingestFoundFiles` skips `bim-model`; `registerBimViewerSessionArtifact` runs on placement. First open prepares from IndexedDB cache or folder handle without the empty import placeholder.',
+    layerIds: ['client', 'external'],
+    tags: ['bim', 'sync', 'placement'],
     status: 'current',
   },
   {

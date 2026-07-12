@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_PRIMITIVES_API || '/api';
+const API_BASE = import.meta.env?.VITE_PRIMITIVES_API || '/api';
 const PREVIEW_MAX_BYTES = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 15_000;
 

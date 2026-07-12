@@ -199,6 +199,8 @@ export function isThreeDPackageEntry(entry) {
  */
 export function folderBackedSyncKeyForEntry(entry) {
   if (!entry) return '';
+  if (entry.folderSyncKey) return toCanonicalSyncKey(entry.folderSyncKey);
+  if (entry.relativePath) return cardKeyFromFilename(entry.relativePath);
   const pinned = pinnedVersionForEntry(entry);
   if (pinned?.cardKey) return toCanonicalSyncKey(pinned.cardKey);
   if (isThreeDPackageEntry(entry)) {
