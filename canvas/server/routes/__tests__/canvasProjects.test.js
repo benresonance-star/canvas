@@ -16,6 +16,11 @@ vi.mock('../../repositories/canvas-previews.js', () => ({
   deletePreviewBlobsForProject: vi.fn(),
 }));
 
+vi.mock('../../repositories/artifact-view-diagnostics.js', () => ({
+  recordArtifactViewDiagnostics: vi.fn(),
+  summarizeArtifactViewDiagnostics: vi.fn(),
+}));
+
 vi.mock('../../lib/projectSyncHub.js', () => ({
   subscribeProjectSync: vi.fn(),
   unsubscribeProjectSync: vi.fn(),
@@ -31,6 +36,7 @@ vi.mock('../../lib/workspaceIndexSyncHub.js', () => ({
 const repo = await import('../../repositories/canvas-projects.js');
 const projectHub = await import('../../lib/projectSyncHub.js');
 const indexHub = await import('../../lib/workspaceIndexSyncHub.js');
+const diagnostics = await import('../../repositories/artifact-view-diagnostics.js');
 const { registerCanvasProjectRoutes } = await import('../canvasProjects.js');
 
 function createApp() {
@@ -116,6 +122,49 @@ describe('canvas project routes', () => {
     expect(body.error).toBe('expectedRevision must be a non-negative integer');
     expect(repo.patchCanvasProject).not.toHaveBeenCalled();
     expect(projectHub.publishProjectSync).not.toHaveBeenCalled();
+  });
+
+  it('POST artifact-view diagnostics validates and records rollout counts', async () => {
+    diagnostics.recordArtifactViewDiagnostics.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+    const { res, body } = await jsonRequest(
+      server,
+      '/canvas/projects/p1/artifact-view-diagnostics',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          mode: 'shadow',
+          eventType: 'comparison',
+          counts: { loads: 1, geometry_mismatch: 2 },
+        }),
+      },
+    );
+
+    expect(res.status).toBe(202);
+    expect(body.recorded).toBe(2);
+    expect(diagnostics.recordArtifactViewDiagnostics).toHaveBeenCalledWith({
+      projectId: 'p1',
+      mode: 'shadow',
+      eventType: 'comparison',
+      counts: { loads: 1, geometry_mismatch: 2 },
+      metadata: {},
+    });
+  });
+
+  it('GET artifact-view diagnostics bounds the summary window', async () => {
+    diagnostics.summarizeArtifactViewDiagnostics.mockResolvedValue([
+      { mode: 'shadow', eventType: 'comparison', category: 'loads', count: 3 },
+    ]);
+    const { res, body } = await jsonRequest(
+      server,
+      '/canvas/projects/p1/artifact-view-diagnostics?hours=999',
+    );
+
+    expect(res.status).toBe(200);
+    expect(body.hours).toBe(168);
+    expect(diagnostics.summarizeArtifactViewDiagnostics).toHaveBeenCalledWith(
+      'p1',
+      { hours: 168 },
+    );
   });
 
   it('PUT /canvas/index returns conflict payload and does not publish SSE', async () => {
