@@ -44,3 +44,16 @@ export function composeUserNoteArtifactViews(payload, views, { mode = 'legacy' }
   });
   return { payload: { ...payload, cards }, mismatches };
 }
+
+export function summarizeUserNoteArtifactViewComparison(payload, mismatches) {
+  const eligibleCards = (payload?.cards ?? []).filter((card) => card?.type === 'user_note').length;
+  const counts = { loads: 1, eligible_cards: eligibleCards };
+  for (const mismatch of mismatches ?? []) {
+    counts[mismatch.category] = (counts[mismatch.category] ?? 0) + 1;
+  }
+  const mismatchedCards = new Set(
+    (mismatches ?? []).map((mismatch) => mismatch.cardId).filter(Boolean),
+  ).size;
+  counts.matched_cards = Math.max(0, eligibleCards - mismatchedCards);
+  return counts;
+}

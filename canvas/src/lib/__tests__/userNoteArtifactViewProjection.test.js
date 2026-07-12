@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { composeUserNoteArtifactViews } from '../userNoteArtifactViewProjection.js';
+import {
+  composeUserNoteArtifactViews,
+  summarizeUserNoteArtifactViewComparison,
+} from '../userNoteArtifactViewProjection.js';
 
 const card = {
   id: 'c1', type: 'user_note', x: 1, y: 2, width: 3, height: 4,
@@ -21,5 +24,18 @@ describe('composeUserNoteArtifactViews', () => {
     const result = composeUserNoteArtifactViews({ cards: [card] }, [view], { mode: 'canonical' });
     expect(result.payload.cards[0]).toMatchObject({ x: 10, y: 20, width: 30, height: 40 });
     expect(result.payload.cards[0].versions).toEqual(card.versions);
+  });
+
+  it('summarizes clean and mismatched cards for rollout telemetry', () => {
+    const secondCard = { ...card, id: 'c2', versions: [{ artifactRef: { id: 'a2' } }] };
+    expect(summarizeUserNoteArtifactViewComparison(
+      { cards: [card, secondCard] },
+      [{ category: 'geometry_mismatch', cardId: 'c1' }],
+    )).toEqual({
+      loads: 1,
+      eligible_cards: 2,
+      geometry_mismatch: 1,
+      matched_cards: 1,
+    });
   });
 });

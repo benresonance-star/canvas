@@ -9,3 +9,16 @@ export async function listProjectArtifactViews(projectId, { surface = null } = {
   const body = await response.json();
   return body.views ?? [];
 }
+
+export async function reportProjectArtifactViewDiagnostics(projectId, diagnostic) {
+  const response = await fetch(
+    `${resolveApiBase()}/canvas/projects/${encodeURIComponent(projectId)}/artifact-view-diagnostics`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(diagnostic),
+      keepalive: true,
+    },
+  );
+  if (!response.ok) throw new Error(`Artifact view diagnostic write failed (${response.status})`);
+}

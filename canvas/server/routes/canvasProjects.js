@@ -21,6 +21,24 @@ import {
 } from '../lib/workspaceIndexSyncHub.js';
 import { deletePreviewBlobsForProject } from '../repositories/canvas-previews.js';
 import { listArtifactViewsByProject } from '../repositories/artifact-views.js';
+import {
+  recordArtifactViewDiagnostics,
+  summarizeArtifactViewDiagnostics,
+} from '../repositories/artifact-view-diagnostics.js';
+
+const ARTIFACT_VIEW_DIAGNOSTIC_CATEGORIES = new Set([
+  'loads',
+  'eligible_cards',
+  'matched_cards',
+  'missing_view',
+  'identity_mismatch',
+  'surface_mismatch',
+  'geometry_mismatch',
+  'duplicate_view',
+  'missing_legacy_card',
+  'version_mismatch',
+  'read_fallback',
+]);
 
 function isPlainObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -154,6 +172,52 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
         surface: req.query.surface || null,
       });
       res.json({ views });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/canvas/projects/:projectId/artifact-view-diagnostics', async (req, res) => {
+    try {
+      const { mode, eventType, counts, metadata } = req.body ?? {};
+      if (!['shadow', 'canonical'].includes(mode)) {
+        return res.status(400).json({ error: 'invalid artifact view mode' });
+      }
+      if (!['comparison', 'read_fallback'].includes(eventType)) {
+        return res.status(400).json({ error: 'invalid diagnostic event type' });
+      }
+      if (!isPlainObject(counts) || Object.keys(counts).length === 0) {
+        return res.status(400).json({ error: 'diagnostic counts required' });
+      }
+      for (const [category, count] of Object.entries(counts)) {
+        if (!ARTIFACT_VIEW_DIAGNOSTIC_CATEGORIES.has(category)) {
+          return res.status(400).json({ error: `invalid diagnostic category: ${category}` });
+        }
+        if (!Number.isInteger(count) || count < 0 || count > 100000) {
+          return res.status(400).json({ error: `invalid diagnostic count: ${category}` });
+        }
+      }
+      const rows = await recordArtifactViewDiagnostics({
+        projectId: req.params.projectId,
+        mode,
+        eventType,
+        counts,
+        metadata: isPlainObject(metadata) ? metadata : {},
+      });
+      res.status(202).json({ recorded: rows.length });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/canvas/projects/:projectId/artifact-view-diagnostics', async (req, res) => {
+    try {
+      const requestedHours = Number(req.query.hours ?? 24);
+      const hours = Number.isFinite(requestedHours)
+        ? Math.min(168, Math.max(1, Math.round(requestedHours)))
+        : 24;
+      const summary = await summarizeArtifactViewDiagnostics(req.params.projectId, { hours });
+      res.json({ hours, summary });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }

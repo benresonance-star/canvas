@@ -7,10 +7,14 @@ import {
   loadSyncedProjectDocument,
 } from '../projectSync.js';
 import { reconcileSpecCanvasOnLoad } from '../specDataPlaneSync.js';
-import { listProjectArtifactViews } from '../artifactViewsApi.js';
+import {
+  listProjectArtifactViews,
+  reportProjectArtifactViewDiagnostics,
+} from '../artifactViewsApi.js';
 import {
   composeUserNoteArtifactViews,
   resolveArtifactViewMode,
+  summarizeUserNoteArtifactViewComparison,
 } from '../userNoteArtifactViewProjection.js';
 
 /**
@@ -30,6 +34,11 @@ export async function loadProjectStructure(projectId, { localOnly = false } = {}
     try {
       const views = await listProjectArtifactViews(projectId);
       const composed = composeUserNoteArtifactViews(reconciled, views, { mode });
+      void reportProjectArtifactViewDiagnostics(projectId, {
+        mode,
+        eventType: 'comparison',
+        counts: summarizeUserNoteArtifactViewComparison(reconciled, composed.mismatches),
+      }).catch(() => {});
       if (composed.mismatches.length > 0) {
         console.warn('[artifact-view] user_note projection drift', {
           projectId,
@@ -39,6 +48,12 @@ export async function loadProjectStructure(projectId, { localOnly = false } = {}
       }
       return composed.payload;
     } catch (error) {
+      void reportProjectArtifactViewDiagnostics(projectId, {
+        mode,
+        eventType: 'read_fallback',
+        counts: { read_fallback: 1 },
+        metadata: { errorName: error?.name ?? 'Error' },
+      }).catch(() => {});
       console.warn('[artifact-view] canonical read fallback', {
         projectId,
         mode,
