@@ -51,3 +51,11 @@ npm.cmd run artifact-view:authority:projection
 ```
 
 This database switch complements the frontend `VITE_USER_NOTE_ARTIFACT_VIEW_WRITES` flag. Keep both rollback controls documented until the compatibility payload and trigger are removed in a separately approved destructive migration.
+
+## Checkpoint 4: payload geometry contraction
+
+Migration `0031_contract_user_note_geometry.sql` moves the verification and lifecycle trigger to `BEFORE` document persistence and adds a second ordered trigger that strips `x`, `y`, `width`, `height`, `zIndex`, and transient view versions from eligible canvas user notes. Artifact identity and content references remain in the project document; rendered placement is reconstructed from `artifact_view` on every load.
+
+Canonical read and write modes are now the defaults. A canonical view read failure fails the project load closed rather than rendering geometry-less notes. Pending or unresolved notes keep their compatibility geometry until they acquire an unambiguous artifact identity and active view.
+
+`projection` mode remains an emergency reconstruction path: a client built with both legacy flags can repopulate compatibility geometry through ordinary document writes. This is now a recovery operation, not the normal persisted representation.

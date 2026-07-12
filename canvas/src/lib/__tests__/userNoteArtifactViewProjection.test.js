@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   composeUserNoteArtifactViews,
+  resolveArtifactViewMode,
+  resolveArtifactViewWriteMode,
   shouldReadUserNoteArtifactViews,
   summarizeUserNoteArtifactViewComparison,
 } from '../userNoteArtifactViewProjection.js';
@@ -15,6 +17,13 @@ const view = {
 };
 
 describe('composeUserNoteArtifactViews', () => {
+  it('defaults reads and writes to canonical authority after payload contraction', () => {
+    expect(resolveArtifactViewMode({})).toBe('canonical');
+    expect(resolveArtifactViewWriteMode({})).toBe('canonical');
+    expect(resolveArtifactViewMode({ VITE_USER_NOTE_ARTIFACT_VIEWS: 'legacy' })).toBe('legacy');
+    expect(resolveArtifactViewWriteMode({ VITE_USER_NOTE_ARTIFACT_VIEW_WRITES: 'legacy' }))
+      .toBe('legacy');
+  });
   it('keeps canonical reads authoritative during local-only project switches', () => {
     expect(shouldReadUserNoteArtifactViews('legacy', { localOnly: false })).toBe(false);
     expect(shouldReadUserNoteArtifactViews('shadow', { localOnly: true })).toBe(false);

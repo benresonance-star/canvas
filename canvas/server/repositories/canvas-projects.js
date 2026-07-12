@@ -73,6 +73,39 @@ function stripLayoutPlacementMap(artifactPlacements) {
   );
 }
 
+async function canonicalizeUserNoteGeometry(projectId, payload) {
+  if (!(payload?.cards ?? []).some((card) => card?.type === 'user_note')) return payload;
+  const result = await query(
+    `SELECT view.artifact_id, view.x, view.y, view.width, view.height, view.z_index
+     FROM artifact_view view
+     JOIN canvas_runtime_setting setting
+       ON setting.key = 'artifact_view_write_authority'
+      AND setting.value = 'verification'
+     WHERE view.project_id = $1 AND view.surface = 'canvas'
+       AND view.view_type = 'card' AND view.archived_at IS NULL`,
+    [projectId],
+  );
+  if (result.rows.length === 0) return payload;
+  const views = new Map(result.rows.map((view) => [view.artifact_id, view]));
+  return {
+    ...payload,
+    cards: (payload?.cards ?? []).map((card) => {
+      if (card?.type !== 'user_note') return card;
+      const ids = [...new Set(
+        (card.versions ?? []).map((version) => version?.artifactRef?.id).filter(Boolean),
+      )];
+      const view = ids.length === 1 ? views.get(ids[0]) : null;
+      if (!view) return card;
+      return {
+        ...card,
+        x: Number(view.x), y: Number(view.y),
+        width: Number(view.width), height: Number(view.height),
+        ...(view.z_index == null ? {} : { zIndex: Number(view.z_index) }),
+      };
+    }),
+  };
+}
+
 function emptyPayloadWouldEraseServer(payload, existingPayload, allowEmptyRemoteOverwrite) {
   return (
     !allowEmptyRemoteOverwrite
@@ -582,6 +615,7 @@ export async function putCanvasProject(
     [projectId],
   );
   const now = new Date().toISOString();
+  payload = await canonicalizeUserNoteGeometry(projectId, payload);
 
   if (!existing.rows[0]) {
     if (expected > 0) {
@@ -743,7 +777,8 @@ export async function patchCanvasProject(
         updatedAt: null,
       };
     }
-    const created = applyProjectOps({}, ops);
+    let created = applyProjectOps({}, ops);
+    created = await canonicalizeUserNoteGeometry(projectId, created);
     syncTraceLog(traceId, 'db:patch-insert', { projectId });
     const inserted = await query(
       `INSERT INTO canvas_project_document (project_id, payload, updated_at, revision)
@@ -796,7 +831,8 @@ export async function patchCanvasProject(
     };
   }
 
-  const merged = applyProjectOps(existing.rows[0].payload, ops);
+  let merged = applyProjectOps(existing.rows[0].payload, ops);
+  merged = await canonicalizeUserNoteGeometry(projectId, merged);
   if (emptyPayloadWouldEraseServer(
     merged,
     existing.rows[0].payload,

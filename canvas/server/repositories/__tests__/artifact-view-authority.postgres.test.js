@@ -81,11 +81,11 @@ describe('artifact-view write authority postgres integration', () => {
     )).rejects.toMatchObject({ code: '23514' });
 
     const unchanged = await query(
-      `SELECT payload->'cards'->0->>'x' AS x FROM canvas_project_document
+      `SELECT payload->'cards'->0 ? 'x' AS has_x FROM canvas_project_document
        WHERE project_id = $1`,
       [PROJECT_ID],
     );
-    expect(Number(unchanged.rows[0].x)).toBe(10);
+    expect(unchanged.rows[0].has_x).toBe(false);
   });
 
   it('restores legacy projection behavior immediately in projection mode', async () => {

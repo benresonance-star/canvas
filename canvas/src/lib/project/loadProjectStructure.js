@@ -72,6 +72,7 @@ export async function loadProjectStructure(projectId, { localOnly = false } = {}
         mode,
         error: error.message,
       });
+      if (mode === 'canonical') throw error;
       return reconciled;
     }
   } catch {

@@ -34,6 +34,12 @@ export function legacyUserNoteToArtifactView(projectId, entry, surface) {
     viewState: {},
   };
   if (surface === 'dock') return base;
+  const geometryFields = ['x', 'y', 'width', 'height'];
+  const presentGeometry = geometryFields.filter(
+    (field) => entry[field] !== undefined && entry[field] !== null,
+  );
+  if (presentGeometry.length === 0) return { ...base, geometryContracted: true };
+  if (presentGeometry.length !== geometryFields.length) return { ...base, geometryInvalid: true };
   return {
     ...base,
     x: Number(entry.x),
@@ -72,7 +78,7 @@ export function auditProjectUserNoteViews(projectId, payload, storedViews) {
       counts.missing_view = (counts.missing_view ?? 0) + 1;
       continue;
     }
-    const geometryMismatch = ['x', 'y', 'width', 'height', 'zIndex'].some(
+    const geometryMismatch = !view.geometryContracted && ['x', 'y', 'width', 'height', 'zIndex'].some(
       (field) => Number(view[field] ?? 0) !== Number(actual[field] ?? 0),
     );
     if (geometryMismatch) {
@@ -107,7 +113,13 @@ export function compareUserNoteView(legacy, canonical) {
   const artifactId = artifactIdForUserNote(legacy);
   if (artifactId !== canonical.artifactId) return 'identity_mismatch';
   if (canonical.surface !== 'canvas') return 'surface_mismatch';
-  for (const field of ['x', 'y', 'width', 'height']) {
+  const geometryFields = ['x', 'y', 'width', 'height'];
+  const presentGeometry = geometryFields.filter(
+    (field) => legacy?.[field] !== undefined && legacy?.[field] !== null,
+  );
+  if (presentGeometry.length === 0) return null;
+  if (presentGeometry.length !== geometryFields.length) return 'geometry_mismatch';
+  for (const field of geometryFields) {
     if (Number(legacy?.[field]) !== Number(canonical?.[field])) return 'geometry_mismatch';
   }
   if (

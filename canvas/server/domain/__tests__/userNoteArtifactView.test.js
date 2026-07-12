@@ -47,6 +47,15 @@ describe('userNoteArtifactView', () => {
     expect(compareUserNoteView(note, null)).toBe('missing_view');
   });
 
+  it('treats fully contracted geometry as canonical while rejecting partial geometry', () => {
+    const view = legacyUserNoteToArtifactView('project-1', note, 'canvas');
+    const { x: _x, y: _y, width: _width, height: _height, zIndex: _zIndex, ...contracted } = note;
+    expect(legacyUserNoteToArtifactView('project-1', contracted, 'canvas'))
+      .toMatchObject({ geometryContracted: true });
+    expect(compareUserNoteView(contracted, view)).toBeNull();
+    expect(compareUserNoteView({ ...contracted, x: 1 }, view)).toBe('geometry_mismatch');
+  });
+
   it('audits stored views against the authoritative server document', () => {
     const view = legacyUserNoteToArtifactView('project-1', note, 'canvas');
     expect(auditProjectUserNoteViews('project-1', { cards: [note] }, [{

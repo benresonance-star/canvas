@@ -7,11 +7,11 @@ export function artifactIdForCard(card) {
 
 export function resolveArtifactViewMode(env = import.meta.env) {
   const mode = env?.VITE_USER_NOTE_ARTIFACT_VIEWS;
-  return ['legacy', 'shadow', 'canonical'].includes(mode) ? mode : 'legacy';
+  return ['legacy', 'shadow', 'canonical'].includes(mode) ? mode : 'canonical';
 }
 
 export function resolveArtifactViewWriteMode(env = import.meta.env) {
-  return env?.VITE_USER_NOTE_ARTIFACT_VIEW_WRITES === 'canonical' ? 'canonical' : 'legacy';
+  return env?.VITE_USER_NOTE_ARTIFACT_VIEW_WRITES === 'legacy' ? 'legacy' : 'canonical';
 }
 
 export function shouldReadUserNoteArtifactViews(mode, { localOnly = false } = {}) {
@@ -36,9 +36,16 @@ export function composeUserNoteArtifactViews(payload, views, { mode = 'legacy' }
       mismatches.push({ category: 'missing_view', artifactId, cardId: card.id ?? null });
       return card;
     }
-    const geometryMismatch = surface === 'canvas' && ['x', 'y', 'width', 'height'].some(
-      (field) => Number(card[field]) !== Number(view[field]),
+    const geometryFields = ['x', 'y', 'width', 'height'];
+    const presentGeometry = geometryFields.filter(
+      (field) => card[field] !== undefined && card[field] !== null,
     );
+    const geometryMismatch = surface === 'canvas'
+      && presentGeometry.length > 0
+      && (
+        presentGeometry.length !== geometryFields.length
+        || geometryFields.some((field) => Number(card[field]) !== Number(view[field]))
+      );
     if (geometryMismatch) {
       mismatches.push({ category: 'geometry_mismatch', artifactId, cardId: card.id ?? null });
     }

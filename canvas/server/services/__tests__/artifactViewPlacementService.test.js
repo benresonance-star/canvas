@@ -22,6 +22,11 @@ function queryResult(sql) {
   };
   if (sql.includes('SELECT * FROM artifact_view')) return { rows: [{ id: 'view-1', version: 7 }] };
   if (sql.includes('SELECT id FROM artifact_view')) return { rows: [] };
+  if (sql.includes('SELECT artifact_id, x, y, width, height, z_index')) return {
+    rows: [{
+      artifact_id: 'artifact-1', x: 10, y: 20, width: 300, height: 180, z_index: null,
+    }],
+  };
   if (sql.includes('INSERT INTO artifact_view')) return {
     rows: [{ artifact_id: 'artifact-1', surface: 'dock', version: 1, updated_at: 'now' }],
   };
