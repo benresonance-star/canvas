@@ -51,6 +51,45 @@ export function projectUserNoteViews(projectId, payload) {
   ].filter(Boolean);
 }
 
+function artifactViewIdentity(view) {
+  return `${view?.artifactId ?? ''}\0${view?.surface ?? ''}\0${view?.viewType ?? ''}`;
+}
+
+export function auditProjectUserNoteViews(projectId, payload, storedViews) {
+  const allNotes = [payload?.cards ?? [], payload?.stagedSyncCards ?? []]
+    .flat()
+    .filter((entry) => entry?.type === 'user_note');
+  const expectedViews = projectUserNoteViews(projectId, payload);
+  const expected = new Map(expectedViews.map((view) => [artifactViewIdentity(view), view]));
+  const stored = new Map((storedViews ?? []).map((view) => [artifactViewIdentity(view), view]));
+  const counts = { loads: 1, eligible_cards: expectedViews.length };
+  let matched = 0;
+  const unresolved = allNotes.length - expectedViews.length;
+  if (unresolved > 0) counts.identity_mismatch = unresolved;
+  for (const [id, view] of expected) {
+    const actual = stored.get(id);
+    if (!actual) {
+      counts.missing_view = (counts.missing_view ?? 0) + 1;
+      continue;
+    }
+    const geometryMismatch = ['x', 'y', 'width', 'height', 'zIndex'].some(
+      (field) => Number(view[field] ?? 0) !== Number(actual[field] ?? 0),
+    );
+    if (geometryMismatch) {
+      counts.geometry_mismatch = (counts.geometry_mismatch ?? 0) + 1;
+    } else {
+      matched += 1;
+    }
+  }
+  for (const id of stored.keys()) {
+    if (!expected.has(id)) {
+      counts.missing_legacy_card = (counts.missing_legacy_card ?? 0) + 1;
+    }
+  }
+  counts.matched_cards = matched;
+  return counts;
+}
+
 export function applyArtifactViewToLegacyCard(card, view) {
   if (!card || !view || view.surface !== 'canvas') return card;
   return {

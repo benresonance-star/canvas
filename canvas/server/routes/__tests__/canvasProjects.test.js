@@ -21,6 +21,10 @@ vi.mock('../../repositories/artifact-view-diagnostics.js', () => ({
   summarizeArtifactViewDiagnostics: vi.fn(),
 }));
 
+vi.mock('../../repositories/artifact-views.js', () => ({
+  listArtifactViewsByProject: vi.fn(),
+}));
+
 vi.mock('../../lib/projectSyncHub.js', () => ({
   subscribeProjectSync: vi.fn(),
   unsubscribeProjectSync: vi.fn(),
@@ -37,6 +41,7 @@ const repo = await import('../../repositories/canvas-projects.js');
 const projectHub = await import('../../lib/projectSyncHub.js');
 const indexHub = await import('../../lib/workspaceIndexSyncHub.js');
 const diagnostics = await import('../../repositories/artifact-view-diagnostics.js');
+const artifactViews = await import('../../repositories/artifact-views.js');
 const { registerCanvasProjectRoutes } = await import('../canvasProjects.js');
 
 function createApp() {
@@ -165,6 +170,23 @@ describe('canvas project routes', () => {
       'p1',
       { hours: 168 },
     );
+  });
+
+  it('GET artifact-view audit compares server-authoritative document geometry', async () => {
+    const note = {
+      id: 'c1', type: 'user_note', x: 1, y: 2, width: 3, height: 4,
+      versions: [{ artifactRef: { id: 'a1' } }],
+    };
+    repo.getCanvasProject.mockResolvedValue({ payload: { cards: [note] } });
+    artifactViews.listArtifactViewsByProject.mockResolvedValue([{
+      id: expect.anything,
+      artifactId: 'a1', surface: 'canvas', viewType: 'card',
+      x: 1, y: 2, width: 3, height: 4,
+    }]);
+
+    const { res, body } = await jsonRequest(server, '/canvas/projects/p1/artifact-view-audit');
+    expect(res.status).toBe(200);
+    expect(body.counts).toMatchObject({ loads: 1, eligible_cards: 1 });
   });
 
   it('PUT /canvas/index returns conflict payload and does not publish SSE', async () => {

@@ -10,6 +10,12 @@ export function resolveArtifactViewMode(env = import.meta.env) {
   return ['legacy', 'shadow', 'canonical'].includes(mode) ? mode : 'legacy';
 }
 
+export function shouldReadUserNoteArtifactViews(mode, { localOnly = false } = {}) {
+  if (mode === 'canonical') return true;
+  if (mode === 'shadow') return !localOnly;
+  return false;
+}
+
 export function composeUserNoteArtifactViews(payload, views, { mode = 'legacy' } = {}) {
   if (mode === 'legacy') return { payload, mismatches: [] };
   const canvasViews = new Map(

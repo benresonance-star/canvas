@@ -21,6 +21,7 @@ import {
 } from '../lib/workspaceIndexSyncHub.js';
 import { deletePreviewBlobsForProject } from '../repositories/canvas-previews.js';
 import { listArtifactViewsByProject } from '../repositories/artifact-views.js';
+import { auditProjectUserNoteViews } from '../domain/userNoteArtifactView.js';
 import {
   recordArtifactViewDiagnostics,
   summarizeArtifactViewDiagnostics,
@@ -172,6 +173,19 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
         surface: req.query.surface || null,
       });
       res.json({ views });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/canvas/projects/:projectId/artifact-view-audit', async (req, res) => {
+    try {
+      const project = await getCanvasProject(req.params.projectId);
+      if (!project) return res.status(404).json({ error: 'project not found' });
+      const views = await listArtifactViewsByProject(req.params.projectId);
+      res.json({
+        counts: auditProjectUserNoteViews(req.params.projectId, project.payload, views),
+      });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
