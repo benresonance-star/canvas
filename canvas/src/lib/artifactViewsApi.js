@@ -50,3 +50,22 @@ export async function commitProjectArtifactViewPlacements(projectId, placements)
   }
   return body;
 }
+
+export async function commitProjectArtifactViewTransfer(projectId, transfer, payload) {
+  const response = await fetch(
+    `${resolveApiBase()}/canvas/projects/${encodeURIComponent(projectId)}/artifact-view-transfers`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transfer, payload }),
+    },
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(body.error || `Artifact view transfer failed (${response.status})`);
+    error.status = response.status;
+    error.currentVersion = body.currentVersion ?? null;
+    throw error;
+  }
+  return body;
+}

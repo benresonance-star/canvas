@@ -86,7 +86,10 @@ import { getCachedFolderHandle } from '../../lib/folderSessionCache.js';
 import { loadFolderHandle } from '../../lib/folderStore.js';
 import { removeStagedCardsByKey } from '../../lib/canvasCardMerge.js';
 import { requestActionSync } from '../../lib/actionSync.js';
-import { commitProjectArtifactViewPlacements } from '../../lib/artifactViewsApi.js';
+import {
+  commitProjectArtifactViewPlacements,
+  commitProjectArtifactViewTransfer,
+} from '../../lib/artifactViewsApi.js';
 import {
   artifactIdForCard,
   resolveArtifactViewMode,
@@ -343,6 +346,43 @@ export function buildCanonicalUserNotePlacementCommand(cards, cardUpdates, env =
     });
   }
   return placements;
+}
+
+export function buildCanonicalUserNoteTransferCommand(
+  sourceEntry,
+  targetEntry,
+  fromSurface,
+  toSurface,
+  env = import.meta.env,
+) {
+  if (resolveArtifactViewMode(env) !== 'canonical'
+    || resolveArtifactViewWriteMode(env) !== 'canonical'
+    || sourceEntry?.type !== 'user_note'
+    || targetEntry?.type !== 'user_note'
+    || !Number.isInteger(sourceEntry.artifactViewVersion)) return null;
+  const artifactId = artifactIdForCard(sourceEntry);
+  if (!artifactId || artifactIdForCard(targetEntry) !== artifactId) return null;
+  const command = {
+    artifactId,
+    expectedVersion: sourceEntry.artifactViewVersion,
+    fromSurface,
+    toSurface,
+  };
+  if (toSurface === 'canvas') {
+    if (!['x', 'y', 'width', 'height'].every(
+      (field) => Number.isFinite(Number(targetEntry[field])),
+    )) return null;
+    Object.assign(command, {
+      x: Number(targetEntry.x),
+      y: Number(targetEntry.y),
+      width: Number(targetEntry.width),
+      height: Number(targetEntry.height),
+      ...(Number.isFinite(Number(targetEntry.zIndex))
+        ? { zIndex: Number(targetEntry.zIndex) }
+        : {}),
+    });
+  }
+  return command;
 }
 
 export function updateCardVersionInStateRef(stateRef, cardId, versionNum, updatedVersion) {
@@ -910,6 +950,7 @@ export function useCanvasDocument({ refs, deps }) {
       if (!isPointerInTrayDropZone(clientX, clientY, rect)) return false;
 
       const projectId = activeProjectIdRef.current;
+      const sourceCard = stateRef.current.cards.find((card) => card.id === cardId);
       const result = transferCardToDock(
         stateRef.current.cards,
         stagedSyncCardsRef.current,
@@ -917,6 +958,9 @@ export function useCanvasDocument({ refs, deps }) {
         getCommittedPayload(projectId)?.artifactPlacements ?? null,
       );
       if (!result.docked) return false;
+      const canonicalTransfer = buildCanonicalUserNoteTransferCommand(
+        sourceCard, result.staged, 'canvas', 'dock',
+      );
 
       invalidateFolderScan();
       stateRef.current = { ...stateRef.current, cards: result.cards };
@@ -933,6 +977,36 @@ export function useCanvasDocument({ refs, deps }) {
         const traceId = createSyncTraceId();
         syncTraceLog(traceId, 'ui:placement-dock', { projectId, cardId });
         if (projectId) {
+          if (canonicalTransfer) {
+            try {
+              const payload = {
+                ...(getCommittedPayload(projectId) ?? {}),
+                ...stateRef.current,
+                cards: result.cards,
+                stagedSyncCards: result.stagedSyncCards,
+                artifactPlacements: result.artifactPlacements,
+              };
+              const committed = await commitProjectArtifactViewTransfer(
+                projectId, canonicalTransfer, payload,
+              );
+              const nextStaged = stagedSyncCardsRef.current.map((entry) => (
+                artifactIdForCard(entry) === canonicalTransfer.artifactId
+                  ? { ...entry, artifactViewVersion: committed.view.version }
+                  : entry
+              ));
+              stagedSyncCardsRef.current = nextStaged;
+              setStagedSyncCards(nextStaged);
+              await commitPlacementState(projectId, {
+                artifactPlacements: result.artifactPlacements,
+                reason: 'artifactViewTransfer:dock',
+                traceId,
+              });
+              void refreshGraph();
+              return;
+            } catch (error) {
+              console.warn('[artifact-view] canonical dock transfer failed; using compatibility write', error);
+            }
+          }
           await commitPlacementState(projectId, {
             artifactPlacements: result.artifactPlacements,
             reason: 'placementTransfer:dock',
@@ -1014,6 +1088,13 @@ export function useCanvasDocument({ refs, deps }) {
         getCommittedPayload(projectId)?.artifactPlacements ?? null,
       );
       if (!result.placed) return;
+
+      const initiallyPlaced = result.cards.find(
+        (entry) => artifactIdForCard(entry) === artifactIdForCard(staged),
+      );
+      const canonicalTransfer = buildCanonicalUserNoteTransferCommand(
+        staged, initiallyPlaced, 'dock', 'canvas',
+      );
 
       const prevIds = new Set((stateRef.current.cards ?? []).map((c) => c.id));
       let cardsForCommit = result.cards;
@@ -1128,13 +1209,51 @@ export function useCanvasDocument({ refs, deps }) {
         }
       }
       if (projectId) {
-        const commitResult = await commitPlacementState(projectId, {
-          artifactPlacements: artifactPlacementsForCommit,
-          reason: 'placementTransfer:canvas',
-          traceId,
-        });
+        let commitResult = null;
+        if (canonicalTransfer) {
+          const target = cardsForCommit.find(
+            (entry) => artifactIdForCard(entry) === canonicalTransfer.artifactId,
+          );
+          const finalTransfer = buildCanonicalUserNoteTransferCommand(
+            staged, target, 'dock', 'canvas',
+          );
+          try {
+            const payload = {
+              ...(getCommittedPayload(projectId) ?? {}),
+              ...stateRef.current,
+              cards: cardsForCommit,
+              stagedSyncCards: result.stagedSyncCards,
+              artifactPlacements: artifactPlacementsForCommit,
+            };
+            const committed = await commitProjectArtifactViewTransfer(
+              projectId, finalTransfer, payload,
+            );
+            const nextCards = stateRef.current.cards.map((entry) => (
+              artifactIdForCard(entry) === finalTransfer.artifactId
+                ? { ...entry, artifactViewVersion: committed.view.version }
+                : entry
+            ));
+            stateRef.current = { ...stateRef.current, cards: nextCards };
+            setState((prev) => ({ ...prev, cards: nextCards }));
+            const localCommit = await commitPlacementState(projectId, {
+              artifactPlacements: artifactPlacementsForCommit,
+              reason: 'artifactViewTransfer:canvas',
+              traceId,
+            });
+            commitResult = { ...localCommit, canonical: true };
+          } catch (error) {
+            console.warn('[artifact-view] canonical canvas transfer failed; using compatibility write', error);
+          }
+        }
+        if (!commitResult) {
+          commitResult = await commitPlacementState(projectId, {
+            artifactPlacements: artifactPlacementsForCommit,
+            reason: 'placementTransfer:canvas',
+            traceId,
+          });
+        }
         if (!commitResult?.deferred) {
-          await requestPlacementTransferSync({ traceId });
+          if (!commitResult.canonical) await requestPlacementTransferSync({ traceId });
         }
       }
       void refreshGraph();

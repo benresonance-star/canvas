@@ -22,7 +22,10 @@ import {
 import { deletePreviewBlobsForProject } from '../repositories/canvas-previews.js';
 import { listArtifactViewsByProject } from '../repositories/artifact-views.js';
 import { auditProjectUserNoteViews } from '../domain/userNoteArtifactView.js';
-import { commitArtifactViewPlacements } from '../services/artifactViewPlacementService.js';
+import {
+  commitArtifactViewPlacements,
+  commitArtifactViewTransfer,
+} from '../services/artifactViewPlacementService.js';
 import {
   recordArtifactViewDiagnostics,
   summarizeArtifactViewDiagnostics,
@@ -212,11 +215,51 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
         placements,
         actorId: req.body?.actorId,
       });
-      publishProjectSync('project_updated', {
-        projectId: req.params.projectId,
+      publishProjectSync(req.params.projectId, 'project_updated', {
         revision: result.documentRevision,
         updatedAt: result.updatedAt,
         reason: 'artifact-view-placement',
+      });
+      res.json(result);
+    } catch (e) {
+      res.status(e.status ?? 500).json({
+        error: e.message,
+        currentVersion: e.currentVersion ?? null,
+      });
+    }
+  });
+
+  app.post('/canvas/projects/:projectId/artifact-view-transfers', async (req, res) => {
+    try {
+      const { transfer, payload, actorId } = req.body ?? {};
+      if (!transfer?.artifactId || !Number.isInteger(transfer.expectedVersion)) {
+        return res.status(400).json({ error: 'artifactId and expectedVersion required' });
+      }
+      const surfaces = new Set(['canvas', 'dock']);
+      if (!surfaces.has(transfer.fromSurface)
+        || !surfaces.has(transfer.toSurface)
+        || transfer.fromSurface === transfer.toSurface) {
+        return res.status(400).json({ error: 'valid distinct surfaces required' });
+      }
+      if (!isPlainObject(payload)
+        || !Array.isArray(payload.cards)
+        || !Array.isArray(payload.stagedSyncCards)) {
+        return res.status(400).json({ error: 'compatibility payload required' });
+      }
+      if (transfer.toSurface === 'canvas') {
+        for (const field of ['x', 'y', 'width', 'height']) {
+          if (!Number.isFinite(Number(transfer[field]))) {
+            return res.status(400).json({ error: `invalid transfer ${field}` });
+          }
+        }
+      }
+      const result = await commitArtifactViewTransfer(req.params.projectId, {
+        transfer, payload, actorId,
+      });
+      publishProjectSync(req.params.projectId, 'project_updated', {
+        revision: result.documentRevision,
+        updatedAt: result.updatedAt,
+        reason: 'artifact-view-transfer',
       });
       res.json(result);
     } catch (e) {

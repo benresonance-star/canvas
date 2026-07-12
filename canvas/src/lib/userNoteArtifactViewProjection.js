@@ -22,28 +22,28 @@ export function shouldReadUserNoteArtifactViews(mode, { localOnly = false } = {}
 
 export function composeUserNoteArtifactViews(payload, views, { mode = 'legacy' } = {}) {
   if (mode === 'legacy') return { payload, mismatches: [] };
-  const canvasViews = new Map(
+  const viewsBySurface = new Map(
     views
-      .filter((view) => view.viewType === 'card' && view.surface === 'canvas')
-      .map((view) => [view.artifactId, view]),
+      .filter((view) => view.viewType === 'card')
+      .map((view) => [`${view.surface}:${view.artifactId}`, view]),
   );
   const mismatches = [];
-  const cards = (payload?.cards ?? []).map((card) => {
+  const composeEntries = (entries, surface) => (entries ?? []).map((card) => {
     if (card?.type !== 'user_note') return card;
     const artifactId = artifactIdForCard(card);
-    const view = artifactId ? canvasViews.get(artifactId) : null;
+    const view = artifactId ? viewsBySurface.get(`${surface}:${artifactId}`) : null;
     if (!view) {
       mismatches.push({ category: 'missing_view', artifactId, cardId: card.id ?? null });
       return card;
     }
-    const geometryMismatch = ['x', 'y', 'width', 'height'].some(
+    const geometryMismatch = surface === 'canvas' && ['x', 'y', 'width', 'height'].some(
       (field) => Number(card[field]) !== Number(view[field]),
     );
     if (geometryMismatch) {
       mismatches.push({ category: 'geometry_mismatch', artifactId, cardId: card.id ?? null });
     }
     if (mode !== 'canonical') return card;
-    return {
+    return surface === 'canvas' ? {
       ...card,
       x: view.x,
       y: view.y,
@@ -51,9 +51,19 @@ export function composeUserNoteArtifactViews(payload, views, { mode = 'legacy' }
       height: view.height,
       ...(view.zIndex == null ? {} : { zIndex: view.zIndex }),
       artifactViewVersion: view.version,
+    } : {
+      ...card,
+      artifactViewVersion: view.version,
     };
   });
-  return { payload: { ...payload, cards }, mismatches };
+  return {
+    payload: {
+      ...payload,
+      cards: composeEntries(payload?.cards, 'canvas'),
+      stagedSyncCards: composeEntries(payload?.stagedSyncCards, 'dock'),
+    },
+    mismatches,
+  };
 }
 
 export function summarizeUserNoteArtifactViewComparison(payload, mismatches) {

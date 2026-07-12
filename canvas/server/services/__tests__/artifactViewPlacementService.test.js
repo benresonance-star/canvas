@@ -4,7 +4,10 @@ const client = { query: vi.fn(), release: vi.fn() };
 vi.mock('../../db.js', () => ({ pool: { connect: vi.fn(async () => client) } }));
 vi.mock('../../../src/primitives/shared/ulid.js', () => ({ newUlid: vi.fn(() => 'event-1') }));
 
-const { commitArtifactViewPlacements } = await import('../artifactViewPlacementService.js');
+const {
+  commitArtifactViewPlacements,
+  commitArtifactViewTransfer,
+} = await import('../artifactViewPlacementService.js');
 
 function queryResult(sql) {
   if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
@@ -14,7 +17,14 @@ function queryResult(sql) {
       versions: [{ artifactRef: { id: 'artifact-1' } }],
     }] } }],
   };
+  if (sql.includes('SELECT revision FROM canvas_project_document')) return {
+    rows: [{ revision: 4 }],
+  };
   if (sql.includes('SELECT * FROM artifact_view')) return { rows: [{ id: 'view-1', version: 7 }] };
+  if (sql.includes('SELECT id FROM artifact_view')) return { rows: [] };
+  if (sql.includes('INSERT INTO artifact_view')) return {
+    rows: [{ artifact_id: 'artifact-1', surface: 'dock', version: 1, updated_at: 'now' }],
+  };
   if (sql.includes('UPDATE artifact_view')) return {
     rows: [{ artifact_id: 'artifact-1', version: 8, updated_at: 'now' }],
   };
@@ -53,5 +63,30 @@ describe('artifact view placement service', () => {
 
     expect(client.query).toHaveBeenCalledWith('ROLLBACK');
     expect(client.query).not.toHaveBeenCalledWith('COMMIT');
+  });
+
+  it('moves canonical authority to the target surface with the compatibility projection', async () => {
+    const payload = {
+      cards: [],
+      stagedSyncCards: [{
+        type: 'user_note',
+        versions: [{ artifactRef: { id: 'artifact-1' } }],
+      }],
+    };
+    const result = await commitArtifactViewTransfer('project-1', {
+      transfer: {
+        artifactId: 'artifact-1', expectedVersion: 7,
+        fromSurface: 'canvas', toSurface: 'dock',
+      },
+      payload,
+    });
+
+    expect(result).toMatchObject({
+      documentRevision: 5,
+      view: { artifactId: 'artifact-1', surface: 'dock', version: 1 },
+    });
+    expect(client.query).toHaveBeenCalledWith('COMMIT');
+    const documentUpdate = client.query.mock.calls.find(([sql]) => sql.includes('UPDATE canvas_project_document'));
+    expect(JSON.parse(documentUpdate[1][1])).toEqual(payload);
   });
 });

@@ -34,6 +34,18 @@ describe('composeUserNoteArtifactViews', () => {
     expect(result.payload.cards[0].versions).toEqual(card.versions);
   });
 
+  it('attaches canonical versions to dock notes for surface transfers', () => {
+    const staged = { ...card, stagingId: 's1' };
+    const dockView = { artifactId: 'a1', viewType: 'card', surface: 'dock', version: 6 };
+
+    const result = composeUserNoteArtifactViews(
+      { cards: [], stagedSyncCards: [staged] }, [dockView], { mode: 'canonical' },
+    );
+
+    expect(result.payload.stagedSyncCards[0].artifactViewVersion).toBe(6);
+    expect(result.mismatches).toEqual([]);
+  });
+
   it('summarizes clean and mismatched cards for rollout telemetry', () => {
     const secondCard = { ...card, id: 'c2', versions: [{ artifactRef: { id: 'a2' } }] };
     expect(summarizeUserNoteArtifactViewComparison(

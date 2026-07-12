@@ -27,6 +27,7 @@ vi.mock('../../repositories/artifact-views.js', () => ({
 
 vi.mock('../../services/artifactViewPlacementService.js', () => ({
   commitArtifactViewPlacements: vi.fn(),
+  commitArtifactViewTransfer: vi.fn(),
 }));
 
 vi.mock('../../lib/projectSyncHub.js', () => ({
@@ -127,8 +128,39 @@ describe('canvas project routes', () => {
     expect(placementService.commitArtifactViewPlacements).toHaveBeenCalledWith('project-1', {
       placements, actorId: undefined,
     });
-    expect(projectHub.publishProjectSync).toHaveBeenCalledWith('project_updated', expect.objectContaining({
-      projectId: 'project-1', revision: 12, reason: 'artifact-view-placement',
+    expect(projectHub.publishProjectSync).toHaveBeenCalledWith('project-1', 'project_updated', expect.objectContaining({
+      revision: 12, reason: 'artifact-view-placement',
+    }));
+  });
+
+  it('POST surface transfer commits through canonical authority', async () => {
+    placementService.commitArtifactViewTransfer.mockResolvedValue({
+      documentRevision: 13,
+      updatedAt: '2026-07-13T00:00:00.000Z',
+      view: { artifactId: 'artifact-1', surface: 'dock', version: 1 },
+    });
+    const transfer = {
+      artifactId: 'artifact-1', expectedVersion: 8,
+      fromSurface: 'canvas', toSurface: 'dock',
+    };
+    const payload = {
+      cards: [],
+      stagedSyncCards: [{
+        type: 'user_note', versions: [{ artifactRef: { id: 'artifact-1' } }],
+      }],
+    };
+
+    const { res, body } = await jsonRequest(server, '/canvas/projects/project-1/artifact-view-transfers', {
+      method: 'POST', body: JSON.stringify({ transfer, payload }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(body.view.surface).toBe('dock');
+    expect(placementService.commitArtifactViewTransfer).toHaveBeenCalledWith('project-1', {
+      transfer, payload, actorId: undefined,
+    });
+    expect(projectHub.publishProjectSync).toHaveBeenCalledWith('project-1', 'project_updated', expect.objectContaining({
+      revision: 13, reason: 'artifact-view-transfer',
     }));
   });
 
