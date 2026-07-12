@@ -41,11 +41,15 @@ All symbols below **must** remain exported from [`src/lib/projectSync.js`](../sr
 
 ### Merge (pure)
 
+- `recordGoodLocalCardCount`
+- `getLastGoodLocalCardCount`
+- `clearLastGoodLocalCardCount`
 - `projectCardCount`
 - `projectPayloadFingerprint`
 - `payloadsEquivalent`
 - `mergeProjectRow`
 - `preserveMergedLocalRowsWithCards`
+- `preserveCanvasCardsInMergedPayload`
 - `mergeProjectIndices`
 
 ### Pending saves
@@ -67,9 +71,18 @@ All symbols below **must** remain exported from [`src/lib/projectSync.js`](../sr
 
 - `pushProjectDocumentIfLocalNewer`
 - `flushOutgoingProjectDocument`
-- `startProjectSyncStream` / `stopProjectSyncStream` (SSE inbound)
-- `applyRemoteProjectPatch` / `flushPendingRemoteProjectPatch`
-- `isProjectPatchSyncEnabled` / `getProjectSyncClientId`
+- `startProjectSyncStream`
+- `stopProjectSyncStream` (SSE inbound)
+- `startWorkspaceIndexSyncStream`
+- `stopWorkspaceIndexSyncStream`
+- `applyRemoteProjectPatch`
+- `flushPendingRemoteProjectPatch`
+- `setRemotePatchAppliedListener`
+- `isProjectPatchSyncEnabled`
+- `getProjectSyncClientId`
+- `getProjectConflict`
+- `clearProjectConflict`
+- `recordProjectConflict`
 
 ### HTTP (server)
 

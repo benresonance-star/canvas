@@ -10,12 +10,16 @@ export function serializeUserTask({ taskStatus = DEFAULT_USER_TASK_STATUS, body 
 
 export function parseUserTask(content) {
   const raw = content ?? '';
-  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(raw);
-  if (!match) {
+  const normalized = raw.replace(/\r\n/g, '\n');
+  if (!normalized.startsWith('---\n')) {
     return { taskStatus: DEFAULT_USER_TASK_STATUS, body: raw };
   }
-  const frontmatter = match[1];
-  const body = (match[2] ?? '').replace(/^\r?\n/, '');
+  const closeIndex = normalized.indexOf('\n---\n', 4);
+  if (closeIndex < 0) {
+    return { taskStatus: DEFAULT_USER_TASK_STATUS, body: raw };
+  }
+  const frontmatter = normalized.slice(4, closeIndex);
+  const body = normalized.slice(closeIndex + 5).replace(/^\n/, '');
   const statusMatch = /taskStatus:\s*(\w+)/.exec(frontmatter);
   const taskStatus = statusMatch && USER_TASK_STATUSES.includes(statusMatch[1])
     ? statusMatch[1]

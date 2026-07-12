@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bold, Italic, List, ListOrdered } from 'lucide-react';
+import { Bold, Heading1, Heading2, Italic, List, ListOrdered, SeparatorHorizontal } from 'lucide-react';
 import { strings } from '../content/strings.js';
 
 function FormatButton({
@@ -37,11 +37,16 @@ export function MarkdownFormatToolbar({
   italicActive = false,
   bulletActive = false,
   numberedActive = false,
+  heading1Active = false,
+  heading2Active = false,
   listsDisabled = false,
   onBold,
   onItalic,
+  onHeading1,
+  onHeading2,
   onBulletList,
   onNumberedList,
+  onDivider,
   onMouseDown,
   className = '',
 }) {
@@ -78,6 +83,24 @@ export function MarkdownFormatToolbar({
         <Italic size={iconSize} strokeWidth={2.25} aria-hidden />
       </FormatButton>
       <FormatButton
+        label={strings.markdownFormat.heading1}
+        pressed={heading1Active}
+        disabled={disabled}
+        onAction={onHeading1}
+        onMouseDown={stopToolbarMouseDown}
+      >
+        <Heading1 size={iconSize} strokeWidth={2.25} aria-hidden />
+      </FormatButton>
+      <FormatButton
+        label={strings.markdownFormat.heading2}
+        pressed={heading2Active}
+        disabled={disabled}
+        onAction={onHeading2}
+        onMouseDown={stopToolbarMouseDown}
+      >
+        <Heading2 size={iconSize} strokeWidth={2.25} aria-hidden />
+      </FormatButton>
+      <FormatButton
         label={strings.markdownFormat.bulletList}
         pressed={bulletActive}
         disabled={disabled || listsDisabled}
@@ -94,6 +117,14 @@ export function MarkdownFormatToolbar({
         onMouseDown={stopToolbarMouseDown}
       >
         <ListOrdered size={iconSize} strokeWidth={2.25} aria-hidden />
+      </FormatButton>
+      <FormatButton
+        label={strings.markdownFormat.divider}
+        disabled={disabled}
+        onAction={onDivider}
+        onMouseDown={stopToolbarMouseDown}
+      >
+        <SeparatorHorizontal size={iconSize} strokeWidth={2.25} aria-hidden />
       </FormatButton>
     </div>
   );

@@ -1077,6 +1077,7 @@ describe('deleteProject', () => {
     } finally {
       vi.doUnmock('../folderMigrate.js');
       vi.doUnmock('../folderStore.js');
+      vi.resetModules();
     }
   });
 });

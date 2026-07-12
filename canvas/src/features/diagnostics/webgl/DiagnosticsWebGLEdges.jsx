@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { useMemo, useRef } from 'react';
 import { Line } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';

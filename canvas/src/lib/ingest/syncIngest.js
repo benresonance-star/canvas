@@ -1,4 +1,5 @@
 import { artifactTypeFromFile } from './artifactType.js';
+import { artifactDateFieldsFromVersion } from '../artifactDates.js';
 import { normalizeFolderRelativePath, parseFilename, syncKeysMatch } from '../filename.js';
 import { resolveCodeLanguage } from '../codeHighlight.js';
 import { ingestArtifacts, ensureClusterForProject, isApiAvailable } from '../primitivesApi.js';
@@ -149,6 +150,7 @@ export async function ingestFoundFiles(projectId, projectName, flatVersions, pre
         ...(v.cardType === 'image' && v.imageMeta
           ? { canvas_kind: 'image', image: v.imageMeta }
           : {}),
+        ...artifactDateFieldsFromVersion(v),
       },
     };
   });
@@ -296,6 +298,7 @@ export function applyArtifactRefsToGrouped(grouped, byFilename) {
           content_hash: ing.content_hash,
           artifactRef: ing.artifactRef,
           artifactSyncState: 'synced',
+          ...artifactDateFieldsFromVersion(v),
         };
       }),
     };

@@ -1612,3 +1612,17 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 - Phase 4: `lib/project/loadProjectStructure.js` unified load API; exported via `persistence.js` and `projects.js`
 - Phase 5: `lib/placement/index.js` barrel for placement domain
 - Phase 6: Vitest `singleFork` pool; `npm run test:features`; schema + feature tests added
+# Canvas Core Phase 1 convergence — 2026-07-12
+
+Phase 1 adds a reversible `user_note` artifact-view slice without deleting legacy project-document authority.
+
+- `artifact.id` is canonical durable identity; card IDs and file paths remain view identity and aliases.
+- `artifact_view` stores project-scoped canvas/dock presentation, with explicit geometry columns, view state, revision, and archive state.
+- Migrations `0026`–`0028` add artifact views, atomic project-document-to-view projection, and artifact lifecycle revisions.
+- Project PUT/PATCH remains the compatibility command boundary. The PostgreSQL projection trigger maintains note views in the same transaction as the accepted document CAS.
+- Client read modes are `legacy` (default), `shadow`, and guarded `canonical`; canonical composition occurs before `loadProjectIntoState` and falls back to legacy on missing/failed view reads.
+- Folder files remain note-body authority while present. Artifact views never own note content or folder-presence state.
+- Generic artifact lifecycle and artifact-relationship history are orchestrated transactionally by `artifactService`; general update routes cannot bypass state transitions.
+- Rollback is `VITE_USER_NOTE_ARTIFACT_VIEWS=legacy`; legacy placement data is retained.
+
+Implementation evidence and procedures: `docs/architecture/CANVAS_CORE_PHASE_1_AUDIT.md`, `docs/architecture/CANVAS_CORE_PHASE_1_MIGRATION.md`, and ADRs `0001`–`0004`.

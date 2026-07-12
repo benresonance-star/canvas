@@ -5,16 +5,17 @@ import {
   getArtifactById,
   listArtifactRelationships,
 } from '../repositories/artifacts.js';
-import { appendArtifactEvent, listEventsForArtifact } from '../repositories/artifact-events.js';
+import { listEventsForArtifact } from '../repositories/artifact-events.js';
 import {
   archiveArtifactWithEvents,
+  addArtifactRelationshipWithEvents,
   createArtifactWithEvents,
+  restoreArtifactWithEvents,
+  removeArtifactRelationshipWithEvents,
   transitionArtifactStateWithEvents,
   updateArtifactWithEvents,
 } from '../services/artifactService.js';
 import {
-  createArtifactRelationship,
-  getRelationshipById,
   insertRelationship,
   insertRelationshipIfAbsent,
   deleteRelationship,
@@ -170,6 +171,16 @@ export function registerArtifactRoutes(app) {
     }
   });
 
+  app.post('/artifacts/:id/restore', async (req, res) => {
+    try {
+      const input = parseRequest(archiveArtifactRequestSchema, req.body);
+      const artifact = await restoreArtifactWithEvents(req.params.id, input);
+      res.json({ artifact });
+    } catch (e) {
+      sendError(res, e);
+    }
+  });
+
   app.post('/artifacts/:id/transition', async (req, res) => {
     try {
       const input = parseRequest(transitionArtifactStateRequestSchema, req.body);
@@ -210,20 +221,7 @@ export function registerArtifactRoutes(app) {
   app.post('/artifact-relationships', async (req, res) => {
     try {
       const input = parseRequest(createArtifactRelationshipRequestSchema, req.body);
-      const result = await createArtifactRelationship(input);
-      await appendArtifactEvent({
-        artifactId: input.sourceArtifactId,
-        projectId: input.projectId ?? null,
-        type: 'RelationshipAdded',
-        payload: {
-          relationshipId: result.relationship.id,
-          sourceArtifactId: input.sourceArtifactId,
-          targetArtifactId: input.targetArtifactId,
-          relationshipType: input.relationshipType,
-        },
-        actorType: 'user',
-        actorId: input.createdBy || 'user:local',
-      });
+      const result = await addArtifactRelationshipWithEvents(input);
       res.status(result.created ? 201 : 200).json(result);
     } catch (e) {
       sendError(res, e);
@@ -232,26 +230,10 @@ export function registerArtifactRoutes(app) {
 
   app.delete('/artifact-relationships/:id', async (req, res) => {
     try {
-      const existing = await getRelationshipById(req.params.id);
-      if (!existing) return res.status(404).json({ error: 'Relationship not found' });
-      const deleted = await deleteRelationship(req.params.id);
-      if (!deleted) return res.status(404).json({ error: 'Relationship not found' });
-      if (existing.from_ref?.type === 'artifact') {
-        await appendArtifactEvent({
-          artifactId: existing.from_ref.id,
-          projectId: existing.project_id ?? null,
-          type: 'RelationshipRemoved',
-          payload: {
-            relationshipId: req.params.id,
-            sourceArtifactId: existing.from_ref.id,
-            targetArtifactId: existing.to_ref?.id ?? null,
-            relationshipType: existing.type,
-          },
-          actorType: 'user',
-          actorId: req.query.actorId || 'user:local',
-        });
-      }
-      res.json({ ok: true });
+      const result = await removeArtifactRelationshipWithEvents(req.params.id, {
+        actorId: req.query.actorId || 'user:local',
+      });
+      res.json(result);
     } catch (e) {
       sendError(res, e);
     }

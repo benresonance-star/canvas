@@ -246,6 +246,9 @@ export function mergeProjectDocuments(localDoc, remoteDoc, options = {}) {
     knownServerAt > 0
     && localEditAt > knownServerAt
     && !payloadsEquivalent(localPatched, remotePatched);
+  const placementRef = placementSource
+    ? patchLocalDocFromArrays(placementSource)
+    : localPatched;
   if (isAuthoritativeRepairDocument(remotePatched)) {
     clearLastGoodLocalCardCount(projectId);
     clearLastGoodEphemeralCardCount(projectId);
@@ -274,9 +277,6 @@ export function mergeProjectDocuments(localDoc, remoteDoc, options = {}) {
   }
   const emptyLocalWouldHideRemote =
     localArtifactCount === 0 && remoteArtifactCount > 0;
-  const placementRef = placementSource
-    ? patchLocalDocFromArrays(placementSource)
-    : localPatched;
 
   const localLayoutNewer =
     !emptyLocalWouldHideRemote

@@ -73,7 +73,8 @@ describe('saveProjectById persistLocal', () => {
     expect(cached).toBeTruthy();
     const parsed = JSON.parse(cached);
     expect(parsed.cards[0].id).toBe('edited');
-    expect(parsed.projectName).toBe('Switch away');
+    // Workspace index owns the display name; document state cannot rename it implicitly.
+    expect(parsed.projectName).toBe('Untitled Project');
   });
 
   it('writes local cache on every save even without persistLocal flag', async () => {
@@ -152,6 +153,7 @@ describe('saveProjectById persistLocal', () => {
     expect(result.localCacheWritten).toBe(false);
     expect(result.pushOk).toBe(true);
     expect(putCalls).toHaveLength(1);
-    expect(putCalls[0].payload.projectName).toBe('Server only');
+    // Workspace index owns the display name; document state cannot rename it implicitly.
+    expect(putCalls[0].payload.projectName).toBe('Untitled Project');
   });
 });

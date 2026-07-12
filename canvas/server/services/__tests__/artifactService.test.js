@@ -6,6 +6,7 @@ const client = {
 };
 
 vi.mock('../../db.js', () => ({
+  query: vi.fn(),
   pool: {
     connect: vi.fn(() => Promise.resolve(client)),
   },
@@ -19,6 +20,7 @@ vi.mock('../../repositories/artifacts.js', () => ({
   archiveArtifact: vi.fn(),
   createArtifact: vi.fn(),
   getBaseArtifactById: vi.fn(),
+  restoreArtifact: vi.fn(),
   updateArtifact: vi.fn(),
   updateArtifactState: vi.fn(),
 }));
@@ -44,6 +46,7 @@ const baseArtifact = {
   currentStateId: 'draft',
   stateMachineId: 'machine-1',
   contentHash: 'hash-1',
+  revision: 3,
 };
 
 describe('artifactService', () => {
@@ -130,5 +133,54 @@ describe('artifactService', () => {
     );
     expect(client.query).toHaveBeenCalledWith('COMMIT');
     expect(result.id).toBe('artifact-1');
+  });
+
+  it('restores an artifact and records restoration atomically', async () => {
+    artifacts.getBaseArtifactById.mockResolvedValue({
+      ...baseArtifact,
+      archivedAt: '2026-07-12T00:00:00.000Z',
+    });
+    artifacts.restoreArtifact.mockResolvedValue({
+      ...baseArtifact,
+      archivedAt: null,
+      revision: 4,
+    });
+
+    const result = await service.restoreArtifactWithEvents('artifact-1', {
+      actorId: 'ben',
+      expectedRevision: 3,
+      reason: 'Needed again',
+    });
+
+    expect(artifacts.restoreArtifact).toHaveBeenCalledWith(
+      'artifact-1',
+      'ben',
+      client,
+      3,
+    );
+    expect(events.appendArtifactEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'ArtifactRestored',
+        payload: { reason: 'Needed again' },
+      }),
+      client,
+    );
+    expect(client.query).toHaveBeenCalledWith('COMMIT');
+    expect(result.archivedAt).toBeNull();
+  });
+
+  it('rejects stale revisions before mutating an artifact', async () => {
+    await expect(service.updateArtifactWithEvents('artifact-1', {
+      title: 'Stale update',
+      expectedRevision: 2,
+    })).rejects.toMatchObject({
+      message: 'Artifact revision conflict',
+      status: 409,
+      currentRevision: 3,
+    });
+
+    expect(artifacts.updateArtifact).not.toHaveBeenCalled();
+    expect(events.appendArtifactEvent).not.toHaveBeenCalled();
+    expect(client.query).toHaveBeenCalledWith('ROLLBACK');
   });
 });

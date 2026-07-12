@@ -7,6 +7,11 @@ import {
   loadSyncedProjectDocument,
 } from '../projectSync.js';
 import { reconcileSpecCanvasOnLoad } from '../specDataPlaneSync.js';
+import { listProjectArtifactViews } from '../artifactViewsApi.js';
+import {
+  composeUserNoteArtifactViews,
+  resolveArtifactViewMode,
+} from '../userNoteArtifactViewProjection.js';
 
 /**
  * Load project document with spec canvas reconciliation applied.
@@ -19,7 +24,28 @@ export async function loadProjectStructure(projectId, { localOnly = false } = {}
     await initializeProjectSync();
     const doc = await loadSyncedProjectDocument(projectId, { localOnly });
     if (!doc) return null;
-    return reconcileSpecCanvasOnLoad(projectId, doc);
+    const reconciled = await reconcileSpecCanvasOnLoad(projectId, doc);
+    const mode = resolveArtifactViewMode();
+    if (mode === 'legacy' || localOnly) return reconciled;
+    try {
+      const views = await listProjectArtifactViews(projectId);
+      const composed = composeUserNoteArtifactViews(reconciled, views, { mode });
+      if (composed.mismatches.length > 0) {
+        console.warn('[artifact-view] user_note projection drift', {
+          projectId,
+          mode,
+          mismatches: composed.mismatches,
+        });
+      }
+      return composed.payload;
+    } catch (error) {
+      console.warn('[artifact-view] canonical read fallback', {
+        projectId,
+        mode,
+        error: error.message,
+      });
+      return reconciled;
+    }
   } catch {
     return null;
   }

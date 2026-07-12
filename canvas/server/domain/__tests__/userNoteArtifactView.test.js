@@ -1,0 +1,48 @@
+import { describe, expect, it } from 'vitest';
+import {
+  applyArtifactViewToLegacyCard,
+  compareUserNoteView,
+  legacyUserNoteToArtifactView,
+  projectUserNoteViews,
+} from '../userNoteArtifactView.js';
+
+const note = {
+  id: 'card-1', type: 'user_note', x: 12, y: 34, width: 280, height: 190, zIndex: 3,
+  selected: true, hover: true,
+  versions: [{ version: 1, artifactRef: { id: 'artifact-1' }, relativePath: 'nested/note.md' }],
+  pinnedVersion: 1,
+};
+
+describe('userNoteArtifactView', () => {
+  it('projects exact stable geometry and excludes transient state', () => {
+    const view = legacyUserNoteToArtifactView('project-1', note, 'canvas');
+    expect(view).toMatchObject({
+      projectId: 'project-1', artifactId: 'artifact-1', surface: 'canvas',
+      x: 12, y: 34, width: 280, height: 190, zIndex: 3,
+    });
+    expect(view).not.toHaveProperty('selected');
+    expect(view).not.toHaveProperty('hover');
+  });
+
+  it('round trips geometry without replacing artifact content', () => {
+    const view = legacyUserNoteToArtifactView('project-1', note, 'canvas');
+    const restored = applyArtifactViewToLegacyCard({ ...note, x: 0 }, view);
+    expect(restored.x).toBe(12);
+    expect(restored.versions).toEqual(note.versions);
+    expect(compareUserNoteView(restored, view)).toBeNull();
+  });
+
+  it('preserves canvas and dock surfaces and skips unresolved identity', () => {
+    const views = projectUserNoteViews('project-1', {
+      cards: [note, { ...note, id: 'pending', versions: [] }],
+      stagedSyncCards: [{ ...note, stagingId: 'dock-1' }],
+    });
+    expect(views.map((view) => view.surface)).toEqual(['canvas', 'dock']);
+  });
+
+  it('categorizes drift', () => {
+    const view = legacyUserNoteToArtifactView('project-1', note, 'canvas');
+    expect(compareUserNoteView(note, { ...view, x: 99 })).toBe('geometry_mismatch');
+    expect(compareUserNoteView(note, null)).toBe('missing_view');
+  });
+});

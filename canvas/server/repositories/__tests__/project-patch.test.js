@@ -48,7 +48,9 @@ describe('patchCanvasProject', () => {
           },
         ],
       })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({
+        rows: [{ revision: 2, updated_at: '2020-01-02' }],
+      });
     const { patchCanvasProject } = await import('../canvas-projects.js');
     const result = await patchCanvasProject('p1', {
       expectedRevision: 1,

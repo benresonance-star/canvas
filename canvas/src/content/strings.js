@@ -131,6 +131,8 @@ export const strings = {
     download: 'Download',
     artifactSidebar: 'Artifact annotations',
     artifactPrimitive: 'Artifact data',
+    dateCreated: 'Date created',
+    dateModified: 'Date modified',
     collapseSidebar: 'Hide annotations',
     expandSidebar: 'Show annotations',
     openExternal: 'Open in external app',
@@ -432,6 +434,9 @@ export const strings = {
     italic: 'Italic',
     bulletList: 'Bullet list',
     numberedList: 'Numbered list',
+    divider: 'Divider',
+    heading1: 'Heading 1',
+    heading2: 'Heading 2',
   },
   linkArtifact: {
     title: 'Link to artifact',

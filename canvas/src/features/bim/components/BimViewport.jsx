@@ -1893,6 +1893,8 @@ export function BimViewport({
     applyRendererClippingPlanes(rendererRef.current, activeClippingPlanesRef.current);
   }, []);
 
+  // The renderer callback deliberately closes over stable refs; React Compiler cannot prove it.
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const rebuildSectionOverlay = useCallback(async () => {
     syncSectionClipping();
     const bounds = modelBoundsRef.current;

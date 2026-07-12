@@ -339,14 +339,16 @@ export function requestActionSync(reason, options = {}) {
       if (builtBefore) {
         auditPlacementStep('folderScan:before-flush', builtBefore, { projectId });
       }
+      await flushLocalAndPush(projectId, reason, { allowEmptyRemoteOverwrite });
+      const builtAfter = getCommittedPayload(projectId)
+        ?? buildPayloadForProject(projectId)?.payload;
       const { shouldSkipInboundReconcileAfterLocalCommit } = await import(
         './projectDocumentMerge.js'
       );
       const skipReconcile = shouldSkipInboundReconcileAfterLocalCommit(
-        builtBefore,
+        builtAfter,
         serverSnapshot,
       );
-      await flushLocalAndPush(projectId, reason, { allowEmptyRemoteOverwrite });
       if (!skipInboundReconcile && !skipReconcile) {
         await handlers.reconcileInbound(projectId, { showPullToast: false });
       }

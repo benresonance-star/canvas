@@ -151,10 +151,13 @@ export function MarkdownMessage({ content, compact = false }) {
         }
         if (block.type === 'heading') {
           const HeadingTag = `h${Math.min(Math.max(block.level, 1), 6)}`;
+          const headingClass = block.level === 1
+            ? `font-semibold text-primary ${compact ? 'text-[12px]' : 'text-base'}`
+            : `font-semibold text-primary ${compact ? 'text-[11px]' : 'text-sm'}`;
           return (
             <HeadingTag
               key={`heading-${index}`}
-              className={`font-semibold text-primary ${compact ? 'text-[11px]' : 'text-sm'}`}
+              className={headingClass}
             >
               <InlineText text={block.text} compact={compact} />
             </HeadingTag>

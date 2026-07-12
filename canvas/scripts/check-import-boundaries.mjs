@@ -9,6 +9,9 @@ const checkedDirs = [
   path.join(root, 'src', 'components'),
 ];
 
+const browserSourceRoot = path.join(root, 'src');
+const sharedCoreRoot = path.join(root, 'src', 'primitives');
+
 const allowedDeepSyncImports = new Set([
   '../lib/syncUi.js',
   '../lib/syncStaging.js',
@@ -51,10 +54,42 @@ for (const file of checkedDirs.flatMap(listFiles)) {
   }
 }
 
+for (const file of listFiles(browserSourceRoot)) {
+  const source = fs.readFileSync(file, 'utf8');
+  for (const specifier of importSpecifiers(source)) {
+    if (specifier.includes('server/repositories')) {
+      violations.push({
+        file: path.relative(root, file),
+        specifier,
+        reason: 'browser code must not import server repositories',
+      });
+    }
+  }
+}
+
+for (const file of listFiles(sharedCoreRoot)) {
+  const source = fs.readFileSync(file, 'utf8');
+  for (const specifier of importSpecifiers(source)) {
+    if (
+      specifier.includes('/features/')
+      || specifier.includes('/components/')
+      || specifier.includes('/server/')
+    ) {
+      violations.push({
+        file: path.relative(root, file),
+        specifier,
+        reason: 'shared core must not import UI, domain, or server runtime modules',
+      });
+    }
+  }
+}
+
 if (violations.length > 0) {
   console.error('Forbidden deep sync imports from UI files:');
   for (const violation of violations) {
-    console.error(`- ${violation.file}: ${violation.specifier}`);
+    console.error(
+      `- ${violation.file}: ${violation.specifier}${violation.reason ? ` (${violation.reason})` : ''}`,
+    );
   }
   process.exit(1);
 }

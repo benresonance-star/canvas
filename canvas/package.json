@@ -11,7 +11,7 @@
     "audit:deprecated-sync": "node scripts/report-deprecated-sync-apis.mjs",
     "audit:migrations": "node scripts/check-migrations.mjs",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run --maxWorkers=1 --minWorkers=1",
     "test:sync": "node --max-old-space-size=8192 ./node_modules/vitest/vitest.mjs run projectPatch projectSync placement projectDocument actionSync schemas syncProjectionInvariants projectSwitch projects canvasProjects canvas-projects.postgres projectDocumentStore workspaceIntegrity specDataPlane spec-canvas-state useSyncStreams useWorkspaceIndexSync workspaceIndexSyncStream",
     "test:features": "vitest run src/features",
     "test:e2e": "node scripts/placement-switch-e2e.mjs",

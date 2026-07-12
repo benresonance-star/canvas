@@ -4,6 +4,13 @@ import { validateArtifact } from '../../src/primitives/artifact.js';
 import { appendEvent } from '../events.js';
 import { addClusterMember } from './clusters.js';
 import crypto from 'node:crypto';
+import {
+  mergeArtifactMetadataDates,
+  artifactMetadataDatesChanged,
+} from '../../src/lib/artifactDates.js';
+import { defaultCapabilitiesForArtifactType } from '../domain/artifactTypeRegistry.js';
+
+export { defaultCapabilitiesForArtifactType } from '../domain/artifactTypeRegistry.js';
 
 function parseJson(value, fallback) {
   if (value == null) return fallback;
@@ -15,20 +22,6 @@ function parseJson(value, fallback) {
     }
   }
   return value;
-}
-
-export function defaultCapabilitiesForArtifactType(type) {
-  if (type === 'agent') return ['canRun', 'canProduceArtifacts', 'canReference'];
-  if (type === 'flow') return ['canHaveState', 'canContain', 'canReference'];
-  if (type === 'studio') return ['canHaveState', 'canContain', 'canReference', 'canRun', 'canReview'];
-  if (type === 'live') return ['canRun', 'canVersion', 'canHaveState'];
-  if (type === 'image') return ['canReview', 'canTransform', 'canBranch', 'canReference'];
-  if (type === 'audio' || type === 'video') return ['canReview', 'canTransform', 'canReference'];
-  if (type === '3d_model' || type === 'bim_model') return ['canReview', 'canBranch', 'canReference'];
-  if (['user_note', 'user_task', 'agent_chat'].includes(type)) {
-    return ['canEdit', 'canReview', 'canReference'];
-  }
-  return ['canReference'];
 }
 
 function stableHash(value) {
@@ -60,6 +53,7 @@ export function rowToBaseArtifact(row) {
     schemaVersion: row.schema_version ?? 1,
     contentSchemaVersion: row.content_schema_version ?? null,
     archivedAt: row.archived_at ?? null,
+    revision: Number(row.revision) || 1,
   };
 }
 
@@ -70,6 +64,17 @@ export async function upsertArtifactByHash(clusterId, fields, { addToCluster = f
   );
   if (existing.rows[0]) {
     const row = existing.rows[0];
+    const existingMeta = parseJson(row.metadata, {});
+    const incomingMeta = fields.metadata || {};
+    const mergedDates = mergeArtifactMetadataDates(existingMeta, incomingMeta, {
+      contentChanged: fields.content_hash !== row.content_hash,
+    });
+    if (artifactMetadataDatesChanged(existingMeta, mergedDates)) {
+      await query(
+        'UPDATE artifact SET metadata = metadata || $2::jsonb, updated_at = NOW() WHERE id = $1',
+        [row.id, JSON.stringify(mergedDates)],
+      );
+    }
     const nextProjectId =
       fields.project_id ?? fields.projectId ?? fields.metadata?.project_id ?? fields.metadata?.projectId ?? null;
     if (
@@ -250,8 +255,9 @@ export async function updateArtifact(id, patch, db = { query }) {
        content_schema_version = CASE WHEN $16 THEN $17 ELSE content_schema_version END,
        updated_by = COALESCE($18, updated_by),
        updated_at = NOW(),
-       retrieved_at = CASE WHEN $6 OR $5 IS NOT NULL THEN NOW() ELSE retrieved_at END
-     WHERE id = $1
+       retrieved_at = CASE WHEN $6 OR $5 IS NOT NULL THEN NOW() ELSE retrieved_at END,
+       revision = revision + 1
+     WHERE id = $1 AND ($19::bigint IS NULL OR revision = $19)
      RETURNING *`,
     [
       id,
@@ -272,29 +278,60 @@ export async function updateArtifact(id, patch, db = { query }) {
       hasContentSchemaVersion,
       patch.contentSchemaVersion ?? patch.content_schema_version ?? null,
       patch.updatedBy || patch.updated_by || null,
+      patch.expectedRevision ?? null,
     ],
   );
   return rowToBaseArtifact(res.rows[0]);
 }
 
-export async function archiveArtifact(id, actorId = 'user:local', db = { query }) {
+export async function archiveArtifact(
+  id,
+  actorId = 'user:local',
+  db = { query },
+  expectedRevision = null,
+) {
   const res = await db.query(
     `UPDATE artifact
-     SET archived_at = COALESCE(archived_at, NOW()), updated_at = NOW(), updated_by = $2
-     WHERE id = $1
+     SET archived_at = COALESCE(archived_at, NOW()), updated_at = NOW(), updated_by = $2,
+         revision = revision + 1
+     WHERE id = $1 AND ($3::bigint IS NULL OR revision = $3)
      RETURNING *`,
-    [id, actorId],
+    [id, actorId, expectedRevision],
   );
   return rowToBaseArtifact(res.rows[0]);
 }
 
-export async function updateArtifactState(id, currentStateId, actorId = 'user:local', db = { query }) {
+export async function restoreArtifact(
+  id,
+  actorId = 'user:local',
+  db = { query },
+  expectedRevision = null,
+) {
   const res = await db.query(
     `UPDATE artifact
-     SET current_state_id = $2, updated_at = NOW(), updated_by = $3
-     WHERE id = $1
+     SET archived_at = NULL, updated_at = NOW(), updated_by = $2,
+         revision = revision + 1
+     WHERE id = $1 AND ($3::bigint IS NULL OR revision = $3)
      RETURNING *`,
-    [id, currentStateId, actorId],
+    [id, actorId, expectedRevision],
+  );
+  return rowToBaseArtifact(res.rows[0]);
+}
+
+export async function updateArtifactState(
+  id,
+  currentStateId,
+  actorId = 'user:local',
+  db = { query },
+  expectedRevision = null,
+) {
+  const res = await db.query(
+    `UPDATE artifact
+     SET current_state_id = $2, updated_at = NOW(), updated_by = $3,
+         revision = revision + 1
+     WHERE id = $1 AND ($4::bigint IS NULL OR revision = $4)
+     RETURNING *`,
+    [id, currentStateId, actorId, expectedRevision],
   );
   return rowToBaseArtifact(res.rows[0]);
 }

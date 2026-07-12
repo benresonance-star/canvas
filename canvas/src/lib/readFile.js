@@ -9,6 +9,7 @@ import { putPreview } from './previewStore.js';
 import { sha256Hex } from './ingest/hashFile.js';
 import { parseAudioTags } from './audio/parseAudioTags.js';
 import { buildImageArtifactMetadata } from './image/imageArtifactMetadata.js';
+import { initialArtifactDates } from './artifactDates.js';
 
 function blobToDataUrl(blob) {
   return new Promise((resolve) => {
@@ -155,6 +156,7 @@ export async function readFileEntry(entry, options = {}) {
     content_hash,
     size: file.size,
     lastModified: file.lastModified,
+    ...initialArtifactDates(file.lastModified),
     content,
     dataUrl,
     objectUrl,
