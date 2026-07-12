@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   applyLayoutCommitPayloadToStateRef,
   buildCanonicalUserNotePlacementCommand,
+  buildCanonicalUserNoteTransferCommand,
   bookmarkFolderFilenamesToRemove,
   cleanupBookmarkFolderFile,
   cleanupProjectArtifactForSyncEntry,
@@ -117,6 +118,26 @@ describe('useCanvasDocument stateRef commit helpers', () => {
     };
 
     expect(buildCanonicalUserNotePlacementCommand(cards, [{ id: 'card-1', x: 40 }], env)).toBeNull();
+  });
+
+  it('builds a version-checked canonical surface transfer', () => {
+    const source = {
+      type: 'user_note', artifactViewVersion: 9,
+      versions: [{ artifactRef: { id: 'artifact-1' } }],
+    };
+    const target = { ...source, x: 10, y: 20, width: 300, height: 180 };
+    const env = {
+      VITE_USER_NOTE_ARTIFACT_VIEWS: 'canonical',
+      VITE_USER_NOTE_ARTIFACT_VIEW_WRITES: 'canonical',
+    };
+
+    expect(buildCanonicalUserNoteTransferCommand(
+      source, target, 'dock', 'canvas', env,
+    )).toEqual({
+      artifactId: 'artifact-1', expectedVersion: 9,
+      fromSurface: 'dock', toSurface: 'canvas',
+      x: 10, y: 20, width: 300, height: 180,
+    });
   });
 
   it('cleans project-scoped artifact primitives for deleted artifact cards', async () => {
