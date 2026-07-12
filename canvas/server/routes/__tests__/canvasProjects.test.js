@@ -25,6 +25,10 @@ vi.mock('../../repositories/artifact-views.js', () => ({
   listArtifactViewsByProject: vi.fn(),
 }));
 
+vi.mock('../../services/artifactViewPlacementService.js', () => ({
+  commitArtifactViewPlacements: vi.fn(),
+}));
+
 vi.mock('../../lib/projectSyncHub.js', () => ({
   subscribeProjectSync: vi.fn(),
   unsubscribeProjectSync: vi.fn(),
@@ -42,6 +46,7 @@ const projectHub = await import('../../lib/projectSyncHub.js');
 const indexHub = await import('../../lib/workspaceIndexSyncHub.js');
 const diagnostics = await import('../../repositories/artifact-view-diagnostics.js');
 const artifactViews = await import('../../repositories/artifact-views.js');
+const placementService = await import('../../services/artifactViewPlacementService.js');
 const { registerCanvasProjectRoutes } = await import('../canvasProjects.js');
 
 function createApp() {
@@ -100,6 +105,31 @@ describe('canvas project routes', () => {
     expect(body.error).toBe('expectedRevision required');
     expect(repo.putCanvasIndex).not.toHaveBeenCalled();
     expect(indexHub.publishWorkspaceIndexSync).not.toHaveBeenCalled();
+  });
+
+  it('PATCH placement commits through canonical authority and publishes the revision', async () => {
+    placementService.commitArtifactViewPlacements.mockResolvedValue({
+      documentRevision: 12,
+      updatedAt: '2026-07-13T00:00:00.000Z',
+      views: [{ artifactId: 'artifact-1', version: 8 }],
+    });
+    const placements = [{
+      artifactId: 'artifact-1', expectedVersion: 7,
+      x: 10, y: 20, width: 300, height: 180,
+    }];
+
+    const { res, body } = await jsonRequest(server, '/canvas/projects/project-1/artifact-view-placements', {
+      method: 'PATCH', body: JSON.stringify({ placements }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(body.views[0].version).toBe(8);
+    expect(placementService.commitArtifactViewPlacements).toHaveBeenCalledWith('project-1', {
+      placements, actorId: undefined,
+    });
+    expect(projectHub.publishProjectSync).toHaveBeenCalledWith('project_updated', expect.objectContaining({
+      projectId: 'project-1', revision: 12, reason: 'artifact-view-placement',
+    }));
   });
 
   it('PUT /canvas/projects/:id rejects non-object payloads before persistence', async () => {

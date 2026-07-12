@@ -86,6 +86,12 @@ import { getCachedFolderHandle } from '../../lib/folderSessionCache.js';
 import { loadFolderHandle } from '../../lib/folderStore.js';
 import { removeStagedCardsByKey } from '../../lib/canvasCardMerge.js';
 import { requestActionSync } from '../../lib/actionSync.js';
+import { commitProjectArtifactViewPlacements } from '../../lib/artifactViewsApi.js';
+import {
+  artifactIdForCard,
+  resolveArtifactViewMode,
+  resolveArtifactViewWriteMode,
+} from '../../lib/userNoteArtifactViewProjection.js';
 import { deleteProjectArtifactPrimitive } from '../../lib/primitivesApi.js';
 import { commitProjectDocument } from '../../lib/projectDocumentCommit.js';
 import { createFlowArtifact } from '../flow/api/flowApi.js';
@@ -307,6 +313,36 @@ export function applyLayoutCommitPayloadToStateRef(stateRef, payload = {}) {
 
   stateRef.current = nextState;
   return nextState;
+}
+
+export function buildCanonicalUserNotePlacementCommand(cards, cardUpdates, env = import.meta.env) {
+  if (resolveArtifactViewMode(env) !== 'canonical'
+    || resolveArtifactViewWriteMode(env) !== 'canonical'
+    || !Array.isArray(cardUpdates)
+    || cardUpdates.length === 0) return null;
+  const cardsById = new Map((cards ?? []).map((card) => [card.id, card]));
+  const placements = [];
+  for (const update of cardUpdates) {
+    const card = cardsById.get(update?.id);
+    const next = card ? { ...card, ...update } : null;
+    const artifactId = artifactIdForCard(card);
+    if (card?.type !== 'user_note'
+      || !artifactId
+      || !Number.isInteger(card.artifactViewVersion)
+      || !['x', 'y', 'width', 'height'].every((field) => Number.isFinite(Number(next?.[field])))) {
+      return null;
+    }
+    placements.push({
+      artifactId,
+      expectedVersion: card.artifactViewVersion,
+      x: Number(next.x),
+      y: Number(next.y),
+      width: Number(next.width),
+      height: Number(next.height),
+      ...(Number.isFinite(Number(next.zIndex)) ? { zIndex: Number(next.zIndex) } : {}),
+    });
+  }
+  return placements;
 }
 
 export function updateCardVersionInStateRef(stateRef, cardId, versionNum, updatedVersion) {
@@ -590,13 +626,37 @@ export function useCanvasDocument({ refs, deps }) {
       userAdjustedViewRef.current = true;
       const projectId = activeProjectIdRef.current;
       if (projectId) {
+        const placements = kind === 'layoutCommit' && !canvasView
+          ? buildCanonicalUserNotePlacementCommand(stateRef.current.cards, cardUpdates)
+          : null;
         applyLayoutCommitPayloadToStateRef(stateRef, { cardUpdates, canvasView });
         if (canvasView) {
           setState((prev) => ({ ...prev, canvasView }));
         }
-        void requestActionSync(kind === 'viewCommit' ? 'viewCommit' : 'layoutCommit', {
-          projectId,
-        });
+        if (placements) {
+          void commitProjectArtifactViewPlacements(projectId, placements)
+            .then((result) => {
+              const versions = new Map(
+                (result.views ?? []).map((view) => [view.artifactId, view.version]),
+              );
+              const applyVersions = (cards) => cards.map((card) => {
+                const version = versions.get(artifactIdForCard(card));
+                return version == null ? card : { ...card, artifactViewVersion: version };
+              });
+              stateRef.current = {
+                ...stateRef.current,
+                cards: applyVersions(stateRef.current.cards),
+              };
+            })
+            .catch((error) => {
+              console.warn('[artifact-view] canonical placement commit failed; using compatibility write', error);
+              void requestActionSync('layoutCommit', { projectId });
+            });
+        } else {
+          void requestActionSync(kind === 'viewCommit' ? 'viewCommit' : 'layoutCommit', {
+            projectId,
+          });
+        }
       }
     }
   }, [activeProjectIdRef, stateRef, userAdjustedViewRef, setState]);

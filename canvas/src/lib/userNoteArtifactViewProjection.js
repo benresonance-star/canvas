@@ -1,4 +1,4 @@
-function artifactIdForCard(card) {
+export function artifactIdForCard(card) {
   const ids = [...new Set(
     (card?.versions ?? []).map((version) => version?.artifactRef?.id).filter(Boolean),
   )];
@@ -8,6 +8,10 @@ function artifactIdForCard(card) {
 export function resolveArtifactViewMode(env = import.meta.env) {
   const mode = env?.VITE_USER_NOTE_ARTIFACT_VIEWS;
   return ['legacy', 'shadow', 'canonical'].includes(mode) ? mode : 'legacy';
+}
+
+export function resolveArtifactViewWriteMode(env = import.meta.env) {
+  return env?.VITE_USER_NOTE_ARTIFACT_VIEW_WRITES === 'canonical' ? 'canonical' : 'legacy';
 }
 
 export function shouldReadUserNoteArtifactViews(mode, { localOnly = false } = {}) {
@@ -46,6 +50,7 @@ export function composeUserNoteArtifactViews(payload, views, { mode = 'legacy' }
       width: view.width,
       height: view.height,
       ...(view.zIndex == null ? {} : { zIndex: view.zIndex }),
+      artifactViewVersion: view.version,
     };
   });
   return { payload: { ...payload, cards }, mismatches };
