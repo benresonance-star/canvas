@@ -16,8 +16,9 @@ const report = {
 
 function mismatchCounts(expectedViews, storedViews) {
   const counts = {};
-  const expected = new Map(expectedViews.map((view) => [view.id, view]));
-  const stored = new Map(storedViews.map((view) => [view.id, view]));
+  const identity = (view) => `${view?.artifactId ?? ''}\0${view?.surface ?? ''}\0${view?.viewType ?? ''}`;
+  const expected = new Map(expectedViews.map((view) => [identity(view), view]));
+  const stored = new Map(storedViews.map((view) => [identity(view), view]));
   for (const [id, view] of expected) {
     const actual = stored.get(id);
     if (!actual) {

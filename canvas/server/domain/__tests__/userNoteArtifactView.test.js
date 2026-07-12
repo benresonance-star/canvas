@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  auditProjectUserNoteViews,
   applyArtifactViewToLegacyCard,
   compareUserNoteView,
   legacyUserNoteToArtifactView,
@@ -44,5 +45,20 @@ describe('userNoteArtifactView', () => {
     const view = legacyUserNoteToArtifactView('project-1', note, 'canvas');
     expect(compareUserNoteView(note, { ...view, x: 99 })).toBe('geometry_mismatch');
     expect(compareUserNoteView(note, null)).toBe('missing_view');
+  });
+
+  it('audits stored views against the authoritative server document', () => {
+    const view = legacyUserNoteToArtifactView('project-1', note, 'canvas');
+    expect(auditProjectUserNoteViews('project-1', { cards: [note] }, [{
+      ...view,
+      id: 'preserved-legacy-row-id',
+    }])).toEqual({
+      loads: 1,
+      eligible_cards: 1,
+      matched_cards: 1,
+    });
+    expect(auditProjectUserNoteViews('project-1', { cards: [note] }, [
+      { ...view, width: 999 },
+    ])).toMatchObject({ geometry_mismatch: 1, matched_cards: 0 });
   });
 });

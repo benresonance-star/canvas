@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   composeUserNoteArtifactViews,
+  shouldReadUserNoteArtifactViews,
   summarizeUserNoteArtifactViewComparison,
 } from '../userNoteArtifactViewProjection.js';
 
@@ -14,6 +15,13 @@ const view = {
 };
 
 describe('composeUserNoteArtifactViews', () => {
+  it('keeps canonical reads authoritative during local-only project switches', () => {
+    expect(shouldReadUserNoteArtifactViews('legacy', { localOnly: false })).toBe(false);
+    expect(shouldReadUserNoteArtifactViews('shadow', { localOnly: true })).toBe(false);
+    expect(shouldReadUserNoteArtifactViews('shadow', { localOnly: false })).toBe(true);
+    expect(shouldReadUserNoteArtifactViews('canonical', { localOnly: true })).toBe(true);
+  });
+
   it('reports shadow drift without changing legacy geometry', () => {
     const result = composeUserNoteArtifactViews({ cards: [card] }, [view], { mode: 'shadow' });
     expect(result.payload.cards[0].x).toBe(1);

@@ -8,12 +8,14 @@ import {
 } from '../projectSync.js';
 import { reconcileSpecCanvasOnLoad } from '../specDataPlaneSync.js';
 import {
+  auditProjectArtifactViews,
   listProjectArtifactViews,
   reportProjectArtifactViewDiagnostics,
 } from '../artifactViewsApi.js';
 import {
   composeUserNoteArtifactViews,
   resolveArtifactViewMode,
+  shouldReadUserNoteArtifactViews,
   summarizeUserNoteArtifactViewComparison,
 } from '../userNoteArtifactViewProjection.js';
 
@@ -30,7 +32,18 @@ export async function loadProjectStructure(projectId, { localOnly = false } = {}
     if (!doc) return null;
     const reconciled = await reconcileSpecCanvasOnLoad(projectId, doc);
     const mode = resolveArtifactViewMode();
-    if (mode === 'legacy' || localOnly) return reconciled;
+    if (mode === 'shadow' && localOnly) {
+      void auditProjectArtifactViews(projectId)
+        .then((counts) => reportProjectArtifactViewDiagnostics(projectId, {
+          mode,
+          eventType: 'comparison',
+          counts,
+          metadata: { source: 'server_authoritative_audit' },
+        }))
+        .catch(() => {});
+      return reconciled;
+    }
+    if (!shouldReadUserNoteArtifactViews(mode, { localOnly })) return reconciled;
     try {
       const views = await listProjectArtifactViews(projectId);
       const composed = composeUserNoteArtifactViews(reconciled, views, { mode });

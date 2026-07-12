@@ -22,3 +22,12 @@ export async function reportProjectArtifactViewDiagnostics(projectId, diagnostic
   );
   if (!response.ok) throw new Error(`Artifact view diagnostic write failed (${response.status})`);
 }
+
+export async function auditProjectArtifactViews(projectId) {
+  const response = await fetch(
+    `${resolveApiBase()}/canvas/projects/${encodeURIComponent(projectId)}/artifact-view-audit`,
+  );
+  if (!response.ok) throw new Error(`Artifact view audit failed (${response.status})`);
+  const body = await response.json();
+  return body.counts ?? {};
+}

@@ -11,6 +11,7 @@
     "audit:deprecated-sync": "node scripts/report-deprecated-sync-apis.mjs",
     "audit:migrations": "node scripts/check-migrations.mjs",
     "report:artifact-view-rollout": "node --use-system-ca scripts/report-artifact-view-rollout.mjs",
+    "gate:artifact-view-canonical": "node --use-system-ca scripts/audit-user-note-identity.mjs && node --use-system-ca scripts/backfill-user-note-views.mjs --strict && node --use-system-ca scripts/report-artifact-view-rollout.mjs --hours 24 --strict",
     "preview": "vite preview",
     "test": "vitest run --maxWorkers=1 --minWorkers=1",
     "test:sync": "node --max-old-space-size=8192 ./node_modules/vitest/vitest.mjs run projectPatch projectSync placement projectDocument actionSync schemas syncProjectionInvariants projectSwitch projects canvasProjects canvas-projects.postgres projectDocumentStore workspaceIntegrity specDataPlane spec-canvas-state useSyncStreams useWorkspaceIndexSync workspaceIndexSyncStream",
