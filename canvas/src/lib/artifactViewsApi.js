@@ -31,3 +31,22 @@ export async function auditProjectArtifactViews(projectId) {
   const body = await response.json();
   return body.counts ?? {};
 }
+
+export async function commitProjectArtifactViewPlacements(projectId, placements) {
+  const response = await fetch(
+    `${resolveApiBase()}/canvas/projects/${encodeURIComponent(projectId)}/artifact-view-placements`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ placements }),
+    },
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(body.error || `Artifact view placement write failed (${response.status})`);
+    error.status = response.status;
+    error.currentVersion = body.currentVersion ?? null;
+    throw error;
+  }
+  return body;
+}

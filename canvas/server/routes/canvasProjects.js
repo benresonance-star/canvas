@@ -22,6 +22,7 @@ import {
 import { deletePreviewBlobsForProject } from '../repositories/canvas-previews.js';
 import { listArtifactViewsByProject } from '../repositories/artifact-views.js';
 import { auditProjectUserNoteViews } from '../domain/userNoteArtifactView.js';
+import { commitArtifactViewPlacements } from '../services/artifactViewPlacementService.js';
 import {
   recordArtifactViewDiagnostics,
   summarizeArtifactViewDiagnostics,
@@ -188,6 +189,41 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
       });
     } catch (e) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch('/canvas/projects/:projectId/artifact-view-placements', async (req, res) => {
+    try {
+      const placements = req.body?.placements;
+      if (!Array.isArray(placements) || placements.length === 0 || placements.length > 100) {
+        return res.status(400).json({ error: 'placements array required' });
+      }
+      for (const placement of placements) {
+        if (!placement?.artifactId || !Number.isInteger(placement.expectedVersion)) {
+          return res.status(400).json({ error: 'artifactId and expectedVersion required' });
+        }
+        for (const field of ['x', 'y', 'width', 'height']) {
+          if (!Number.isFinite(Number(placement[field]))) {
+            return res.status(400).json({ error: `invalid placement ${field}` });
+          }
+        }
+      }
+      const result = await commitArtifactViewPlacements(req.params.projectId, {
+        placements,
+        actorId: req.body?.actorId,
+      });
+      publishProjectSync('project_updated', {
+        projectId: req.params.projectId,
+        revision: result.documentRevision,
+        updatedAt: result.updatedAt,
+        reason: 'artifact-view-placement',
+      });
+      res.json(result);
+    } catch (e) {
+      res.status(e.status ?? 500).json({
+        error: e.message,
+        currentVersion: e.currentVersion ?? null,
+      });
     }
   });
 

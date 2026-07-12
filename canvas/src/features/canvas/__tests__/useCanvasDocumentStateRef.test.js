@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyLayoutCommitPayloadToStateRef,
+  buildCanonicalUserNotePlacementCommand,
   bookmarkFolderFilenamesToRemove,
   cleanupBookmarkFolderFile,
   cleanupProjectArtifactForSyncEntry,
@@ -85,6 +86,37 @@ describe('useCanvasDocument stateRef commit helpers', () => {
       { id: 'card-1', key: 'links__a', x: 100, y: 200, width: 360, height: 220 },
       { id: 'card-2', key: 'links__b', x: -30, y: 70 },
     ]);
+  });
+
+  it('builds version-checked canonical placement commands for eligible notes', () => {
+    const cards = [{
+      id: 'card-1', type: 'user_note', x: 10, y: 20, width: 300, height: 180,
+      artifactViewVersion: 7,
+      versions: [{ artifactRef: { id: 'artifact-1' } }],
+    }];
+
+    expect(buildCanonicalUserNotePlacementCommand(cards, [
+      { id: 'card-1', x: 40, y: 50 },
+    ], {
+      VITE_USER_NOTE_ARTIFACT_VIEWS: 'canonical',
+      VITE_USER_NOTE_ARTIFACT_VIEW_WRITES: 'canonical',
+    })).toEqual([{
+      artifactId: 'artifact-1', expectedVersion: 7,
+      x: 40, y: 50, width: 300, height: 180,
+    }]);
+  });
+
+  it('keeps legacy writes for mixed or unversioned layout commits', () => {
+    const cards = [{
+      id: 'card-1', type: 'user_note', x: 10, y: 20, width: 300, height: 180,
+      versions: [{ artifactRef: { id: 'artifact-1' } }],
+    }];
+    const env = {
+      VITE_USER_NOTE_ARTIFACT_VIEWS: 'canonical',
+      VITE_USER_NOTE_ARTIFACT_VIEW_WRITES: 'canonical',
+    };
+
+    expect(buildCanonicalUserNotePlacementCommand(cards, [{ id: 'card-1', x: 40 }], env)).toBeNull();
   });
 
   it('cleans project-scoped artifact primitives for deleted artifact cards', async () => {
