@@ -1510,6 +1510,7 @@ export function CanvasWorkspaceView({
               if (card) openCardOrExternalLink(card);
             },
             cards: state.cards,
+            stagedSyncCards,
             selectedCardIds,
             activeCardId,
             agentChatThreadIndex,
@@ -1765,6 +1766,8 @@ export function CanvasWorkspaceView({
           onSaveBookmark={(payload) => handleInlineSaveBookmark(openCard, payload)}
           onSaveNoteToProject={(payload) => handleSaveNoteToProject(openCard, payload)}
           onSaveTaskToProject={(payload) => handleSaveTaskToProject(openCard, payload)}
+          onFolderSaveUserNote={async (payload) => handleInlineSaveUserNote(openCard, payload)}
+          onFolderSaveUserTask={async (payload) => handleInlineSaveUserTask(openCard, payload)}
           onUpdateCard={(updates) => {
             if (openCard.type === 'sonic_studio') {
               void handleUpdateSonicStudioCard(openCard.id, updates);

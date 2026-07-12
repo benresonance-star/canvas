@@ -1,4 +1,8 @@
-import { buildFilename } from './filename.js';
+import {
+  buildFilename,
+  normalizeFolderRelativePath,
+  relativePathAfterFilenameRename,
+} from './filename.js';
 import { readFileEntry } from './readFile.js';
 import { reloadFolderHandleForWrite } from './restoreFolder.js';
 import { markFolderHandleStale } from './folderSessionCache.js';
@@ -255,6 +259,34 @@ export async function removeFileAtFolderPath(handle, relativePath) {
     dir = await dir.getDirectoryHandle(segment, { create: false });
   }
   await dir.removeEntry(parts[parts.length - 1]);
+}
+
+/**
+ * Write note/task to a new relative path (when name changes) or overwrite in place.
+ * If body is omitted, content is read from the old file before removal.
+ */
+export async function renameUserNoteFileAtPath(handle, oldRelativePath, { prefix, name, version, body }) {
+  const oldPath = normalizeFolderRelativePath(oldRelativePath);
+  const newFilename = buildFilename({ prefix, name, version, ext: 'md' });
+  const newRelativePath = relativePathAfterFilenameRename(oldPath, newFilename);
+  if (newRelativePath === oldPath) {
+    if (body !== undefined) {
+      await overwriteTextFileAtPath(handle, oldPath, body);
+    }
+    return newRelativePath;
+  }
+  if (await fileExistsAtFolderPath(handle, newRelativePath)) {
+    return { collision: true, filename: newFilename, relativePath: newRelativePath };
+  }
+  let text = body;
+  if (text === undefined) {
+    const entry = await getFileHandleAtPath(handle, oldPath);
+    const file = await readFileEntry(entry);
+    text = file.content ?? '';
+  }
+  await overwriteTextFileAtPath(handle, newRelativePath, text);
+  await removeFileAtFolderPath(handle, oldPath);
+  return newRelativePath;
 }
 
 /**

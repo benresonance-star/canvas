@@ -2,11 +2,8 @@ import {
   ensureWritePermission,
   getFileHandleAtPath,
   overwriteTextFileAtPath,
-  renameUserNoteFile,
-  fileExistsInFolder,
 } from '../folderWrite.js';
 import {
-  buildFilename,
   folderRelativePathFromVersion,
   parseFilename,
 } from '../filename.js';
@@ -17,6 +14,7 @@ import {
   buildCardKeyToArtifactRef,
   ingestLinksFromVersions,
 } from './linkIngest.js';
+import { renameAllArtifactVersions } from './renameUserArtifact.js';
 
 export function validateUserNoteName(name) {
   const trimmed = (name ?? '').trim();
@@ -39,58 +37,20 @@ async function refreshVersionFromFile(folderHandle, ver, filename) {
     ...file,
     ...parsed,
     filename,
-    ...(relativePath && relativePath !== filename ? { relativePath } : {}),
+    relativePath,
+    cardKey: parsed.fullBase,
     content: file.content ?? ver.content,
   };
 }
 
-async function checkRenameCollisions(folderHandle, card, newName) {
-  const prefix = card.prefix;
-  for (const v of card.versions) {
-    const newFilename = buildFilename({ prefix, name: newName, version: v.version, ext: 'md' });
-    if (newFilename !== v.filename && (await fileExistsInFolder(folderHandle, newFilename))) {
-      return true;
-    }
-  }
-  return false;
-}
-
 async function renameAllVersions({ folderHandle, card, versionNum, body, newName }) {
-  if (await checkRenameCollisions(folderHandle, card, newName)) {
-    return { ok: false, reason: 'name_collision' };
-  }
-
-  const prefix = card.prefix;
-  const updatedVersions = [];
-
-  for (const v of card.versions) {
-    const versionBody = v.version === versionNum ? body : undefined;
-    const result = await renameUserNoteFile(folderHandle, v.filename, {
-      prefix,
-      name: newName,
-      version: v.version,
-      body: versionBody,
-    });
-    if (result?.collision) {
-      return { ok: false, reason: 'name_collision' };
-    }
-    const filename = typeof result === 'string' ? result : v.filename;
-    updatedVersions.push(await refreshVersionFromFile(folderHandle, v, filename));
-  }
-
-  const parsed = parseFilename(updatedVersions.find((v) => v.version === versionNum)?.filename
-    ?? buildFilename({ prefix, name: newName, version: versionNum, ext: 'md' }));
-
-  return {
-    ok: true,
-    versions: updatedVersions,
-    cardUpdates: {
-      key: parsed.fullBase,
-      name: parsed.name,
-      prefix: parsed.prefix,
-      versions: updatedVersions,
-    },
-  };
+  return renameAllArtifactVersions({
+    folderHandle,
+    card,
+    versionNum,
+    body,
+    newName,
+  });
 }
 
 async function patchArtifactAndLinks({

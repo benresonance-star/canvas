@@ -53,6 +53,13 @@ export function folderRelativePathFromVersion(version) {
   return normalizeFolderRelativePath(version?.relativePath ?? version?.path ?? version?.filename);
 }
 
+/** Keep folder subpath when renaming a file basename. */
+export function relativePathAfterFilenameRename(relativePathOrFilename, newFilename) {
+  const normalized = normalizeFolderRelativePath(relativePathOrFilename);
+  const dir = folderPathDirname(normalized);
+  return dir ? `${dir}/${newFilename}` : newFilename;
+}
+
 /** Canonical workspace card key (matches folder sync grouped keys). */
 export function cardKeyFromFilename(filename) {
   return folderKeyFromRelativePath(filename);
@@ -232,6 +239,36 @@ function cardCanonicalKeysForPresence(card) {
   const name = card.name;
   if (prefix && name) keys.add(toCanonicalSyncKey(`${prefix}__${name}`));
   return keys;
+}
+
+/** All canonical folder-sync keys used to test whether a card is present on disk. */
+export function collectFolderPresenceKeysForEntry(entry) {
+  return [...cardCanonicalKeysForPresence(entry ?? {})];
+}
+
+/**
+ * After an in-app rename, drop stale folder keys and add the card's new keys.
+ * @param {string[] | null | undefined} presentKeys
+ * @param {object} oldCard
+ * @param {object} mergedCard
+ */
+export function migrateFolderPresentKeysAfterRename(presentKeys, oldCard, mergedCard) {
+  const next = new Set(
+    (presentKeys ?? [])
+      .map((key) => toCanonicalSyncKey(key))
+      .filter(Boolean),
+  );
+  const oldKeys = collectFolderPresenceKeysForEntry(oldCard);
+  const newKeys = collectFolderPresenceKeysForEntry(mergedCard);
+  for (const presentKey of [...next]) {
+    if (oldKeys.some((oldKey) => syncKeysMatch(presentKey, oldKey))) {
+      next.delete(presentKey);
+    }
+  }
+  for (const newKey of newKeys) {
+    next.add(toCanonicalSyncKey(newKey));
+  }
+  return [...next];
 }
 
 /**

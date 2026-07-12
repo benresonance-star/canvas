@@ -74,6 +74,8 @@ export function CardModal({
   bookmarkSaving = false,
   onSaveNoteToProject,
   onSaveTaskToProject,
+  onFolderSaveUserNote,
+  onFolderSaveUserTask,
   onUpdateCard,
   agentPanelProps = null,
   flowArtifactCandidates = [],
@@ -744,6 +746,7 @@ export function CardModal({
               onSaveStatus={onSaveStatus}
               onCancelEdit={() => setEditName(card.name)}
               onSaveToProject={onSaveNoteToProject}
+              onFolderSave={onFolderSaveUserNote}
             />
           </div>
         ) : isUserTask ? (
@@ -769,6 +772,7 @@ export function CardModal({
               onSaveStatus={onSaveStatus}
               onCancelEdit={() => setEditName(card.name)}
               onSaveToProject={onSaveTaskToProject}
+              onFolderSave={onFolderSaveUserTask}
             />
           </div>
         ) : (

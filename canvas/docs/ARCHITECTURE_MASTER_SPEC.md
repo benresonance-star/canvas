@@ -1,7 +1,7 @@
 # Canvas Architecture Master Spec
 
-**Version:** 2026.07.11.1
-**Version label:** artifact-linking
+**Version:** 2026.07.12.1
+**Version label:** task-rename-relink
 **Status:** Active — this is the single spec authority.
 
 This is the single source of truth for shipped architecture, target data architecture, module boundaries, spec migration, debugging, and testing. Historical runbooks and target-only drafts have been folded into this document.
@@ -484,7 +484,8 @@ Rules:
 - `scanFolderFiles` walks directory handles recursively with stale-scan cancellation, ignored folders (`node_modules`, `.git`, hidden/system folders), max-depth, and max-file limits.
 - Folder-backed versions may carry both `filename` (basename) and `relativePath` (normalized path from the linked root). Consumers must resolve file reads through `relativePath` when present.
 - Preview cache keys, staging, `folderPresentKeys`, artifact ingest URIs, outbox entries, agent context reads, external open, and stripped-content hydration use the path-aware canonical key.
-- **Canvas edits** to `user_note` and `markdown` cards save to the linked folder via `saveUserNote` / `saveMarkdownArtifact` when `noteRequiresProjectOnlySave` is false (folder linked and card key present in `folderPresentKeys`). Writes use `folderRelativePathFromVersion` (`overwriteTextFileAtPath` in `folderWrite.js`) so nested subfolder files update in place, not only at the linked-folder root.
+- **Canvas edits** to `user_note`, `user_task`, and `markdown` cards save to the linked folder via `saveUserNote` / `saveUserTask` / `saveMarkdownArtifact` when `noteRequiresProjectOnlySave` is false (folder linked and card key present in `folderPresentKeys`). Writes use `folderRelativePathFromVersion` (`overwriteTextFileAtPath` in `folderWrite.js`) so nested subfolder files update in place, not only at the linked-folder root.
+- **Title renames** for folder-backed `user_note` and `user_task` cards rename the on-disk markdown via `renameUserNoteFileAtPath` (`renameUserArtifact.js`). The save path updates `card.key`, version `filename` / `relativePath` / `cardKey`, and card-level path fields; `persistCardEdits` migrates `folderPresentKeys` through `migrateFolderPresentKeysAfterRename` so the canvas card stays connected after the backing file basename changes. Modal editors route folder saves through `handleInlineSaveUserNote` / `handleInlineSaveUserTask` so structural project sync runs on every save.
 - `noteRequiresProjectOnlySave` (`filename.js`) returns true only when there is no `folderHandle`, or when the card key is absent from a non-empty `folderPresentKeys` scan set. An empty scan set is treated as presence-unknown (not “all missing”). Nested `relativePath` no longer forces project-only saves.
 - App-created notes, bookmarks, and agent chat transcripts still **create** at the linked-folder root. Nested files are read and staged from subfolders; in-place body edits hit the on-disk path via `relativePath`.
 - Dock hover UI may show nested `relativePath` for disambiguation; root files keep the existing label behavior.
@@ -1295,6 +1296,13 @@ Captured by `scripts/capture-architecture-baseline.mjs`. Targets after remediati
 ---
 
 ## 14. Changelog
+
+### 2026-07-12 — User task/note title rename relink (implemented)
+
+- Bumped the active spec to `2026.07.12.1` (`task-rename-relink`); app architecture spec to `2026-07-12-task-rename-relink` in `systemArchitectureSpec.js`.
+- **Problem:** Renaming a task or note title renamed the folder markdown file but left the canvas card on stale sync keys (`card.key`, version `relativePath`, `folderPresentKeys`), so the artifact showed as missing/disconnected from the linked folder.
+- **Fix:** Shared `renameAllArtifactVersions` (`renameUserArtifact.js`) performs path-aware renames via `renameUserNoteFileAtPath`, rewrites card + version metadata (including nested `relativePath` keys), and `persistCardEdits` migrates all canonical folder presence keys after rename. Modal `UserTaskEditor` / `UserNoteEditor` folder saves go through inline save handlers so `requestActionSync('structuralChange')` persists the relinked card.
+- **Tests:** `saveUserTask.test.js`, `renameUserArtifact.test.js`, `filename.test.js` (`migrateFolderPresentKeysAfterRename`, `relativePathAfterFilenameRename`).
 
 ### 2026-07-12 — Folder IFC dock → bim-viewers session placement (implemented)
 

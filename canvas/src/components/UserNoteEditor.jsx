@@ -25,6 +25,7 @@ export const UserNoteEditor = forwardRef(function UserNoteEditor({
   onSaveStatus,
   onCancelEdit,
   onSaveToProject,
+  onFolderSave,
 }, ref) {
   const initialBody = version?.content ?? '';
   const initialName = card?.name ?? '';
@@ -84,6 +85,17 @@ export const UserNoteEditor = forwardRef(function UserNoteEditor({
     setSaving(true);
     setError(null);
     try {
+      if (onFolderSave) {
+        const ok = await onFolderSave({
+          body,
+          name: title,
+          versionNum,
+        });
+        if (!ok) {
+          setError(strings.userNote.saveFailed);
+        }
+        return;
+      }
       const result = await saveUserNote({
         projectId,
         projectName,
@@ -163,10 +175,11 @@ export const UserNoteEditor = forwardRef(function UserNoteEditor({
       </p>
       <div className="flex-1 min-h-0 px-12 py-4">
         {formattedView ? (
-          <div className="h-full min-h-[20rem] overflow-y-auto rounded border border-border bg-surface px-4 py-3 text-primary leading-relaxed">
+          <div className="h-full min-h-[20rem] flex flex-col overflow-hidden rounded border border-border bg-surface px-4 py-3 text-primary leading-relaxed">
             <EditableMarkdownMessage
               value={body}
               onChange={setBody}
+              fillHeight
               disabled={editBlocked || saving}
               toolbarRight={(
                 <button

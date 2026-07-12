@@ -73,7 +73,14 @@ import {
   patchPlacementsMapFromArrays,
 } from '../../lib/artifactPlacementsMap.js';
 import { dockPersistAheadOfCommit } from '../../lib/folderScanDockPersist.js';
-import { syncKeysMatch, noteRequiresProjectOnlySave, cardKeyFromFilename, toCanonicalSyncKey } from '../../lib/filename.js';
+import {
+  syncKeysMatch,
+  noteRequiresProjectOnlySave,
+  cardKeyFromFilename,
+  toCanonicalSyncKey,
+  collectFolderPresenceKeysForEntry,
+  migrateFolderPresentKeysAfterRename,
+} from '../../lib/filename.js';
 import { addSuppressedSyncKey, addSuppressedBookmarkUrl } from '../../lib/syncSuppressedKeys.js';
 import { getCachedFolderHandle } from '../../lib/folderSessionCache.js';
 import { loadFolderHandle } from '../../lib/folderStore.js';
@@ -1152,20 +1159,27 @@ export function useCanvasDocument({ refs, deps }) {
   const persistCardEdits = useCallback((cardId, cardUpdates) => {
     const oldCard = stateRef.current.cards.find((c) => c.id === cardId);
     if (!oldCard) return;
+    const mergedCard = { ...oldCard, ...cardUpdates };
     updateCard(cardId, cardUpdates);
     const projectId = activeProjectIdRef.current;
     if (projectId) {
       void requestActionSync('structuralChange', { projectId });
     }
-    if (cardUpdates.key && cardUpdates.key !== oldCard.key && folderKeySet && setFolderPresentKeys) {
-      setFolderPresentKeys((keys) => {
-        const next = new Set(keys || []);
-        next.delete(oldCard.key);
-        if (cardUpdates.key) next.add(cardUpdates.key);
-        return [...next];
-      });
+    if (setFolderPresentKeys) {
+      const oldKeys = collectFolderPresenceKeysForEntry(oldCard);
+      const newKeys = collectFolderPresenceKeysForEntry(mergedCard);
+      const relinked = oldKeys.some(
+        (oldKey) => !newKeys.some((newKey) => syncKeysMatch(oldKey, newKey)),
+      ) || newKeys.some(
+        (newKey) => !oldKeys.some((oldKey) => syncKeysMatch(oldKey, newKey)),
+      );
+      if (relinked) {
+        setFolderPresentKeys((keys) =>
+          migrateFolderPresentKeysAfterRename(keys, oldCard, mergedCard),
+        );
+      }
     }
-  }, [updateCard, folderKeySet, activeProjectIdRef, setFolderPresentKeys, stateRef]);
+  }, [updateCard, activeProjectIdRef, setFolderPresentKeys, stateRef]);
 
   const handleInlineSaveUserNote = useCallback(async (card, { body, name }) => {
     const projectId = activeProjectIdRef.current;

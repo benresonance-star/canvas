@@ -1,7 +1,7 @@
 /** Bump when architecture or shipped load behavior changes. */
 import { getArchitectureGraphManifest } from './architecture/index.js';
 
-export const ARCHITECTURE_SPEC_VERSION = '2026-07-12-folder-ifc-dock';
+export const ARCHITECTURE_SPEC_VERSION = '2026-07-12-task-rename-relink';
 
 export const ARCHITECTURE_LAYERS = [
   {
@@ -557,8 +557,14 @@ export function buildArchitectureMarkdown(runtime) {
     '- Card type **`user_note`** (`notes | NOTE`) — not legacy `markdown` for `notes__` files (migrated on load)',
     '- **Canvas:** title + `UserNoteInlineEditor` when active (zoom ≥ 0.5); editing always enabled in UI',
     '- **Fullscreen:** editable title in `CardModal`; body via `UserNoteEditor`',
-    '- **Folder:** `saveUserNote` when folder linked and root key is in scan set; nested folder notes are read-only-first-slice and save to project JSON',
+    '- **Folder:** `saveUserNote` when folder linked and key is in scan set; nested paths use `relativePath` for reads/writes',
+    '- **Title rename:** `renameAllArtifactVersions` + `renameUserNoteFileAtPath` relink `card.key`, version paths, and `folderPresentKeys` after on-disk rename',
     '- Missing from folder scan still shown via red ring (`isCardMissingFromFolder`)',
+    '',
+    '## User tasks (current)',
+    '- Card type **`user_task`** (`tasks | TASK`) — frontmatter + body in folder markdown (`saveUserTask`, `serializeUserTask`)',
+    '- **Canvas / modal:** inline + fullscreen editors mirror notes; folder saves use `handleInlineSaveUserTask` → `persistCardEdits` + structural sync',
+    '- **Title rename:** same relink path as notes (`renameUserArtifact.js`); nested `inbox/tasks__*` keys preserved via `cardKeyFromFilename(relativePath)`',
     '',
     '## Bookmarks (current)',
     '- **`bookmark`** cards (`links__*`): URL + title editable on canvas and in modal (`BookmarkInlineEditor`, `saveBookmarkToProject`)',

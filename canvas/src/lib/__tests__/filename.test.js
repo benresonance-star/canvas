@@ -18,6 +18,9 @@ import {
   isCardMissingFromFolder,
   folderBackedSyncKeyForEntry,
   gltfPackageSyncKey,
+  relativePathAfterFilenameRename,
+  migrateFolderPresentKeysAfterRename,
+  collectFolderPresenceKeysForEntry,
 } from '../filename.js';
 
 describe('sync key helpers', () => {
@@ -384,5 +387,54 @@ describe('noteRequiresProjectOnlySave', () => {
         card: { key: 'notes__a', type: 'user_note', prefix: 'notes' },
       }),
     ).toBe(false);
+  });
+});
+
+describe('relativePathAfterFilenameRename', () => {
+  it('preserves nested directory when basename changes', () => {
+    expect(
+      relativePathAfterFilenameRename(
+        'inbox/tasks__LIVE TASKS-v1.md',
+        'tasks__CURRENT HIGH-LEVEL TASKS-v1.md',
+      ),
+    ).toBe('inbox/tasks__CURRENT HIGH-LEVEL TASKS-v1.md');
+  });
+
+  it('returns basename for root files', () => {
+    expect(
+      relativePathAfterFilenameRename(
+        'tasks__LIVE TASKS-v1.md',
+        'tasks__CURRENT HIGH-LEVEL TASKS-v1.md',
+      ),
+    ).toBe('tasks__CURRENT HIGH-LEVEL TASKS-v1.md');
+  });
+});
+
+describe('migrateFolderPresentKeysAfterRename', () => {
+  it('replaces old sync keys with renamed keys', () => {
+    const oldCard = {
+      key: 'tasks__LIVE TASKS',
+      prefix: 'tasks',
+      name: 'LIVE TASKS',
+      type: 'user_task',
+      versions: [{ filename: 'tasks__LIVE TASKS-v1.md', version: 1 }],
+    };
+    const mergedCard = {
+      ...oldCard,
+      key: 'tasks__CURRENT HIGH-LEVEL TASKS',
+      name: 'CURRENT HIGH-LEVEL TASKS',
+      versions: [{ filename: 'tasks__CURRENT HIGH-LEVEL TASKS-v1.md', version: 1 }],
+    };
+
+    const next = migrateFolderPresentKeysAfterRename(
+      ['tasks__LIVE TASKS', 'notes__other'],
+      oldCard,
+      mergedCard,
+    );
+
+    expect(next).toContain('tasks__CURRENT HIGH-LEVEL TASKS');
+    expect(next).not.toContain('tasks__LIVE TASKS');
+    expect(next).toContain('notes__other');
+    expect(collectFolderPresenceKeysForEntry(mergedCard)).toContain('tasks__CURRENT HIGH-LEVEL TASKS');
   });
 });

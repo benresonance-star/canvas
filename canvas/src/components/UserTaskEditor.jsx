@@ -28,6 +28,7 @@ export const UserTaskEditor = forwardRef(function UserTaskEditor({
   onSaveStatus,
   onCancelEdit,
   onSaveToProject,
+  onFolderSave,
 }, ref) {
   const parsed = parseUserTask(version?.content ?? '');
   const initialBody = parsed.body;
@@ -94,6 +95,18 @@ export const UserTaskEditor = forwardRef(function UserTaskEditor({
     setSaving(true);
     setError(null);
     try {
+      if (onFolderSave) {
+        const ok = await onFolderSave({
+          body,
+          name: title,
+          taskStatus,
+          versionNum,
+        });
+        if (!ok) {
+          setError(strings.userTask.saveFailed);
+        }
+        return;
+      }
       const result = await saveUserTask({
         projectId,
         projectName,
@@ -193,10 +206,11 @@ export const UserTaskEditor = forwardRef(function UserTaskEditor({
       </p>
       <div className="flex-1 min-h-0 px-12 py-4">
         {formattedView ? (
-          <div className="h-full min-h-[20rem] overflow-y-auto rounded border border-border bg-surface px-4 py-3 text-primary leading-relaxed">
+          <div className="h-full min-h-[20rem] flex flex-col overflow-hidden rounded border border-border bg-surface px-4 py-3 text-primary leading-relaxed">
             <EditableMarkdownMessage
               value={body}
               onChange={setBody}
+              fillHeight
               disabled={editBlocked || saving}
               toolbarRight={(
                 <button
