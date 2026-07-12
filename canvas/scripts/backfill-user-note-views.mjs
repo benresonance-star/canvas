@@ -25,7 +25,7 @@ function mismatchCounts(expectedViews, storedViews) {
       counts.missing_view = (counts.missing_view ?? 0) + 1;
       continue;
     }
-    if (['x', 'y', 'width', 'height', 'zIndex'].some(
+    if (!view.geometryContracted && ['x', 'y', 'width', 'height', 'zIndex'].some(
       (field) => Number(view[field] ?? 0) !== Number(actual[field] ?? 0),
     )) counts.geometry_mismatch = (counts.geometry_mismatch ?? 0) + 1;
   }
@@ -58,7 +58,11 @@ try {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        await upsertArtifactViews(row.project_id, views, client);
+        await upsertArtifactViews(
+          row.project_id,
+          views.filter((view) => !view.geometryContracted && !view.geometryInvalid),
+          client,
+        );
         await archiveMissingArtifactViews(row.project_id, views.map((view) => view.id), client);
         await client.query('COMMIT');
       } catch (error) {

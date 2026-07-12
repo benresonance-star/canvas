@@ -37,6 +37,34 @@ function applyPlacementToCompatibilityPayload(payload, artifactId, placement) {
   return { payload: { ...payload, cards }, matchCount };
 }
 
+async function hydrateCompatibilityGeometry(client, projectId, payload) {
+  const result = await client.query(
+    `SELECT artifact_id, x, y, width, height, z_index
+     FROM artifact_view
+     WHERE project_id = $1 AND surface = 'canvas'
+       AND view_type = 'card' AND archived_at IS NULL`,
+    [projectId],
+  );
+  const views = new Map(result.rows.map((view) => [view.artifact_id, view]));
+  return {
+    ...payload,
+    cards: (payload?.cards ?? []).map((card) => {
+      if (card?.type !== 'user_note') return card;
+      const ids = artifactIdsForEntry(card);
+      const view = ids.length === 1 ? views.get(ids[0]) : null;
+      if (!view) return card;
+      return {
+        ...card,
+        x: Number(view.x),
+        y: Number(view.y),
+        width: Number(view.width),
+        height: Number(view.height),
+        ...(view.z_index == null ? {} : { zIndex: Number(view.z_index) }),
+      };
+    }),
+  };
+}
+
 function compatibilitySurfaceCounts(payload, artifactId) {
   const count = (entries) => (entries ?? []).filter(
     (entry) => entry?.type === 'user_note' && artifactIdsForEntry(entry).includes(artifactId),
@@ -247,6 +275,7 @@ export async function commitArtifactViewPlacements(projectId, input) {
         updatedAt: updated.rows[0].updated_at,
       });
     }
+    payload = await hydrateCompatibilityGeometry(client, projectId, payload);
     const documentRevision = Number(documentResult.rows[0].revision) + 1;
     const documentUpdate = await client.query(
       `UPDATE canvas_project_document
