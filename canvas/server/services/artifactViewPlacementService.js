@@ -167,7 +167,8 @@ export async function commitArtifactViewTransfer(projectId, input) {
     const documentRevision = Number(documentResult.rows[0].revision) + 1;
     const documentUpdate = await client.query(
       `UPDATE canvas_project_document
-       SET payload = $2::jsonb, revision = $3, updated_at = NOW()
+       SET payload = prepare_user_note_artifact_view_document($1, $2::jsonb),
+           revision = $3, updated_at = NOW()
        WHERE project_id = $1 AND revision = $4
        RETURNING revision, updated_at`,
       [projectId, JSON.stringify(compatibilityPayload), documentRevision, documentResult.rows[0].revision],
@@ -279,7 +280,8 @@ export async function commitArtifactViewPlacements(projectId, input) {
     const documentRevision = Number(documentResult.rows[0].revision) + 1;
     const documentUpdate = await client.query(
       `UPDATE canvas_project_document
-       SET payload = $2::jsonb, revision = $3, updated_at = NOW()
+       SET payload = prepare_user_note_artifact_view_document($1, $2::jsonb),
+           revision = $3, updated_at = NOW()
        WHERE project_id = $1 AND revision = $4
        RETURNING revision, updated_at`,
       [projectId, JSON.stringify(payload), documentRevision, documentResult.rows[0].revision],
