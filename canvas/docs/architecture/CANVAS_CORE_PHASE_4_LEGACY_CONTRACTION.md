@@ -35,22 +35,11 @@ Before removing the compatibility trigger or legacy note geometry, production te
 
 ## Checkpoint 3: verification authority
 
-Migration `0030_artifact_view_write_authority.sql` adds a reversible database authority mode. `projection` remains the migration default and preserves the Phase 1 trigger behavior. After the canonical gate passes, switch with:
-
-```powershell
-npm.cmd run artifact-view:authority:verification
-npm.cmd run gate:artifact-view-authority
-```
+Migration `0030_artifact_view_write_authority.sql` introduced the reversible database authority mode used during the checkpoint 3 rollout. `projection` preserved the Phase 1 behavior and `verification` guarded the canonical cutover.
 
 In `verification` mode, generic project-document writes may create the first view for a genuinely new note and archive views for a deleted note. They cannot change existing note geometry or move an existing note between surfaces. Those changes must already have been committed through the explicit canonical placement or transfer command, otherwise the document transaction is rejected.
 
-Immediate database rollback is:
-
-```powershell
-npm.cmd run artifact-view:authority:projection
-```
-
-This database switch complements the frontend `VITE_USER_NOTE_ARTIFACT_VIEW_WRITES` flag. Keep both rollback controls documented until the compatibility payload and trigger are removed in a separately approved destructive migration.
+These temporary switch commands and the runtime setting were removed by checkpoint 5 after lifecycle authority became explicit.
 
 ## Checkpoint 4: payload geometry contraction
 
@@ -58,4 +47,10 @@ Migration `0031_contract_user_note_geometry.sql` moves the verification and life
 
 Canonical read and write modes are now the defaults. A canonical view read failure fails the project load closed rather than rendering geometry-less notes. Pending or unresolved notes keep their compatibility geometry until they acquire an unambiguous artifact identity and active view.
 
-`projection` mode remains an emergency reconstruction path: a client built with both legacy flags can repopulate compatibility geometry through ordinary document writes. This is now a recovery operation, not the normal persisted representation.
+During checkpoint 4, `projection` mode remained an emergency reconstruction path. Checkpoint 5 removed that path after explicit lifecycle authority replaced the triggers.
+
+## Checkpoint 5: explicit lifecycle authority
+
+Migration `0032_remove_artifact_view_projection_triggers.sql` replaces both document triggers with `prepare_user_note_artifact_view_document(project_id, payload)`. Every accepted project-document INSERT or UPDATE invokes this lifecycle function inside the same SQL statement and transaction. It creates the first canonical view for a new identified note, validates that existing geometry/surface changes were performed by explicit commands, archives removed-note views, and returns the contracted document payload.
+
+The projection trigger functions, runtime authority table, and projection switch commands are removed. Canonical artifact views are now the sole persisted placement authority for identified user notes. Recovery requires restoring canonical views from database backup or a purpose-built repair operation; switching the client to legacy mode is no longer a valid rollback.

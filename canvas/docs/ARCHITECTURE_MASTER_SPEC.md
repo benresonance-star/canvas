@@ -1623,6 +1623,6 @@ Phase 1 adds a reversible `user_note` artifact-view slice without deleting legac
 - Client read modes are `legacy`, `shadow`, and `canonical` (default after Phase 4 payload contraction); canonical composition occurs before `loadProjectIntoState` and fails closed when required views cannot be read.
 - Folder files remain note-body authority while present. Artifact views never own note content or folder-presence state.
 - Generic artifact lifecycle and artifact-relationship history are orchestrated transactionally by `artifactService`; general update routes cannot bypass state transitions.
-- Emergency reconstruction uses database `projection` authority plus legacy client read/write flags; normal project documents no longer retain geometry for eligible user notes.
+- Identified user-note placement is owned solely by canonical artifact views. Project-document lifecycle writes invoke the explicit transactional lifecycle function; legacy projection triggers and the runtime authority switch have been removed.
 
 Implementation evidence and procedures: `docs/architecture/CANVAS_CORE_PHASE_1_AUDIT.md`, `docs/architecture/CANVAS_CORE_PHASE_1_MIGRATION.md`, and ADRs `0001`–`0004`.

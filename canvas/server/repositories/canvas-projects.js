@@ -78,9 +78,6 @@ async function canonicalizeUserNoteGeometry(projectId, payload) {
   const result = await query(
     `SELECT view.artifact_id, view.x, view.y, view.width, view.height, view.z_index
      FROM artifact_view view
-     JOIN canvas_runtime_setting setting
-       ON setting.key = 'artifact_view_write_authority'
-      AND setting.value = 'verification'
      WHERE view.project_id = $1 AND view.surface = 'canvas'
        AND view.view_type = 'card' AND view.archived_at IS NULL`,
     [projectId],
@@ -413,7 +410,13 @@ export async function putCanvasIndex(payload, expectedRevision = 0, options = {}
   ];
   if (removedProjectIds.length > 0) {
     await query(
-      'DELETE FROM canvas_project_document WHERE project_id = ANY($1::text[])',
+      `WITH archived AS (
+         UPDATE artifact_view
+         SET archived_at = NOW(), updated_at = NOW(), version = version + 1
+         WHERE project_id = ANY($1::text[]) AND archived_at IS NULL
+         RETURNING id
+       )
+       DELETE FROM canvas_project_document WHERE project_id = ANY($1::text[])`,
       [removedProjectIds],
     );
   }
@@ -470,7 +473,7 @@ export async function createCanvasProjectWithIndex(projectId, projectPayload, in
     }
     await client.query(
       `INSERT INTO canvas_project_document (project_id, payload, updated_at, revision)
-       VALUES ($1, $2::jsonb, $3, 1)`,
+       VALUES ($1, prepare_user_note_artifact_view_document($1, $2::jsonb), $3, 1)`,
       [projectId, JSON.stringify(projectPayload), now],
     );
     if (!indexRow.rows[0]) {
@@ -629,7 +632,7 @@ export async function putCanvasProject(
     }
     const inserted = await query(
       `INSERT INTO canvas_project_document (project_id, payload, updated_at, revision)
-       VALUES ($1, $2::jsonb, $3, 1)
+       VALUES ($1, prepare_user_note_artifact_view_document($1, $2::jsonb), $3, 1)
        ON CONFLICT (project_id) DO NOTHING
        RETURNING revision, updated_at`,
       [projectId, JSON.stringify(payload), now],
@@ -695,7 +698,8 @@ export async function putCanvasProject(
   const nextRevision = currentRevision + 1;
   const updated = await query(
     `UPDATE canvas_project_document
-     SET payload = $2::jsonb, updated_at = $3, revision = $4
+     SET payload = prepare_user_note_artifact_view_document($1, $2::jsonb),
+         updated_at = $3, revision = $4
      WHERE project_id = $1 AND revision = $5
      RETURNING revision, updated_at`,
     [projectId, JSON.stringify(payload), now, nextRevision, currentRevision],
@@ -782,7 +786,7 @@ export async function patchCanvasProject(
     syncTraceLog(traceId, 'db:patch-insert', { projectId });
     const inserted = await query(
       `INSERT INTO canvas_project_document (project_id, payload, updated_at, revision)
-       VALUES ($1, $2::jsonb, $3, 1)
+       VALUES ($1, prepare_user_note_artifact_view_document($1, $2::jsonb), $3, 1)
        ON CONFLICT (project_id) DO NOTHING
        RETURNING revision, updated_at`,
       [projectId, JSON.stringify(created), now],
@@ -875,7 +879,8 @@ export async function patchCanvasProject(
   try {
     const updated = await query(
       `UPDATE canvas_project_document
-       SET payload = $2::jsonb, updated_at = $3, revision = $4
+       SET payload = prepare_user_note_artifact_view_document($1, $2::jsonb),
+           updated_at = $3, revision = $4
        WHERE project_id = $1 AND revision = $5
        RETURNING revision, updated_at`,
       [projectId, JSON.stringify(merged), now, nextRevision, currentRevision],
@@ -931,6 +936,11 @@ export async function deleteCanvasProject(projectId) {
   try {
     await client.query('BEGIN');
     const primitiveCleanup = await deleteProjectPrimitiveScope(projectId, client);
+    await client.query(
+      `UPDATE artifact_view SET archived_at = NOW(), updated_at = NOW(), version = version + 1
+       WHERE project_id = $1 AND archived_at IS NULL`,
+      [projectId],
+    );
     await client.query('DELETE FROM canvas_project_document WHERE project_id = $1', [projectId]);
     await client.query('COMMIT');
     return { primitiveCleanup };
