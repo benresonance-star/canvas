@@ -26,4 +26,13 @@ describe('userTaskContent', () => {
       body: 'Do this first',
     });
   });
+
+  it('keeps multiple body dividers after frontmatter', () => {
+    const body = ['Section 1', '', '---', '', '---', '', 'Section 2'].join('\n');
+    const content = serializeUserTask({ taskStatus: 'general', body });
+    expect(parseUserTask(content)).toEqual({
+      taskStatus: 'general',
+      body,
+    });
+  });
 });

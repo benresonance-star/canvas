@@ -1,11 +1,22 @@
 import { fileTypeFromExt } from './filename.js';
+import { mergeArtifactDates } from './artifactDates.js';
 
 /** Merge binary/text preview fields from a fresh disk read onto an existing version row */
-export function pickPreviewFieldsFromDisk(disk) {
+export function pickPreviewFieldsFromDisk(disk, existing = null) {
+  const contentChanged = Boolean(
+    existing?.content_hash
+    && disk.content_hash
+    && existing.content_hash !== disk.content_hash,
+  );
+  const dateFields = mergeArtifactDates(existing, {
+    lastModified: disk.lastModified,
+    contentChanged,
+  });
   return {
     filename: disk.filename,
     size: disk.size,
     lastModified: disk.lastModified,
+    ...dateFields,
     content: disk.content,
     content_hash: disk.content_hash,
     dataUrl: disk.dataUrl,
@@ -57,7 +68,7 @@ export function mergeDiskPreviewIntoCardVersions(cardVersions, diskVersions) {
       && diskV.content_hash
       && ev.content_hash !== diskV.content_hash,
     );
-    const merged = { ...ev, ...pickPreviewFieldsFromDisk(diskV) };
+    const merged = { ...ev, ...pickPreviewFieldsFromDisk(diskV, ev) };
     if (contentChanged) {
       merged.threeDSnapshotCacheKey = null;
       merged.threeDSnapshotContentHash = null;

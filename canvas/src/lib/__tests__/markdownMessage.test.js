@@ -451,6 +451,73 @@ describe('buildEditableDocumentHtml', () => {
     expect(buildEditableDocumentHtml([])).toBe('<p class="whitespace-pre-wrap"><br></p>');
   });
 
+  it('round-trips horizontal dividers through document html', () => {
+    const blocks = parseMarkdownMessage(['Before', '', '---', '', 'After'].join('\n'));
+    const html = buildEditableDocumentHtml(blocks);
+    expect(html).toContain('<hr contenteditable="false">');
+    const root = mockDocumentRoot([
+      mockElement('p', { childNodes: [mockText('Before')] }),
+      mockElement('hr'),
+      mockElement('p', { childNodes: [mockText('After')] }),
+    ]);
+    expect(editableDocumentToMarkdown(root)).toBe(serializeMarkdownMessage(blocks));
+  });
+
+  it('round-trips multiple dividers including browser-wrapped hr nodes', () => {
+    const source = ['Before', '', '---', '', '---', '', 'After'].join('\n');
+    const blocks = parseMarkdownMessage(source);
+    const expected = serializeMarkdownMessage(blocks);
+    const root = mockDocumentRoot([
+      mockElement('p', { childNodes: [mockText('Before')] }),
+      mockElement('div', { childNodes: [mockElement('hr')] }),
+      mockElement('div', { childNodes: [mockElement('hr')] }),
+      mockElement('p', { childNodes: [mockText('After')] }),
+    ]);
+    expect(editableDocumentToMarkdown(root)).toBe(expected);
+    expect(buildEditableDocumentHtml(blocks).match(/<hr/g)?.length).toBe(2);
+  });
+
+  it('round-trips headings through document html', () => {
+    const source = ['# Title', '', '## Section', '', 'Body text'].join('\n');
+    const blocks = parseMarkdownMessage(source);
+    const expected = serializeMarkdownMessage(blocks);
+    const root = mockDocumentRoot([
+      mockElement('h1', { childNodes: [mockText('Title')] }),
+      mockElement('h2', { childNodes: [mockText('Section')] }),
+      mockElement('p', { childNodes: [mockText('Body text')] }),
+    ]);
+    expect(editableDocumentToMarkdown(root)).toBe(expected);
+  });
+
+  it('round-trips inline formatting with wrapped dividers', () => {
+    const source = ['Line1', '', '**bold** and *italic*', '', '---', '', 'Line2'].join('\n');
+    const blocks = parseMarkdownMessage(source);
+    const expected = serializeMarkdownMessage(blocks);
+    const root = mockDocumentRoot([
+      mockElement('p', { childNodes: [mockText('Line1')] }),
+      mockElement('p', {
+        childNodes: [
+          mockElement('strong', { childNodes: [mockText('bold')] }),
+          mockText(' and '),
+          mockElement('em', { childNodes: [mockText('italic')] }),
+        ],
+      }),
+      mockElement('div', { childNodes: [mockElement('hr')] }),
+      mockElement('p', { childNodes: [mockText('Line2')] }),
+    ]);
+    expect(editableDocumentToMarkdown(root)).toBe(expected);
+  });
+
+  it('preserves extra blank lines between paragraphs', () => {
+    const root = mockDocumentRoot([
+      mockElement('p', { childNodes: [mockText('A')] }),
+      mockElement('p', { childNodes: [mockElement('br')] }),
+      mockElement('p', { childNodes: [mockElement('br')] }),
+      mockElement('p', { childNodes: [mockText('B')] }),
+    ]);
+    expect(editableDocumentToMarkdown(root)).toBe('A\n\n\n\n\n\nB');
+  });
+
   it('round-trips a multi-paragraph note through document html', () => {
     const source = [
       'First paragraph.',

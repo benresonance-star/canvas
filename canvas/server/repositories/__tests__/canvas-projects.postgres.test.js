@@ -299,9 +299,11 @@ async function insertPrimitiveScopeFixtures() {
     [DELETE_PROJECT_ID, DELETE_CLUSTER_ID, KEEP_PROJECT_ID, KEEP_CLUSTER_ID],
   );
   await query(
-    `INSERT INTO artifact (id, type, uri, content_hash, version, retrieved_at, metadata)
-     VALUES ($1, 'doc', 'fixture://shared', $2, '1', $5, $6::jsonb),
-            ($3, 'doc', 'fixture://local', $4, '1', $5, $7::jsonb)`,
+    `INSERT INTO artifact (
+       id, type, uri, content_hash, version, retrieved_at, metadata, title, created_at, updated_at
+     )
+     VALUES ($1, 'doc', 'fixture://shared', $2, '1', $5, $6::jsonb, 'Shared fixture', $5, $5),
+            ($3, 'doc', 'fixture://local', $4, '1', $5, $7::jsonb, 'Local fixture', $5, $5)`,
     [
       SHARED_ARTIFACT_ID,
       `${SHARED_ARTIFACT_ID}-hash`,

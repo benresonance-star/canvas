@@ -18,6 +18,7 @@ export const createArtifactRequestSchema = z.object({
   stateMachineId: z.string().min(1).optional().nullable(),
   createdBy: z.string().min(1).optional(),
   contentSchemaVersion: z.number().int().positive().optional().nullable(),
+  expectedRevision: z.number().int().positive().optional(),
 });
 
 export const updateArtifactRequestSchema = z.object({
@@ -29,16 +30,16 @@ export const updateArtifactRequestSchema = z.object({
   payloadText: z.string().optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   capabilities: z.array(z.string().min(1)).optional(),
-  currentStateId: z.string().min(1).optional().nullable(),
-  stateMachineId: z.string().min(1).optional().nullable(),
   updatedBy: z.string().min(1).optional(),
   contentSchemaVersion: z.number().int().positive().optional().nullable(),
+  expectedRevision: z.number().int().positive().optional(),
 });
 
 export const archiveArtifactRequestSchema = z.object({
   actorType: actorTypeSchema.optional(),
   actorId: z.string().min(1).optional(),
   reason: z.string().optional(),
+  expectedRevision: z.number().int().positive().optional(),
 });
 
 export const transitionArtifactStateRequestSchema = z.object({
@@ -48,6 +49,7 @@ export const transitionArtifactStateRequestSchema = z.object({
   actorId: z.string().min(1),
   runId: z.string().min(1).optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  expectedRevision: z.number().int().positive().optional(),
 });
 
 export const createStateMachineRequestSchema = z.object({

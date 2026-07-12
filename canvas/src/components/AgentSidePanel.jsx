@@ -1053,16 +1053,21 @@ export function AgentSidePanel({
           ? strings.agent.agentChatTranscriptFolderWriteFailed
           : strings.agent.agentChatTranscriptSyncFailed;
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const text = draft.trim();
     if (!text || !canChat || chatLoading) return;
-    onSendMessage?.({
-      text,
+    const sentText = text;
+    setDraft('');
+    if (!onSendMessage) return;
+    const result = await onSendMessage({
+      text: sentText,
       contextMode,
       contextCards,
     });
-    setDraft('');
+    if (result?.ok === false) {
+      setDraft(sentText);
+    }
   };
 
   const handleSaveKey = async (e) => {

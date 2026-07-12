@@ -70,6 +70,7 @@ import {
   estimateAgentChat,
   sendAgentChat,
   pullOllamaModel,
+  resolveAgentChatTimeoutMs,
 } from '../../lib/agentApi.js';
 import {
   resolveEffectiveAgentContextCards,
@@ -2080,7 +2081,7 @@ export function useAgentChatShell({
             contextLabels,
           },
         ]);
-        return;
+        return { ok: true };
       }
 
       if (!activeThreadAgentTypeCompatible) {
@@ -2089,7 +2090,7 @@ export function useAgentChatShell({
             defaultAgentTypeLabelForProvider(selectedConnectorProvider),
           ),
         );
-        return;
+        return { ok: false };
       }
 
       const threadTemplate = threadAgentTemplate;
@@ -2120,7 +2121,7 @@ export function useAgentChatShell({
         || null;
       const provider = resolvedProvider;
       const connectorId = singleConnectorId;
-      if (!provider) return;
+      if (!provider) return { ok: false };
 
       const registry = agentContextRegistryRef.current;
       const hydratedContextCards = await hydrateLiveContextCards(contextCards);
@@ -2277,8 +2278,10 @@ export function useAgentChatShell({
             strings.agent.contextImagesUnsupported(activeConnector?.label || 'This agent'),
           );
           rollbackOptimisticMessages();
-          return;
+          return { ok: false };
         }
+
+        const chatTimeoutMs = resolveAgentChatTimeoutMs(provider);
 
         try {
           const estimate = await estimateAgentChat({
@@ -2287,6 +2290,7 @@ export function useAgentChatShell({
             messages: historyForApi,
             systemContext,
             templateId: resolvedTemplateId,
+            timeoutMs: chatTimeoutMs,
           });
           setAgentLastTokenEstimate(estimate);
           if (estimate.inputTokens > AGENT_TOKEN_CONFIRM_THRESHOLD) {
@@ -2298,7 +2302,7 @@ export function useAgentChatShell({
             );
             if (!ok) {
               rollbackOptimisticMessages();
-              return;
+              return { ok: false };
             }
           }
         } catch {
@@ -2311,6 +2315,7 @@ export function useAgentChatShell({
           messages: historyForApi,
           systemContext,
           templateId: resolvedTemplateId,
+          timeoutMs: chatTimeoutMs,
         });
 
         for (const card of diff.added) {
@@ -2359,6 +2364,7 @@ export function useAgentChatShell({
             setTimeout(() => setSyncStatus(null), 5000);
           }, diff.added.length ? 4500 : 0);
         }
+        return { ok: true };
       } catch (e) {
         rollbackOptimisticMessages();
         if (optimisticIds?.size) {
@@ -2367,6 +2373,7 @@ export function useAgentChatShell({
           });
         }
         setAgentChatError(e.message || strings.agent.chatError);
+        return { ok: false };
       } finally {
         setAgentChatLoading(false);
       }

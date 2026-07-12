@@ -13,8 +13,11 @@ vi.mock('../../repositories/artifact-events.js', () => ({
   listEventsForArtifact: vi.fn(),
 }));
 vi.mock('../../services/artifactService.js', () => ({
+  addArtifactRelationshipWithEvents: vi.fn(),
   archiveArtifactWithEvents: vi.fn(),
   createArtifactWithEvents: vi.fn(),
+  removeArtifactRelationshipWithEvents: vi.fn(),
+  restoreArtifactWithEvents: vi.fn(),
   transitionArtifactStateWithEvents: vi.fn(),
   updateArtifactWithEvents: vi.fn(),
 }));
@@ -44,8 +47,6 @@ vi.mock('../../services/urlPreview.js', () => ({
 }));
 
 const artifactRepo = await import('../../repositories/artifacts.js');
-const events = await import('../../repositories/artifact-events.js');
-const relationships = await import('../../repositories/relationships.js');
 const service = await import('../../services/artifactService.js');
 const { registerArtifactRoutes } = await import('../artifacts.js');
 
@@ -125,11 +126,10 @@ describe('artifact base routes', () => {
   });
 
   it('creates artifact relationships over the generic relationship table', async () => {
-    relationships.createArtifactRelationship.mockResolvedValue({
+    service.addArtifactRelationshipWithEvents.mockResolvedValue({
       created: true,
       relationship: { id: 'rel-1' },
     });
-    events.appendArtifactEvent.mockResolvedValue({ id: 'event-1' });
 
     const result = await request(server, '/artifact-relationships', {
       method: 'POST',
@@ -142,11 +142,8 @@ describe('artifact base routes', () => {
     });
 
     expect(result.response.status).toBe(201);
-    expect(relationships.createArtifactRelationship).toHaveBeenCalledWith(
+    expect(service.addArtifactRelationshipWithEvents).toHaveBeenCalledWith(
       expect.objectContaining({ relationshipType: 'depends_on' }),
-    );
-    expect(events.appendArtifactEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ artifactId: 'source-1', type: 'RelationshipAdded' }),
     );
   });
 });

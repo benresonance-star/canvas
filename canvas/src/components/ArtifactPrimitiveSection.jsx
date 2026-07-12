@@ -4,6 +4,7 @@ import { getPrimitiveDetail } from '../lib/primitivesApi.js';
 import { formatDurationSec } from '../lib/audio/parseAudioTags.js';
 import { FieldRow } from './FieldRow.jsx';
 import { ImageArtifactMetadataFields } from './ImageArtifactMetadataFields.jsx';
+import { formatArtifactDateTime } from '../lib/artifactDates.js';
 
 export function ArtifactPrimitiveSection({ artifactRef, version = null, variant = 'sidebar' }) {
   const [detail, setDetail] = useState(null);
@@ -39,6 +40,8 @@ export function ArtifactPrimitiveSection({ artifactRef, version = null, variant 
   const p = detail?.primitive;
   const meta =
     p?.metadata && typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p?.metadata;
+  const dateCreated = version?.dateCreated ?? meta?.dateCreated ?? null;
+  const dateModified = version?.dateModified ?? meta?.dateModified ?? null;
 
   return (
     <section
@@ -61,6 +64,10 @@ export function ArtifactPrimitiveSection({ artifactRef, version = null, variant 
           <FieldRow label="Hash" value={p.content_hash} />
           <FieldRow label="Type" value={p.type} />
           <FieldRow label="File" value={meta?.filename} />
+          <FieldRow label={strings.modal.dateCreated} value={formatArtifactDateTime(dateCreated)} />
+          {dateModified ? (
+            <FieldRow label={strings.modal.dateModified} value={formatArtifactDateTime(dateModified)} />
+          ) : null}
           <ImageArtifactMetadataFields meta={meta} version={version} />
           {meta?.canvas_kind === 'audio' && meta?.audio && (
             <>

@@ -22,7 +22,12 @@ function rowToRelationship(row) {
   };
 }
 
-export async function insertRelationship(clusterId, fields) {
+export async function insertRelationship(
+  clusterId,
+  fields,
+  db = { query },
+  { emitCanvasEvent = true } = {},
+) {
   const id = newUlid();
   const rel = createRelationship({
     id,
@@ -36,7 +41,7 @@ export async function insertRelationship(clusterId, fields) {
   });
 
   try {
-    await query(
+    await db.query(
       `INSERT INTO relationship (
          id, from_id, from_type, to_id, to_type, type, confidence,
          bidirectional, created_at, metadata, project_id
@@ -61,7 +66,7 @@ export async function insertRelationship(clusterId, fields) {
         from_ref: fields.from_ref,
         to_ref: fields.to_ref,
         type: fields.type,
-      });
+      }, db);
       if (existing) return rowToRelationship(existing);
     }
     throw err;
@@ -69,7 +74,7 @@ export async function insertRelationship(clusterId, fields) {
 
   for (let i = 0; i < rel.provenance.length; i += 1) {
     const p = rel.provenance[i];
-    await query(
+    await db.query(
       `INSERT INTO provenance (primitive_id, primitive_type, source_id, source_type, position)
        VALUES ($1, 'relationship', $2, $3, $4)`,
       [id, p.id, p.type, i],
@@ -80,13 +85,15 @@ export async function insertRelationship(clusterId, fields) {
     await addClusterMember(clusterId, { id, type: 'relationship' });
   }
 
-  await appendEvent({
-    actor: { kind: 'agent', id: 'canvas.server' },
-    action: 'created',
-    targetId: id,
-    targetType: 'relationship',
-    after: { type: rel.type },
-  });
+  if (emitCanvasEvent) {
+    await appendEvent({
+      actor: { kind: 'agent', id: 'canvas.server' },
+      action: 'created',
+      targetId: id,
+      targetType: 'relationship',
+      after: { type: rel.type },
+    });
+  }
 
   return { ...rel, id };
 }
@@ -101,8 +108,8 @@ export async function getRelationshipsForPrimitive(id, type) {
   return res.rows;
 }
 
-export async function findRelationship({ from_ref, to_ref, type }) {
-  const res = await query(
+export async function findRelationship({ from_ref, to_ref, type }, db = { query }) {
+  const res = await db.query(
     `SELECT * FROM relationship
      WHERE from_id = $1 AND from_type = $2 AND to_id = $3 AND to_type = $4 AND type = $5
      LIMIT 1`,
@@ -111,17 +118,22 @@ export async function findRelationship({ from_ref, to_ref, type }) {
   return res.rows[0] ?? null;
 }
 
-export async function getRelationshipById(id) {
-  const res = await query('SELECT * FROM relationship WHERE id = $1', [id]);
+export async function getRelationshipById(id, db = { query }) {
+  const res = await db.query('SELECT * FROM relationship WHERE id = $1', [id]);
   return rowToRelationship(res.rows[0]);
 }
 
-export async function insertRelationshipIfAbsent(clusterId, fields) {
+export async function insertRelationshipIfAbsent(
+  clusterId,
+  fields,
+  db = { query },
+  options = {},
+) {
   const existing = await findRelationship({
     from_ref: fields.from_ref,
     to_ref: fields.to_ref,
     type: fields.type,
-  });
+  }, db);
   if (existing) {
     const relationship = rowToRelationship(existing);
     if (clusterId) {
@@ -129,11 +141,16 @@ export async function insertRelationshipIfAbsent(clusterId, fields) {
     }
     return { relationship, created: false };
   }
-  const relationship = await insertRelationship(clusterId, fields);
+  const relationship = await insertRelationship(clusterId, fields, db, options);
   return { relationship, created: true };
 }
 
-export async function createArtifactRelationship(fields, { clusterId = null } = {}) {
+export async function createArtifactRelationship(
+  fields,
+  { clusterId = null } = {},
+  db = { query },
+  options = {},
+) {
   if (!fields.sourceArtifactId || !fields.targetArtifactId) {
     throw new Error('sourceArtifactId and targetArtifactId are required');
   }
@@ -144,7 +161,7 @@ export async function createArtifactRelationship(fields, { clusterId = null } = 
     type: fields.relationshipType,
     metadata: fields.metadata ?? {},
     provenance: fields.provenance ?? [{ id: fields.sourceArtifactId, type: 'artifact' }],
-  });
+  }, db, options);
   return {
     relationship: {
       id: result.relationship.id,
@@ -159,8 +176,8 @@ export async function createArtifactRelationship(fields, { clusterId = null } = 
   };
 }
 
-export async function deleteRelationship(id) {
-  await query(`DELETE FROM provenance WHERE primitive_id = $1 AND primitive_type = 'relationship'`, [id]);
-  const res = await query(`DELETE FROM relationship WHERE id = $1 RETURNING id`, [id]);
+export async function deleteRelationship(id, db = { query }) {
+  await db.query(`DELETE FROM provenance WHERE primitive_id = $1 AND primitive_type = 'relationship'`, [id]);
+  const res = await db.query(`DELETE FROM relationship WHERE id = $1 RETURNING id`, [id]);
   return res.rows[0] ?? null;
 }

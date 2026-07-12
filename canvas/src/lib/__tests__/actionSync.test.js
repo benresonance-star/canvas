@@ -477,6 +477,80 @@ describe('actionSync', () => {
     expect(reconcile).not.toHaveBeenCalled();
   });
 
+  it('folderScan skips inbound reconcile when post-flush local has more dock than server', async () => {
+    const {
+      setCommittedPayloadForTests,
+      resetProjectDocumentCommitForTests,
+    } = await import('../projectDocumentCommit.js');
+    const { getLastKnownProjectPayloadById } = await import('../sync/projectSyncLocal.js');
+
+    resetProjectDocumentCommitForTests();
+
+    const canvasCards = Array.from({ length: 10 }, (_, i) => ({
+      id: `c${i}`,
+      key: `notes__file-${i}`,
+    }));
+    const dockCards = [
+      { stagingId: 's1', key: 'html__page' },
+      { stagingId: 's2', key: 'images__photo' },
+    ];
+    const preFlushPayload = {
+      projectName: 'P',
+      cards: canvasCards,
+      stagedSyncCards: [],
+      artifactPlacements: {},
+      canvasView: { x: 0, y: 0, zoom: 1 },
+    };
+    const postFlushPayload = {
+      ...preFlushPayload,
+      stagedSyncCards: dockCards,
+      artifactPlacements: {
+        'html__page': { surface: 'dock', key: 'html__page' },
+        'images__photo': { surface: 'dock', key: 'images__photo' },
+      },
+    };
+
+    setCommittedPayloadForTests('p1', preFlushPayload);
+    getLastKnownProjectPayloadById().set('p1', { ...preFlushPayload });
+
+    const commitProjectDocument = vi.fn(async () => {
+      setCommittedPayloadForTests('p1', postFlushPayload);
+      return {
+        ok: true,
+        localCacheWritten: true,
+        payload: postFlushPayload,
+      };
+    });
+    const reconcile = vi.fn(async () => ({}));
+    const flushActive = vi.fn(async () => {});
+
+    registerActionSyncHandlers({
+      getProjectId: () => 'p1',
+      getState: () => ({
+        projectName: 'P',
+        cards: canvasCards,
+        canvasView: { x: 0, y: 0, zoom: 1 },
+      }),
+      getStagedSyncCards: () => dockCards,
+      buildPayload: (s, staged) => ({ ...s, stagedSyncCards: staged ?? [] }),
+      commitProjectDocument,
+      touchIndex: vi.fn(),
+      onLocalCacheFailed: vi.fn(),
+      reconcileInbound: reconcile,
+      flushActiveProject: flushActive,
+      flushAll: vi.fn(),
+    });
+
+    await requestActionSync('folderScan', { projectId: 'p1' });
+
+    expect(flushOutgoingProjectDocument).toHaveBeenCalledWith(
+      'p1',
+      postFlushPayload,
+      expect.objectContaining({ reason: 'folderScan' }),
+    );
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
   it('structuralChange does not push when target id is not the active project', async () => {
     registerActionSyncHandlers({
       getProjectId: () => 'old-project',

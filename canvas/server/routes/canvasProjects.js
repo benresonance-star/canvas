@@ -20,6 +20,7 @@ import {
   publishWorkspaceIndexSync,
 } from '../lib/workspaceIndexSyncHub.js';
 import { deletePreviewBlobsForProject } from '../repositories/canvas-previews.js';
+import { listArtifactViewsByProject } from '../repositories/artifact-views.js';
 
 function isPlainObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -142,6 +143,17 @@ export function registerCanvasProjectRoutes(app, { requireDb }) {
       const row = await getCanvasProjectLayout(req.params.projectId);
       if (!row) return res.status(404).json({ error: 'project not found' });
       res.json(row);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/canvas/projects/:projectId/artifact-views', async (req, res) => {
+    try {
+      const views = await listArtifactViewsByProject(req.params.projectId, {
+        surface: req.query.surface || null,
+      });
+      res.json({ views });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }

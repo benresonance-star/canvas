@@ -3,6 +3,17 @@ import { resolveApiBase } from './apiBase.js';
 const API_BASE = resolveApiBase();
 const REQUEST_TIMEOUT_MS = 15_000;
 
+/** Client timeouts aligned with server chat limits (openaiFetch / ollamaChat). */
+export const AGENT_CHAT_TIMEOUT_MS = Object.freeze({
+  openai: 60_000,
+  ollama: 120_000,
+});
+
+export function resolveAgentChatTimeoutMs(provider) {
+  if (provider === 'ollama') return AGENT_CHAT_TIMEOUT_MS.ollama;
+  return AGENT_CHAT_TIMEOUT_MS.openai;
+}
+
 export class AgentApiError extends Error {
   /**
    * @param {string} message
@@ -147,9 +158,11 @@ export async function estimateAgentChat({
   messages,
   systemContext,
   templateId,
+  timeoutMs,
 }) {
   return request('/agent/estimate', {
     method: 'POST',
+    timeoutMs,
     body: JSON.stringify({ provider, connectorId, messages, systemContext, templateId }),
   });
 }

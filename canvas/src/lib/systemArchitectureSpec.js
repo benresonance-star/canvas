@@ -1,7 +1,7 @@
 /** Bump when architecture or shipped load behavior changes. */
 import { getArchitectureGraphManifest } from './architecture/index.js';
 
-export const ARCHITECTURE_SPEC_VERSION = '2026-07-12-task-rename-relink';
+export const ARCHITECTURE_SPEC_VERSION = '2026-07-12-canvas-core-phase-1';
 
 export const ARCHITECTURE_LAYERS = [
   {
@@ -307,9 +307,9 @@ export const ARCHITECTURE_ENTITY_STORAGE = [
     id: 'artifacts',
     label: 'Artifacts (primitives)',
     summary:
-      'Ingested files and structured sources (hash-deduped in `artifact`). Linked into clusters; card `versions[].artifactRef` points at primitive rows.',
+      'Durable artifact identity and metadata in `artifact`; `artifact_view` stores canonical user-note placement projections while card versions retain compatibility references.',
     server:
-      '`artifact` · `spec_resource` + `spec_project_resource` (spec migration, dual-write path)',
+      '`artifact` · `artifact_event` · `artifact_view` · `spec_resource` + `spec_project_resource`',
     client:
       'Refs on card versions; preview bytes in IndexedDB `canvas-previews` and optional server blobs',
   },
@@ -379,6 +379,7 @@ const CORE_API_ROUTES = [
   'GET|PUT /canvas/diagnostics/concentrate-layouts/:actionId (per-action 3D concentrate layout)',
   'GET /canvas/projects/:id/meta',
   'GET /canvas/projects/:id/layout (layout-only payload for fast cross-browser convergence)',
+  'GET /canvas/projects/:id/artifact-views (batch canonical placement projection)',
   'GET|PUT /canvas/projects/:id (revision, expectedRevision → 409)',
   'GET|PUT /canvas/projects/:id/spec-canvas (layout/viewport CAS)',
   'GET /spec/resources/:id (reference count)',
@@ -407,6 +408,7 @@ const CORE_API_ROUTES = [
   'GET /clusters/:id/primitives, POST /relationships (primitives router)',
   'GET|POST /agent/types (agent type catalog)',
   'GET|POST /state-machines (state machine artifacts)',
+  'POST /artifacts/:id/archive|restore|transition (revision-aware transactional lifecycle)',
 ];
 
 const LOAD_ROADMAP = [

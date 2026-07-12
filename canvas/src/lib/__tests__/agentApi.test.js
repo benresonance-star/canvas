@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AgentApiError, getArtifact, saveAgentTemplate, sendAgentChat } from '../agentApi.js';
+import { AgentApiError, getArtifact, resolveAgentChatTimeoutMs, saveAgentTemplate, sendAgentChat } from '../agentApi.js';
 
 describe('agentApi', () => {
   beforeEach(() => {
@@ -8,6 +8,11 @@ describe('agentApi', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('resolves chat timeouts by provider', () => {
+    expect(resolveAgentChatTimeoutMs('openai')).toBe(60_000);
+    expect(resolveAgentChatTimeoutMs('ollama')).toBe(120_000);
   });
 
   it('maps network failure to AgentApiError', async () => {

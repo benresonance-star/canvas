@@ -406,13 +406,14 @@ export function serializeMarkdownBlock(block) {
     const rows = (block.rows ?? []).map((row) => `| ${row.join(' | ')} |`);
     return [headerRow, separator, ...rows].join('\n');
   }
+  if (block.type === 'hr') return '---';
   return '';
 }
 
 export function serializeMarkdownMessage(blocks) {
   return (blocks ?? [])
     .map((block) => serializeMarkdownBlock(block))
-    .filter((text) => text.length > 0)
+    .filter((text, index) => text.length > 0 || blocks[index]?.type === 'paragraph')
     .join('\n\n')
     .trim();
 }
@@ -495,11 +496,14 @@ function buildEditableBlockHtml(block, compact = false) {
   }
   if (block.type === 'heading') {
     const level = Math.min(Math.max(block.level ?? 1, 1), 6);
-    const headingClass = compact ? 'text-[11px]' : 'text-sm';
-    return `<h${level} class="font-semibold text-primary ${headingClass}">${buildEditableInlineHtml(block.text ?? '')}</h${level}>`;
+    const headingClass = level === 1
+      ? `font-semibold text-primary ${compact ? 'text-[12px]' : 'text-base'}`
+      : `font-semibold text-primary ${compact ? 'text-[11px]' : 'text-sm'}`;
+    return `<h${level} class="${headingClass}">${buildEditableInlineHtml(block.text ?? '')}</h${level}>`;
   }
   if (block.type === 'list') return buildEditableListHtml(block);
   if (block.type === 'table') return buildEditableTableHtml(block);
+  if (block.type === 'hr') return '<hr contenteditable="false">';
   return `<p class="whitespace-pre-wrap">${buildEditableInlineHtml(block.text ?? '')}</p>`;
 }
 
@@ -610,6 +614,141 @@ export function splitMixedBlockNode(node) {
     blocks.push(domListToBlock(list));
   });
   return blocks;
+}
+
+function isHorizontalRuleElement(node) {
+  return node?.nodeType === 1 && node.tagName?.toLowerCase() === 'hr';
+}
+
+function isIgnorableDomChild(node) {
+  if (!node) return true;
+  if (node.nodeType === 3) return !(node.textContent ?? '').trim();
+  if (node.nodeType === 1) return node.tagName?.toLowerCase() === 'br';
+  return true;
+}
+
+function meaningfulDomChildren(node) {
+  return Array.from(node?.childNodes ?? []).filter((child) => !isIgnorableDomChild(child));
+}
+
+function nodeContainsDirectHorizontalRule(node) {
+  return Array.from(node?.childNodes ?? []).some(isHorizontalRuleElement);
+}
+
+function isHorizontalRuleWrapper(node) {
+  if (!node || node.nodeType !== 1) return false;
+  const tag = node.tagName?.toLowerCase();
+  if (tag === 'hr') return true;
+  if (tag !== 'p' && tag !== 'div') return false;
+  const meaningful = meaningfulDomChildren(node);
+  if (meaningful.length !== 1) return false;
+  return isHorizontalRuleWrapper(meaningful[0]);
+}
+
+function hoistHorizontalRules(root) {
+  if (!root?.querySelectorAll) return;
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const wrappers = Array.from(root.querySelectorAll('div, p')).filter((node) => (
+      node !== root && isHorizontalRuleWrapper(node)
+    ));
+    wrappers.forEach((wrapper) => {
+      const parent = wrapper.parentNode;
+      const hr = isHorizontalRuleElement(wrapper)
+        ? wrapper
+        : meaningfulDomChildren(wrapper).find(isHorizontalRuleElement)
+          ?? meaningfulDomChildren(wrapper)[0];
+      if (!parent || !hr) return;
+      parent.insertBefore(hr, wrapper);
+      wrapper.remove();
+      changed = true;
+    });
+  }
+
+  const mixed = Array.from(root.querySelectorAll('p, div')).filter((node) => (
+    node !== root
+    && nodeContainsDirectHorizontalRule(node)
+    && meaningfulDomChildren(node).some((child) => !isHorizontalRuleElement(child))
+  ));
+
+  mixed.forEach((container) => splitContainerAtHorizontalRules(container));
+}
+
+function splitContainerAtHorizontalRules(container) {
+  const parent = container.parentNode;
+  if (!parent || typeof document === 'undefined') return;
+
+  const paragraphClass = container.className || 'whitespace-pre-wrap';
+  const fragment = document.createDocumentFragment();
+  let current = document.createElement('p');
+  current.className = paragraphClass;
+
+  const flushParagraph = () => {
+    if (!current.hasChildNodes()) {
+      current.appendChild(document.createElement('br'));
+    }
+    fragment.appendChild(current);
+    current = document.createElement('p');
+    current.className = paragraphClass;
+  };
+
+  Array.from(container.childNodes).forEach((child) => {
+    if (isHorizontalRuleElement(child)) {
+      if (meaningfulDomChildren(current).length > 0) flushParagraph();
+      fragment.appendChild(child);
+      current = document.createElement('p');
+      current.className = paragraphClass;
+      return;
+    }
+    current.appendChild(child);
+  });
+
+  if (meaningfulDomChildren(current).length > 0 || fragment.childNodes.length === 0) {
+    flushParagraph();
+  }
+
+  parent.insertBefore(fragment, container);
+  container.remove();
+}
+
+function expandDomNodeToBlocks(node) {
+  if (!node) return [];
+  if (isHorizontalRuleWrapper(node)) return [{ type: 'hr' }];
+  if (!isBlockContainerElement(node)) {
+    const block = domNodeToBlock(node);
+    return block ? [block] : [];
+  }
+  if (!nodeContainsDirectHorizontalRule(node)) {
+    const block = domNodeToBlock(node);
+    return block ? [block] : [];
+  }
+
+  const blocks = [];
+  let inlineNodes = [];
+  const flushInline = () => {
+    if (!inlineNodes.length) return;
+    const text = domInlineToMarkdownFromChildNodes(inlineNodes).trim();
+    inlineNodes = [];
+    if (text) blocks.push({ type: 'paragraph', text });
+  };
+
+  Array.from(node.childNodes ?? []).forEach((child) => {
+    if (isHorizontalRuleElement(child)) {
+      flushInline();
+      blocks.push({ type: 'hr' });
+      return;
+    }
+    if (isIgnorableDomChild(child)) return;
+    inlineNodes.push(child);
+  });
+  flushInline();
+  return blocks;
+}
+
+function domInlineToMarkdownFromChildNodes(nodes) {
+  return (nodes ?? []).map((node) => domInlineToMarkdown(node)).join('');
 }
 
 function hoistListsFromContainers(root) {
@@ -733,6 +872,7 @@ export function normalizeEditableDocumentDom(root) {
   if (!root || typeof document === 'undefined') return root;
   for (let pass = 0; pass < 5; pass += 1) {
     const before = root.innerHTML ?? '';
+    hoistHorizontalRules(root);
     hoistListsFromContainers(root);
     normalizeListItems(root);
     mergeAdjacentListsDeep(root);
@@ -768,12 +908,14 @@ function domNodeToBlock(node) {
       (child) => child.tagName?.toLowerCase() === 'table',
     );
     if (childTable) return domTableToBlock(childTable);
+    if (isHorizontalRuleWrapper(node)) return { type: 'hr' };
     return domParagraphToBlock(node);
   }
   if (tag === 'p') return domParagraphToBlock(node);
   if (/^h[1-6]$/.test(tag ?? '')) return domHeadingToBlock(node);
   if (tag === 'ul' || tag === 'ol') return domListToBlock(node);
   if (tag === 'table') return domTableToBlock(node);
+  if (tag === 'hr') return { type: 'hr' };
   if (tag === 'br') return null;
   return domParagraphToBlock(node);
 }
@@ -816,6 +958,10 @@ export function editableDocumentToBlocks(root) {
   getTopLevelBlockNodes(root).forEach((node) => {
     if (isBlockContainerElement(node) && Array.from(node.children ?? []).some(isListElement)) {
       blocks.push(...splitMixedBlockNode(node));
+      return;
+    }
+    if (isBlockContainerElement(node) && nodeContainsDirectHorizontalRule(node)) {
+      blocks.push(...expandDomNodeToBlocks(node));
       return;
     }
     const block = domNodeToBlock(node);

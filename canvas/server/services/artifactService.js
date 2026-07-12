@@ -4,17 +4,33 @@ import {
   archiveArtifact,
   createArtifact,
   getBaseArtifactById,
+  restoreArtifact,
   updateArtifact,
   updateArtifactState,
 } from '../repositories/artifacts.js';
 import { appendArtifactEvent } from '../repositories/artifact-events.js';
 import { getStateMachineById } from '../repositories/state-machines.js';
+import {
+  createArtifactRelationship,
+  deleteRelationship,
+  getRelationshipById,
+} from '../repositories/relationships.js';
 
 function eventPayloadForArtifact(artifact) {
   return {
     artifactType: artifact.type,
     title: artifact.title,
   };
+}
+
+function assertExpectedRevision(artifact, expectedRevision) {
+  if (expectedRevision == null) return;
+  if (Number(expectedRevision) !== Number(artifact.revision)) {
+    const error = new Error('Artifact revision conflict');
+    error.status = 409;
+    error.currentRevision = artifact.revision;
+    throw error;
+  }
 }
 
 async function appendCanvasEvent(db, { actor, action, targetId, targetType, before, after }) {
@@ -120,6 +136,7 @@ export async function updateArtifactWithEvents(id, patch) {
       error.status = 404;
       throw error;
     }
+    assertExpectedRevision(before, patch.expectedRevision);
     const updatedBy = patch.updatedBy || patch.updated_by || 'user:local';
     const updated = await updateArtifact(id, { ...patch, updatedBy }, client);
     const changedFields = changedFieldsFromPatch(patch);
@@ -166,7 +183,10 @@ export async function archiveArtifactWithEvents(id, input = {}) {
     }
     const actorType = input.actorType || 'user';
     const actorId = input.actorId || 'user:local';
-    const artifact = await archiveArtifact(id, actorId, client);
+    assertExpectedRevision(before, input.expectedRevision);
+    const artifact = input.expectedRevision == null
+      ? await archiveArtifact(id, actorId, client)
+      : await archiveArtifact(id, actorId, client, input.expectedRevision);
     await appendArtifactEvent({
       artifactId: id,
       projectId: artifact.projectId,
@@ -193,6 +213,46 @@ export async function archiveArtifactWithEvents(id, input = {}) {
   }
 }
 
+export async function restoreArtifactWithEvents(id, input = {}) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const before = await getBaseArtifactById(id, client);
+    if (!before) {
+      const error = new Error('Artifact not found');
+      error.status = 404;
+      throw error;
+    }
+    assertExpectedRevision(before, input.expectedRevision);
+    const actorType = input.actorType || 'user';
+    const actorId = input.actorId || 'user:local';
+    const artifact = await restoreArtifact(id, actorId, client, input.expectedRevision ?? null);
+    await appendArtifactEvent({
+      artifactId: id,
+      projectId: artifact.projectId,
+      type: 'ArtifactRestored',
+      payload: { reason: input.reason ?? null },
+      actorType,
+      actorId,
+    }, client);
+    await appendCanvasEvent(client, {
+      actor: { kind: actorType, id: actorId },
+      action: 'restored',
+      targetId: id,
+      targetType: 'artifact',
+      before: { archived_at: before.archivedAt },
+      after: { archived_at: null },
+    });
+    await client.query('COMMIT');
+    return artifact;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function transitionArtifactStateWithEvents(id, input) {
   const client = await pool.connect();
   try {
@@ -203,6 +263,7 @@ export async function transitionArtifactStateWithEvents(id, input) {
       error.status = 404;
       throw error;
     }
+    assertExpectedRevision(artifact, input.expectedRevision);
     if (artifact.stateMachineId) {
       const machine = await getStateMachineById(artifact.stateMachineId, client);
       if (!machine) throw new Error('State machine not found');
@@ -212,7 +273,15 @@ export async function transitionArtifactStateWithEvents(id, input) {
         throw error;
       }
     }
-    const updated = await updateArtifactState(id, input.toStateId, input.actorId, client);
+    const updated = input.expectedRevision == null
+      ? await updateArtifactState(id, input.toStateId, input.actorId, client)
+      : await updateArtifactState(
+        id,
+        input.toStateId,
+        input.actorId,
+        client,
+        input.expectedRevision,
+      );
     const event = await appendArtifactEvent({
       artifactId: id,
       projectId: artifact.projectId,
@@ -237,6 +306,82 @@ export async function transitionArtifactStateWithEvents(id, input) {
     });
     await client.query('COMMIT');
     return { artifact: updated, event };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function addArtifactRelationshipWithEvents(input) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await createArtifactRelationship(
+      input,
+      {},
+      client,
+      { emitCanvasEvent: false },
+    );
+    if (result.created) {
+      await appendArtifactEvent({
+        artifactId: input.sourceArtifactId,
+        projectId: input.projectId ?? null,
+        type: 'RelationshipAdded',
+        payload: {
+          relationshipId: result.relationship.id,
+          sourceArtifactId: input.sourceArtifactId,
+          targetArtifactId: input.targetArtifactId,
+          relationshipType: input.relationshipType,
+        },
+        actorType: 'user',
+        actorId: input.createdBy || 'user:local',
+      }, client);
+    }
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function removeArtifactRelationshipWithEvents(id, input = {}) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existing = await getRelationshipById(id, client);
+    if (!existing) {
+      const error = new Error('Relationship not found');
+      error.status = 404;
+      throw error;
+    }
+    const deleted = await deleteRelationship(id, client);
+    if (!deleted) {
+      const error = new Error('Relationship not found');
+      error.status = 404;
+      throw error;
+    }
+    if (existing.from_ref?.type === 'artifact') {
+      await appendArtifactEvent({
+        artifactId: existing.from_ref.id,
+        projectId: existing.project_id ?? null,
+        type: 'RelationshipRemoved',
+        payload: {
+          relationshipId: id,
+          sourceArtifactId: existing.from_ref.id,
+          targetArtifactId: existing.to_ref?.id ?? null,
+          relationshipType: existing.type,
+        },
+        actorType: 'user',
+        actorId: input.actorId || 'user:local',
+      }, client);
+    }
+    await client.query('COMMIT');
+    return { ok: true };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

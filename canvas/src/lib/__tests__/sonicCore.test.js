@@ -369,7 +369,8 @@ describe('sonic-core DSP foundation', () => {
     const render = renderBeatPatternWithSonicCore({ pattern, transport: { bpm: 120 }, sampleRate: 4000 });
 
     expect(voice.archetype).toBe('kick');
-    expect(voice.output.gain).toBe(1.2);
+    // Public Sonic voice output is normalized to the safe 0..1 range.
+    expect(voice.output.gain).toBe(1);
     expect(voice.richness.saturation).toBe(0.4);
     expect(events).toHaveLength(1);
     expect(render.stats.peak).toBeGreaterThan(0);

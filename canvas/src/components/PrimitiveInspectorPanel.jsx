@@ -15,6 +15,10 @@ import { buildArtifactToCardMap } from '../lib/graph/clusterGraph.js';
 import { formatDurationSec } from '../lib/audio/parseAudioTags.js';
 import { FieldRow } from './FieldRow.jsx';
 import { ImageArtifactMetadataFields } from './ImageArtifactMetadataFields.jsx';
+import {
+  formatArtifactDateTime,
+  resolveArtifactFileDates,
+} from '../lib/artifactDates.js';
 
 function stripPrimitivePrefix(summary) {
   return summary?.replace(/^[^:]+:\s*/, '') || '';
@@ -48,13 +52,6 @@ function parseMaybeJson(value, fallback = null) {
     }
   }
   return value;
-}
-
-function formatDateTime(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
 }
 
 function prettyJson(value) {
@@ -127,6 +124,7 @@ function CapabilityList({ capabilities }) {
 function ArtifactSchemaInspector({
   p,
   meta,
+  fileDates,
   capabilities,
   artifactEdges,
   artifactEvents,
@@ -164,10 +162,10 @@ function ArtifactSchemaInspector({
         open={openSections.lifecycle}
         onToggle={() => onToggleSection('lifecycle')}
       >
-        <FieldRow label="Created" value={formatDateTime(p.created_at)} />
-        <FieldRow label="Updated" value={formatDateTime(p.updated_at)} />
-        <FieldRow label="Retrieved" value={formatDateTime(p.retrieved_at)} />
-        <FieldRow label="Archived" value={formatDateTime(p.archived_at)} />
+        <FieldRow label="Created" value={formatArtifactDateTime(p.created_at)} />
+        <FieldRow label="Updated" value={formatArtifactDateTime(p.updated_at)} />
+        <FieldRow label="Retrieved" value={formatArtifactDateTime(p.retrieved_at)} />
+        <FieldRow label="Archived" value={formatArtifactDateTime(p.archived_at)} />
         <FieldRow label="Schema version" value={p.schema_version} />
         <FieldRow label="Content schema version" value={p.content_schema_version} />
       </CollapsibleSchemaSection>
@@ -192,6 +190,16 @@ function ArtifactSchemaInspector({
         <FieldRow label="Hash" value={p.content_hash} />
         <FieldRow label="Version" value={p.version} />
         <FieldRow label="File" value={meta?.filename} />
+        <FieldRow
+          label={strings.modal.dateCreated}
+          value={formatArtifactDateTime(fileDates?.dateCreated)}
+        />
+        {fileDates?.dateModified ? (
+          <FieldRow
+            label={strings.modal.dateModified}
+            value={formatArtifactDateTime(fileDates.dateModified)}
+          />
+        ) : null}
         <ImageArtifactMetadataFields meta={meta} />
         {meta?.canvas_kind === 'audio' && meta?.audio && (
           <>
@@ -325,7 +333,7 @@ function ArtifactSchemaInspector({
                 <div className="flex items-center justify-between gap-2">
                   <span className="sans text-xs text-primary">{event.type}</span>
                   <span className="sans text-[10px] text-muted">
-                    {formatDateTime(event.createdAt)}
+                    {formatArtifactDateTime(event.createdAt)}
                   </span>
                 </div>
                 <div className="sans text-[10px] text-muted mt-0.5">
@@ -357,6 +365,7 @@ export function PrimitiveInspectorPanel({
   clusterId,
   clusterInspectorReload = 0,
   cards = [],
+  stagedSyncCards = [],
   selectedCardIds,
   activeCardId = null,
   agentChatThreadIndex = null,
@@ -473,6 +482,10 @@ export function PrimitiveInspectorPanel({
       ? parseMaybeJson(p.metadata, {})
       : p?.metadata;
   const capabilities = Array.isArray(p?.capabilities) ? p.capabilities : [];
+  const fileDates =
+    selection.type === 'artifact'
+      ? resolveArtifactFileDates(selection.id, { cards, stagedSyncCards, meta })
+      : null;
 
   const toggleSchemaSection = (sectionId) => {
     setSchemaSectionsOpen((current) => ({
@@ -561,6 +574,7 @@ export function PrimitiveInspectorPanel({
                     <ArtifactSchemaInspector
                       p={p}
                       meta={meta}
+                      fileDates={fileDates}
                       capabilities={capabilities}
                       artifactEdges={artifactEdges}
                       artifactEvents={artifactEvents}

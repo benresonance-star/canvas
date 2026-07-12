@@ -1,3 +1,4 @@
+/* eslint-disable no-fallthrough */
 import {
   LAYER_ORDER,
   LAYER_Y,
